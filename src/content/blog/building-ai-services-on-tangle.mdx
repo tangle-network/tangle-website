@@ -1,0 +1,553 @@
+---
+title: Building AI Services on Tangle
+slug: building-ai-services-on-tangle
+summary: >-
+  How to build AI inference and sandboxed execution services using Tangle's
+  Blueprint SDK - from model loading to job routing.
+date: '2026-02-26'
+author: Drew Stone
+tags:
+  - ai
+  - inference
+  - sdk
+series: Tangle Re-Introduction
+seriesOrder: 5
+coverImage: /images/covers/building-ai-services-on-tangle.png
+heroImage: /images/covers/building-ai-services-on-tangle.png
+imageAlt: 'Building AI Services on Tangle: Inference and Sandboxes'
+---
+
+*Day 5 of the Tangle Re-Introduction Series*
+
+---
+
+The previous post covered the general developer experience. This one gets specific: how to build the two AI services that matter most right now.
+
+AI agents need two things from infrastructure: **inference** (running models) and **execution** (running code). Both have trust problems that Tangle solves. This post walks through building each.
+
+## Why AI Services Are Different
+
+Traditional web services have a simple trust model: you trust the provider, or you don't use them. The provider's reputation and legal liability are your guarantees.
+
+AI services break this model in three ways:
+
+**Outputs are hard to verify.** When an LLM returns a response, you can't easily tell if it came from GPT-4 or a fine-tuned Llama pretending to be GPT-4. The output might be plausible either way.
+
+**Inputs are often sensitive.** Agents process private data, make decisions with financial consequences, and operate on behalf of users. The inference provider sees everything.
+
+**Agents operate autonomously.** A human might notice a degraded service. An agent making thousands of API calls won't. By the time anyone notices, damage is done.
+
+Tangle addresses these through verification mechanisms and economic accountability. Let's see how that works in practice.
+
+---
+
+## Part 1: Building an Inference Service
+
+An inference service runs AI models on behalf of customers. The customer sends a prompt, the operator runs it through the model, and returns the response.
+
+### The Hardware Reality
+
+Before diving in, an honest acknowledgment: TEE-based inference has constraints.
+
+**Memory limits.** Intel SGX EPC is ~256MB. AMD SEV-SNP is more generous but still limited. Loading a 70B parameter model in a TEE requires specialized approaches: model sharding, offloading, or accepting that some models only run on larger SEV instances.
+
+**GPU attestation is emerging.** Most production inference uses GPUs, but GPU TEE support is new. NVIDIA H100 Confidential Computing exists but isn't widely deployed. For now, GPU inference either uses multi-operator verification (consensus across independent operators) or accepts that TEE attestation covers the orchestration but not the GPU computation itself.
+
+**Our current approach:** TEE attestation for model loading and result signing, with optional multi-operator quorum for additional verification. Full GPU-in-TEE support is on the roadmap as hardware matures.
+
+### The Trust Problem
+
+When you call an inference API, you're trusting:
+- They're running the model they claim (not a cheaper substitute)
+- They're not logging or selling your prompts
+- They're not modifying outputs (filtering, biasing, watermarking)
+- They're actually running inference (not returning cached/fabricated responses)
+
+Most inference APIs ask you to trust their reputation. Tangle makes these properties verifiable.
+
+### Architecture
+
+```
+Customer → Job Request → Operators (TEE) → Response + Attestation
+                              ↓
+                    Model runs in enclave
+                    Attestation proves which model
+                    Canary checks detect substitution
+```
+
+### The Blueprint
+
+```rust
+use blueprint_sdk::prelude::*;
+use tee_attestation::TeeAttestation;
+
+/// Inference job: run a prompt through a specified model
+#[job(id = 0, params(model_id, prompt, config), result(InferenceResponse))]
+pub async fn inference(
+    model_id: ModelId,
+    prompt: String,
+    config: InferenceConfig,
+) -> Result<InferenceResponse, BlueprintError> {
+    // Load model (hash verified against registry)
+    let model = ModelRegistry::load(model_id).await?;
+    
+    // Run inference
+    let response = model.generate(&prompt, &config).await?;
+    
+    // Generate attestation AFTER computation
+    // Binds the attestation to what was actually computed
+    let attestation = TeeAttestation::generate_for(
+        &response,
+        &model.hash(),
+        TeeAttestation::fresh_nonce(),
+    )?;
+    
+    Ok(InferenceResponse {
+        text: response.text,
+        tokens_used: response.tokens,
+        model_hash: model.hash(),
+        attestation: attestation.serialize(),
+    })
+}
+
+/// Configuration for inference
+#[derive(Serialize, Deserialize)]
+pub struct InferenceConfig {
+    pub max_tokens: u32,
+    pub temperature: f32,
+    pub top_p: f32,
+}
+
+/// Response includes proof of execution
+#[derive(Serialize, Deserialize)]
+pub struct InferenceResponse {
+    pub text: String,
+    pub tokens_used: u32,
+    pub model_hash: Hash,
+    pub attestation: Vec<u8>,
+}
+```
+
+### Verification Mechanisms
+
+The blueprint uses three layers of verification:
+
+**1. TEE Attestation**
+
+Every response includes an attestation signed by the TEE hardware. This proves:
+- Code ran inside an enclave (operator couldn't observe)
+- Specific model binary was loaded (hash matches registry)
+- Hardware is genuine (Intel/AMD signed)
+
+Customers verify attestations client-side. Invalid attestation = don't trust the response.
+
+**2. Model Registry**
+
+Models are registered with their cryptographic hashes:
+
+```rust
+/// Register a model in the on-chain registry
+pub async fn register_model(
+    name: String,
+    hash: Hash,
+    metadata: ModelMetadata,
+) -> Result<ModelId> {
+    // Only model owner can register
+    require!(msg::sender() == metadata.owner);
+    
+    // Store hash on-chain
+    let id = ModelRegistry::insert(name, hash, metadata);
+    
+    emit!(ModelRegistered { id, hash, name });
+    Ok(id)
+}
+```
+
+When an operator loads a model, the TEE verifies the hash matches. Model substitution requires either breaking the TEE or compromising the registry.
+
+**3. Canary Prompts**
+
+Periodic challenge prompts with known expected outputs:
+
+```rust
+/// Canary check: verify model responds correctly to known prompts
+#[job(id = 1, params(model_id), result(CanaryResult))]
+pub async fn canary_check(model_id: ModelId) -> Result<CanaryResult> {
+    let canaries = CanaryRegistry::get_for_model(model_id);
+    
+    let mut results = Vec::new();
+    for canary in canaries {
+        let response = inference(model_id, canary.prompt.clone(), canary.config.clone()).await?;
+        let similarity = semantic_similarity(&response.text, &canary.expected);
+        results.push(CanaryCheckResult {
+            prompt_id: canary.id,
+            similarity,
+            passed: similarity > canary.threshold,
+        });
+    }
+    
+    Ok(CanaryResult { checks: results })
+}
+```
+
+Different models have different "fingerprints" on carefully designed prompts. If canary checks fail, something is wrong.
+
+### Slashing Conditions
+
+```rust
+#[slashing_hook]
+async fn check_violations(&self, job_result: &JobResult) -> Option<SlashReason> {
+    // Invalid TEE attestation
+    if !verify_attestation(&job_result.attestation) {
+        return Some(SlashReason::InvalidAttestation);
+    }
+    
+    // Model hash mismatch
+    if job_result.model_hash != self.expected_model_hash {
+        return Some(SlashReason::WrongModel);
+    }
+    
+    // Failed canary (checked separately)
+    if job_result.job_id == CANARY_JOB_ID && !job_result.canary_passed {
+        return Some(SlashReason::FailedCanary);
+    }
+    
+    None
+}
+```
+
+### What This Doesn't Solve
+
+**Output quality.** We verify the right model ran. We don't verify the output is "good" or "helpful." Quality is subjective.
+
+**Prompt injection in the model.** If the model itself has been fine-tuned maliciously, the TEE faithfully runs the malicious model. Verification proves fidelity, not safety.
+
+**Side-channel leakage.** TEEs have known side-channel vulnerabilities. Sophisticated attackers might extract information. For most use cases, this risk is acceptable.
+
+---
+
+## Part 2: Building a Sandbox Service
+
+A sandbox service executes arbitrary code in an isolated environment. The customer sends code, the operator runs it, and returns the result.
+
+### The Trust Problem
+
+Code execution is dangerous:
+- Malicious code could attack the operator's infrastructure
+- Operators could observe sensitive data in the code
+- Operators could modify execution (return wrong results, inject code)
+- Resource consumption is hard to predict and limit
+
+Sandboxes need isolation in both directions: protecting operators from customers, and protecting customers from operators.
+
+### Architecture
+
+```
+Customer → Code + Inputs → Sandbox Container → Outputs + Proof
+                                ↓
+                    Isolated execution environment
+                    Resource limits enforced
+                    Deterministic replay possible
+```
+
+### The Blueprint
+
+```rust
+use blueprint_sdk::prelude::*;
+use sandbox_runtime::{Sandbox, SandboxConfig, ExecutionResult};
+
+/// Execute code in isolated sandbox
+#[job(id = 0, params(code, language, inputs, config), result(ExecutionResult))]
+pub async fn execute(
+    code: String,
+    language: Language,
+    inputs: Vec<u8>,
+    config: SandboxConfig,
+) -> Result<ExecutionResult> {
+    // Create isolated sandbox
+    let sandbox = Sandbox::new(config)?;
+    
+    // Set resource limits
+    sandbox.set_memory_limit(config.max_memory_mb * 1024 * 1024);
+    sandbox.set_cpu_time_limit(config.max_cpu_seconds);
+    sandbox.set_network_policy(config.network_policy);
+    
+    // Execute code
+    let result = sandbox.run(&code, language, &inputs).await?;
+    
+    // Capture execution trace for verification
+    let trace = sandbox.get_execution_trace()?;
+    
+    Ok(ExecutionResult {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exit_code: result.exit_code,
+        resources_used: result.resources,
+        execution_trace: trace,
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SandboxConfig {
+    pub max_memory_mb: u32,
+    pub max_cpu_seconds: u32,
+    pub network_policy: NetworkPolicy,
+    pub filesystem_policy: FilesystemPolicy,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum NetworkPolicy {
+    None,           // No network access
+    AllowList(Vec<String>),  // Only specified hosts
+    Full,           // Unrestricted (dangerous)
+}
+```
+
+### Isolation Layers
+
+**1. Container Isolation**
+
+Each execution runs in a fresh container:
+
+```rust
+impl Sandbox {
+    pub fn new(config: SandboxConfig) -> Result<Self> {
+        let container = Container::create(ContainerConfig {
+            image: "tangle/sandbox-base:latest",
+            memory: config.max_memory_mb,
+            cpu_shares: 1024,
+            read_only_root: true,
+            no_new_privileges: true,
+            seccomp_profile: "strict",
+            capabilities: vec![], // Drop all capabilities
+        })?;
+        
+        Ok(Self { container, config })
+    }
+}
+```
+
+Containers are destroyed after execution. No state persists.
+
+**2. Syscall Filtering**
+
+Seccomp profiles restrict what system calls are allowed:
+
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64"],
+  "syscalls": [
+    { "names": ["read", "write", "open", "close", "mmap", "munmap", "brk", "exit_group"], "action": "SCMP_ACT_ALLOW" }
+  ]
+}
+```
+
+Dangerous syscalls (ptrace, mount, reboot, etc.) are blocked.
+
+**3. Resource Accounting**
+
+Every resource is tracked:
+
+```rust
+#[derive(Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub cpu_time_ms: u64,
+    pub memory_peak_bytes: u64,
+    pub network_bytes_in: u64,
+    pub network_bytes_out: u64,
+    pub disk_bytes_written: u64,
+}
+```
+
+Customers pay for resources used. Operators are compensated fairly.
+
+### Verification Approaches
+
+Verification depends on the workload type:
+
+**For TEE-enabled execution:** Hardware attestation proves the sandbox ran the code correctly. This is the strongest guarantee but requires TEE-capable operators.
+
+**For deterministic code (WASM, seeded execution):** Replay verification works. Run the same inputs through multiple operators and compare.
+
+**For general code (Python, Node, etc.):** Most real code isn't deterministic. Dict ordering, floating-point operations, and timing-dependent behavior vary across runs. For these workloads, we use:
+- Multi-operator consensus (3 operators must agree)
+- Statistical consistency checking (outputs should be similar even if not identical)
+- TEE attestation where available
+
+```rust
+/// Verification for non-deterministic code uses multi-operator consensus
+#[verification_hook]
+async fn verify_execution(&self, results: Vec<OperatorResult>) -> VerificationResult {
+    // Require minimum operator count
+    if results.len() < 3 {
+        return VerificationResult::InsufficientOperators;
+    }
+    
+    // Check for consensus (majority agreement)
+    let consensus = find_consensus(&results, ConsensusThreshold::Majority);
+    
+    match consensus {
+        Some(agreed_result) => VerificationResult::Passed(agreed_result),
+        None => VerificationResult::Failed(VerificationError::NoConsensus),
+    }
+}
+```
+
+**Honest limitation:** For workloads that are neither TEE-attested nor consensus-verifiable, economic security (stake at risk) is the primary deterrent. This is weaker than cryptographic verification but often sufficient for lower-stakes computation.
+
+### Handling Non-Determinism
+
+```rust
+/// Sandbox with controlled randomness
+impl Sandbox {
+    pub fn run_deterministic(&self, code: &str, language: Language, inputs: &[u8], seed: u64) -> Result<ExecutionResult> {
+        // Override random number generator with seeded PRNG
+        self.set_env("SANDBOX_RANDOM_SEED", seed.to_string());
+        
+        // Fix timestamp to provided value
+        self.set_env("SANDBOX_FIXED_TIME", inputs.timestamp.to_string());
+        
+        // Intercept network calls, return recorded responses
+        self.set_network_mode(NetworkMode::Replay(inputs.network_recording));
+        
+        self.run(code, language, inputs)
+    }
+}
+```
+
+By controlling sources of non-determinism, we can replay and verify.
+
+### Supported Languages
+
+```rust
+#[derive(Serialize, Deserialize)]
+pub enum Language {
+    Python,     // Sandboxed CPython
+    JavaScript, // V8 isolate
+    Rust,       // Compiled in sandbox
+    Go,         // Compiled in sandbox
+    Wasm,       // WebAssembly modules
+}
+```
+
+Each language has a runtime optimized for sandbox execution. WASM provides the strongest isolation guarantees.
+
+### Real Use Cases
+
+**AI Agent Tool Execution**
+
+An agent needs to run code to accomplish tasks:
+
+```python
+# Agent generates this code
+def analyze_data(data):
+    import pandas as pd
+    df = pd.DataFrame(data)
+    return {
+        "mean": df["value"].mean(),
+        "std": df["value"].std(),
+        "outliers": df[df["value"] > df["value"].mean() + 2*df["value"].std()].to_dict()
+    }
+```
+
+The sandbox executes it safely, the agent gets results, the operator can't see the data.
+
+**Serverless Functions**
+
+Deploy functions without managing infrastructure:
+
+```javascript
+// User's function
+export async function handler(event) {
+    const response = await fetch(event.url);
+    const data = await response.json();
+    return { processed: transform(data) };
+}
+```
+
+Runs on Tangle operators with economic guarantees. No AWS account needed.
+
+**Automated Testing**
+
+Run untrusted test code:
+
+```rust
+// Test submitted by user
+#[test]
+fn test_my_contract() {
+    let result = my_contract::execute(input);
+    assert_eq!(result, expected);
+}
+```
+
+Safe execution even if tests are malicious.
+
+---
+
+## Combining Inference and Sandbox
+
+The most powerful pattern: chain inference and execution.
+
+```
+User Request → Inference (generate code) → Sandbox (execute code) → Result
+```
+
+An AI agent can:
+1. Receive a task
+2. Generate code to accomplish it (inference service)
+3. Execute that code safely (sandbox service)
+4. Return verified results
+
+Both steps have cryptoeconomic guarantees. The agent operates autonomously with accountability.
+
+### Example: Data Analysis Agent
+
+```rust
+/// Agent that analyzes data using generated code
+pub async fn analyze(request: AnalysisRequest) -> Result<AnalysisResult> {
+    // Step 1: Generate analysis code
+    let code = inference(
+        MODEL_GPT4,
+        format!("Write Python to analyze this data: {:?}", request.schema),
+        InferenceConfig::default(),
+    ).await?;
+    
+    // Step 2: Execute the generated code
+    let result = execute(
+        code.text,
+        Language::Python,
+        request.data,
+        SandboxConfig::default(),
+    ).await?;
+    
+    Ok(AnalysisResult {
+        output: result.stdout,
+        code_used: code.text,
+        inference_attestation: code.attestation,
+        execution_trace: result.execution_trace,
+    })
+}
+```
+
+The customer gets:
+- The analysis result
+- The code that produced it
+- Proof the right model generated the code
+- Proof the code ran correctly
+
+Full accountability chain.
+
+---
+
+## What's Next
+
+The final post in this series covers the road ahead: what we're building next, where Tangle fits in the broader landscape, and how to get involved.
+
+---
+
+**Links:**
+- [Discord](https://discord.gg/cv8EfJu3Tn)
+- [Twitter](https://twitter.com/tangle_network)
+- [Docs](https://docs.tangle.tools)
+- [Blueprint SDK](https://github.com/tangle-network/blueprint)

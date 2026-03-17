@@ -1,0 +1,424 @@
+---
+title: 'Building on Tangle: From Idea to Production'
+slug: building-on-tangle-from-idea-to-production
+summary: >-
+  A practical walkthrough of taking a blueprint from concept to deployment -
+  tooling, testing, and the developer experience.
+date: '2026-02-22'
+author: Drew Stone
+tags:
+  - tutorial
+  - sdk
+  - developer-experience
+series: Tangle Re-Introduction
+seriesOrder: 4
+coverImage: /images/covers/building-on-tangle-from-idea-to-production.png
+heroImage: /images/covers/building-on-tangle-from-idea-to-production.png
+imageAlt: 'Building on Tangle: From Idea to Production Service'
+---
+
+*Day 4 of the Tangle Re-Introduction Series*
+
+---
+
+The previous posts covered why decentralized infrastructure matters and how verification works. This one is practical: how do you actually build something?
+
+Most "developer experience" posts in crypto are marketing dressed as documentation. They show a hello-world example, claim it's easy, and leave you to figure out the hard parts yourself. This post tries to be honest about what building on Tangle actually involves, where the rough edges are, and what the path to production looks like.
+
+## What You're Building
+
+When you build on Tangle, you're creating a **blueprint**: a template that defines a type of service. Operators register to run your blueprint. Customers pay to use instances of your service. You earn a share of every transaction.
+
+This is different from traditional SaaS:
+
+| Traditional SaaS | Tangle Blueprint |
+|------------------|------------------|
+| You run the infrastructure | Operators run it |
+| You handle scaling | Network handles it |
+| You're liable for uptime | Operators stake collateral |
+| Revenue = your pricing | Revenue = share of operator fees |
+
+The tradeoff: you give up direct control in exchange for not running infrastructure. Whether that's good depends on what you're building.
+
+## When Tangle Makes Sense
+
+**Good fits:**
+- Services where trust matters more than latency (custody, signing, verification)
+- Compute you want others to run but need accountability (AI inference, code execution)
+- Multi-party protocols that need distributed operators (MPC, threshold signatures)
+- Infrastructure you'd rather not operate yourself
+
+**Poor fits:**
+- Sub-10ms latency requirements (blockchain coordination adds overhead)
+- Simple CRUD apps (traditional infrastructure is simpler)
+- Services where you need direct customer relationships (blueprints abstract this)
+- Anything requiring proprietary infrastructure you control
+
+If you're building a standard web app, use Vercel. Seriously. Tangle is for services where decentralized operation and cryptoeconomic accountability provide value that justifies the complexity.
+
+## The SDK
+
+The Blueprint SDK is Rust-based. If you're comfortable with Rust, the learning curve is manageable. If you're not, you'll be learning Rust and Tangle simultaneously, which is harder.
+
+### Core Concepts
+
+**Jobs** are units of work. A customer submits a job, operators execute it, results come back. Jobs have IDs, typed inputs, and typed outputs.
+
+**Gadgets** are reusable components: key-value stores, event listeners, protocol bindings. The SDK provides common gadgets; you can build custom ones.
+
+**Hooks** are lifecycle callbacks: what happens when an operator registers, when a job starts, when verification runs.
+
+### A Minimal Blueprint
+
+First, your `Cargo.toml`:
+
+```toml
+[package]
+name = "squaring-service"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blueprint-sdk = "0.1"
+tokio = { version = "1", features = ["full"] }
+```
+
+Then the blueprint itself:
+
+```rust
+use blueprint_sdk::prelude::*;
+
+/// Define a job that squares a number
+/// The macro generates on-chain metadata from the function signature
+#[job(id = 0)]
+pub async fn square(x: u64) -> Result<u64, BlueprintError> {
+    Ok(x * x)
+}
+
+/// Verification: prove the output is correct
+/// This runs after execution to check operator honesty
+#[verify(job = 0)]
+pub fn verify_square(input: u64, output: u64) -> VerifyResult {
+    if output == input * input {
+        VerifyResult::Valid
+    } else {
+        VerifyResult::Invalid { slash: true }
+    }
+}
+
+/// The blueprint struct wires jobs together
+#[blueprint(jobs = [square])]
+pub struct SquaringService;
+
+impl SquaringService {
+    #[registration_hook]
+    async fn on_register(&self, operator: Address) -> Result<(), BlueprintError> {
+        // Example: require minimum stake
+        let stake = operator.staked_amount().await?;
+        if stake < MIN_STAKE {
+            return Err(BlueprintError::InsufficientStake);
+        }
+        Ok(())
+    }
+}
+```
+
+**What changed from the oversimplified version:**
+- Explicit error type (`BlueprintError`)
+- Jobs wired to blueprint via `#[blueprint(jobs = [...])]`
+- Verification function that defines what "correct" means
+- Registration hook with actual validation logic
+
+This is still simple, but it compiles and shows the real patterns.
+
+### What the SDK Handles
+
+- Protocol communication (you don't touch raw blockchain)
+- Job routing and result aggregation
+- Operator lifecycle management
+- Fee distribution
+- Event emission for indexing
+
+### What You Handle
+
+- Business logic (the actual computation)
+- Verification hooks (how to check correctness)
+- Operator requirements (who can run your service)
+- Pricing recommendations (though operators set final prices)
+
+## Local Development
+
+### Prerequisites
+
+- Rust 1.75+ (stable)
+- Docker (for local network)
+- Node.js 18+ (for tooling)
+
+### Setup
+
+```bash
+# Install the CLI
+cargo install blueprint-cli
+
+# Create a new project
+blueprint new my-service
+cd my-service
+
+# Start local network (Tangle node + test operators)
+blueprint dev up
+
+# Build and deploy locally
+blueprint build
+blueprint deploy --local
+```
+
+The local environment simulates the full network: a Tangle node, multiple test operators, and a mock customer. You can test job submission, operator behavior, and verification without touching testnet.
+
+### Testing
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blueprint_sdk::testing::*;
+
+    #[tokio::test]
+    async fn test_square_correct() {
+        let mut env = TestEnv::new().await;
+        env.register_blueprint::<SquaringService>().await;
+        
+        let result = env.submit_job(square, 5u64).await;
+        assert_eq!(result.unwrap(), 25);
+    }
+
+    #[tokio::test]
+    async fn test_verification_catches_cheating() {
+        let mut env = TestEnv::new().await;
+        env.register_blueprint::<SquaringService>().await;
+        
+        // Simulate operator returning wrong result
+        env.configure_operator(OperatorBehavior::ReturnValue(100)); // Wrong!
+        
+        let result = env.submit_job(square, 5u64).await;
+        
+        // Verification should catch the lie
+        assert!(matches!(result, Err(JobError::VerificationFailed { .. })));
+        
+        // Operator should be slashed
+        assert!(env.operator_was_slashed());
+    }
+
+    #[tokio::test]
+    async fn test_registration_requires_stake() {
+        let mut env = TestEnv::new().await;
+        env.set_operator_stake(0); // No stake
+        
+        let result = env.register_blueprint::<SquaringService>().await;
+        assert!(matches!(result, Err(BlueprintError::InsufficientStake)));
+    }
+}
+```
+
+The testing framework lets you simulate the full lifecycle: registration, job submission, operator behavior, verification, and slashing.
+
+The testing framework lets you simulate:
+- Normal operation
+- Operator misbehavior
+- Network partitions
+- Verification failures
+- Slashing scenarios
+
+### Debugging
+
+```bash
+# Watch logs from all components
+blueprint dev logs
+
+# Inspect specific operator
+blueprint dev logs --operator 1
+
+# Check job status
+blueprint jobs list --local
+blueprint jobs inspect <job-id>
+```
+
+## Testnet Deployment
+
+When local testing passes, deploy to testnet:
+
+```bash
+# Configure testnet credentials
+blueprint config set-network testnet
+blueprint config set-key <your-key>
+
+# Deploy
+blueprint deploy --testnet
+
+# Your blueprint is now live at:
+# Blueprint ID: 0x...
+```
+
+Testnet uses real Tangle infrastructure but test tokens. Operators can register (with test stake), and you can simulate real usage patterns.
+
+### Testnet vs Production Differences
+
+| Aspect | Testnet | Production |
+|--------|---------|------------|
+| Tokens | Test TNT (free) | Real TNT |
+| Operators | Mix of test + real | Vetted operators |
+| Stakes | Low requirements | Production minimums |
+| SLAs | None | Operator-defined |
+
+## Production Deployment
+
+### Pre-Launch Checklist
+
+Before mainnet:
+
+- [ ] All tests pass (unit, integration, e2e)
+- [ ] Verification logic is correct (this is your security)
+- [ ] Slashing conditions are well-defined
+- [ ] Operator requirements match your security model
+- [ ] Fee structure makes economic sense
+- [ ] Documentation exists for operators
+- [ ] You've tested with real operators on testnet
+
+### Deployment
+
+```bash
+blueprint config set-network mainnet
+blueprint deploy --mainnet
+
+# Verify deployment
+blueprint status <blueprint-id>
+```
+
+### After Launch
+
+Your blueprint is now live. What happens:
+
+1. **Operators discover it** via the registry
+2. **Operators evaluate** if it's worth running (fees, requirements, complexity)
+3. **Operators register** by meeting your requirements and staking
+4. **Customers find** your service (via your marketing, the marketplace, or direct integration)
+5. **Jobs flow** through registered operators
+6. **You earn** a share of every transaction
+
+### Monitoring
+
+```bash
+# Real-time metrics
+blueprint metrics <blueprint-id>
+
+# Job history
+blueprint jobs list --blueprint <blueprint-id> --limit 100
+
+# Operator performance
+blueprint operators list --blueprint <blueprint-id>
+blueprint operators inspect <operator-address>
+```
+
+## What Can Go Wrong
+
+Being honest about failure modes:
+
+### Verification Bugs
+
+If your verification logic has bugs, operators can cheat without getting slashed. This is the most critical code in your blueprint. Test it exhaustively.
+
+**Mitigation:** Multiple verification approaches (redundancy + attestation), conservative slashing thresholds, gradual rollout.
+
+### No Operators
+
+If your blueprint isn't profitable enough, operators won't run it. Zero operators = zero service.
+
+**Mitigation:** Set realistic fee structures. Start with guaranteed operators (run some yourself initially). Make operator setup easy.
+
+### Operator Collusion
+
+If all operators collude, verification fails. This is why operator diversity matters.
+
+**Mitigation:** Require geographic distribution, different staking sources, TEE attestation from different manufacturers.
+
+### Economic Attacks
+
+If the value protected exceeds total operator stake, rational attackers will attack.
+
+**Mitigation:** Match stake requirements to value at risk. For high-value services, require higher stakes.
+
+### SDK Bugs
+
+The SDK is software. It has bugs. Early adopters will find them.
+
+**Mitigation:** Start with lower-value services. Monitor closely. Have incident response ready.
+
+## Real Blueprint Examples
+
+### Threshold Signatures (FROST)
+
+A production blueprint for distributed Schnorr signatures:
+
+- **Job:** Sign a message with threshold key
+- **Operators:** 5 of 7 must participate
+- **Verification:** Signature verifies against known public key
+- **Slashing:** Invalid signature or non-participation
+
+Used for: Cross-chain bridges, custody solutions, multi-sig wallets.
+
+### AI Inference
+
+A blueprint for verified LLM inference:
+
+- **Job:** Run prompt through specified model
+- **Operators:** Must run in TEE with attestation
+- **Verification:** TEE attestation + consistency checking + canary prompts
+- **Slashing:** Failed attestation or canary check
+
+Used for: AI agents needing verified inference, privacy-preserving AI.
+
+### Code Execution
+
+A blueprint for serverless function execution:
+
+- **Job:** Run arbitrary code in sandboxed environment
+- **Operators:** Must provide isolated execution environment
+- **Verification:** Deterministic replay on challenges
+- **Slashing:** Failed replay verification
+
+Used for: Serverless backends, automation, scheduled tasks.
+
+## What's Missing
+
+Honest gaps in the current developer experience:
+
+**IDE support is minimal.** No VSCode extension with autocomplete, no inline documentation. You're reading docs and source code.
+
+**Error messages could be better.** Some SDK errors are cryptic. We're improving them.
+
+**Documentation has gaps.** Some advanced features are documented only in code comments.
+
+**Tooling is young.** The CLI works but isn't polished. Expect rough edges.
+
+We're a small team shipping fast. The core functionality works. The developer experience is improving but not yet where we want it.
+
+## Getting Started
+
+1. **Read the docs:** [docs.tangle.tools](https://docs.tangle.tools)
+2. **Clone an example:** [github.com/tangle-network/blueprint-examples](https://github.com/tangle-network/blueprint-examples)
+3. **Join Discord:** [discord.gg/cv8EfJu3Tn](https://discord.gg/cv8EfJu3Tn) (ask questions, we answer)
+4. **Start small:** Build something simple first. Learn the patterns.
+
+The best way to understand Tangle is to build something on it. The second-best way is to ask questions in Discord. We're small enough that you'll talk to people who wrote the code.
+
+## What's Next
+
+The next post covers the economic model: how operators earn, how blueprints get paid, how the token economics work, and how this creates sustainable infrastructure.
+
+---
+
+**Links:**
+- [Discord](https://discord.gg/cv8EfJu3Tn)
+- [Twitter](https://twitter.com/tangle_network)
+- [Docs](https://docs.tangle.tools)
+- [Blueprint SDK](https://github.com/tangle-network/blueprint)
+- [Example Blueprints](https://github.com/tangle-network/blueprint-examples)

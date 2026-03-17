@@ -1,0 +1,222 @@
+---
+title: How Blueprints Work
+slug: how-blueprints-work
+summary: >-
+  Blueprints are the unit of deployable infrastructure on Tangle. This post
+  explains their architecture, lifecycle, and how operators run them.
+date: '2026-02-14'
+author: Drew Stone
+tags:
+  - blueprints
+  - architecture
+  - sdk
+series: Tangle Re-Introduction
+seriesOrder: 2
+coverImage: /images/covers/how-blueprints-work.png
+heroImage: /images/covers/how-blueprints-work.png
+imageAlt: 'How Blueprints Work: The Building Blocks of Decentralized Services'
+---
+
+*Day 2 of the Tangle Re-Introduction Series*
+
+---
+
+Last month, an AI agent built on OpenClaw autonomously paid for its own GPU inference using the x402 protocol. The agent needed to render images. It found a compute provider, negotiated a price in USDC, and paid over HTTP without any human involvement. The transaction settled in seconds.
+
+This is what agent commerce looks like in 2026. But it raises a question the payment rails alone cannot answer: how does the agent know it got what it paid for?
+
+The x402 protocol handles the payment. Coinbase and Cloudflare built it specifically for machine-to-machine transactions: agents paying for APIs, compute, data, other agents. But payment is only half the problem. The other half is execution. Did the compute actually happen? Did the provider run the model they claimed to run? If the output is wrong, what recourse does the agent have?
+
+This is where Tangle's blueprints come in. They provide the execution layer that x402 payments pay for, with built-in verification and economic consequences for misbehavior.
+
+## Why This Needs a Blockchain
+
+Let me address the obvious skepticism: couldn't you do this with legal contracts and escrow services?
+
+You could. And for many applications, you should. Traditional infrastructure works fine when:
+
+- Both parties are identified legal entities in cooperating jurisdictions
+- Transaction values justify the overhead of contract negotiation
+- Dispute resolution can wait weeks or months
+- The threat of litigation is a meaningful deterrent
+
+But agent commerce breaks these assumptions.
+
+Agents transact continuously, in small amounts, across jurisdictions. An agent might make thousands of micropayments per day to dozens of providers. The overhead of traditional contracts would exceed the value transacted. And when the counterparty is another agent, "legal entity" becomes a fuzzy concept.
+
+More fundamentally: agents operate at machine speed. A legal dispute that takes months to resolve is useless when the agent needed that compute ten minutes ago. The feedback loop has to be automatic and immediate.
+
+Blockchains provide three things traditional infrastructure cannot:
+
+**Programmable escrow.** Funds are held by a smart contract with explicit release conditions. No trusted third party, no counterparty risk on the escrow provider, no manual intervention required.
+
+**Automatic enforcement.** When an operator fails to deliver, the contract executes the consequences immediately. Slashing happens in the same block as verification failure. No lawyers, no arbitration, no delay.
+
+**Transparent state.** Every participant can see operator stakes, reputation histories, and service terms on-chain. Information asymmetry, the classic source of market failures, is dramatically reduced.
+
+The blockchain isn't here because it's trendy. It's here because it solves coordination problems that traditional mechanisms cannot solve at the speed and scale agents require.
+
+## What a Blueprint Actually Is
+
+A blueprint is a template that defines a type of service: what computation it performs, how operators register, how jobs get verified, and what triggers slashing.
+
+When someone uses a blueprint, they're not trusting a provider's promises. They're relying on code that executes automatically, backed by economic stakes that make cheating unprofitable.
+
+Here's what a blueprint specifies:
+
+**The service logic.** The actual computation, whether that's AI inference, cryptographic signing, code execution, or anything else. This runs on operator hardware, off-chain.
+
+**Registration requirements.** What operators need to participate: minimum stake, specific hardware, attestations, or access control. The blueprint developer decides who can operate.
+
+**Verification hooks.** How to check that execution was correct. This is where blueprints differ from generic compute: the developer defines what "correct" means for their specific service.
+
+**Slashing conditions.** When operators lose stake. Failed verification, missed deadlines, provably malicious behavior. The conditions are explicit and enforced by smart contracts.
+
+A single blueprint can power thousands of service instances, each with different operators, different security configurations, different payment terms. But they all share the same underlying logic.
+
+### In Code
+
+A minimal blueprint looks like this:
+
+```rust
+/// Job ID for the squaring operation
+pub const XSQUARE_JOB_ID: u8 = 0;
+
+/// Receives input, returns output
+pub async fn square(TangleEvmArg(x): TangleEvmArg<u64>) -> TangleEvmResult<u64> {
+    TangleEvmResult(x * x)
+}
+
+/// Router wires jobs to the Tangle EVM layer
+pub fn router() -> Router {
+    Router::new()
+        .route(XSQUARE_JOB_ID, square.layer(TangleEvmLayer))
+}
+```
+
+The SDK handles protocol integration, job routing, and settlement. You write the logic; the framework handles the plumbing.
+
+## The Lifecycle: From Request to Settlement
+
+### 1. Discovery
+
+A customer (or their agent) browses available blueprints. Each blueprint has metadata: what it does, what verification mechanisms it uses, what security guarantees it provides.
+
+For each blueprint, operators are visible with their stakes, reputation scores, and pricing. This transparency is the point: the information that matters for trust decisions is on-chain.
+
+### 2. Service Creation
+
+The customer configures their service instance:
+
+- Which operators to use
+- What security level they need (minimum stake, redundancy requirements)
+- How to pay (per-job, subscription, or auction-based pricing)
+
+Funds go into escrow via the blueprint's manager contract. The contract validates operator eligibility, holds payment, and tracks service state.
+
+### 3. Execution
+
+Jobs are submitted to the service. Operators receive them through the Blueprint Manager daemon, which watches for on-chain events and routes work to the appropriate handlers.
+
+Actual computation happens off-chain. The blueprint specifies the execution environment: native binary, container, WASM sandbox, TEE enclave. The choice depends on isolation requirements.
+
+### 4. Verification
+
+When a job completes, verification hooks run. This is where blueprints get interesting.
+
+**For deterministic computation:** Compare outputs. If multiple operators run the same job and produce different results, someone is wrong.
+
+**For cryptographic proofs:** Verify the proof on-chain. A ZK proof either verifies or it doesn't.
+
+**For TEE execution:** Check the attestation. Hardware manufacturers sign attestations proving code ran inside an enclave.
+
+**For AI inference:** This is harder. More on this below.
+
+If verification fails, the failure is recorded. Repeated failures trigger slashing based on the blueprint's conditions.
+
+### 5. Settlement
+
+Payment flows automatically:
+
+- **Operators** claim their share of service fees from the contract
+- **Blueprint developers** receive a portion of every transaction
+- **Delegators** who staked to operators earn a share of operator rewards
+- **Protocol treasury** takes a cut for ongoing development
+
+No invoicing. No payment disputes. No 30-day settlement cycles. The smart contract handles it.
+
+## The AI Verification Problem
+
+Here's where I need to be honest about what blueprints can and cannot do.
+
+AI inference is non-deterministic. Run the same prompt through the same model twice, you might get different outputs. This makes traditional verification approaches, comparing outputs from multiple executions, unreliable.
+
+Blueprints for AI services use alternative approaches:
+
+**TEE attestation.** If the model runs inside a Trusted Execution Environment, hardware attestation proves the correct model was loaded and executed. You're trusting Intel or AMD's security, but not the operator.
+
+**Consistency checking.** Run the same input through the same service multiple times. If outputs are wildly inconsistent, something is wrong. This catches obvious substitution (running a cheaper model than claimed) but not subtle manipulation.
+
+**Cryptographic sampling.** Randomly verify a subset of outputs using more expensive methods. If spot checks pass, probabilistic guarantees extend to the full workload.
+
+**Reputation and stake.** For some applications, economic deterrence is sufficient. An operator with $500K at stake is unlikely to risk it by serving degraded outputs.
+
+None of these are perfect. Verifying that an LLM produced a "correct" response in any absolute sense remains unsolved. What blueprints provide is explicit security models: you know what assumptions you're relying on, what verification is happening, and what the consequences are for misbehavior.
+
+This is better than the status quo, where you pay a provider, hope they run what they claim, and have no recourse if they don't.
+
+## x402 and the Agent Payment Stack
+
+Tangle's blueprint system and the x402 protocol solve complementary problems. Together they form a complete stack for autonomous agent commerce.
+
+**x402 handles the payment.** An agent discovers a service, negotiates price, and pays in stablecoins over HTTP. The protocol is lightweight: an HTTP 402 response contains payment requirements, the agent pays, the service unlocks. No API keys, no accounts, no billing systems.
+
+**Tangle handles the execution.** The service runs on operator infrastructure with stake at risk. Verification hooks check that the work was done correctly. If it wasn't, slashing happens automatically.
+
+**The combination is powerful.** An agent can autonomously find compute providers, pay for services, and have cryptographic guarantees that it got what it paid for. All at machine speed, with no human intervention.
+
+This extends naturally to agent-to-agent transactions. One agent running on Tangle infrastructure can pay another agent for services, with both sides having economic guarantees on their respective contributions.
+
+We're building blueprint templates that integrate x402 payment verification directly into the service lifecycle. An x402 payment triggers service creation; job completion triggers payment release; failed verification triggers refund. The economic loop is closed and automatic.
+
+## What Blueprints Cannot Do
+
+**Blueprints don't verify arbitrary computation automatically.** The developer must define verification logic. If that logic is incomplete, the blueprint provides incomplete protection. This is inherent: generic verification that works for any computation doesn't exist.
+
+**Blueprints don't stop irrational attackers.** Economic security assumes rational actors who won't attack when expected cost exceeds expected benefit. Against adversaries willing to lose their stake, guarantees are weaker.
+
+**Blueprints don't eliminate trust entirely.** TEEs trust hardware manufacturers. Multi-party verification trusts that operators aren't colluding. Every mechanism has assumptions.
+
+**Numbers depend on the market.** What does a job cost? What do operators earn? What's the slashing ratio? These are set by blueprint developers and negotiated between operators and customers. The protocol provides the infrastructure; the market determines the prices. Early services will need to discover equilibrium pricing through experimentation.
+
+## Real Blueprints
+
+This isn't theoretical. Blueprints in production or development:
+
+**MPC Signing (FROST):** Threshold Schnorr signatures where multiple operators cooperate to sign. No single operator can sign alone. Used for custody, bridge validation, any application needing distributed key management.
+
+**Cross-Chain Infrastructure:** LayerZero DVN and Hyperlane relayer blueprints provide operator infrastructure for cross-chain messaging, with slashing if relayers misbehave.
+
+**Code Execution:** Secure execution of arbitrary code (Rust, Go, Python, JavaScript) in isolated sandboxes. Serverless functions with operator accountability.
+
+**AI Agents:** Coinbase AgentKit integration for agents that interact with crypto wallets and execute trades with economic guarantees.
+
+Each represents infrastructure that would traditionally require building and operating your own systems. Blueprints abstract that away.
+
+## What's Next
+
+The next post in this series goes deeper on verification: how different blueprints implement different approaches, what the tradeoffs are, and where the hard problems remain unsolved.
+
+If you're building agents and want execution guarantees, or building infrastructure and want to reach agent customers, [find us on Discord](https://discord.gg/cv8EfJu3Tn). The intersection of x402 payments and Tangle execution is where agent commerce is heading.
+
+---
+
+**Sources:**
+1. x402 Protocol: [Coinbase Developer Docs](https://docs.cdp.coinbase.com/x402/docs/welcome)
+2. OpenClaw agents using x402: [x.com/nedos/status/2018602074397888682](https://x.com/nedos/status/2018602074397888682)
+
+**Links:**
+- [Discord](https://discord.gg/cv8EfJu3Tn)
+- [Twitter](https://twitter.com/tangle_network)
+- [Docs](https://docs.tangle.tools)
+- [Blueprint SDK](https://github.com/tangle-network/blueprint)

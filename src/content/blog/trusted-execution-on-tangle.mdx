@@ -1,0 +1,145 @@
+---
+title: 'Trusted Execution on Tangle: How TEE Works in the Blueprint SDK'
+slug: trusted-execution-on-tangle
+summary: >-
+  How the Blueprint SDK integrates AWS Nitro, GCP Confidential Space, and Azure
+  CVM for hardware-isolated execution with attestation, sealed secrets, and
+  multi-cloud provisioning.
+date: '2026-03-02'
+author: Drew Stone
+tags:
+  - tee
+  - security
+  - sdk
+series: Tangle Re-Introduction
+seriesOrder: 6
+coverImage: /images/covers/trusted-execution-on-tangle.png
+imageAlt: 'Trusted Execution on Tangle: How TEE Works in the Blueprint SDK'
+heroImage: /images/covers/trusted-execution-on-tangle.png
+---
+
+*Day 6 of the Tangle Re-Introduction Series*
+
+---
+
+Previous posts covered [why decentralized AI infrastructure matters](/post/why-ai-infrastructure-needs-decentralization), [how blueprints work](/post/how-blueprints-work), [verification mechanisms](/post/how-tangle-verifies-work), [building from idea to production](/post/building-on-tangle-from-idea-to-production), and [AI services with inference and sandboxes](/post/building-ai-services-on-tangle). This post covers what just shipped: first-class TEE support in the Blueprint SDK.
+
+## The problem TEE solves for blueprints
+
+Verification in Day 3 covered how Tangle proves work was done correctly. But verification happens after execution. TEE flips this: it proves the execution environment itself is trustworthy *before and during* computation.
+
+For AI inference, this matters. A model running inside an AWS Nitro Enclave or an Azure Confidential VM can prove it's running the exact binary you expect, on hardware that isolates it from the operator. The operator can't read the model weights. They can't tamper with the inference. The hardware enforces this, not a smart contract.
+
+Tangle's TEE integration lets blueprint developers declare TEE requirements at the SDK level, and the runtime handles provisioning across AWS Nitro, GCP Confidential Space, Azure CVM, or direct hardware (Intel TDX, AMD SEV-SNP).
+
+## Three deployment modes
+
+The SDK supports three modes, each for a different operational model:
+
+**Direct mode.** The blueprint runner itself executes inside a TEE. Device passthrough gives it access to `/dev/tdx_guest` or `/dev/sev-guest`. The runner produces attestation by hashing its own binary. This is the highest-integrity path with the fewest network trust links.
+
+```rust
+let tee = TeeConfig::builder()
+    .requirement(TeeRequirement::Required)
+    .mode(TeeMode::Direct)
+    .allow_providers([TeeProvider::IntelTdx])
+    .build()?;
+
+BlueprintRunner::builder(config, env)
+    .tee(tee)
+    .router(router)
+    .run()
+    .await?;
+```
+
+**Remote mode.** The runner provisions workloads into cloud TEE instances. It calls the AWS EC2 API to launch Nitro Enclave instances, the GCP Compute API for Confidential Space VMs, or the Azure ARM API for DCasv5 CVMs. The runner manages the lifecycle; the workload runs in hardware isolation.
+
+**Hybrid mode.** Some jobs route to TEE, some don't. A pricing engine might run in a standard container while the model inference runs in a Nitro Enclave. Routing is controlled by a policy file that maps job types to execution environments.
+
+## How attestation flows through the system
+
+When a TEE deployment starts, attestation follows this path:
+
+1. The backend provisions the workload (EC2 instance with enclave, Confidential Space VM, etc.)
+2. The sidecar inside the TEE reads hardware attestation (NSM document on Nitro, OIDC token from teeserver.sock on GCP, vTPM report on Azure)
+3. The attestation report includes a measurement (hash of the running binary) and a timestamp
+4. This report is cached in the deployment handle for idempotent re-submission
+5. The on-chain contract stores `keccak256(attestationJsonBytes)` so anyone can verify
+
+The `AttestationVerifier` trait lets you plug in verification logic per provider. Each provider has different evidence formats, but they all answer the same question: is this binary running on genuine TEE hardware?
+
+```rust
+pub trait AttestationVerifier: Send + Sync {
+    fn verify(
+        &self,
+        report: &AttestationReport,
+        config: &TeeConfig,
+    ) -> Result<VerifiedAttestation, TeeError>;
+}
+```
+
+Built-in verifiers check provider type, debug mode flags, measurement hashes, and attestation freshness. The GCP verifier, for example, rejects debug-mode attestations unless explicitly configured to allow them (a security fix that shipped with this PR).
+
+## Sealed secrets: why container recreation is forbidden
+
+Standard Docker deployments inject secrets via environment variables. When a config changes, you recreate the container with new env vars.
+
+TEE deployments can't do this. Recreating the container invalidates the attestation, breaks sealed secrets, and loses the on-chain deployment ID. The SDK enforces this at the type level: any TEE-enabled config automatically sets `SecretInjectionPolicy::SealedOnly`.
+
+Instead, secrets flow through a key exchange protocol:
+
+1. The TEE generates an X25519 key pair
+2. The public key is embedded in the attestation report
+3. Clients encrypt secrets to this key using ChaCha20-Poly1305
+4. Only the TEE holding the private key can decrypt
+
+The `TeeAuthService` manages ephemeral key exchange sessions with configurable TTL and automatic cleanup. It runs as a background service alongside the blueprint runner.
+
+## Cloud backends: what each provider looks like
+
+The SDK includes real implementations for three cloud providers, not stubs or mocks.
+
+**AWS Nitro** launches EC2 instances with `EnclaveOptions: true`, generates user-data scripts that configure `nitro-cli`, sets up vsock proxies for communication between the parent instance and the enclave, and polls `DescribeInstances` until the enclave is healthy.
+
+**GCP Confidential Space** creates Compute Engine VMs with `confidentialInstanceConfig` and `tee-image-reference` metadata. The Confidential Space launcher auto-pulls the container image, starts it inside the TEE, and exposes OIDC attestation tokens via a Unix socket. Supports both AMD SEV-SNP (N2D machines) and Intel TDX (C3 machines).
+
+**Azure CVM** provisions Confidential VMs (DCasv5/ECasv5 series) through the ARM REST API, retrieves attestation from Microsoft Azure Attestation (MAA), and supports Secure Key Release from Key Vault. The HCL generates ephemeral RSA key pairs sealed to the vTPM.
+
+All three are feature-gated so the default build stays lightweight:
+
+```toml
+[features]
+aws-nitro = ["dep:aws-sdk-ec2", "dep:aws-config"]
+gcp-confidential = ["dep:gcp-auth", "dep:reqwest"]
+azure-snp = ["dep:reqwest"]
+```
+
+## Blueprint requirements: telling the manager you need TEE
+
+A blueprint declares its TEE needs through `TeeRequirements`, which the blueprint manager inspects at deploy time to route the workload to an appropriate host:
+
+```rust
+let requirements = TeeRequirements {
+    requirement: TeeRequirement::Required,
+    providers: TeeProviderSelector::AllowList(vec![
+        TeeProvider::AwsNitro,
+        TeeProvider::GcpConfidential,
+    ]),
+    min_attestation_age_secs: Some(3600),
+};
+```
+
+This is how the manager knows to deploy on TEE-capable infrastructure rather than a standard Docker host. The `requirement` field controls whether TEE is mandatory (fail if unavailable) or preferred (degrade gracefully). The `providers` field narrows which cloud backends are acceptable.
+
+## What's real and what's next
+
+Everything described above is shipped and tested (162 tests across attestation, config, exchange, middleware, and runtime). The cloud backends make real API calls to provision real VMs.
+
+What's coming next:
+- **Periodic attestation refresh.** Re-attest on a schedule and update the on-chain hash, catching enclave reboots and measurement drift.
+- **Contract-driven hybrid routing.** Read the `teeRequired` flag from the on-chain contract instead of a local policy file.
+- **Hardware-specific attestation.** TDX TDREPORT via `/dev/tdx_guest` ioctl, SEV-SNP report via `/dev/sev-guest`. Currently the direct backend uses software measurement (binary hash); hardware attestation integration requires platform SDK work.
+
+If you're building a blueprint that handles sensitive data, model weights, or private inference, TEE is how you prove to users that their data stays confidential. The SDK handles the complexity of multi-cloud provisioning, attestation verification, and sealed secret management so your blueprint code stays focused on the actual service logic.
+
+[Blueprint SDK on GitHub](https://github.com/tangle-network/blueprint) · [TEE crate source](https://github.com/tangle-network/blueprint/tree/main/crates/tee) · [Previous: Building AI Services on Tangle](/post/building-ai-services-on-tangle)
