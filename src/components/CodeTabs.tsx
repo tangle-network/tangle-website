@@ -9,7 +9,7 @@ const N = ({ children }: { children: ReactNode }) => <span style={{ color: '#fcd
 const V = ({ children }: { children: ReactNode }) => <span style={{ color: '#e2e8f0' }}>{children}</span>;
 const SH = ({ children }: { children: ReactNode }) => <span style={{ color: '#4ade80' }}>{children}</span>;
 
-const mono = "'SF Mono', 'Fira Code', 'Cascadia Code', 'Menlo', ui-monospace, monospace";
+const mono = "'JetBrains Mono', 'Fira Code', monospace";
 
 interface Tab {
   key: string;
