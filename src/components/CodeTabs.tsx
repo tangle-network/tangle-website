@@ -62,7 +62,7 @@ function BATestSuite() {
 function BASDK() {
   return <>
     <K>import</K> {'{ '}<F>BrowserAgent</F>, <F>PlaywrightDriver</F>{' }'}{'\n'}
-    <K>from</K> <S>'@tangle-network/agent-browser-driver'</S>;{'\n\n'}
+    <K>from</K> <S>'@tangle-network/browser-agent-driver'</S>;{'\n\n'}
     <K>const</K> <V>driver</V> = <K>new</K> <F>PlaywrightDriver</F>(page);{'\n'}
     <K>const</K> <V>agent</V> = <K>new</K> <F>BrowserAgent</F>({'{'}{'\n'}
     {'  '}driver,{'\n'}
