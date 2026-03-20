@@ -372,7 +372,8 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
         height: 380,
-        overflow: 'hidden',
+        overflowY: 'auto',
+        overflowX: 'auto',
       }}>
         <code>
           <ActiveCode />
