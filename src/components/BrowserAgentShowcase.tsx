@@ -285,7 +285,8 @@ export default function BrowserAgentShowcase() {
         margin: 0,
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        height: 380,
+        minHeight: 280,
+        maxHeight: 420,
         overflowY: 'auto',
         overflowX: 'auto',
       }}>
