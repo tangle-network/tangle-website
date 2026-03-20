@@ -15,6 +15,12 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    ssr: {
+      noExternal: ['astro:content'],
+    },
+    optimizeDeps: {
+      exclude: ['astro:content'],
+    },
   },
 
   adapter: cloudflare(),

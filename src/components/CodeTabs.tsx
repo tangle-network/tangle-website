@@ -168,6 +168,108 @@ function SBCLI() {
   </>;
 }
 
+// ==================== BLUEPRINT TABS ====================
+
+function BPService() {
+  return <>
+    <K>use</K> <F>blueprint_sdk</F>::<V>Router</V>;{'\n'}
+    <K>use</K> <F>blueprint_sdk</F>::tangle::extract::{'{'}
+    <V>Caller</V>, <V>TangleArg</V>, <V>TangleResult</V>
+    {'}'};{'\n'}
+    <K>use</K> <F>blueprint_sdk</F>::alloy::sol;{'\n\n'}
+    sol! {'{'}{'\n'}
+    {'  '}<K>struct</K> <V>PriceRequest</V>  {'{'} <S>string</S> asset; {'}'}{'\n'}
+    {'  '}<K>struct</K> <V>PriceResponse</V> {'{'} <S>uint256</S> price; {'}'}{'\n'}
+    {'}'}{'\n\n'}
+    <K>pub const</K> <N>FETCH_PRICE</N>: <V>u8</V> = <N>0</N>;{'\n\n'}
+    <C>{'/// Fetch a live asset price. Operators earn'}</C>{'\n'}
+    <C>{'/// fees on every call to this job.'}</C>{'\n'}
+    <K>pub async fn</K> <F>fetch_price</F>({'\n'}
+    {'  '}<V>Caller</V>(who): <V>Caller</V>,{'\n'}
+    {'  '}<V>TangleArg</V>(req): <V>TangleArg</V>{'<'}<V>PriceRequest</V>{'>,'}{'\n'}
+    ) {'-> '}<V>TangleResult</V>{'<'}<V>PriceResponse</V>{'>'} {'{'}{'\n'}
+    {'  '}<K>let</K> price = get_price(&req.asset).<K>await</K>?;{'\n'}
+    {'  '}<V>TangleResult</V>(<V>PriceResponse</V> {'{'} price {'}'});{'\n'}
+    {'}'}{'\n\n'}
+    <K>pub fn</K> <F>router</F>() {'-> '}<V>Router</V> {'{'}{'\n'}
+    {'  '}<V>Router</V>::new().route(<N>FETCH_PRICE</N>, fetch_price){'\n'}
+    {'}'}
+  </>;
+}
+
+function BPRunner() {
+  return <>
+    <K>use</K> <F>blueprint_sdk</F>::runner::<V>BlueprintRunner</V>;{'\n'}
+    <K>use</K> <F>blueprint_sdk</F>::runner::config::<V>BlueprintEnvironment</V>;{'\n'}
+    <K>use</K> <F>blueprint_sdk</F>::tangle::consumer::<V>TangleConsumer</V>;{'\n'}
+    <K>use</K> <F>blueprint_sdk</F>::tangle::producer::<V>TangleProducer</V>;{'\n\n'}
+    <SH>#[tokio::main]</SH>{'\n'}
+    <K>async fn</K> <F>main</F>() {'-> '}<V>Result</V>{'<(), '}<V>blueprint_sdk</V>::<V>Error</V>{'>'} {'{'}{'\n'}
+    {'  '}<K>let</K> env = <V>BlueprintEnvironment</V>::load()?;{'\n'}
+    {'  '}<K>let</K> client = env.tangle_client().<K>await</K>?;{'\n\n'}
+    {'  '}<K>let</K> producer = <V>TangleProducer</V>::finalized_blocks({'\n'}
+    {'    '}client.rpc_client.clone(){'\n'}
+    {'  '}).<K>await</K>?;{'\n'}
+    {'  '}<K>let</K> consumer = <V>TangleConsumer</V>::new({'\n'}
+    {'    '}client.rpc_client.clone(), signer{'\n'}
+    {'  '});{'\n\n'}
+    {'  '}<V>BlueprintRunner</V>::builder(config, env){'\n'}
+    {'    '}.router(router()){'\n'}
+    {'    '}.producer(producer){'\n'}
+    {'    '}.consumer(consumer){'\n'}
+    {'    '}.run().<K>await</K>?;{'\n\n'}
+    {'  '}<V>Ok</V>(()){'\n'}
+    {'}'}
+  </>;
+}
+
+function BPABI() {
+  return <>
+    <K>use</K> <F>blueprint_sdk</F>::alloy::sol;{'\n\n'}
+    <C>{'// Define on-chain types with Solidity syntax.'}</C>{'\n'}
+    <C>{'// ABI-encoded automatically on submit.'}</C>{'\n\n'}
+    sol! {'{'}{'\n'}
+    {'  '}<K>struct</K> <V>InferenceRequest</V> {'{'}{'\n'}
+    {'    '}<S>string</S> prompt;{'\n'}
+    {'    '}<S>uint32</S> maxTokens;{'\n'}
+    {'    '}<S>uint64</S> temperature;{'\n'}
+    {'  }'}{'\n\n'}
+    {'  '}<K>struct</K> <V>InferenceResult</V> {'{'}{'\n'}
+    {'    '}<S>string</S> text;{'\n'}
+    {'    '}<S>uint32</S> promptTokens;{'\n'}
+    {'    '}<S>uint32</S> completionTokens;{'\n'}
+    {'  }'}{'\n'}
+    {'}'}{'\n\n'}
+    <C>{'// Use in your job handler — decoded automatically'}</C>{'\n'}
+    <K>pub async fn</K> <F>infer</F>({'\n'}
+    {'  '}<V>TangleArg</V>(req): <V>TangleArg</V>{'<'}<V>InferenceRequest</V>{'>,'}{'\n'}
+    ) {'-> '}<V>TangleResult</V>{'<'}<V>InferenceResult</V>{'>'} {'{'}{'\n'}
+    {'  '}<K>let</K> result = run_model(&req.prompt, req.maxTokens).<K>await</K>?;{'\n'}
+    {'  '}<V>TangleResult</V>(result){'\n'}
+    {'}'}
+  </>;
+}
+
+function BPDeploy() {
+  return <>
+    <C>{'# Install the Tangle CLI'}</C>{'\n'}
+    <SH>$</SH> cargo install cargo-tangle{'\n\n'}
+    <C>{'# Build your Blueprint'}</C>{'\n'}
+    <SH>$</SH> cargo build --release{'\n'}
+    <C>   Compiling my-oracle v0.1.0</C>{'\n'}
+    <SH>{'    '}Finished</SH> release [optimized] target(s){'\n\n'}
+    <C>{'# Deploy to Tangle Network'}</C>{'\n'}
+    <SH>$</SH> cargo tangle blueprint deploy{'\n'}
+    <C>   Deploying to Tangle Mainnet...</C>{'\n'}
+    <SH>✓ Blueprint registered</SH> <C>· ID: 42</C>{'\n'}
+    <SH>✓ Binary uploaded</SH> <C>· CID: Qm7f3a...c2d1</C>{'\n\n'}
+    <C>{'# Operators can now discover and run your service'}</C>{'\n'}
+    <SH>$</SH> cargo tangle blueprint list{'\n'}
+    <V>  ID  Name        Operators  Revenue</V>{'\n'}
+    <V>  42  my-oracle   7          $1,240/mo</V>
+  </>;
+}
+
 // ==================== TAB COMPONENT ====================
 
 const tabSets: Record<string, Tab[]> = {
@@ -183,9 +285,15 @@ const tabSets: Record<string, Tab[]> = {
     { key: 'stream', label: 'Stream', icon: '⚡', code: SBStream },
     { key: 'cli', label: 'CLI', icon: '💻', code: SBCLI },
   ],
+  blueprint: [
+    { key: 'service', label: 'lib.rs', icon: '⚡', code: BPService },
+    { key: 'runner', label: 'main.rs', icon: '▶', code: BPRunner },
+    { key: 'abi', label: 'Types', icon: '{ }', code: BPABI },
+    { key: 'deploy', label: 'Deploy', icon: '🚀', code: BPDeploy },
+  ],
 };
 
-export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' | 'sandbox' }) {
+export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' | 'sandbox' | 'blueprint' }) {
   const tabs = tabSets[variant];
   const [active, setActive] = useState(tabs[0].key);
   const ActiveCode = tabs.find(t => t.key === active)?.code ?? tabs[0].code;
@@ -205,6 +313,9 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         background: 'rgba(255,255,255,0.02)',
         padding: '8px 12px',
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        scrollbarWidth: 'none',
       }}>
         {/* Window dots */}
         <div style={{ display: 'flex', gap: 6, marginRight: 12 }}>
@@ -226,10 +337,12 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
               borderRadius: 6,
               padding: '6px 12px',
               fontFamily: mono,
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: 500,
               border: 'none',
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
               transition: 'all 0.15s',
               background: active === tab.key ? 'rgba(142,89,255,0.15)' : 'transparent',
               color: active === tab.key ? '#c084fc' : 'rgba(255,255,255,0.4)',
@@ -250,13 +363,15 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
       {/* Code content */}
       <pre style={{
         overflowX: 'auto',
-        padding: 20,
+        padding: 'clamp(12px, 3vw, 20px)',
         fontFamily: mono,
-        fontSize: 13,
+        fontSize: 'clamp(10px, 2.5vw, 13px)',
         lineHeight: 1.6,
         color: 'rgba(255,255,255,0.8)',
         margin: 0,
         whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        minHeight: 320,
       }}>
         <code>
           <ActiveCode />
