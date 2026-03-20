@@ -279,14 +279,14 @@ export default function BrowserAgentShowcase() {
       <pre style={{
         padding: 20,
         fontFamily: mono,
-        fontSize: 12.5,
-        lineHeight: 1.7,
+        fontSize: 13.5,
+        lineHeight: 1.75,
         color: 'rgba(255,255,255,0.8)',
         margin: 0,
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        minHeight: 280,
-        maxHeight: 420,
+        minHeight: 340,
+        maxHeight: 480,
         overflowY: 'auto',
         overflowX: 'auto',
       }}>
