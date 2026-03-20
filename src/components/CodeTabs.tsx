@@ -362,7 +362,6 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
 
       {/* Code content */}
       <pre style={{
-        overflowX: 'auto',
         padding: 'clamp(12px, 3vw, 20px)',
         fontFamily: mono,
         fontSize: 'clamp(10px, 2.5vw, 13px)',
