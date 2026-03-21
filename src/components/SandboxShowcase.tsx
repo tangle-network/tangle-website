@@ -25,7 +25,7 @@ interface Example {
 const examples: Example[] = [
   {
     key: 'create', label: 'Create & Execute', icon: '▶',
-    title: 'Spin up a sandbox and run commands.',
+    title: 'From zero to running in seconds.',
     desc: 'Create an isolated container from any Docker image, execute shell commands, and get structured results. Full root access, custom environment variables, optional SSH.',
     bullets: ['Any Docker image works', 'Full root access', 'Structured stdout/stderr/exit code', 'Sub-200ms exec latency'],
     cli: () => <>
@@ -63,7 +63,7 @@ const examples: Example[] = [
   },
   {
     key: 'agent', label: 'AI Agent Task', icon: '🤖',
-    title: 'Run AI agents inside sandboxes.',
+    title: 'Your agent gets a full computer.',
     desc: 'Send prompts or multi-turn tasks to an AI agent running inside the sandbox. The agent can read files, run commands, install packages, and iterate until the task is done.',
     bullets: ['Claude Code, Codex, OpenCode backends', 'Multi-turn autonomous execution', 'Full tool access inside sandbox', 'Bring your own API key'],
     cli: () => <>
@@ -101,7 +101,7 @@ const examples: Example[] = [
   },
   {
     key: 'files', label: 'File System', icon: '📁',
-    title: 'Full filesystem and git access.',
+    title: 'Read, write, search, commit.',
     desc: 'Read and write files, search code with ripgrep, manage git repos. Install tools and language runtimes on the fly via mise.',
     bullets: ['Read, write, search files', 'Git status, commit, push', 'Install tools via mise', 'Code search with ripgrep'],
     cli: () => <>
@@ -142,7 +142,7 @@ const examples: Example[] = [
   },
   {
     key: 'stream', label: 'Streaming', icon: '⚡',
-    title: 'Stream agent output in real-time.',
+    title: 'Watch your agent think, live.',
     desc: 'Watch tool calls, text generation, and task completion events as they happen. Build responsive UIs that show agent reasoning live.',
     bullets: ['SSE event stream', 'Tool call visibility', 'Text delta streaming', 'Task completion events'],
     cli: () => <>
@@ -185,7 +185,7 @@ const examples: Example[] = [
   },
   {
     key: 'snapshot', label: 'Snapshots', icon: '📸',
-    title: 'Checkpoint and restore sandbox state.',
+    title: 'Freeze time. Resume anywhere.',
     desc: 'Save the full state of a sandbox — filesystem, installed packages, running processes. Restore instantly or bring your own S3-compatible storage.',
     bullets: ['Full state checkpoint', 'Instant restore from snapshot', 'BYOS3: AWS S3, GCS, Cloudflare R2', 'Tag snapshots for organization'],
     cli: () => <>
@@ -273,17 +273,17 @@ export default function SandboxShowcase() {
 
         {/* Description */}
         <div style={{ padding: '20px 20px 24px', flex: 1 }}>
-          <h3 style={{ fontFamily: sat, fontSize: 18, fontWeight: 700, color: 'white', lineHeight: 1.3, marginBottom: 10 }}>
+          <h3 style={{ fontFamily: sat, fontSize: 22, fontWeight: 700, color: 'white', lineHeight: 1.25, marginBottom: 12 }}>
             {current.title}
           </h3>
-          <p style={{ fontFamily: sat, fontSize: 13, color: 'rgba(255,255,255,0.45)', lineHeight: 1.65, marginBottom: 16 }}>
+          <p style={{ fontFamily: sat, fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: 1.7, marginBottom: 16 }}>
             {current.desc}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {current.bullets.map((b, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <span style={{ color: '#6172f3', fontSize: 11, lineHeight: '18px', flexShrink: 0, fontFamily: mono }}>{'\u2192'}</span>
-                <span style={{ fontFamily: sat, fontSize: 12, color: 'rgba(255,255,255,0.4)', lineHeight: '18px' }}>{b}</span>
+                <span style={{ fontFamily: sat, fontSize: 14, color: 'rgba(255,255,255,0.5)', lineHeight: '22px' }}>{b}</span>
               </div>
             ))}
           </div>
