@@ -357,8 +357,8 @@ export default function BrowserAgentShowcase() {
         <pre style={{
           padding: '20px 24px',
           fontFamily: mono,
-          fontSize: 13.5,
-          lineHeight: 1.75,
+          fontSize: 15,
+          lineHeight: 1.8,
           color: 'rgba(255,255,255,0.8)',
           margin: 0,
           whiteSpace: 'pre-wrap',

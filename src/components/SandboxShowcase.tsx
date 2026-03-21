@@ -273,17 +273,17 @@ export default function SandboxShowcase() {
 
         {/* Description */}
         <div style={{ padding: '20px 20px 24px', flex: 1 }}>
-          <h3 style={{ fontFamily: sat, fontSize: 22, fontWeight: 700, color: 'white', lineHeight: 1.25, marginBottom: 12 }}>
+          <h3 style={{ fontFamily: sat, fontSize: 24, fontWeight: 700, color: 'white', lineHeight: 1.25, marginBottom: 14 }}>
             {current.title}
           </h3>
-          <p style={{ fontFamily: sat, fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: 1.7, marginBottom: 16 }}>
+          <p style={{ fontFamily: sat, fontSize: 16, color: 'rgba(255,255,255,0.5)', lineHeight: 1.7, marginBottom: 16 }}>
             {current.desc}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {current.bullets.map((b, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <span style={{ color: '#6172f3', fontSize: 11, lineHeight: '18px', flexShrink: 0, fontFamily: mono }}>{'\u2192'}</span>
-                <span style={{ fontFamily: sat, fontSize: 14, color: 'rgba(255,255,255,0.5)', lineHeight: '22px' }}>{b}</span>
+                <span style={{ color: '#6172f3', fontSize: 14, lineHeight: '22px', flexShrink: 0, fontFamily: mono }}>{'\u2192'}</span>
+                <span style={{ fontFamily: sat, fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: '24px' }}>{b}</span>
               </div>
             ))}
           </div>
@@ -313,7 +313,7 @@ export default function SandboxShowcase() {
                   border: 'none',
                   cursor: 'pointer',
                   fontFamily: mono,
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 600,
                   background: mode === m ? 'rgba(97,114,243,0.2)' : 'transparent',
                   color: mode === m ? '#818cf8' : 'rgba(255,255,255,0.25)',
@@ -334,7 +334,7 @@ export default function SandboxShowcase() {
         <pre style={{
           padding: '20px 24px',
           fontFamily: mono,
-          fontSize: 13.5,
+          fontSize: 15,
           lineHeight: 1.75,
           color: 'rgba(255,255,255,0.8)',
           margin: 0,
