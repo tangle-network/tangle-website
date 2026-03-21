@@ -364,8 +364,8 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
       <pre style={{
         padding: 'clamp(12px, 3vw, 20px)',
         fontFamily: mono,
-        fontSize: 'clamp(10px, 2.5vw, 13px)',
-        lineHeight: 1.6,
+        fontSize: 'clamp(12px, 2.5vw, 15px)',
+        lineHeight: 1.75,
         color: 'rgba(255,255,255,0.8)',
         margin: 0,
         whiteSpace: 'pre-wrap',
