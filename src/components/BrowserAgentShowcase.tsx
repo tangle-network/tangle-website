@@ -364,7 +364,7 @@ export default function BrowserAgentShowcase() {
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           flex: 1,
-          minHeight: 380,
+          minHeight: 480,
           overflowY: 'auto',
           overflowX: 'auto',
         }}>
