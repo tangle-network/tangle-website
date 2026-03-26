@@ -10,7 +10,9 @@ import sitemap from '@astrojs/sitemap';
 export default defineConfig({
   site: 'https://tangle.tools',
   output: 'static',
-  integrations: [react(), mdx(), sitemap()],
+  integrations: [react(), mdx(), sitemap({
+    filter: (page) => !page.includes('/preview/'),
+  })],
 
   vite: {
     plugins: [tailwindcss()],

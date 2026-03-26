@@ -3,7 +3,6 @@ import { getCollection, render } from 'astro:content';
 import BlogLayout from '../../layouts/BlogLayout.astro';
 
 export async function getStaticPaths() {
-  // Only generate pages for published posts (not drafts)
   const posts = await getCollection('blog', ({ data }) => !data.draft);
   return posts.map((post) => ({
     params: { slug: post.data.slug },
@@ -11,8 +10,29 @@ export async function getStaticPaths() {
   }));
 }
 
+function extractFaqs(body: string): { question: string; answer: string }[] {
+  const faqMatch = body.match(/^## FAQ\s*$/m);
+  if (!faqMatch || faqMatch.index === undefined) return [];
+  const faqSection = body.slice(faqMatch.index + faqMatch[0].length);
+  // Stop at next H2 or end-of-content separator (---)
+  const endMatch = faqSection.match(/^## [^#]|^---$/m);
+  const section = endMatch && endMatch.index !== undefined
+    ? faqSection.slice(0, endMatch.index)
+    : faqSection;
+  const parts = section.split(/^### /m).filter(Boolean);
+  return parts
+    .map((part) => {
+      const lines = part.trim().split('\n');
+      const question = lines[0].trim();
+      const answer = lines.slice(1).join(' ').trim();
+      return { question, answer };
+    })
+    .filter((faq) => faq.question && faq.answer);
+}
+
 const { post } = Astro.props;
 const { Content } = await render(post);
+const faqs = extractFaqs(post.body ?? '');
 ---
 
 <BlogLayout
@@ -24,6 +44,7 @@ const { Content } = await render(post);
   coverImage={post.data.coverImage}
   heroImage={post.data.heroImage}
   imageAlt={post.data.imageAlt}
+  faqs={faqs}
 >
   <Content />
 </BlogLayout>
