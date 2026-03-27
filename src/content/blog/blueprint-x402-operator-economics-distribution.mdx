@@ -1,0 +1,225 @@
+---
+title: "Operator Economics After Payment: Distribution, Exposure Weighting, and Fee Routing"
+slug: blueprint-x402-operator-economics-distribution
+summary: >-
+  When a client pays an x402 Blueprint job, the USDC moves to an operator address.
+  What happens next is decided by the Tangle protocol: ServiceFeeDistributor splits
+  the fee across delegators using USD-weighted exposure scores, with streaming
+  payments for time-bounded services.
+date: '2026-03-27'
+author: Drew Stone
+tags:
+  - blueprint
+  - x402
+  - operators
+  - staking
+  - economics
+  - solidity
+series: x402 Production Runway
+seriesOrder: 7
+coverImage: /images/covers/blueprint-x402-operator-economics-distribution.png
+heroImage: /images/covers/blueprint-x402-operator-economics-distribution.png
+imageAlt: 'On-chain payment distribution flow diagram showing ServiceFeeDistributor, streaming manager, and exposure-weighted staking pools'
+---
+
+When a client pays an x402 Blueprint job, the USDC moves to the operator's `pay_to` address on the settlement chain. That's the end of the client's story. It's the beginning of the operator's.
+
+The payment lands as a cross-chain deposit. Before operators can claim anything, the Tangle protocol has to decide who gets what. An operator running a high-stakes Blueprint with a large staking pool behind it gets a different cut than one running the same Blueprint with minimal backing. The distribution isn't arbitrary — it's driven by exposure, USD-weighted delegation scores, and blueprint selection mode. This post opens that system.
+
+## Where payments enter the distribution layer
+
+After x402 settlement, the Tangle contract calls `distributeServiceFee` on `ServiceFeeDistributor`. This is the on-chain entry point for all service-fee revenue.
+
+```solidity
+function distributeServiceFee(
+    uint64 serviceId,
+    uint64 blueprintId,
+    address operator,
+    address paymentToken,
+    uint256 amount
+)
+    external
+    payable
+    override
+    nonReentrant
+```
+
+Only the Tangle contract can call this — `msg.sender != tangle` reverts. The function handles both native ETH (`paymentToken == address(0)`) and ERC-20 tokens. For ERC-20, it expects no `msg.value`; for native, it requires `msg.value == amount`. This prevents a class of accounting bugs where msg.value doesn't match what the caller claimed to send.
+
+Source: [`tnt-core/src/rewards/ServiceFeeDistributor.sol`](https://github.com/tangle-network/tnt-core/blob/main/src/rewards/ServiceFeeDistributor.sol)
+
+## Streaming vs immediate distribution
+
+The first branch after validation isn't about who gets the fee — it's about *when* they get it.
+
+```solidity
+Types.Service memory svc = ITangleSecurityView(tangle).getService(serviceId);
+if (svc.ttl > 0 && address(streamingManager) != address(0)) {
+    uint64 startTime = svc.createdAt;
+    uint64 endTime = svc.createdAt + svc.ttl;
+    if (block.timestamp > startTime) {
+        startTime = uint64(block.timestamp);
+    }
+    if (endTime > startTime) {
+        IERC20(paymentToken).safeTransfer(address(streamingManager), amount);
+        streamingManager.createStream{ value: paymentToken == address(0) ? amount : 0 }(
+            serviceId, blueprintId, operator, paymentToken, amount, startTime, endTime
+        );
+        return;
+    }
+}
+_distributeImmediate(serviceId, blueprintId, operator, paymentToken, amount);
+```
+
+If the service has a TTL and `StreamingPaymentManager` is configured, the entire payment transfers to the streaming manager and gets distributed pro-rata over the service lifetime. If a delegation changes mid-service, the distributor drips the stream first — paying out at the current score ratios — then applies the delegation change. This prevents retroactive gaming: you can't bond more stake after a job runs and claim a larger slice of revenue that was already earned at lower backing levels.
+
+For services without TTL (or if streaming isn't configured), distribution is immediate via `_distributeImmediate`.
+
+## How drip math works
+
+The `StreamingPaymentManager` holds the full fee amount and releases chunks over time:
+
+```solidity
+durationSeconds = currentTime - p.lastDripTime;
+uint256 duration = p.endTime - p.startTime;
+uint256 remaining = p.totalAmount - p.distributed;
+uint256 chunk = (p.totalAmount * durationSeconds) / duration;
+if (chunk > remaining) {
+    chunk = remaining;
+}
+```
+
+Each drip is proportional to elapsed time. At 50% of the service lifetime, 50% of the payment is dripable. The dripped chunk gets forwarded back to `ServiceFeeDistributor` for immediate distribution at current scores.
+
+Source: [`tnt-core/src/rewards/StreamingPaymentManager.sol`](https://github.com/tangle-network/tnt-core/blob/main/src/rewards/StreamingPaymentManager.sol)
+
+## USD-weighted scoring: why your asset mix matters
+
+Once funds reach `_distributeImmediate`, the contract needs to split the payment across delegators. The split is proportional to *USD-weighted score*, not raw token amounts. This is the core economic mechanism.
+
+Each delegator's score for an operator is tracked in two modes:
+
+- **All mode** (`selectionMode = All`): the delegator's stake covers all blueprints the operator runs. Score accumulates in `totalAllScore[operator][assetHash]`.
+- **Fixed mode** (`selectionMode = Fixed`): the delegator's stake is allocated to specific blueprint IDs. Score accumulates in `totalFixedScore[operator][blueprintId][assetHash]`.
+
+Score is computed at delegation time:
+
+```solidity
+scoreDelta = (amount * lockMultiplierBps) / BPS_DENOMINATOR;
+```
+
+The lock multiplier rewards longer-duration commitments with more score per unit of capital. Score decreases on withdrawal proportional to the principal reduction, preserving the effective rate.
+
+The fee then splits between All-mode and Fixed-mode pools proportionally:
+
+```solidity
+uint256 allAmount = (amount * allUsdTotal) / totalUsd;
+uint256 fixedAmount = amount - allAmount;
+```
+
+Where `allUsdTotal` and `fixedUsdTotal` are the USD values of effective (post-slash) scores for each pool. Within each pool, fees are distributed using an **accumulator-per-score** pattern:
+
+```solidity
+accAllPerScore[operator][assetHash][paymentToken] +=
+    (share * PRECISION) / allScore;
+```
+
+This is O(1) per asset per payment token — no loop over delegators. Delegators claim by computing `score * accPerScore - debtAtLastSync`. A delegator who bonded after a fee was distributed has their debt initialized at the current accumulator level, so they only earn on fees distributed after they joined.
+
+## Exposure weighting: committed capital drives reward share
+
+For services with `AssetSecurityRequirements`, the USD computation adds an exposure layer. Each operator declares how much of their delegation they're willing to have at risk for a service — `commitmentBps` — and the exposed amount drives both slashing and fee allocation.
+
+```solidity
+uint256 allExposed = (allEffective * commitmentBps) / BPS_DENOMINATOR;
+allUsdTotal += _toUsd(a, allExposed);
+```
+
+Higher exposure means higher risk (you can be slashed on more of your stake) and higher reward (you earn a larger share of the service fee). Operators who run low-commitment configurations take less slashing risk but earn proportionally less revenue. The `ExposureCalculator` library encodes this directly:
+
+```solidity
+/// @notice Calculate reward share based on exposure percentage
+/// @dev Higher exposure = higher risk = higher reward share
+function calculateRewardShare(
+    uint256 delegatedAmount,
+    uint16 exposureBps,
+    uint256 totalReward,
+    uint256 totalExposedValue
+) internal pure returns (uint256 rewardShare) {
+    if (totalExposedValue == 0) return 0;
+    uint256 exposedAmount = calculateExposedAmount(delegatedAmount, exposureBps);
+    return (totalReward * exposedAmount) / totalExposedValue;
+}
+```
+
+`exposureBps` is bounded between `MIN_EXPOSURE_BPS = 1` (0.01%) and `MAX_EXPOSURE_BPS = 10_000` (100%), defined in `ExposureTypes`. An operator at 5000 bps (50% exposure) earns half of what the same operator at 10000 bps (full exposure) would earn, all else equal.
+
+The USD weighting uses a price oracle to normalize across assets. An operator backed by ETH and one backed by stablecoins compete on USD-equivalent exposed value, not raw token count.
+
+Source: [`tnt-core/src/exposure/ExposureCalculator.sol`](https://github.com/tangle-network/tnt-core/blob/main/src/exposure/ExposureCalculator.sol)
+
+## TNT score boost
+
+The distributor supports a configurable TNT token score rate:
+
+```solidity
+/// @dev If tntScoreRate = 1e18, then 1 TNT = $1 score regardless of actual market price.
+/// If tntScoreRate = 0, TNT uses oracle price like other tokens.
+uint256 public tntScoreRate;
+```
+
+When `tntScoreRate` is set above the oracle price of TNT, delegators backing operators with TNT earn amplified score per dollar of capital — a direct incentive to hold and stake the native token. At `tntScoreRate = 1e18` with TNT at $0.10 market price, TNT earns 10× the fee share of its market value relative to other tokens.
+
+## Treasury fallback
+
+If an operator has zero stakers or zero USD-weighted score when a fee arrives, the fee doesn't sit in the contract — it routes to the protocol treasury:
+
+```solidity
+if (totalUsd == 0) {
+    _transferPayment(ITangleSecurityView(tangle).treasury(), paymentToken, amount);
+    return;
+}
+```
+
+Same behavior if the operator has no asset hashes tracked at all. Fees are never stranded in the distributor.
+
+## The payment metadata trail
+
+On the Blueprint SDK side, `X402Producer` propagates the payment context into the job metadata so that operators can trace which payment triggered which execution:
+
+```rust
+pub const X402_QUOTE_DIGEST_KEY: &str = "X-X402-QUOTE-DIGEST";
+pub const X402_PAYMENT_NETWORK_KEY: &str = "X-X402-PAYMENT-NETWORK";
+pub const X402_PAYMENT_TOKEN_KEY: &str = "X-X402-PAYMENT-TOKEN";
+pub const X402_ORIGIN_KEY: &str = "X-X402-ORIGIN";
+pub const X402_SERVICE_ID_KEY: &str = "X-TANGLE-SERVICE-ID";
+pub const X402_CALL_ID_KEY: &str = "X-TANGLE-CALL-ID";
+```
+
+Every job that came from an x402 payment carries its quote digest, payment network (CAIP-2), token, service ID, and a synthetic call ID for tracking. This metadata is consumed by the runner, not by the distribution layer — but it's the operator's audit trail linking an HTTP payment to a specific on-chain service invocation.
+
+Source: [`blueprint/crates/x402/src/producer.rs`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/producer.rs)
+
+## What's wired vs what's planned
+
+Two items in the distribution system are architecturally present but not fully live:
+
+**Security-adjusted pricing.** `calculate_security_rate_adjustment` in the pricing engine returns `Decimal::ONE` unconditionally. The hook exists and is wired through `calculate_resource_price`, but the implementation is a stub (`// TODO: Implement security requirement adjustments`). Premium pricing for high-exposure operators isn't in production yet.
+
+**Slashing impact on distribution.** Slash factors *are* live in `ServiceFeeDistributor`. `_allSlashFactor` and `_fixedSlashFactor` are applied via `_applySlashFactor` before USD scoring:
+
+```solidity
+uint256 allEffective = _applySlashFactor(allScore, _getAllSlashFactor(operator, assetHash));
+```
+
+The slashing mechanism in `ServiceFeeDistributor` is operational. What feeds those slash factors — the slashing protocol itself — depends on the staking and governance layer, which is out of scope here.
+
+## The economic signal in the design
+
+The fee distribution design encodes a specific opinion about what operators should optimize for: committed, long-duration, diversified backing. Operators with high USD-weighted exposure earn more per fee unit. Operators with mixed asset backing benefit from oracle normalization. Operators who attract All-mode delegators (stake that covers the full service roster) earn from a broader pool than operators whose delegators make narrow Fixed-mode bets.
+
+The streaming payment design punishes late entry. Delegation after a service starts doesn't capture retroactive fees — drips happen at the score ratios that were in place at drip time. This is intended: an operator who can attract capital before a service launches is more valuable to the protocol than one who can attract it after the fact.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)
