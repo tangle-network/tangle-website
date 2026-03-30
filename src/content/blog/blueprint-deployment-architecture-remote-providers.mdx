@@ -24,19 +24,21 @@ heroImage: /images/covers/blueprint-deployment-architecture-remote-providers.png
 imageAlt: 'Parallel ingress streams (x402 + primary) feeding one Blueprint runner'
 ---
 
-## The Architectural Decision Most Guides Skip
+When you build a service with the Blueprint SDK, your service logic runs inside a `BlueprintRunner`. The runner manages all the ways work arrives: from the Tangle blockchain, from direct HTTP calls, or from any custom source you wire in. Where that runner actually executes, whether on your laptop, a cloud VM, or a Kubernetes cluster, is a separate decision called the deployment target.
 
-Most infrastructure guides treat deployment and payment as separate concerns: pick a deployment target, then bolt on monetization later. In Blueprint, that separation doesn't exist at the layer where it matters. `X402Gateway` implements `BackgroundService` — it runs concurrently with the job runner, not in front of it, not as a proxy, not as middleware. That single architectural choice changes how you compose payment-gated services across every deployment topology.
+This post explains how deployment targets work, how Blueprint services receive payment-gated HTTP jobs via the x402 protocol, and how those two concerns fit together across every topology Blueprint supports. If you have never heard of Blueprint or x402: Blueprint is Tangle's SDK for building AI agent services that accept jobs from the Tangle network. x402 is a payment protocol built on HTTP 402, which lets HTTP clients pay for a request before the server executes it.
 
-Before mapping the decision tree, it's worth understanding why this matters operationally.
+The key design choice this post is really about: the x402 payment gateway is not a separate proxy that sits in front of your service. It runs as a concurrent background task inside the same process as your job runner. That decision has real consequences for how you deploy, scale, and upgrade paid services, and the rest of this post explains why it was made that way and what it means for each deployment target.
 
-A conventional payment gateway sits in front of compute: request → payment check → compute. The payment layer can only see requests that arrive through it. When it's down, no compute runs. When you want to add a second ingress — say, on-chain Tangle events alongside HTTP payments — you need a mux layer the gateway doesn't natively provide.
+## What Problem Does This Solve?
 
-Blueprint's model inverts this. The runner is the mux. `TangleProducer`, `X402Producer`, and any other producers you wire in are concurrent streams feeding the same `Router`. Each producer is independent. The x402 payment HTTP server runs as a `BackgroundService` alongside heartbeats, metrics servers, and TEE auth services — it's structurally identical to those, just one more concurrent task in the runner's lifecycle.
+Most infrastructure guides treat deployment and payment as separate concerns: pick a deployment target, then bolt on monetization later. A conventional payment gateway sits in front of compute. Request arrives, payment is checked, then compute runs. The payment layer can only see requests that arrive through it. When it goes down, nothing runs. When you want to add a second job source (say, on-chain Tangle events alongside HTTP payments), you need a multiplexing layer that the gateway does not natively provide.
 
-This post covers what that looks like at each deployment layer.
+Blueprint inverts this. The runner is the multiplexer. `TangleProducer`, `X402Producer`, and any other producers you wire in are concurrent streams feeding the same `Router`. Each producer is independent. The x402 payment HTTP server runs as a `BackgroundService` alongside heartbeats, metrics servers, and TEE auth services. It is structurally identical to those, just one more concurrent task in the runner's lifecycle.
 
-## DeploymentTarget: What Each Variant Means Operationally
+## How Do You Deploy a Blueprint Service to Production?
+
+### What Is a Deployment Target?
 
 Blueprint's remote provider crate models deployment topology as an enum. From `crates/blueprint-remote-providers/src/core/deployment_target.rs`:
 
@@ -102,7 +104,7 @@ DeploymentConfig::managed_k8s(CloudProvider::AWS, "us-east-1".into(), "my-eks-cl
 DeploymentConfig::generic_k8s(Some("staging-context".into()), "blueprint-remote".into())
 ```
 
-## CloudProvider: Local vs Remote Boundary
+### What Is a Cloud Provider and Why Does It Matter for Networking?
 
 `CloudProvider` is defined in `crates/pricing-engine/src/types.rs` and re-exported throughout the remote provider crate:
 
@@ -121,7 +123,7 @@ pub enum CloudProvider {
 }
 ```
 
-`DockerLocal` is the development boundary. When this provider is selected, the runner executes containers on the host directly — no provisioning, no TLS tunnel, no remote endpoint registration. It's what you use during local development and integration testing.
+`DockerLocal` is the development boundary. When this provider is selected, the runner executes containers on the host directly. No provisioning, no TLS tunnel, no remote endpoint registration. It is what you use during local development and integration testing.
 
 The `requires_tunnel` extension method (from `crates/blueprint-remote-providers/src/core/remote.rs`) makes the network topology consequence explicit:
 
@@ -134,9 +136,9 @@ fn requires_tunnel(&self) -> bool {
 }
 ```
 
-`Generic`, `BareMetal`, and `DockerLocal` require a tunnel for private networking — they don't have managed load balancers. AWS, GCP, Azure, DigitalOcean, Vultr, and Linode get `LoadBalancer` or `ClusterIP` service types from the managed Kubernetes provider, so they don't need one.
+`Generic`, `BareMetal`, and `DockerLocal` require a tunnel for private networking because they do not have managed load balancers. AWS, GCP, Azure, DigitalOcean, Vultr, and Linode get `LoadBalancer` or `ClusterIP` service types from the managed Kubernetes provider, so they do not need one.
 
-For `CloudConfig` — the top-level credentials structure — provider credentials are loaded from environment variables with priority ordering. From `crates/blueprint-remote-providers/src/config.rs`:
+For `CloudConfig`, the top-level credentials structure, provider credentials are loaded from environment variables with priority ordering. From `crates/blueprint-remote-providers/src/config.rs`:
 
 ```rust
 pub struct CloudConfig {
@@ -151,9 +153,9 @@ pub struct CloudConfig {
 
 Priority is embedded in each provider config. When multiple providers are configured, higher-priority providers are preferred for deployment decisions.
 
-## SecureBridge: mTLS for Remote Execution
+## How Does SecureBridge Handle mTLS for Remote Execution?
 
-When a Blueprint job runs on a remote VM or remote Docker host, the manager needs a secure authenticated tunnel to that instance. That's `SecureBridge` in `crates/blueprint-remote-providers/src/secure_bridge.rs`.
+When a Blueprint job runs on a remote VM or remote Docker host, the manager needs a secure authenticated tunnel to that instance. That is `SecureBridge` in `crates/blueprint-remote-providers/src/secure_bridge.rs`.
 
 The endpoint data structure:
 
@@ -183,7 +185,7 @@ impl Default for SecureBridgeConfig {
 }
 ```
 
-In production (`BLUEPRINT_ENV=production`), certificate presence is enforced — the bridge fails hard if `BLUEPRINT_CLIENT_CERT_PATH`, `BLUEPRINT_CLIENT_KEY_PATH`, or `BLUEPRINT_CA_CERT_PATH` don't resolve to valid PEM files. In development, it falls back to system certs with a warning. Disabling mTLS entirely fails in production:
+In production (`BLUEPRINT_ENV=production`), certificate presence is enforced. The bridge fails hard if `BLUEPRINT_CLIENT_CERT_PATH`, `BLUEPRINT_CLIENT_KEY_PATH`, or `BLUEPRINT_CA_CERT_PATH` do not resolve to valid PEM files. In development, it falls back to system certs with a warning. Disabling mTLS entirely fails in production:
 
 ```rust
 if is_production {
@@ -193,7 +195,7 @@ if is_production {
 }
 ```
 
-There's also SSRF protection on endpoint registration. Endpoints that resolve to public IPs are rejected — only loopback and private ranges are accepted:
+There is also SSRF protection on endpoint registration. Endpoints that resolve to public IPs are rejected. Only loopback and private ranges are accepted:
 
 ```rust
 fn validate_endpoint_security(endpoint: &RemoteEndpoint) -> Result<()> {
@@ -212,11 +214,13 @@ fn validate_endpoint_security(endpoint: &RemoteEndpoint) -> Result<()> {
 }
 ```
 
-This means the SecureBridge is designed for tunneling to instances on private networks — not direct public internet exposure. The cloud provider's network layer (VPC, private subnet, VPN) is the outer security boundary; SecureBridge handles authentication within that perimeter.
+This means SecureBridge is designed for tunneling to instances on private networks, not direct public internet exposure. The cloud provider's network layer (VPC, private subnet, VPN) is the outer security boundary. SecureBridge handles authentication within that perimeter.
 
-## X402Gateway as BackgroundService
+## How Does the x402 Payment Gateway Deploy?
 
-Here's where the deployment model and the payment model intersect. `X402Gateway` implements `BackgroundService`. From `crates/x402/src/gateway.rs`:
+### X402Gateway as a Background Service
+
+`X402Gateway` implements `BackgroundService`. From `crates/x402/src/gateway.rs`:
 
 ```rust
 impl BackgroundService for X402Gateway {
@@ -248,17 +252,17 @@ Router::new()
     .route("/x402/jobs/{service_id}/{job_index}/price", get(get_job_price))
 ```
 
-`POST /x402/jobs/{service_id}/{job_index}` is the payment-gated execution endpoint. The `X402Middleware` intercepts this route: absent payment header returns 402 with settlement options; present header is verified via the facilitator; settlement completes before the handler runs.
+`POST /x402/jobs/{service_id}/{job_index}` is the payment-gated execution endpoint. The `X402Middleware` intercepts this route: an absent payment header returns 402 with settlement options; a present header is verified via the facilitator and settlement completes before the handler runs.
 
-`GET /x402/jobs/{service_id}/{job_index}/price` is the discovery endpoint. Clients call this first to learn what payment is required — network, token, amount — without triggering execution.
+`GET /x402/jobs/{service_id}/{job_index}/price` is the discovery endpoint. Clients call this first to learn what payment is required (network, token, amount) without triggering execution.
 
-`POST /x402/jobs/{service_id}/{job_index}/auth-dry-run` lets callers check `RestrictedPaid` access control eligibility before spending a payment. Useful for wallets that want to show the user whether they're permitted before presenting the payment UI.
+`POST /x402/jobs/{service_id}/{job_index}/auth-dry-run` lets callers check `RestrictedPaid` access control eligibility before spending a payment. Useful for wallets that want to show the user whether they are permitted before presenting the payment UI.
 
 `GET /x402/stats` exposes the `GatewayCounters` snapshot: accepted payments, policy denials, replay guard hits, enqueue failures. Low-overhead observability without external instrumentation.
 
 The x402 server binds to a separate address from any primary runner ports (default `0.0.0.0:8402`), configured in `X402Config.bind_address`.
 
-## The Producer Channel: How Payments Become JobCalls
+### How Payments Become Job Calls
 
 The mechanical connection between the HTTP server and the job runner is `X402Producer`. From `crates/x402/src/producer.rs`:
 
@@ -301,7 +305,7 @@ pub fn new(
 }
 ```
 
-The `payment_tx` sender lives inside the gateway. When a payment verifies and settles, the handler sends a `VerifiedPayment` through `payment_tx`. The `X402Producer` (which holds `rx`) is wired into the runner as a standard producer — the runner polls it alongside `TangleProducer` or any other source.
+The `payment_tx` sender lives inside the gateway. When a payment verifies and settles, the handler sends a `VerifiedPayment` through `payment_tx`. The `X402Producer` (which holds `rx`) is wired into the runner as a standard producer. The runner polls it alongside `TangleProducer` or any other source.
 
 `VerifiedPayment.into_job_call()` stamps the resulting `JobCall` with metadata that job handlers can inspect:
 
@@ -315,9 +319,9 @@ pub const X402_CALL_ID_KEY: &str        = "X-TANGLE-CALL-ID";
 pub const X402_CALLER_KEY: &str         = "X-TANGLE-CALLER";
 ```
 
-The job handler receives a `JobCall` identical in shape to one from Tangle, but the metadata tells it the call came from x402 and on which chain. Nothing in the dispatch path treats x402 jobs differently — the router doesn't know or care.
+The job handler receives a `JobCall` identical in shape to one from Tangle, but the metadata tells it the call came from x402 and on which chain. Nothing in the dispatch path treats x402 jobs differently. The router does not know or care.
 
-## X402InvocationMode: Per-Job Access Control
+## When Should You Use RestrictedPaid Access Control?
 
 Each job's x402 accessibility is independently configured via `X402InvocationMode`. From `crates/x402/src/config.rs`:
 
@@ -330,7 +334,7 @@ pub enum X402InvocationMode {
 }
 ```
 
-`Disabled` (the default) means the gateway will return 403 for this job even if payment is provided — the job is not reachable via x402. `PublicPaid` is open to anyone who can pay. `RestrictedPaid` adds an `isPermittedCaller` check against a Tangle contract before execution.
+`Disabled` (the default) means the gateway will return 403 for this job even if payment is provided. The job is not reachable via x402. `PublicPaid` is open to anyone who can pay. `RestrictedPaid` adds an `isPermittedCaller` check against a Tangle contract before execution.
 
 For `RestrictedPaid`, `X402CallerAuthMode` determines how caller identity is asserted:
 
@@ -339,17 +343,17 @@ pub enum X402CallerAuthMode {
     #[default]
     PayerIsCaller,
     DelegatedCallerSignature,
-    PaymentOnly, // invalid for RestrictedPaid — config validation rejects this
+    PaymentOnly, // invalid for RestrictedPaid -- config validation rejects this
 }
 ```
 
-`PayerIsCaller` infers identity from the settled payment's payer address — simplest, works for wallets that pay for themselves. `DelegatedCallerSignature` supports scenarios where an agent pays on behalf of a user: the agent includes `X-TANGLE-CALLER`, `X-TANGLE-CALLER-SIG`, `X-TANGLE-CALLER-NONCE`, and `X-TANGLE-CALLER-EXPIRY` headers. The gateway verifies the signature and runs the Tangle permission check against the declared caller, not the payer.
+`PayerIsCaller` infers identity from the settled payment's payer address. It is the simplest option and works for wallets that pay for themselves. `DelegatedCallerSignature` supports scenarios where an agent pays on behalf of a user: the agent includes `X-TANGLE-CALLER`, `X-TANGLE-CALLER-SIG`, `X-TANGLE-CALLER-NONCE`, and `X-TANGLE-CALLER-EXPIRY` headers. The gateway verifies the signature and runs the Tangle permission check against the declared caller, not the payer.
 
 `RestrictedPaid` requires both `tangle_rpc_url` and `tangle_contract` in the `JobPolicyConfig`. Config validation rejects `RestrictedPaid` with `PaymentOnly` auth or missing RPC config at startup.
 
-## The Full Builder Pattern
+## What Does the Full Builder Pattern Look Like?
 
-Here's how these pieces compose in `BlueprintRunner`. From `crates/runner/src/lib.rs`:
+Here is how these pieces compose in `BlueprintRunner`. From `crates/runner/src/lib.rs`:
 
 ```rust
 pub fn background_service(mut self, service: impl BackgroundService + 'static) -> Self {
@@ -380,33 +384,31 @@ BlueprintRunner::builder(tangle_config, env)
     .await?;
 ```
 
-Both producers are polled concurrently in the same event loop. The gateway runs in its own `tokio::spawn`. The runner manages their lifetimes uniformly — when the runner shuts down, the `oneshot::Receiver` from each background service's `start()` signals completion or error.
+Both producers are polled concurrently in the same event loop. The gateway runs in its own `tokio::spawn`. The runner manages their lifetimes uniformly. When the runner shuts down, the `oneshot::Receiver` from each background service's `start()` signals completion or error.
 
-## Deployment Decision Tree
+## Which Deployment Target Should You Use?
 
-Putting the topology choices together:
+**DockerLocal, no SecureBridge:** Development. No provisioning, no TLS tunnel, no external cloud credentials needed. Run `cargo run` locally, test x402 payment flow with a local facilitator.
 
-**DockerLocal + no SecureBridge**: Development. No provisioning, no TLS tunnel, no external cloud credentials needed. Run `cargo run` locally, test x402 payment flow with a local facilitator.
+**VirtualMachine (AWS, GCP, DigitalOcean, Vultr, Hetzner) with SecureBridge mTLS:** Production single-operator. The manager SSHes into provisioned VMs, starts containers, and registers `RemoteEndpoint` in SecureBridge. The x402 gateway binds on the remote VM and is reachable via the provider's networking. SecureBridge handles manager-to-instance communication authenticated with client certs from `/etc/blueprint/certs/`.
 
-**VirtualMachine (AWS/GCP/DigitalOcean/Vultr/Hetzner) + SecureBridge mTLS**: Production single-operator. The manager SSHes into provisioned VMs, starts containers, registers `RemoteEndpoint` in SecureBridge. The x402 gateway binds on the remote VM and is reachable via the provider's networking. SecureBridge handles manager-to-instance communication authenticated with client certs from `/etc/blueprint/certs/`.
+**ManagedKubernetes (EKS, GKE, AKS) with CloudProvider load balancer:** Multi-job, horizontally scaled. EKS and AKS get `LoadBalancer` service type. GKE gets `ClusterIP` with an Ingress resource. The x402 gateway runs as a BackgroundService inside each pod. Payment ingress is co-located with the job runner, not a separate service.
 
-**ManagedKubernetes (EKS/GKE/AKS) + CloudProvider load balancer**: Multi-job, horizontally scaled. EKS and AKS get `LoadBalancer` service type. GKE gets `ClusterIP` with an Ingress resource. The x402 gateway runs as a BackgroundService inside each pod — payment ingress is co-located with the job runner, not a separate service.
+**GenericKubernetes with tunnel:** Existing clusters, staging environments, or on-prem. The `context: Option<String>` field lets you switch kubeconfig contexts without modifying the default. Paired with `CloudProvider::Generic`, which `requires_tunnel()`. You handle the private networking layer yourself.
 
-**GenericKubernetes + tunnel**: Existing clusters, staging environments, or on-prem. The `context: Option<String>` field lets you switch kubeconfig contexts without modifying the default. Paired with `CloudProvider::Generic`, which `requires_tunnel()` — you need to handle the private networking layer yourself.
+**BareMetal:** Bare metal SSH hosts. The `BareMetal(Vec<String>)` variant takes a list of SSH-accessible hosts. Also `requires_tunnel()`. No managed networking. SecureBridge provides the auth layer within your existing network perimeter.
 
-**BareMetal**: Bare metal SSH hosts. The `BareMetal(Vec<String>)` variant takes a list of SSH-accessible hosts. Also `requires_tunnel()` — no managed networking, SecureBridge provides the auth layer within your existing network perimeter.
+The x402 gateway placement is the same in all of these: `.background_service(gateway)` in the builder. The deployment target changes where the process runs and how it is networked. The payment ingress layer is identical code regardless of where the runner executes.
 
-The x402 gateway placement is the same in all of these: `.background_service(gateway)` in the builder. The deployment target changes where the process runs and how it's networked. The payment ingress layer is identical code regardless of where the runner executes.
+## What Are the Tradeoffs of This Design?
 
-## What This Buys You
+The BackgroundService model solves a real operational problem: operator upgrade paths do not require payment gateway downtime. When you roll a new version of your blueprint, the runner and its BackgroundServices restart together. There is no separately managed payment proxy to upgrade, no version skew between the proxy and the business logic it fronts.
 
-The BackgroundService model solves a real operational problem: operator upgrade paths don't require payment gateway downtime. When you roll a new version of your blueprint, the runner and its BackgroundServices restart together. There's no separately managed payment proxy to upgrade, no version skew between the proxy and the business logic it fronts.
+It also means x402 payment ingress scales with your runner. Add more pods and you get more payment capacity. No centralized payment router to scale separately, no single point of failure in the payment path.
 
-It also means x402 payment ingress scales with your runner. Add more pods — you get more payment capacity. No centralized payment router to scale separately, no single point of failure in the payment path.
+The tradeoff is that the x402 HTTP endpoint is co-located with the job runner rather than edge-deployed. If you need CDN-level caching of price discovery responses or geographic distribution of payment ingress endpoints, you would put a lightweight HTTP proxy in front. The price and auth-dry-run endpoints are stateless and safe to cache. The job execution endpoint requires the live runner. That one cannot be edge-cached by definition.
 
-The tradeoff is that the x402 HTTP endpoint is co-located with the job runner rather than edge-deployed. If you need CDN-level caching of price discovery responses or geographic distribution of payment ingress endpoints, you'd put a lightweight HTTP proxy in front. The price and auth-dry-run endpoints are stateless and safe to cache. The job execution endpoint requires the live runner — that one can't be edge-cached by definition.
-
-For most Blueprint service operators — particularly ones using Tangle for decentralized AVS infrastructure — the co-location model is the right default. The runner is already the first layer worth scaling. Adding another independent service to manage introduces complexity that only pays off at scales most early-stage services won't hit.
+For most Blueprint service operators, particularly ones using Tangle for decentralized AVS infrastructure, the co-location model is the right default. The runner is already the first layer worth scaling. Adding another independent service to manage introduces complexity that only pays off at scales most early-stage services will not hit.
 
 ---
 
