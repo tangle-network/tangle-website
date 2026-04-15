@@ -1,0 +1,98 @@
+---
+title: 'Better Answers Without Bigger Models: We Shipped RSA'
+slug: rsa-recursive-self-aggregation
+summary: >-
+  Recursive Self-Aggregation is a test-time scaling strategy that amplifies
+  cheap model output toward expensive-model quality. One gateway flag on
+  Tangle Router. Paper, implementation, and benchmark.
+date: '2026-04-15'
+author: Drew Stone
+tags:
+  - router
+  - inference
+  - research
+---
+
+A test-time scaling strategy called Recursive Self-Aggregation (RSA) shipped as a gateway option on [Tangle Router](https://router.tangle.tools). Pick any cheap model from the 671+ catalog, add one flag, and RSA amplifies its output quality toward expensive-model territory. The paper shows a 4B model matching frontier reasoning models. Our benchmark shows Claude Haiku + RSA matching Opus on 3/6 tasks and beating it on 1.
+
+## What the paper proves
+
+[Venkatraman et al., 2025](https://arxiv.org/abs/2509.26626) — a collaboration across Mila, McGill, Lawrence Livermore National Lab, and the University of Edinburgh — show that test-time compute spent on **aggregation** beats test-time compute spent on majority voting or self-refinement. The method:
+
+1. Generate N candidate reasoning chains in parallel.
+2. For each slot in the population, randomly subsample K candidates and ask the same LLM to aggregate them into one improved solution.
+3. Repeat for T rounds.
+4. Return `population[0]` — by then, the population has converged.
+
+Total calls: `N + N*T`. No external verifier. The LLM self-corrects by cross-referencing candidates during aggregation.
+
+On ARC-AGI-2, Gemini 3 Flash + RSA lands in the same quality band as Gemini 3 Deep Think at roughly one-tenth of Deep Think's cost. Qwen3-4B-Instruct-2507 + RSA reaches competitive performance with DeepSeek-R1 and o3-mini (high) across AIME-25, HMMT-25, Reasoning Gym, LiveCodeBench-v6, and SuperGPQA.
+
+## How we built it
+
+RSA shipped as a gateway option on the existing `/v1/chat/completions` endpoint. One flag:
+
+```json
+{
+  "model": "google/gemini-3-flash",
+  "messages": [{"role": "user", "content": "..."}],
+  "gateway": {
+    "rsa": { "n": 16, "k": 4, "t": 5 }
+  }
+}
+```
+
+Fallback chains, BYOK, compliance routing, response caching — everything else still works. Opt in per request.
+
+The production implementation is small. `rsaInfer()` takes an opaque callback `infer(body) → Response`. It knows nothing about routing tiers, auth, operators, or billing. The callback handles all of that. RSA composes with every gateway option the Router already supports, and the module is testable against mocks without mocking any Router internals.
+
+## What it costs
+
+Assumptions: ~500 input + ~500 output tokens per call.
+
+| Configuration | Calls per request | Cost estimate |
+|---|---|---|
+| Single Gemini 3 Flash | 1 | ~$0.001 |
+| Single Gemini 3 Deep Think | 1 | ~$1.00 |
+| Flash + RSA (N=8, K=3, T=3) | 32 | ~$0.03 |
+| Flash + RSA (N=16, K=4, T=5) | 96 | ~$0.10 |
+
+Before fan-out, the Router estimates `(N + N*T) × per-call cost` and returns a 402 if the user's credit balance can't cover it. Budget pre-check is non-optional.
+
+## What RSA is not for
+
+You're trading wall-clock latency for quality per dollar. T=5 rounds runs ~10-15 seconds end-to-end.
+
+Use RSA for async workloads, eval pipelines, agent planning steps, code generation, structured analysis. Don't use it for interactive chat or real-time agent loops.
+
+## Two more strategies
+
+**Mixture-of-Agents (MoA).** RSA with a different model per population slot. Claude + Gemini + GPT-5 + DeepSeek generating; one primary model aggregating.
+
+```json
+{
+  "gateway": {
+    "rsa": {
+      "n": 4, "k": 3, "t": 2,
+      "models": [
+        "anthropic/claude-sonnet-4-6",
+        "google/gemini-3-flash",
+        "openai/gpt-4o",
+        "deepseek/deepseek-chat"
+      ]
+    }
+  }
+}
+```
+
+**Best-of-N with user-supplied scorers.** Generate N candidates, score them, return the winner. Webhook scorer (your HTTP endpoint) or LLM-as-judge.
+
+## Reproduce the numbers
+
+[`tangle-network/rsa-benchmark`](https://github.com/tangle-network/rsa-benchmark) is a public repo with a prompt suite, a runner comparing baseline against three RSA configs, and CSV + JSON output per run. Max projected spend for a full run: under $5.
+
+## Links
+
+- Paper: [arxiv.org/abs/2509.26626](https://arxiv.org/abs/2509.26626)
+- Benchmark: [github.com/tangle-network/rsa-benchmark](https://github.com/tangle-network/rsa-benchmark)
+- Landing: [router.tangle.tools/rsa](https://router.tangle.tools/rsa)
