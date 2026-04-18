@@ -3,21 +3,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-SECRETS_DIR="$HOME/.openclaw/workspace/.secrets"
+VAULT="$HOME/company/devops/secrets/agent-state.env"
 
 cd "$PROJECT_DIR"
 
-# Load Cloudflare credentials
-if [[ -f "$SECRETS_DIR/cloudflare-api-token" && -f "$SECRETS_DIR/cloudflare-account-id" ]]; then
-  export CLOUDFLARE_API_TOKEN
-  export CLOUDFLARE_ACCOUNT_ID
-  CLOUDFLARE_API_TOKEN="$(cat "$SECRETS_DIR/cloudflare-api-token")"
-  CLOUDFLARE_ACCOUNT_ID="$(cat "$SECRETS_DIR/cloudflare-account-id")"
-else
-  echo "ERROR: Cloudflare credentials not found at $SECRETS_DIR"
-  echo "Expected files: cloudflare-api-token, cloudflare-account-id"
-  exit 1
+# Re-exec under dotenvx so CLOUDFLARE_* are loaded from the encrypted vault
+if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+  if [[ ! -f "$VAULT" ]]; then
+    echo "ERROR: secrets vault not found at $VAULT" >&2
+    exit 1
+  fi
+  exec dotenvx run -f "$VAULT" --overload --quiet -- "$0" "$@"
 fi
+export CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID
 
 # Build
 echo "Building site..."
