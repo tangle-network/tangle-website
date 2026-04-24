@@ -1,10 +1,10 @@
 import { useState } from 'react';
 
-const mono = "'JetBrains Mono', 'Fira Code', monospace";
-const sat = "'Satoshi Variable', 'Satoshi', sans-serif";
+const mono = 'var(--font-mono)';
+const sat = 'var(--font-display)';
 
 const P = ({ children }: { children: React.ReactNode }) => <span style={{ color: '#4ade80' }}>{children}</span>;
-const F = ({ children }: { children: React.ReactNode }) => <span style={{ color: '#6172f3' }}>{children}</span>;
+const F = ({ children }: { children: React.ReactNode }) => <span style={{ color: '#6366F1' }}>{children}</span>;
 const S = ({ children }: { children: React.ReactNode }) => <span style={{ color: '#a78bfa' }}>{children}</span>;
 const D = ({ children }: { children: React.ReactNode }) => <span style={{ color: 'rgba(255,255,255,0.3)' }}>{children}</span>;
 const W = ({ children }: { children: React.ReactNode }) => <span style={{ color: 'rgba(255,255,255,0.7)' }}>{children}</span>;
@@ -236,7 +236,7 @@ export default function SandboxShowcase() {
   const Content = mode === 'cli' ? current.cli : current.sdk;
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 0, borderRadius: 20, border: '2px solid rgb(42,43,57)', overflow: 'hidden', background: '#0a0a0a' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 0, borderRadius: 20, border: '2px solid rgba(100,100,148,0.18)', overflow: 'hidden', background: '#0a0a0a' }}>
 
       {/* Left panel */}
       <div style={{ borderRight: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexDirection: 'column' }}>
@@ -254,7 +254,7 @@ export default function SandboxShowcase() {
                 width: '100%',
                 padding: '12px 20px',
                 border: 'none',
-                borderLeft: activeKey === ex.key ? '3px solid #6172f3' : '3px solid transparent',
+                borderLeft: activeKey === ex.key ? '3px solid #6366F1' : '3px solid transparent',
                 background: activeKey === ex.key ? 'rgba(97,114,243,0.08)' : 'transparent',
                 color: activeKey === ex.key ? 'white' : 'rgba(255,255,255,0.4)',
                 fontFamily: sat,
@@ -282,7 +282,7 @@ export default function SandboxShowcase() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {current.bullets.map((b, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <span style={{ color: '#6172f3', fontSize: 14, lineHeight: '22px', flexShrink: 0, fontFamily: mono }}>{'\u2192'}</span>
+                <span style={{ color: '#6366F1', fontSize: 14, lineHeight: '22px', flexShrink: 0, fontFamily: mono }}>{'\u2192'}</span>
                 <span style={{ fontFamily: sat, fontSize: 15, color: 'rgba(255,255,255,0.5)', lineHeight: '24px' }}>{b}</span>
               </div>
             ))}
