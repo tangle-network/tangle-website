@@ -67,33 +67,38 @@ const bpChatCode = `<span class="cw-c">╭ Blueprint Agent · ai.tangle.tools �
 <span class="cw-c">╰────────────────────────────────────────────────────────╯</span>`;
 
 const bpGeneratedCode = `<span class="cw-k">use</span> <span class="cw-v">blueprint_sdk</span>::{
-  <span class="cw-v">extract</span>::<span class="cw-f">Context</span>,
-  <span class="cw-v">macros</span>::<span class="cw-f">debug_job</span>,
-  <span class="cw-v">tangle</span>::<span class="cw-f">TangleLayer</span>,
-  <span class="cw-f">Router</span>, <span class="cw-f">Result</span>,
+  <span class="cw-f">Router</span>,
+  tangle::{extract::{<span class="cw-f">Context</span>, <span class="cw-f">TangleArg</span>, <span class="cw-f">TangleResult</span>}, layers::<span class="cw-f">TangleLayer</span>},
 };
-<span class="cw-k">use</span> <span class="cw-v">frost_secp256k1</span>::<span class="cw-f">SigningPackage</span>;
-<span class="cw-k">use</span> <span class="cw-k">crate</span>::<span class="cw-v">context</span>::<span class="cw-f">FrostCtx</span>;
+<span class="cw-k">use</span> <span class="cw-v">blueprint_sdk</span>::alloy::sol;
+<span class="cw-k">use</span> <span class="cw-k">crate</span>::context::<span class="cw-f">FrostCtx</span>;
 
-<span class="cw-k">pub const</span> <span class="cw-v">SIGN_JOB_ID</span>: <span class="cw-f">u32</span> = 0;
+<span class="cw-k">pub const</span> <span class="cw-v">SIGN_JOB_ID</span>: <span class="cw-f">u8</span> = <span class="cw-n">0</span>;
+
+sol! {
+  <span class="cw-k">struct</span> <span class="cw-f">SignRequest</span>  { <span class="cw-f">bytes</span> message; <span class="cw-f">uint16</span> threshold; }
+  <span class="cw-k">struct</span> <span class="cw-f">SignResponse</span> { <span class="cw-f">bytes</span> signature; }
+}
 
 <span class="cw-c">/// t-of-n FROST signing — scaffolded by Blueprint Agent.</span>
 <span class="cw-c">/// Audit, tune, ship. You own the repo.</span>
-<span class="cw-p">#[debug_job]</span>
 <span class="cw-k">pub async fn</span> <span class="cw-f">sign</span>(
-  <span class="cw-f">Context</span>(<span class="cw-v">ctx</span>): <span class="cw-f">Context</span>&lt;<span class="cw-f">FrostCtx</span>&gt;,
-  <span class="cw-v">message</span>: <span class="cw-f">Vec</span>&lt;<span class="cw-f">u8</span>&gt;,
-  <span class="cw-v">threshold</span>: <span class="cw-f">u16</span>,
-) -&gt; <span class="cw-f">Result</span>&lt;<span class="cw-f">Vec</span>&lt;<span class="cw-f">u8</span>&gt;&gt; {
-  <span class="cw-k">let</span> <span class="cw-v">round1</span> = <span class="cw-v">ctx</span>.<span class="cw-f">round1</span>(<span class="cw-v">threshold</span>).<span class="cw-k">await</span>?;
-  <span class="cw-k">let</span> <span class="cw-v">pkg</span>    = <span class="cw-f">SigningPackage</span>::<span class="cw-f">new</span>(<span class="cw-v">round1</span>.commitments, &amp;<span class="cw-v">message</span>);
-  <span class="cw-k">let</span> <span class="cw-v">shares</span> = <span class="cw-v">ctx</span>.<span class="cw-f">round2</span>(&amp;<span class="cw-v">pkg</span>).<span class="cw-k">await</span>?;
-  <span class="cw-v">ctx</span>.<span class="cw-f">aggregate</span>(&amp;<span class="cw-v">pkg</span>, &amp;<span class="cw-v">shares</span>)
+  <span class="cw-f">Context</span>(ctx): <span class="cw-f">Context</span>&lt;<span class="cw-f">FrostCtx</span>&gt;,
+  <span class="cw-f">TangleArg</span>(req): <span class="cw-f">TangleArg</span>&lt;<span class="cw-f">SignRequest</span>&gt;,
+) -&gt; <span class="cw-f">TangleResult</span>&lt;<span class="cw-f">SignResponse</span>&gt; {
+  <span class="cw-k">let</span> round1 = ctx.<span class="cw-f">round1</span>(req.threshold).<span class="cw-k">await</span>.<span class="cw-f">unwrap</span>();
+  <span class="cw-k">let</span> pkg    = ctx.<span class="cw-f">package</span>(&amp;round1.commitments, &amp;req.message);
+  <span class="cw-k">let</span> shares = ctx.<span class="cw-f">round2</span>(&amp;pkg).<span class="cw-k">await</span>.<span class="cw-f">unwrap</span>();
+  <span class="cw-k">let</span> sig    = ctx.<span class="cw-f">aggregate</span>(&amp;pkg, &amp;shares).<span class="cw-f">unwrap</span>();
+  <span class="cw-f">TangleResult</span>(<span class="cw-f">SignResponse</span> { signature: sig.into() })
 }
 
-<span class="cw-c">// wiring — BlueprintRunner composes producer/consumer/router</span>
-<span class="cw-f">Router</span>::<span class="cw-f">new</span>()
-  .<span class="cw-f">route</span>(<span class="cw-v">SIGN_JOB_ID</span>, <span class="cw-v">sign</span>.<span class="cw-f">layer</span>(<span class="cw-f">TangleLayer</span>))</span>`;
+<span class="cw-c">// Mount on a Router. TangleLayer injects on-chain metadata.</span>
+<span class="cw-k">pub fn</span> <span class="cw-f">router</span>(ctx: <span class="cw-f">FrostCtx</span>) -&gt; <span class="cw-f">Router</span> {
+  <span class="cw-f">Router</span>::<span class="cw-f">new</span>()
+    .<span class="cw-f">route</span>(<span class="cw-v">SIGN_JOB_ID</span>, sign.<span class="cw-f">layer</span>(<span class="cw-f">TangleLayer</span>))
+    .<span class="cw-f">with_context</span>(ctx)
+}`;
 
 // ─── Build for any framework — 4 deploy-target examples ───────────────────
 // Each "group" is a different framework/ecosystem; each group has 2 tabs:
