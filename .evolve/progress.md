@@ -74,3 +74,51 @@ Expected /stake delta: 6.0 → ~7.5+ once the 5-axe-critical and 1-color-contras
 ## Plateau / pursue triggers
 - 3 rounds without 0.5pt movement on a target → escalate to next `/pursue` (architectural redesign)
 - Gen 2 + round-2 fixes shipped; round-3 evolve waits on cap-reset / credit add to re-measure.
+
+## Session 2026-04-25 (post-handoff)
+
+Router PR #26 deploy verified green (commit 33c669a, Hetzner deploy success
+07:13Z). 25/25 smoke calls still 402: Drew's user has `subscription: null`
+in BOTH the router DB AND id.tangle.tools (per `/api/auth/userinfo`). Patch
+deployed correctly but has no Subscription row to honor. Drew needs to
+either (a) actually subscribe through id.tangle.tools so the Stripe webhook
+populates platform → router, (b) fix Tailscale auth so SSH seeding works,
+or (c) flip `ADMIN_TEST_SECRET_ALLOW_PROD=1` on the router env so the
+existing `/api/admin/test-seed` endpoint becomes usable.
+
+Bad audit re-run still blocked on the cap. Round-5 baseline cannot be
+measured this session.
+
+### Wishlist items shipped this session
+- **`<StoryScroller>` component** (`src/components/ui/StoryScroller.astro`)
+  — reusable sticky-scroll narrative with indexed static slots (max 6
+  stages), scoped per-instance script, prefers-reduced-motion respected,
+  stacks on mobile.
+- **`/services/blueprint-agent`** — Spec → Build → Eval → Ship lifecycle
+  scroller with bespoke per-stage visuals (workbench KV, file deltas,
+  eval rubric, release card with operators + revenue split).
+- **`/services/sandbox`** — Spawn → Run → Snapshot → Scale lifecycle
+  scroller with bespoke per-stage visuals (cold-start KV, runtime status
+  pills, snapshot freeze/restore diff, concurrency gauge).
+- **`/overview`** "How it flows" data-flow diagram — three source columns
+  (Public/Personal/Licensed) → Context Window panel showing token
+  allocation per source → 4-judge Eval panel. Pure SVG funnel,
+  IntersectionObserver entrance, scoped CSS, no fake brand logos.
+- **Crypto-bleed reframe** — `/developers` ecosystem section repositioned
+  as "Web3 vertical" (one of N), with subtitle making explicit that AI
+  runtimes + agent frameworks are also targets. BP-agent FAQ #237 leads
+  with "Any runtime you can describe" + AI frameworks first, then chains.
+  Logos retained per Drew's "keep going, not remove" instruction.
+
+Commits: 8dc9c04, f595e6e, 4fd582c (all pushed to
+`feat/brand-system-unification`).
+
+### Still queued (untouched this session)
+- Sticky-scroll on `/overview` (replaced with the data-flow diagram for
+  this session — overview already has a Four Surfaces FeatureCard grid;
+  a sticky-scroll could replace that grid in a future pass)
+- Service-page hero rework (BP-agent + browser-agent reading "mid")
+- Sandbox snapshot/restore + browser-agent DOM-tree 2D diagrams
+- `wf-h4-2` heading hierarchy fix (held — touches 6 pages)
+- Section/BentoCell/CtaBlock primitives (Gen-3 territory; trigger if
+  round-5 stuck ≤6.5/10 across the board)
