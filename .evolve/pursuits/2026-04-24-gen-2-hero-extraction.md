@@ -1,6 +1,6 @@
 # Pursuit: tangle-website to 9.5+/10
 Generation: 2
-Status: designing
+Status: shipped (verdict: ADVANCE — measurement deferred to round-2 evolve)
 
 ## Metric → product-value claim
 - bad-design-audit score: moves with user-visible polish (typography hierarchy, contrast, alignment, surface rhythm). Confirmed via 4-persona reviews — when audit went 4.6 → 6, persona reviews concurred on visible improvement direction.
@@ -160,3 +160,43 @@ Verdict: PASS conditionally. **Concern**: standardizing 8 heroes loses page pers
 5. ME: Run bad-batch.sh + persona re-rate
 6. PERSIST: scorecard.json + progress.md + experiments.jsonl + current.json (mode → evolve)
 7. HANDOFF: "Run /evolve targeting <weakest page> against <new baseline>."
+
+## Generation 2 Results
+
+### Build status — all changes shipped
+| # | Change | Status | Commit | Files |
+|---|--------|--------|--------|-------|
+| 1 | `src/components/ui/Hero.astro` (new) | ✅ | 73a30f3 | 1 (+196 lines) |
+| 2a | `/` (home) port | ✅ | 73a30f3 | index.astro |
+| 2b | `/operators` + `/developers` + `/stake` ports | ✅ | fe9cd9d | 3 pages |
+| 2c | `/services/blueprint-agent` + `/overview` ports | ✅ | db82118 | 2 pages |
+| 2d | `/services/sandbox` + `/services/browser-agent` ports | ✅ | c5d583e | 2 pages |
+| 3 | Retire `SandboxShowcase.tsx` + `BrowserAgentShowcase.tsx` | ✅ | c5d583e | -733 lines deleted |
+
+### Verification
+- All 8 ported pages return HTTP 200 against local dev server
+- Zero remaining `*-hero-grid` / `wf-section-hero` / `wf-hero-section` class refs in `src/pages`
+- Zero `BrowserAgentShowcase` / `SandboxShowcase` component refs in src (one stale comment in `global.css` legacy block — Gen 3 sweep)
+- Zero hardcoded near-black/grey contrast traps (`#0a0a0a`, `#545454`, `#6c6c6c`, `#6f6f6f`) in `src/pages` or `src/components`
+- Net diff: **+716 / −1290** across 14 files. Bespoke hero CSS surface reduced by ~574 lines net; 733 lines of React-island showcase code deleted.
+
+### What worked
+- Brand-kit hero pattern transfers cleanly to a typed Astro component — single source of truth for eyebrow / clamp h1 / install pill / CTAs / video bg / right-slot.
+- Parallel subagent decomposition (3 agents, 7 pages, ~3 min wall-clock from kickoff to last commit) — Hero.astro contract was tight enough that no agent had to backtrack.
+- Optional `videoBg` and `installPill` props let each page own its identity (glass-cylinders, abstract-objects, cube-dark) without forking structure.
+- ExamplePanel-as-replacement-for-React-showcase eliminated 28+ contrast violations at once instead of patching them one by one.
+
+### What didn't / surprised
+- Bad-audit re-run blocked: `TANGLE_ROUTER_USER_KEY` is at the 5/day free-tier cap. **Quantitative re-rating deferred to round 2 of `/evolve`** once the cap resets (~midnight UTC).
+- Gen 2 successfully eliminated `wf-*-hero-*` from pages, but the 1791-line legacy `global.css` block still ships (Gen 3 territory, as designed).
+- One subagent mid-flight reported its prior edits had been reverted (linter/auto-revert race) and re-applied them cleanly — flagged for awareness but resolved without intervention.
+
+### Verdict: ADVANCE
+Architectural shift complete. Every marketing page now consumes the same Hero.astro contract; the two highest-violation React showcases are gone; the bespoke-hero surface area that was regenerating contrast/spacing/alignment failures every round is closed.
+
+Quantitative validation deferred to round-2 evolve — the structural prerequisite for hitting 9.5+/10 (single-source heroes, no React showcase contrast traps) is met. Round 2 measures the result.
+
+### Seeds for Generation 3
+1. **Nuke `global.css` legacy block** (lines 1–1791). Every page is now off `wf-*-hero-*`; finish the migration on `wf-h1`, `wf-h3`, `wf-section-head`, `wf-bento-cell`, `wf-cta-block`, etc.
+2. **`Section.astro` + `BentoCell.astro` + `CtaBlock.astro` primitives** — Hero.astro proved the pattern; section-level surfaces are the next snowflake set.
+3. **Lightweight static linter** for the 4-persona slop dimensions (banned-word density, `<em>` italics on h1, hardcoded greys) — replaces $$ LLM audit on the cheap dimensions, reserves bad-audit for visual craft.
