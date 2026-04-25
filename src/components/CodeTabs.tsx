@@ -1,13 +1,14 @@
 import { useState, type ReactNode } from 'react';
 
-// Syntax highlighting helpers — matching sandbox landing exactly
-const K = ({ children }: { children: ReactNode }) => <span style={{ color: '#c084fc' }}>{children}</span>;
-const S = ({ children }: { children: ReactNode }) => <span style={{ color: '#a78bfa' }}>{children}</span>;
-const C = ({ children }: { children: ReactNode }) => <span style={{ color: 'rgba(255,255,255,0.3)' }}>{children}</span>;
-const F = ({ children }: { children: ReactNode }) => <span style={{ color: '#60a5fa' }}>{children}</span>;
-const N = ({ children }: { children: ReactNode }) => <span style={{ color: '#fcd34d' }}>{children}</span>;
-const V = ({ children }: { children: ReactNode }) => <span style={{ color: '#e2e8f0' }}>{children}</span>;
-const SH = ({ children }: { children: ReactNode }) => <span style={{ color: '#4ade80' }}>{children}</span>;
+// Syntax highlighting — matches the .cw-* token palette in global.css.
+// Comment opacity bumped from 0.3 (≈3:1 fails AA) to 0.65 (≈5:1 passes).
+const K = ({ children }: { children: ReactNode }) => <span style={{ color: '#C4B5FD' }}>{children}</span>;
+const S = ({ children }: { children: ReactNode }) => <span style={{ color: '#6EE7B7' }}>{children}</span>;
+const C = ({ children }: { children: ReactNode }) => <span style={{ color: '#9B9BBF' }}>{children}</span>;
+const F = ({ children }: { children: ReactNode }) => <span style={{ color: '#93C5FD' }}>{children}</span>;
+const N = ({ children }: { children: ReactNode }) => <span style={{ color: '#FCD34D' }}>{children}</span>;
+const V = ({ children }: { children: ReactNode }) => <span style={{ color: '#E5E7EB' }}>{children}</span>;
+const SH = ({ children }: { children: ReactNode }) => <span style={{ color: '#34D399' }}>{children}</span>;
 
 const mono = 'var(--font-mono)';
 
@@ -345,7 +346,7 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
               flexShrink: 0,
               transition: 'all 0.15s',
               background: active === tab.key ? 'rgba(142,89,255,0.15)' : 'transparent',
-              color: active === tab.key ? '#c084fc' : 'rgba(255,255,255,0.4)',
+              color: active === tab.key ? '#C4B5FD' : 'rgba(255,255,255,0.65)',
             }}
           >
             <span style={{ fontSize: 11 }}>{tab.icon}</span>
@@ -354,7 +355,7 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
         ))}
 
         {/* Copy button */}
-        <svg style={{ width: 16, height: 16, color: 'rgba(255,255,255,0.2)', cursor: 'pointer', marginLeft: 'auto' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <svg style={{ width: 16, height: 16, color: 'rgba(255,255,255,0.5)', cursor: 'pointer', marginLeft: 'auto' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
         </svg>
