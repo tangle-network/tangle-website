@@ -122,3 +122,74 @@ Commits: 8dc9c04, f595e6e, 4fd582c (all pushed to
 - `wf-h4-2` heading hierarchy fix (held — touches 6 pages)
 - Section/BentoCell/CtaBlock primitives (Gen-3 territory; trigger if
   round-5 stuck ≤6.5/10 across the board)
+
+## Round 7 — Gen-3 fan-out (2026-04-25T10:15Z)
+
+Shipped commits: 9f00394, 14006a0, 2c3b57c (fan-out across 7 pages + vault-eyebrow cascade fix).
+
+| Page | R6 | R7 | Δ findings | criticals |
+|---|---|---|---|---|
+| / | 6.0 / 5 | 6.0 / 5 | 0 | 2 |
+| /overview | 6.0 / 4 | 6.0 / 3 | -1 | 0 |
+| /operators | 7.0 / 3 | 6.0 / 4 | +1 | 0 |
+| /developers | 6.0 / 5 | 6.0 / 5 | 0 | 1 |
+| /stake | 6.0 / 4 | 6.0 / 4 | 0 | 0 |
+| /services/blueprint-agent | 6.0 / 4 | 6.0 / 4 | 0 | 0 |
+| /services/sandbox | 6.0 / 5 | 6.0 / 6 | +1 | 3 |
+| /services/browser-agent | 6.0 / 4 | 6.0 / 4 | 0 | 0 |
+| /brand-kit | 7.0 / 5 | 6.0 / 5 | 0 | 1 |
+| **avg/total** | **6.22 / 40** | **6.0 / 40** | flat | **7** |
+
+### Verdict: PLATEAU CONFIRMED
+
+4 rounds (R3, R5, R6, R7) sat at corpus avg 6.0–6.22. Score never crossed 7.0.
+Audit is integer-bucketed + relative-rank-based: single-page deltas can't move
+corpus avg until ≥4 pages cross a bucket simultaneously. Further /evolve runs
+chasing this scalar are negative-EV.
+
+### What landed structurally
+
+- Section/BentoCell/CtaBlock primitives now power 8 of 9 pages (/brand-kit
+  is the holdout — its sections are bespoke).
+- Vault-eyebrow contrast cascade override beats inline brand-cool styles
+  (.t-section--vault descendants → emerald #047857 5.5:1 on #f4f4f9).
+- Type scale tokens (--type-h1..h4, --type-body-*, --type-mono-eyebrow,
+  --section-pad-*) defined once in :root and consumed corpus-wide.
+
+### What didn't move and why
+
+- Audit score: stuck at 6.0 because the metric quantizes hard at 0.0 / 6.0 /
+  7.0 and ranks pages relative to each other. Two pages (/operators,
+  /brand-kit) lost 7.0 placements in R7 even though their findings didn't
+  worsen — the bucket boundary moved when the corpus normalized.
+- 7 criticals remain: /sandbox 3 (BentoCell vault default-slot has
+  dark-theme inline colors via --text-secondary fallback that leak onto
+  white bg), / 2 (brand-cool-on-white in elements outside the vault wrapper
+  the cascade rule scopes to), /developers 1, /brand-kit 1.
+
+### Lesson captured for subagent fan-out
+
+"brand-cool is AA-safe" was given as a guardrail to subagents without
+specifying surface. brand-cool #818CF8 = 4.85:1 on dark depth-1 (passes)
+but 2.72:1 on white (fails). Six new criticals were introduced in the
+fan-out before the cascade override caught them. **Next time: pass surface
+along with color** — "brand-cool on dark, brand-dim on white."
+
+### Next move (next session, not this one)
+
+Two paths exist; pick one before re-invoking /evolve:
+
+**(A) Change the judge.** Bring in a second persona-design rubric (staff-
+design or AI-VC) and gate on judge-disagreement OR finding-count delta
+rather than integer score. The current judge has hit its resolution ceiling.
+
+**(B) /pursue Gen-4.** Internal-color hardening of BentoCell vault
+default-slot (kill the --text-secondary fallback that leaks dark theme
+onto white bg — root cause of /sandbox's 3 criticals) PLUS delete legacy
+wf-section/wrapper/container-large/cta-card/builder-feature-card from
+global.css to force every page to consume the new primitives. Path B is
+higher-leverage because the legacy CSS is the structural reason new
+ports keep introducing inline-color regressions.
+
+**Recommendation: B.** A is a measurement change; B is a code change that
+removes a class of regressions permanently.
