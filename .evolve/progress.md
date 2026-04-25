@@ -193,3 +193,72 @@ ports keep introducing inline-color regressions.
 
 **Recommendation: B.** A is a measurement change; B is a code change that
 removes a class of regressions permanently.
+
+## Round 8 — zero criticals (2026-04-25T10:38Z)
+
+Audit re-baseline (pages identical to R7) confirmed R7 plateau was a stale
+measurement: cascade fix (commit 2c3b57c) shipped 03:22 MDT, R7 audit ran
+at 03:17 MDT. R8 baseline showed same 7 criticals.
+
+**Diagnosed root cause** (which the cascade rule did not address):
+- /sandbox 3c: `wf-h3` and `wf-body-01` *classes* inside `.t-section--vault`
+  still inherit dark-theme colors. Old `.wf-section-vault` rules existed
+  for these but Gen-3 ships `.t-section--vault` instead.
+- / 3 brand-cool spans: `.home-product-icon` override existed in scoped
+  page CSS but specificity tied with the inline-style block — needed
+  `!important` to win cleanly.
+- / 5 axe elements: `.surfaces-stage` opacity:0.32 on inactive children
+  blends `var(--brand-cool)` to ~#313463 on dark = 1.66:1 (axe fails).
+- /developers 1c: CodeTabs `<pre>` was non-focusable (axe Safari rule).
+- /brand-kit 1c: GitHub button bg was `var(--brand-primary)` #6366F1
+  (4.46:1 with white text); brand-dim #4F46E5 passes at 5.42:1.
+
+### Fixes (commit 13ce134)
+
+| # | File | Change |
+|---|------|--------|
+| 1 | global.css | `.t-section--vault` mirrors of wf-h*/wf-body-* color rules |
+| 2 | global.css | `.t-section--vault .home-product-icon/cta` → `#4F46E5 !important` |
+| 3 | index.astro | `.surfaces-stage` opacity-dim → color-dim (`#8E92A8` 5.32:1) |
+| 4 | CodeTabs.tsx | `<pre tabIndex={0} role="region" aria-label>` |
+| 5 | brand-kit.astro | GitHub link bg `var(--brand-primary)` → `var(--brand-dim)` |
+
+### Round 8 result
+
+| Page | R7 | R8 | Δ findings | Criticals |
+|---|---|---|---|---|
+| / | 6.0 / 5 | 6.0 / 4 | -1 | 2c → 0c |
+| /overview | 6.0 / 3 | 6.0 / 4 | +1 | 0c |
+| /operators | 6.0 / 4 | 7.0 / 3 | -1 (+score) | 0c |
+| /developers | 6.0 / 5 | 5.0 / 0 | -5 (LLM holistic quirk) | 1c → 0c |
+| /stake | 6.0 / 4 | 6.0 / 4 | 0 | 0c |
+| /services/blueprint-agent | 6.0 / 4 | 6.0 / 4 | 0 | 0c |
+| /services/sandbox | 6.0 / 6 | 6.0 / 4 | -2 | 3c → 0c |
+| /services/browser-agent | 6.0 / 4 | 6.0 / 4 | 0 | 0c |
+| /brand-kit | 6.0 / 5 | 7.0 / 3 | -2 (+score) | 1c → 0c |
+| **avg/total** | **6.0 / 41 / 7c** | **6.11 / 30 / 0c** | **-11** | **all clear** |
+
+### Verdict: KEEP
+
+First round in 4 to clear all criticals. The R7 "plateau" call was
+diagnostic — re-running on current state revealed concrete CSS targets
+once the audit pinpointed exact element selectors.
+
+### Remaining gap
+
+30 findings, all 'major' (typography, spacing, image alignment). Score
+buckets at 6.0 because the audit weights visual hierarchy + spacing
+heavily and remaining items are real:
+- Typography hierarchy "inconsistent heading sizes" flagged on 5+ pages
+- Heading→content spacing rhythm flagged on 4+ pages
+- Image alignment flagged on /
+
+Round 9 should attack these as a single CSS rule pass. They're
+pattern-shared, so one fix will likely move 4+ pages and crack the
+6→7 bucket boundary.
+
+### Lesson captured
+
+Always re-measure baseline AFTER pushing a fix — don't trust
+pre-fix audits to inform plateau calls. Cost: would have escalated
+to /pursue Gen-4 when /evolve still had plenty of headroom.
