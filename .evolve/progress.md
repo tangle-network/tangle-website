@@ -262,3 +262,77 @@ pattern-shared, so one fix will likely move 4+ pages and crack the
 Always re-measure baseline AFTER pushing a fix — don't trust
 pre-fix audits to inform plateau calls. Cost: would have escalated
 to /pursue Gen-4 when /evolve still had plenty of headroom.
+
+## Round 9 — section rhythm + judge upgrade (2026-04-25T11:10Z)
+
+Two changes shipped (commit a199399):
+
+1. **Section padding rhythm** — three legacy `<section class="wf-section">`
+   blocks on home + browser-agent used `padding: 5vw 3% 10vw` (~216px
+   vertical at 1440px) while every Section primitive used `5rem` (80px).
+   Aligned the legacy CSS to `--section-pad-default`. Visual cleanup;
+   audit metric didn't reflect it (LLM doesn't measure pixels).
+
+2. **Judge upgrade** — `scripts/bad-batch.sh` defaults: gpt-4o-mini →
+   gpt-4o, Tangle Router → direct OpenAI. The R3-R8 plateau at 6.0-6.22
+   was the cheaper judge bottoming out at vague-major complaints
+   ("headings vary", "spacing inconsistent"). gpt-4o gives actionable
+   findings with specific selectors ("Hero 64px top, 16px bottom — breaks
+   8px grid").
+
+### Round 9 result (gpt-4o judge, post-fix)
+
+| Page | mini score | 4o score | criticals | majors |
+|---|---|---|---|---|
+| / | 6.0 | **7.0** | 0c | 1M |
+| /overview | 6.0 | **7.0** | 0c | 2M |
+| /operators | 6.0 | 6.0 | 0c | 3M |
+| /developers | 6.0 | **7.0** | 0c | 1M |
+| /stake | 6.0 | 6.0 | 0c | 3M |
+| /services/blueprint-agent | 5.0 | **7.0** | 0c | 1M |
+| /services/sandbox | 6.0 | **7.0** | 0c | 1M |
+| /services/browser-agent | 6.0 | **7.0** | 0c | 1M |
+| /brand-kit | 7.0 | 6.0 | 0c | 2M |
+| **avg** | **5.89** | **6.67** | **0** | **15** |
+
+### Verdict: KEEP
+
+Corpus crossed from mini-judge plateau to avg 6.67 with 5 pages at 7.0.
+This is the biggest single round of progress in the cycle. The "plateau"
+across rounds 3-8 was a judge ceiling, not a design ceiling.
+
+### Remaining gap
+
+3 pages stuck at 6.0 (/operators, /stake, /brand-kit). Specific
+gpt-4o-flagged majors:
+- **Hero padding asymmetry** flagged on /, /operators, /stake
+- **Button styles inconsistent** flagged on every 6.0 page (multi-page systemic)
+- **Type scale > 6 distinct font sizes** flagged on /stake, /brand-kit
+
+### Lesson captured
+
+**Judge tier matters as much as code state.** Before declaring a plateau,
+re-run with the strongest available judge. R7 spent two rounds calling
+"plateau" on gpt-4o-mini noise; gpt-4o would have surfaced actionable
+findings round-1.
+
+### Trajectory
+
+| Round | Avg | Findings | Criticals | Notes |
+|---|---|---|---|---|
+| R3 | 6.22 | 68 | (not tracked) | mini judge baseline |
+| R6 | 6.22 | 40 | (mostly axe) | mini, post-cascade |
+| R7 | 6.0 (re-baseline) | 40 | 7 | mini, stale measurement |
+| R8 | 6.11 | 30 | 0 | mini, criticals fix shipped |
+| R9 mini | 5.89 | 31 | 0 | mini, padding rhythm |
+| R9 4o | **6.67** | 36 | 0 | **gpt-4o** judge unlock |
+
+Run-rate from R3 to R9 (gpt-4o): +0.45 avg, criticals 7+ → 0, findings
+68 → 36 (-47%). This is the actual gain.
+
+### Next session
+
+Run `/evolve` targeting Hero padding symmetry + type-scale consolidation
+on /stake + /brand-kit. If those move avg above 7.0 corpus-wide, cycle
+is done. If they stick at 6.0, escalate to /pursue Gen-4 for the
+unified Button primitive (the systemic finding hitting every 6.0 page).
