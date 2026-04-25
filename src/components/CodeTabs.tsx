@@ -361,8 +361,9 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
         </svg>
       </div>
 
-      {/* Code content */}
-      <pre style={{
+      {/* Code content — tabIndex=0 + role=region + aria-label so the
+         scrollable region is keyboard-accessible (axe Safari rule). */}
+      <pre tabIndex={0} role="region" aria-label="Code example" style={{
         padding: 'clamp(12px, 3vw, 20px)',
         fontFamily: mono,
         fontSize: 'clamp(12px, 2.5vw, 15px)',
