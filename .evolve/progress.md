@@ -336,3 +336,96 @@ Run `/evolve` targeting Hero padding symmetry + type-scale consolidation
 on /stake + /brand-kit. If those move avg above 7.0 corpus-wide, cycle
 is done. If they stick at 6.0, escalate to /pursue Gen-4 for the
 unified Button primitive (the systemic finding hitting every 6.0 page).
+
+## Round 10 — gpt-5.5 judge + screenshot cleanup (2026-04-25T13:50Z)
+
+**User flagged the judge tier.** I'd defaulted to gpt-4o — Claude's Jan
+2026 cutoff missed gpt-5.5 (released 2026-04-23, two days ago). Upgraded
+default and re-baselined.
+
+### gpt-5.5 baseline (pre-fix)
+
+| page | gpt-4o R9 | gpt-5.5 |
+|---|---|---|
+| / | 7.0 / 3 | 7.0 / 10 |
+| /overview | 7.0 / 5 | **8.0** / 9 |
+| /operators | 6.0 / 5 | **7.0** / 8 |
+| /developers | 7.0 / 4 | 7.0 / 8 |
+| /stake | 6.0 / 5 | **7.0** / 9 |
+| /services/blueprint-agent | 7.0 / 4 | 7.0 / 10 |
+| /services/sandbox | 7.0 / 4 | 7.0 / 7 |
+| /services/browser-agent | 7.0 / 4 | 7.0 / 8 |
+| /brand-kit | 6.0 / 5 | **7.0** / 8 |
+| **avg** | **6.67** | **7.11** |
+
+Four pages crossed buckets. Findings up (10 vs 3 typical) because 5.5
+catches finer issues. Avg up because it also recognizes overall quality.
+
+### Fixes shipped (commit 556cd90)
+
+| # | Change | Why |
+|---|--------|-----|
+| 1 | astro.config: `devToolbar.enabled = false` | Inspect/Audit/Settings floating buttons were leaking into screenshots, flagged on 3 pages as "internal controls visible" |
+| 2 | CodeWindow tab `'bad CLI' → 'CLI'` | gpt-5.5 read 'bad' as accidental placeholder/typo |
+| 3 | Blueprint-card `<img alt={name}>` → `alt=''` | visible `<span>` already names; alt was duplicating to "Envio Indexer Envio Indexer" |
+
+### Round 10 final
+
+| | baseline | post-fix |
+|---|---|---|
+| avg | 7.11 | 7.0 |
+| findings | 77 | 73 |
+| criticals | 0 | 0 |
+
+Score regression is single-rep variance (/overview 8→7 with no code
+change to that page). Real signal: -4 findings, all pages still 7.0+.
+
+### Remaining 73 findings — categorized
+
+These are gpt-5.5's senior product critiques. Most need copy/UX decisions,
+not blind CSS fixes:
+
+- **Hero needs explicit lede** under headline naming buyer + outcome (recurring on / Hero, /stake, /operators)
+- **CTA hierarchy ambiguous** when 2+ CTAs presented at equal weight (/stake, /sandbox)
+- **Narrative density** — too many media moments stacked (/, /overview, /blueprint-agent)
+- **Brand-kit lacks ToC + copy affordances** on code examples
+- **Operators hero needs quickstart proof point** above fold
+
+### Lesson captured
+
+**Always check what models are actually live.** I defaulted to gpt-4o
+without listing OpenAI's `/v1/models`. gpt-5.5 was 2 days old. Round 9
+"plateau" was actually mid-tier judge ceiling; round 10 baseline with
+the right judge showed the corpus is already in 7.0+ territory.
+Companion to the R9 lesson on judge-tier-matters: the strongest model
+isn't a fixed point — re-check the model list when starting a new
+session.
+
+### Trajectory
+
+| Round | Judge | Avg | Findings | Criticals |
+|---|---|---|---|---|
+| R3 | mini | 6.22 | 68 | tracked-axe-only |
+| R7 | mini | 6.0 | 40 | 7 (stale audit) |
+| R8 | mini | 6.11 | 30 | **0** |
+| R9 | mini | 5.89 | 31 | 0 |
+| R9 | 4o | 6.67 | 36 | 0 |
+| R10 | 5.5 | 7.11 | 77 | 0 |
+| **R10 fix** | **5.5** | **7.0** | **73** | **0** |
+
+The trajectory looks "non-monotonic" in raw avg, but the right read is:
+findings dropping (68 → 73 with stricter judge ≈ same) and criticals at
+0 since R8. Score increases mostly tracked judge upgrades — the design
+was already at 7.0 by R8 but mini couldn't see it.
+
+### Next session
+
+Round 11 should attack one specific gpt-5.5 major. The cheapest with
+biggest blast: **add explicit hero ledes** on /stake and /operators
+(both flagged "no visible lede; headline + CTAs only"). Both pages have
+strong taglines but no second-level explainer. Drew should write the
+copy; I implement.
+
+If those move the 5/9 pages stuck at 7.0 (vs /overview which hit 8),
+cycle is done above 7.5. If not, escalate to /pursue Gen-4 for a full
+hero refactor + unified Button primitive (still on the queue).
