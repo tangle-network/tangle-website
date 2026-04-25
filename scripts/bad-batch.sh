@@ -28,7 +28,7 @@ fi
 # NOT plumbed through cli-design-audit.js, so we set the SDK env var directly.
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://router.tangle.tools/v1}"
 # Free-tier model on Tangle Router (default gpt-5.4 requires credits).
-MODEL="${BAD_MODEL:-gpt-4o}"  # mini bottoms out at vague 6.0; full gpt-4o gives actionable selectors
+MODEL="${BAD_MODEL:-gpt-5.5}"  # gpt-5.5 (released 2026-04-23) gives product-strategy critique, not CSS noise
 
 if [[ -z "$OPENAI_API_KEY" ]]; then
   echo "TANGLE_ROUTER_USER_KEY decrypt returned empty" >&2

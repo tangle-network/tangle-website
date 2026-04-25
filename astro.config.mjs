@@ -10,6 +10,11 @@ import sitemap from '@astrojs/sitemap';
 export default defineConfig({
   site: 'https://tangle.tools',
   output: 'static',
+  // Hide the dev toolbar so it doesn't leak into design-audit screenshots.
+  // The toolbar's Inspect/Audit/Settings buttons were being flagged as
+  // "internal controls visible in marketing flow" on /sandbox, /browser-agent,
+  // /brand-kit. Re-enable with ASTRO_DEV_TOOLBAR=1.
+  devToolbar: { enabled: process.env.ASTRO_DEV_TOOLBAR === '1' },
   integrations: [react(), mdx(), sitemap({
     filter: (page) => !page.includes('/preview/'),
   })],
