@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Audit every marketing page with `bad design-audit` via Tangle Router.
+# Audit every marketing page with `bad design-audit`.
 # Usage: ./scripts/bad-batch.sh [base-url]
 #   base-url defaults to http://localhost:4321 (Astro dev server)
 #
-# Routes through Tangle Router (no rate cap, billed via TANGLE_ROUTER_USER_KEY).
-# Writes a per-page report under audit-results/ and a flat scorecard line per page.
+# Defaults to direct OpenAI (Drew's router sub is anonymous-tier 5/day,
+# which caps a 9-page batch). Override with TANGLE_USER=1 to route via
+# router (5/day cap applies). Writes per-page report + flat scorecard.
 
 set -euo pipefail
 
@@ -16,12 +17,18 @@ if [[ ! -f "$SECRETS" ]]; then
   exit 1
 fi
 
-export OPENAI_API_KEY="$(dotenvx get TANGLE_ROUTER_USER_KEY -f "$SECRETS")"
+if [[ "${TANGLE_USER:-0}" == "1" ]]; then
+  export OPENAI_API_KEY="$(dotenvx get TANGLE_ROUTER_USER_KEY -f "$SECRETS")"
+  export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://router.tangle.tools/v1}"
+else
+  export OPENAI_API_KEY="$(dotenvx get OPENAI_API_KEY -f "$SECRETS")"
+  export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+fi
 # @ai-sdk/openai reads OPENAI_BASE_URL natively; bad's documented LLM_BASE_URL is
 # NOT plumbed through cli-design-audit.js, so we set the SDK env var directly.
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://router.tangle.tools/v1}"
 # Free-tier model on Tangle Router (default gpt-5.4 requires credits).
-MODEL="${BAD_MODEL:-gpt-4o-mini}"
+MODEL="${BAD_MODEL:-gpt-4o}"  # mini bottoms out at vague 6.0; full gpt-4o gives actionable selectors
 
 if [[ -z "$OPENAI_API_KEY" ]]; then
   echo "TANGLE_ROUTER_USER_KEY decrypt returned empty" >&2
