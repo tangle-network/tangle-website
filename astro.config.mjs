@@ -6,7 +6,6 @@ import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
 import cloudflare from '@astrojs/cloudflare';
 import sitemap from '@astrojs/sitemap';
-import icon from 'astro-icon';
 // https://astro.build/config
 export default defineConfig({
   site: 'https://tangle.tools',
@@ -18,7 +17,7 @@ export default defineConfig({
   devToolbar: { enabled: process.env.ASTRO_DEV_TOOLBAR === '1' },
   integrations: [react(), mdx(), sitemap({
     filter: (page) => !page.includes('/preview/'),
-  }), icon()],
+  })],
 
   vite: {
     plugins: [tailwindcss()],
