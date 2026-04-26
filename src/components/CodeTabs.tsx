@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 
-// Syntax highlighting — matches the .cw-* token palette in global.css.
+// Syntax highlighting. matches the .cw-* token palette in global.css.
 // Comment opacity bumped from 0.3 (≈3:1 fails AA) to 0.65 (≈5:1 passes).
 const K = ({ children }: { children: ReactNode }) => <span style={{ color: '#C4B5FD' }}>{children}</span>;
 const S = ({ children }: { children: ReactNode }) => <span style={{ color: '#6EE7B7' }}>{children}</span>;
@@ -122,7 +122,7 @@ function SBAgent() {
     <K>const</K> <V>response</V> = <K>await</K> box.<F>prompt</F>({'\n'}
     {'  '}<S>"Find and fix the failing tests in this repo"</S>{'\n'}
     );{'\n\n'}
-    <C>{'// Multi-turn task — agent works until done'}</C>{'\n'}
+    <C>{'// Multi-turn task. agent works until done'}</C>{'\n'}
     <K>const</K> <V>task</V> = <K>await</K> box.<F>task</F>({'\n'}
     {'  '}<S>"Create a REST API with JWT authentication"</S>,{'\n'}
     {'  '}{'{'} maxTurns: <N>20</N> {'}'}{'\n'}
@@ -241,7 +241,7 @@ function BPABI() {
     {'    '}<S>uint32</S> completionTokens;{'\n'}
     {'  }'}{'\n'}
     {'}'}{'\n\n'}
-    <C>{'// Use in your job handler — decoded automatically'}</C>{'\n'}
+    <C>{'// Use in your job handler. decoded automatically'}</C>{'\n'}
     <K>pub async fn</K> <F>infer</F>({'\n'}
     {'  '}<V>TangleArg</V>(req): <V>TangleArg</V>{'<'}<V>InferenceRequest</V>{'>,'}{'\n'}
     ) {'-> '}<V>TangleResult</V>{'<'}<V>InferenceResult</V>{'>'} {'{'}{'\n'}
@@ -361,7 +361,7 @@ export default function CodeTabs({ variant = 'browser' }: { variant?: 'browser' 
         </svg>
       </div>
 
-      {/* Code content — tabIndex=0 + role=region + aria-label so the
+      {/* Code content. tabIndex=0 + role=region + aria-label so the
          scrollable region is keyboard-accessible (axe Safari rule). */}
       <pre tabIndex={0} role="region" aria-label="Code example" style={{
         padding: 'clamp(12px, 3vw, 20px)',
