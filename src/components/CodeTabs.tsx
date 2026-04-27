@@ -26,9 +26,9 @@ function BAGoal() {
     <SH>$</SH> bad run \{'\n'}
     {'  '}<K>--goal</K> <S>"Sign up, create project, verify dashboard"</S> \{'\n'}
     {'  '}<K>--url</K> <S>https://your-app.com</S> \{'\n'}
-    {'  '}<K>--model</K> claude-sonnet-4-20250514 <K>--vision</K>{'\n\n'}
+    {'  '}<K>--model</K> claude-sonnet-4-6 <K>--vision</K>{'\n\n'}
     <C>agent-driver v0.10.0</C>{'\n'}
-    <C>Model: anthropic/claude-sonnet-4-20250514 | Vision: true</C>{'\n\n'}
+    <C>Model: anthropic/claude-sonnet-4-6 | Vision: true</C>{'\n\n'}
     {'  '}<V>▶ Sign up, create project, verify dashboard</V>{'\n'}
     <C>{'    '}turn 1: navigate → /signup</C>{'\n'}
     <C>{'    '}turn 2: type → email field</C>{'\n'}
@@ -67,7 +67,7 @@ function BASDK() {
     <K>const</K> <V>driver</V> = <K>new</K> <F>PlaywrightDriver</F>(page);{'\n'}
     <K>const</K> <V>agent</V> = <K>new</K> <F>BrowserAgent</F>({'{'}{'\n'}
     {'  '}driver,{'\n'}
-    {'  '}config: {'{'} model: <S>'claude-sonnet-4-20250514'</S>, vision: <N>true</N> {'}'}{'\n'}
+    {'  '}config: {'{'} model: <S>'claude-sonnet-4-6'</S>, vision: <N>true</N> {'}'}{'\n'}
     {'}'});{'\n\n'}
     <K>const</K> <V>result</V> = <K>await</K> agent.<F>run</F>({'{'}{'\n'}
     {'  '}goal: <S>'Sign up, create a project, verify preview'</S>,{'\n'}
@@ -84,7 +84,7 @@ function BADesignAudit() {
     <SH>$</SH> bad design-audit \{'\n'}
     {'  '}<K>--url</K> <S>https://your-app.com</S> \{'\n'}
     {'  '}<K>--extract-tokens</K> \{'\n'}
-    {'  '}<K>--model</K> claude-sonnet-4-20250514{'\n\n'}
+    {'  '}<K>--model</K> claude-sonnet-4-6{'\n\n'}
     <C>Auditing https://your-app.com...</C>{'\n'}
     <C>Viewport: 1440×900 | Pages: 5</C>{'\n\n'}
     <V>Health Score: </V><SH>82</SH><V>/100</V>{'\n\n'}
