@@ -60,11 +60,25 @@ if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
+  // Try OpenAI direct first (router free-tier hits the wall fast).
   try {
-    API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+    const k = execSync(`dotenvx get OPENAI_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+    if (k && k.startsWith('sk-')) {
+      API_KEY = k;
+      API_BASE = 'https://api.openai.com/v1';
+    }
   }
   catch {
-    // ignore — caught below
+    // ignore
+  }
+  // Fall through to router key.
+  if (!API_KEY) {
+    try {
+      API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+    }
+    catch {
+      // ignore — caught below
+    }
   }
 }
 if (!API_KEY) {
@@ -173,7 +187,6 @@ async function auditPage(label, copy, attempt = 1) {
         { role: 'user', content: userMessage },
       ],
       response_format: { type: 'json_object' },
-      temperature: 0.2,
     }),
   });
   if (!res.ok) {
