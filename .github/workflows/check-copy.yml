@@ -1,0 +1,54 @@
+name: Check copy
+
+# Anti-slop copywriting audit. Runs `pnpm check:copy` against the
+# built site, sends each page's visible copy to a strong LLM judge,
+# scores 1–10 against a strict rubric (hollow adjectives, counting
+# headlines, em-dashes, mechanism-less claims, dev-tool clichés).
+# Pages below the threshold fail the workflow.
+#
+# Local: `pnpm check:copy` (single page: `pnpm check:copy services/sandbox`).
+
+on:
+  pull_request:
+    paths:
+      - 'src/pages/**'
+      - 'src/components/**'
+      - 'src/layouts/**'
+      - 'scripts/check-copy.mjs'
+      - '.github/workflows/check-copy.yml'
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Run copy audit
+        env:
+          # CI uses the repo-secret router key. Set this in
+          # Settings → Secrets → Actions.
+          TANGLE_ROUTER_USER_KEY: ${{ secrets.TANGLE_ROUTER_USER_KEY }}
+          # Stronger judge in CI; tune in local via env.
+          COPY_AUDIT_MODEL: ${{ vars.COPY_AUDIT_MODEL || 'gpt-4o-mini' }}
+          COPY_AUDIT_THRESHOLD: ${{ vars.COPY_AUDIT_THRESHOLD || '6.5' }}
+        run: pnpm check:copy
