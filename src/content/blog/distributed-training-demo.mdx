@@ -1,0 +1,71 @@
+---
+title: 'Distributed Training with 10,000x Communication Reduction'
+slug: distributed-training-demo
+summary: >-
+  DeMo (Decoupled Momentum Optimization) makes permissionless distributed
+  training viable over the internet. 100KB syncs instead of 10GB. Our
+  Training Blueprint is the first protocol-native implementation.
+date: '2026-04-15'
+author: Drew Stone
+tags:
+  - blueprints
+  - training
+  - research
+---
+
+We shipped a [distributed training Blueprint](https://github.com/tangle-network/training-blueprint) on Tangle that uses DeMo (Decoupled Momentum Optimization) from [Nous Research](https://arxiv.org/abs/2411.19870) to reduce inter-operator communication by 10,000x. Operators join permissionlessly at epoch boundaries, train on data shards locally, and synchronize via compressed momentum over libp2p gossip. The chain enforces payment and slashing.
+
+## Why 10,000x matters
+
+Distributed training across the open internet has always failed on bandwidth. Gradient synchronization for a 7B model transfers ~10GB per sync step. DeMo replaces this:
+
+1. Each operator trains locally with AdamW on its data shard
+2. Every K steps, DCT-transform the momentum buffers
+3. Top-k sparsification keeps 0.1% of DCT coefficients
+4. Broadcast compressed momentum via libp2p gossip (~100KB)
+5. Aggregate and inverse DCT to reconstruct shared update
+
+~100KB vs ~10GB. This makes permissionless distributed training viable over commodity internet connections.
+
+## How this differs from Prime Intellect
+
+[OpenDiLoCo](https://arxiv.org/abs/2407.07852) and [INTELLECT-2](https://arxiv.org/abs/2505.07291) share the thesis (distributed training over the internet). The differences are in execution.
+
+**Protocol-native payment.** Operators earn fees through the Tangle payment split (40% operators, 20% stakers, 20% protocol, 20% developer). Training jobs have real economics. GPU hours are priced by operators, paid by callers via on-chain jobs or x402 shielded payments.
+
+**Permissionless join/leave.** Operators join at epoch boundaries without a whitelist. The coordinator handles shard reassignment, sync barriers, and DeMo state merging.
+
+**Slashing.** Operators who submit fabricated checkpoints, fail to sync, or go offline mid-epoch lose stake. The DistributedTrainingBSM contract enforces this on-chain.
+
+**TEE attestation.** Operators can run in Trusted Execution Environments. The TeeLayer middleware attaches attestation metadata. Checkpoints are hash-submitted on-chain for verifiability.
+
+## Supported methods
+
+SFT (supervised fine-tuning), DPO (Direct Preference Optimization), GRPO (Group Relative Policy Optimization), and continued pre-training on domain corpora. Training backend interface supports axolotl, unsloth, torchtune.
+
+## The pipeline
+
+Training Blueprint outputs a checkpoint. That checkpoint loads into [LLM Inference Blueprint](https://github.com/tangle-network/llm-inference-blueprint). The operator who trained the model can immediately serve it for inference fees on [Tangle Router](https://router.tangle.tools). Train on Tangle, serve on Tangle.
+
+```
+                    Tangle Chain
+                         |
+              DistributedTrainingBSM
+              /     |     |      \
+         Op A    Op B   Op C    Op D
+          |        |      |       |
+        shard0  shard1  shard2  shard3
+          |        |      |       |
+        AdamW   AdamW   AdamW   AdamW
+          \       |      |       /
+           DeMo Sync (every K steps)
+           ~100KB per operator per sync
+```
+
+## References
+
+- DeMo: [arxiv.org/abs/2411.19870](https://arxiv.org/abs/2411.19870) (Nous Research)
+- OpenDiLoCo: [arxiv.org/abs/2407.07852](https://arxiv.org/abs/2407.07852) (Prime Intellect)
+- INTELLECT-2: [arxiv.org/abs/2505.07291](https://arxiv.org/abs/2505.07291)
+- Training Blueprint: [github.com/tangle-network/training-blueprint](https://github.com/tangle-network/training-blueprint)
+- Blueprint SDK: [github.com/tangle-network/blueprint](https://github.com/tangle-network/blueprint)
