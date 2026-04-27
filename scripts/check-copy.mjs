@@ -32,12 +32,12 @@ import { execSync } from 'node:child_process';
 const ROOT = resolve(process.cwd(), 'dist/client');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.0);
-// Default model: gemini-2.5-flash-lite — current, free tier on the
-// router, structured-output reliable. Override via COPY_AUDIT_MODEL
-// for stronger judges (gpt-5.5, claude-sonnet-4-6, claude-opus-4-7,
-// deepseek-chat) once router credits are loaded. NEVER use gpt-4o
-// or gpt-4o-mini — both deprecated.
-const MODEL = process.env.COPY_AUDIT_MODEL ?? 'gemini-2.5-flash-lite';
+// Default model: gpt-5.5 — current per OpenAI's deprecations page.
+// Override with COPY_AUDIT_MODEL for stronger judges
+// (claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5-20251001).
+// `pnpm check:models` validates this default + every model name
+// cited in the codebase against the live provider deprecation lists.
+const MODEL = process.env.COPY_AUDIT_MODEL ?? 'gpt-5.5';
 
 if (!existsSync(ROOT)) {
   console.error('✗ dist/client/ not found — run `pnpm build` first.');

@@ -1,0 +1,52 @@
+name: Check models
+
+# Fails CI on any reference to a deprecated model. Sources of truth
+# fetched live on every run:
+#   - https://developers.openai.com/api/docs/deprecations
+#   - https://platform.claude.com/docs/en/about-claude/model-deprecations
+#   - https://ai.google.dev/gemini-api/docs/deprecations
+#
+# Auto-updates as providers add new deprecations — no maintenance.
+# Falls back to a committed cache if a fetch is rate-limited.
+#
+# Local: `pnpm check:models`.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/check-models.yml'
+      - '.deprecated-models.active.json'
+      - '.deprecated-models.allow.json'
+  push:
+    branches: [main, master]
+  schedule:
+    # Weekly so the check still runs even when no code changes —
+    # if a provider deprecates a model that's cited in our codebase,
+    # we hear about it within a week, not on the next PR.
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+jobs:
+  models:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for deprecated model references
+        run: pnpm check:models
