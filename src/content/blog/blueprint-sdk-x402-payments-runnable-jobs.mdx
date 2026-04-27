@@ -1,0 +1,301 @@
+---
+title: How Blueprint SDK Turns x402 Payments into Runnable Jobs
+slug: blueprint-sdk-x402-payments-runnable-jobs
+summary: >-
+  How Blueprint SDK translates x402 HTTP payment headers into standard JobCalls,
+  so you write your handler once and accept payments from any chain.
+date: '2026-03-18'
+author: Drew Stone
+tags:
+  - x402
+  - blueprint-sdk
+  - tangle
+  - pay-per-call
+  - agent-infrastructure
+series: x402 Production Runway
+seriesOrder: 1
+coverImage: /images/covers/blueprint-sdk-x402-payments-runnable-jobs.png
+heroImage: /images/covers/blueprint-sdk-x402-payments-runnable-jobs.png
+imageAlt: 'How Blueprint SDK Turns x402 Payments into Runnable Jobs'
+---
+
+## HTTP Status 402 Finally Has a Job
+
+HTTP status code 402 has been "reserved for future use" since 1999. For twenty-seven years it sat in the spec, a placeholder for a payments web that never materialized. In 2025, Coinbase and Cloudflare's [x402 protocol](https://x402.org) gave it real work: a client hits an endpoint, receives a 402 response with pricing information, signs a stablecoin payment, and resends the request with proof of settlement attached as an HTTP header. No API keys, no billing dashboard, no monthly invoices. Just cryptographic proof that money moved before compute burned.
+
+Blueprint SDK integrates the x402 payment protocol through its `blueprint_x402` crate, which runs an axum HTTP server that verifies x402 payment headers via an external facilitator, settles payments on-chain before execution, and converts each verified payment into a standard `JobCall`. If you're new to the blueprint model, [How Blueprints Work](/blog/how-blueprints-work) covers the architecture. Job handlers work identically whether triggered by x402 payments on Base, on-chain Tangle events, or cron. You write a function that takes bytes and returns bytes, set prices in a TOML config, and the gateway handles payment verification, multi-chain exchange rate conversion, access control, and replay protection. Integration requires adding the `blueprint_x402` dependency, configuring accepted tokens and job prices in two TOML files, and wiring the `X402Gateway` and `X402Producer` into `BlueprintRunner`.
+
+This post walks through how that works: the payment verification flow, the price conversion pipeline, the producer abstraction that makes it composable, and the configuration that ties it together.
+
+### Integration Checklist
+
+Before the deep dive, here's the end-to-end wiring at a glance:
+
+1. Add `blueprint_x402` as a dependency (requires Blueprint SDK and Rust 2021 edition)
+2. Create `x402.toml` with facilitator URL, accepted tokens, and per-job access policies
+3. Create `job_pricing.toml` with base prices in wei for each job
+4. Initialize `X402Gateway` and `X402Producer` from the config
+5. Wire the producer and gateway into `BlueprintRunner` alongside your job router
+6. (Optional) Configure a `CachedRateProvider` for live exchange rates
+
+Each step is covered in detail below.
+
+## The Problem with Credit-Based APIs
+
+If you've built a paid API before, you know the pattern. Users sign up, get an API key, load credits into an account, and you decrement their balance on each call. It works, but it comes with a billing system, an accounts database, dispute resolution, fraud detection, and a support queue for "why was I charged twice."
+
+For infrastructure operators [building AI services on Tangle](/blog/building-ai-services-on-tangle), this overhead is significant. You want to expose a compute job over HTTP and get paid for it. You don't want to run a SaaS billing platform on the side.
+
+x402 removes the account layer entirely. The client proves payment in the HTTP request itself. The server verifies that proof before executing anything. There's no balance to track, no credits to reconcile, no API key to rotate. Each request is a self-contained economic transaction.
+
+## x402 Payment Protocol Integration with Blueprint SDK
+
+### Settlement Before Execution
+
+Blueprint SDK makes an opinionated design choice: the operator gets paid before doing any work.
+
+The gateway uses `X402Middleware` (in `blueprint_x402::gateway`) configured with `.settle_before_execution()`. When a request arrives at `/x402/jobs/{service_id}/{job_index}`, the middleware extracts the `X-PAYMENT` header, sends it to an external **facilitator** (by default, `https://facilitator.x402.org`), and the facilitator verifies the payment signature and settles it on-chain. Only after settlement confirms does the request proceed to the job handler.
+
+This is the opposite of the typical API pattern where you serve the response and bill afterward. The tradeoff is latency: settlement adds a round-trip to the facilitator plus on-chain confirmation time. The benefit is that operators never perform free work and never chase unpaid invoices.
+
+The facilitator is a trust boundary worth understanding. The gateway itself does not verify on-chain transactions. It delegates that to the facilitator and trusts the response. For production deployments, you'll want to evaluate whether the public facilitator at `x402.org` meets your trust requirements, or whether you need to run your own.
+
+### The Translation Layer: From Payment to JobCall
+
+The central design decision in `blueprint_x402` is how it connects payments to the existing job system. Rather than building a separate execution path for paid requests, it converts every verified payment into a `JobCall` (defined in `blueprint_sdk::core::job::call`), the same type that every other producer in the system emits.
+
+A `JobCall` is a pair: `Parts` (containing a `JobId`, a `MetadataMap` of headers, and an `Extensions` map) plus a body as raw `Bytes`. When the x402 middleware verifies a payment, it constructs a `VerifiedPayment` and converts it:
+
+```rust
+pub struct VerifiedPayment {
+    pub service_id: u64,
+    pub job_index: u32,
+    pub job_args: Bytes,
+    pub quote_digest: [u8; 32],
+    pub payment_network: String,  // "eip155:8453"
+    pub payment_token: String,    // "USDC"
+    pub call_id: u64,
+    pub caller: Option<Address>,
+}
+```
+
+The conversion injects x402-specific metadata into the `MetadataMap` (payment network, token, quote digest, synthetic call ID) and passes the original request body through as job arguments. Downstream, the job handler receives this as a normal `JobCall`. If it cares about payment metadata, it can inspect the headers. If it doesn't, it just reads the body.
+
+This means a job handler like this works identically whether triggered by x402 or any other source:
+
+```rust
+pub async fn echo(body: Bytes) -> Bytes {
+    body
+}
+
+pub async fn hash(body: Bytes) -> Bytes {
+    Bytes::copy_from_slice(alloy_primitives::keccak256(&body).as_slice())
+}
+
+pub fn router() -> Router {
+    Router::new().route(0, echo).route(1, hash)
+}
+```
+
+The `Job` trait uses an extractor pattern borrowed from axum. Any async function with the right signature auto-implements `Job`. You can also use `FromJobCall` and `FromJobCallParts` extractors to destructure arguments ergonomically, and apply Tower middleware like `ConcurrencyLimitLayer` via `Job::layer()`.
+
+### The Producer Model
+
+The mechanism connecting the HTTP gateway to the job router is `X402Producer`, which implements `Stream<Item = Result<JobCall, BoxError>>`. It's backed by an unbounded `mpsc` channel:
+
+```rust
+pub struct X402Producer {
+    rx: mpsc::UnboundedReceiver<VerifiedPayment>,
+}
+
+impl X402Producer {
+    pub fn channel() -> (Self, mpsc::UnboundedSender<VerifiedPayment>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self { rx }, tx)
+    }
+}
+```
+
+The gateway sends verified payments into the channel. `BlueprintRunner` polls the producer alongside its other producers (on-chain events, cron, webhooks) and dispatches each `JobCall` through the same router. This is why the handler doesn't know its trigger source: all producers converge into one stream.
+
+A note on the unbounded channel: under a payment flood, this queue grows without limit. That's a deliberate simplicity-over-backpressure tradeoff. For production deployments handling high throughput, monitor queue depth via the `/x402/stats` endpoint, which exposes counters for accepted, rejected, and enqueued calls.
+
+## Pricing: Wei, Exchange Rates, and Oracle Composition
+
+Job prices are denominated in **wei**, the smallest unit of the native chain currency. This might seem odd for services priced in stablecoins, but it solves a real problem: operators accept multiple tokens across multiple chains, and wei provides a denomination-neutral base unit. The gateway converts to token amounts at request time.
+
+The conversion formula (from `blueprint_x402::config`):
+
+```
+token_amount = (wei / 10^18) × rate_per_native_unit × (1 + markup_bps / 10000) × 10^decimals
+```
+
+A concrete example: you price your echo job at `1000000000000000` wei (0.001 ETH). With a rate of 3200 USDC per ETH and a 2% markup (200 basis points): `0.001 × 3200 × 1.02 = 3.264 USDC`, represented as `3264000` in USDC's 6-decimal smallest units.
+
+Pricing configuration lives in two TOML files. `job_pricing.toml` sets base prices per job:
+
+```toml
+[1]
+0 = "1000000000000000"       # echo: 0.001 ETH
+1 = "10000000000000000"      # hash: 0.01 ETH
+```
+
+And `x402.toml` configures accepted tokens with their exchange rates and markup:
+
+```toml
+[[accepted_tokens]]
+network = "eip155:8453"
+asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+symbol = "USDC"
+decimals = 6
+pay_to = "0xYourOperatorAddressOnBase"
+rate_per_native_unit = "3200.00"
+markup_bps = 200
+```
+
+When a client calls the price endpoint, it gets back a response with settlement options:
+
+```json
+{
+  "service_id": 1,
+  "job_index": 0,
+  "options": [
+    {
+      "network": "eip155:8453",
+      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "symbol": "USDC",
+      "amount": "3264000",
+      "pay_to": "0xYourOperatorAddressOnBase",
+      "quote_digest": "0xabc...",
+      "ttl_secs": 300
+    }
+  ]
+}
+```
+
+The `quote_digest` ties this price to a specific calculation. The client includes it in the payment, and the gateway matches it against the `QuoteRegistry` to ensure the payment covers the quoted amount.
+
+Static rates in a config file are fine for getting started, but production operators need live pricing. The `PriceOracle` trait and its implementations handle this. You can compose oracles: load base prices from TOML, apply a `ScaledPriceOracle` for surge pricing (say, 1.5x during peak hours), and keep exchange rates fresh via `CachedRateProvider<CoinbaseOracle>` with a 60-second TTL. Chainlink and Uniswap V3 TWAP oracles are also available behind feature flags. None of this touches your job handler code.
+
+## Three Access Modes
+
+Not every job should be publicly callable. The gateway supports three invocation modes per job, configured in `x402.toml`:
+
+**`Disabled`** (the default): the job isn't exposed via x402 at all.
+
+**`PublicPaid`**: anyone can call, as long as they pay. No identity checks beyond the payment itself.
+
+**`RestrictedPaid`**: payment required, AND the caller must pass an on-chain `isPermittedCaller` check. The gateway makes an `eth_call` dry-run against the Tangle contract to verify the caller is authorized for this service.
+
+```toml
+[[job_policies]]
+service_id = 1
+job_index = 0
+invocation_mode = "public_paid"
+
+[[job_policies]]
+service_id = 1
+job_index = 1
+invocation_mode = "restricted_paid"
+caller_auth = "delegated_caller_signature"
+tangle_rpc_url = "https://rpc.tangle.tools"
+tangle_contract = "0x..."
+```
+
+For `RestrictedPaid`, the gateway needs to know who the caller is. Two options: **`PayerIsCaller`** infers identity from the payment's payer address, and **`DelegatedCallerSignature`** lets a third party pay on behalf of a caller. In the delegated case, the caller signs a set of headers:
+
+```
+X-TANGLE-CALLER: 0x<address>
+X-TANGLE-CALLER-SIG: <signature>
+X-TANGLE-CALLER-NONCE: <unique-nonce>
+X-TANGLE-CALLER-EXPIRY: <unix-timestamp>
+```
+
+The signature payload is `x402-authorize:{service_id}:{job_index}:{keccak(body)_hex}:{nonce}:{expiry}`. A `DelegatedReplayGuard` tracks used nonces to prevent replay attacks.
+
+This matters for agent-to-agent scenarios where a coordinator agent pays for compute on behalf of worker agents that have their own on-chain identities.
+
+## Double-Spend and Replay Protection
+
+Two mechanisms prevent payment reuse. The `QuoteRegistry` (in `blueprint_x402::quote_registry`) tracks outstanding price quotes and atomically consumes them when a payment arrives. Each quote has a TTL (configurable, default 300 seconds). Attempting to reuse a consumed quote returns `None`, and the request is rejected. The registry uses `DashMap` for lock-free concurrent reads.
+
+One production consideration: the `QuoteRegistry` is in-memory. If the gateway restarts, all outstanding quotes are lost. Clients will need to re-request price quotes after a restart. For most deployments this is fine (quotes are short-lived), but it's worth knowing if you're running behind a load balancer with rolling restarts.
+
+The `DelegatedReplayGuard` provides separate replay protection for delegated caller signatures, tracking nonces and rejecting expired or reused ones.
+
+## Wiring It All Together
+
+Here's what a complete Blueprint setup looks like with x402 enabled:
+
+```rust
+use blueprint_runner::BlueprintRunner;
+use blueprint_x402::{X402Gateway, X402Config};
+use x402_blueprint::{router, load_job_pricing};
+use x402_blueprint::oracle::{CoinbaseOracle, CachedRateProvider, refresh_rates};
+
+// Load gateway config and per-job pricing
+let mut config = X402Config::from_toml("x402.toml")?;
+let pricing = load_job_pricing(&std::fs::read_to_string("job_pricing.toml")?)?;
+
+// Initialize a cached exchange rate oracle
+let oracle = CachedRateProvider::new(CoinbaseOracle::new(), Duration::from_secs(60));
+refresh_rates(&mut config, &oracle, "ETH").await?;
+
+// Create the gateway and its producer
+let (gateway, x402_producer) = X402Gateway::new(config, pricing)?;
+
+// Wire into the runner
+BlueprintRunner::builder((), BlueprintEnvironment::default())
+    .router(router())
+    .producer(x402_producer)
+    .background_service(gateway)
+    .run()
+    .await?;
+```
+
+The gateway runs as a background service. The producer feeds `JobCall`s into the runner. The router dispatches to handlers. Each piece is independent: you can swap the oracle, add jobs to the router, or change access policies without touching the others.
+
+## Observability
+
+The gateway exposes `GatewayCounters` at `GET /x402/stats`, tracking: accepted requests, policy denials, policy errors, replay rejections, enqueue failures, job-not-found errors, quote conflicts, and auth dry-run results (allowed, denied, error). These are the numbers you'll want in your monitoring stack.
+
+The full endpoint surface:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/x402/health` | GET | Health check |
+| `/x402/stats` | GET | Operator diagnostics |
+| `/x402/jobs/{sid}/{jid}/price` | GET | Price discovery for clients |
+| `/x402/jobs/{sid}/{jid}` | POST | Execute job (x402 payment required) |
+| `/x402/jobs/{sid}/{jid}/auth-dry-run` | POST | Test caller authorization without paying |
+
+The `auth-dry-run` endpoint is useful during integration: clients can verify their caller signature and on-chain permissions before committing real money.
+
+## What This Gets You
+
+x402 collapses the billing stack into the transport layer. Instead of maintaining user accounts, API keys, credit balances, and a reconciliation pipeline, you get a per-request payment proof verified before execution. Blueprint SDK's contribution is making that payment proof look identical to every other job trigger, so your handler code stays clean and your infrastructure stays composable.
+
+You write a function that takes bytes and returns bytes. You set a price in a TOML file. The gateway handles payment verification, exchange rate conversion, access control, replay protection, and dispatch. When a payment clears, your function runs. When it doesn't, nothing happens and you burned zero compute.
+
+For operators running AI agent services, the billing system is the blockchain, the API key is a wallet, and the invoice is a transaction receipt. To understand how Tangle [verifies work](/blog/how-tangle-verifies-work) beyond payment settlement, that post covers the full verification stack.
+
+## FAQ
+
+**How does the client know what to pay?**
+The client calls `GET /x402/jobs/{service_id}/{job_index}/price`, which returns available settlement options: accepted tokens, networks, amounts, and a quote with a TTL. The client picks an option, signs the payment, and includes it as an `X-PAYMENT` header on the next request. Client libraries like `@x402/fetch` handle this negotiation automatically.
+
+**What happens if the gateway restarts mid-operation?**
+Outstanding price quotes are lost (the `QuoteRegistry` is in-memory), so clients will get a stale-quote rejection and need to re-request pricing. Payments that have already settled on-chain are unaffected. Jobs already dispatched to the runner continue executing.
+
+**Can I accept payments on multiple chains simultaneously?**
+Yes. The `[[accepted_tokens]]` array in `x402.toml` supports multiple entries across different networks (Base, Ethereum, Arbitrum, etc.) using CAIP-2 identifiers like `eip155:8453`. Each entry specifies its own `pay_to` address, exchange rate, and markup. The client chooses which option to use from the price endpoint response.
+
+**What's the latency overhead of x402 compared to a normal API call?**
+The main addition is the facilitator round-trip for payment verification and settlement. On Base (which has fast block times), this typically adds 1-3 seconds depending on the facilitator's confirmation requirements. The gateway processing itself (quote lookup, metadata injection, channel dispatch) adds negligible latency.
+
+**Can I use this without Tangle's on-chain job system?**
+The x402 gateway and producer are designed to plug into `BlueprintRunner`, which is Tangle's job execution framework. `RestrictedPaid` mode specifically depends on Tangle's on-chain permission contracts. `PublicPaid` mode has a lighter dependency since it only needs the facilitator for payment verification, but the job dispatch still runs through the Blueprint runner infrastructure.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)

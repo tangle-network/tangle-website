@@ -10,35 +10,238 @@ interface Props {
   coverImage?: string;
   heroImage?: string;
   imageAlt?: string;
+  faqs?: { question: string; answer: string }[];
 }
 
-const { title, summary, date, author, tags, coverImage, heroImage, imageAlt } = Astro.props;
+const { title, summary, date, author, tags, coverImage, heroImage, imageAlt, faqs } = Astro.props;
 const displayImage = heroImage || coverImage;
+const canonicalUrl = new URL(Astro.url.pathname, Astro.site).toString();
+const imageUrl = displayImage ? new URL(displayImage, Astro.site).toString() : undefined;
+
+const articleJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: title,
+  description: summary,
+  author: { '@type': 'Person', name: author },
+  datePublished: date,
+  ...(imageUrl && { image: imageUrl }),
+  publisher: {
+    '@type': 'Organization',
+    name: 'Tangle Network',
+    url: 'https://tangle.tools',
+  },
+  mainEntityOfPage: canonicalUrl,
+};
+
+const faqJsonLd = faqs && faqs.length > 0 ? {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map((faq) => ({
+    '@type': 'Question',
+    name: faq.question,
+    acceptedAnswer: { '@type': 'Answer', text: faq.answer },
+  })),
+} : null;
 ---
 
-<BaseLayout title={title} description={summary} image={displayImage}>
-  <article class="max-w-3xl mx-auto px-4 py-16">
-    <header class="mb-12">
-      <div class="flex gap-2 mb-4">
-        {tags.map((tag) => (
-          <span class="text-xs font-mono px-2 py-1 rounded bg-brand-primary/10 text-brand-cool">
-            {tag}
-          </span>
-        ))}
+<BaseLayout title={title} description={summary} image={displayImage} imageAlt={imageAlt || title} ogType="article">
+  <script type="application/ld+json" set:html={JSON.stringify(articleJsonLd)} />
+  {faqJsonLd && <script type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />}
+  <div class="blog-backdrop" aria-hidden="true"></div>
+  <div style="padding-top: 10rem; padding-bottom: 4rem; position: relative;">
+    <section class="wf-section" style="padding: 0 5%;">
+      <div class="wf-section-wrapper" style="padding: 4rem 0;">
+        <article style="max-width: 64rem; margin: 0 auto; padding: 0 2rem;">
+          <header style="margin-bottom: 3rem;">
+            <div style="display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap;">
+              {tags.map((tag) => (
+                <span style="font-family: var(--font-mono); font-size: 12px; padding: 4px 10px; border-radius: 100px; background: rgba(97,114,243,0.1); color: #818cf8; border: 1px solid rgba(97,114,243,0.2);">{tag}</span>
+              ))}
+            </div>
+            <h1 style="font-family: var(--font-display); font-size: clamp(2.5rem, 4vw, 3.5rem); font-weight: 800; color: white; line-height: 1.1; margin-bottom: 1rem;">{title}</h1>
+            <p style="font-family: var(--font-sans); font-size: 1.2rem; color: rgba(255,255,255,0.55); line-height: 1.5; margin-bottom: 1rem;">{summary}</p>
+            <div style="display: flex; align-items: center; gap: 12px; font-family: var(--font-sans); font-size: 14px; color: rgba(255,255,255,0.35);">
+              <span>{author}</span>
+              <span>&middot;</span>
+              <time datetime={date}>{new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
+            </div>
+          </header>
+          {displayImage && (
+            <img src={displayImage} alt={imageAlt || title} style="width: 100%; border-radius: 16px; margin-bottom: 3rem; border: 1px solid rgba(255,255,255,0.08);" />
+          )}
+          <div class="blog-content">
+            <slot />
+          </div>
+        </article>
       </div>
-      <h1 class="text-4xl md:text-5xl font-bold mb-4">{title}</h1>
-      <p class="text-text-secondary text-lg mb-4">{summary}</p>
-      <div class="flex items-center gap-4 text-text-muted text-sm">
-        <span>{author}</span>
-        <span>&middot;</span>
-        <time datetime={date}>{new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</time>
-      </div>
-    </header>
-    {displayImage && (
-      <img src={displayImage} alt={imageAlt || title} class="w-full rounded-lg mb-12" />
-    )}
-    <div class="prose prose-invert prose-purple max-w-none">
-      <slot />
-    </div>
-  </article>
+    </section>
+  </div>
 </BaseLayout>
+
+<style>
+  .blog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 15% 0%, rgba(130, 99, 255, 0.1) 0%, transparent 50%),
+      radial-gradient(ellipse at 85% 100%, rgba(104, 136, 249, 0.06) 0%, transparent 50%);
+  }
+
+  .blog-content {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 18px;
+    line-height: 1.7;
+  }
+
+  .blog-content :global(h2) {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 2.5em;
+    margin-bottom: 0.75em;
+    line-height: 1.2;
+  }
+
+  .blog-content :global(h3) {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #fff;
+    margin-top: 2em;
+    margin-bottom: 0.5em;
+    line-height: 1.3;
+  }
+
+  .blog-content :global(h4) {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #fff;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    line-height: 1.4;
+  }
+
+  .blog-content :global(p) {
+    margin-bottom: 1.25em;
+  }
+
+  .blog-content :global(a) {
+    color: #6366F1;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: color 0.15s;
+  }
+
+  .blog-content :global(a:hover) {
+    color: #8b9aff;
+  }
+
+  .blog-content :global(strong) {
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .blog-content :global(blockquote) {
+    border-left: 3px solid #6366F1;
+    padding-left: 1.25em;
+    margin-left: 0;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+    color: rgba(255, 255, 255, 0.7);
+    font-style: italic;
+  }
+
+  .blog-content :global(ul) {
+    list-style-type: disc;
+    padding-left: 1.5em;
+    margin-bottom: 1.25em;
+  }
+
+  .blog-content :global(ol) {
+    list-style-type: decimal;
+    padding-left: 1.5em;
+    margin-bottom: 1.25em;
+  }
+
+  .blog-content :global(li) {
+    margin-bottom: 0.5em;
+  }
+
+  .blog-content :global(li > ul),
+  .blog-content :global(li > ol) {
+    margin-top: 0.5em;
+    margin-bottom: 0;
+  }
+
+  .blog-content :global(pre) {
+    background: #0a0a14;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1.25em;
+    overflow-x: auto;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+    font-size: 0.875em;
+    line-height: 1.6;
+  }
+
+  .blog-content :global(pre code) {
+    background: none;
+    border: none;
+    padding: 0;
+    border-radius: 0;
+    font-family: var(--font-mono);
+    color: rgba(255, 255, 255, 0.85);
+    font-size: inherit;
+  }
+
+  .blog-content :global(code) {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 0.15em 0.4em;
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    color: #c4b5fd;
+  }
+
+  .blog-content :global(img) {
+    width: 100%;
+    border-radius: 12px;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+  }
+
+  .blog-content :global(hr) {
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 2.5em;
+    margin-bottom: 2.5em;
+  }
+
+  .blog-content :global(table) {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1.5em;
+    margin-bottom: 1.5em;
+    font-size: 0.925em;
+  }
+
+  .blog-content :global(th) {
+    text-align: left;
+    padding: 0.75em 1em;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .blog-content :global(td) {
+    padding: 0.75em 1em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+</style>

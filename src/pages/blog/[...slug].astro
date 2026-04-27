@@ -3,7 +3,6 @@ import { getCollection, render } from 'astro:content';
 import BlogLayout from '../../layouts/BlogLayout.astro';
 
 export async function getStaticPaths() {
-  // Only generate pages for published posts (not drafts)
   const posts = await getCollection('blog', ({ data }) => !data.draft);
   return posts.map((post) => ({
     params: { slug: post.data.slug },
@@ -11,8 +10,58 @@ export async function getStaticPaths() {
   }));
 }
 
+function extractFaqs(body: string): { question: string; answer: string }[] {
+  const faqMatch = body.match(/^## FAQ\s*$/m);
+  if (!faqMatch || faqMatch.index === undefined) return [];
+  const faqSection = body.slice(faqMatch.index + faqMatch[0].length);
+  const endMatch = faqSection.match(/^##\s+.+$/m);
+  const section = endMatch && endMatch.index !== undefined
+    ? faqSection.slice(0, endMatch.index)
+    : faqSection;
+
+  const lines = section.split('\n');
+  const faqs: { question: string; answer: string }[] = [];
+  let currentQuestion = '';
+  let currentAnswer: string[] = [];
+
+  const flush = () => {
+    const answer = currentAnswer.join(' ').replace(/\s+/g, ' ').trim();
+    if (currentQuestion && answer) {
+      faqs.push({ question: currentQuestion, answer });
+    }
+    currentQuestion = '';
+    currentAnswer = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (currentAnswer.length > 0) currentAnswer.push('');
+      continue;
+    }
+
+    const headingMatch = line.match(/^###\s+(.+)$/);
+    const boldMatch = line.match(/^\*\*(.+?)\*\*$/);
+    const question = headingMatch?.[1]?.trim() ?? boldMatch?.[1]?.trim();
+
+    if (question) {
+      flush();
+      currentQuestion = question;
+      continue;
+    }
+
+    if (currentQuestion) {
+      currentAnswer.push(line);
+    }
+  }
+
+  flush();
+  return faqs;
+}
+
 const { post } = Astro.props;
 const { Content } = await render(post);
+const faqs = extractFaqs(post.body ?? '');
 ---
 
 <BlogLayout
@@ -24,6 +73,7 @@ const { Content } = await render(post);
   coverImage={post.data.coverImage}
   heroImage={post.data.heroImage}
   imageAlt={post.data.imageAlt}
+  faqs={faqs}
 >
   <Content />
 </BlogLayout>

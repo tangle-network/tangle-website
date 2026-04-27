@@ -1,0 +1,289 @@
+---
+title: 'x402 and TEE Together: What Must Pass Before Promotion'
+slug: blueprint-tee-x402-production-gating
+summary: >-
+  x402 handles payment authorization. TEE handles execution integrity. Neither alone is sufficient for production. This post explains the two-gate system: what must pass before a Blueprint service activates and before job results can be trusted.
+date: '2026-03-30'
+author: Drew Stone
+tags:
+  - x402
+  - tee
+  - security
+  - blueprint
+  - production
+series: x402 Production Runway
+seriesOrder: 8
+coverImage: /images/covers/blueprint-tee-x402-production-gating.png
+heroImage: /images/covers/blueprint-tee-x402-production-gating.png
+imageAlt: 'Two gates: payment and TEE attestation must both pass before promotion'
+---
+
+When you pay for a computation, you want two things to be true. First, that the payment was valid and authorized. Second, that the computation actually ran where and how it was supposed to. Most systems get the payment part right. The execution integrity part is harder.
+
+Trusted Execution Environments (TEEs) solve the execution integrity problem at the hardware level. A TEE is a secure zone inside a processor where code runs in isolation from the host operating system. The machine's owner cannot inspect memory inside the TEE, cannot tamper with the code running inside it, and cannot substitute a different binary without breaking the attestation that proves which code is running. AWS Nitro Enclaves, Intel TDX, AMD SEV-SNP, and Azure Confidential VMs are all variations of this model.
+
+Attestation is the mechanism that makes TEEs verifiable. When a TEE starts up, it generates a cryptographically signed report describing the exact binary that was loaded, the hardware measurements of the enclave, and whether it is running in debug mode. A remote verifier can check this report against a known-good measurement and trust that the code running inside matches what was deployed.
+
+In Blueprint, x402 handles payment authorization and TEE handles execution integrity. The two systems compose into a single promotion condition: a service does not go live until both gates pass. This post explains exactly what those eight conditions are, where each one is enforced, and which two require explicit action from you because the defaults are not production-safe.
+
+## The Default That Will Burn You in Production
+
+`on_chain_verification` defaults to `false`.
+
+That single field in `TeeKeyExchangeConfig` is the most important thing to know before shipping a TEE-enabled Blueprint. With it disabled, a key exchange succeeds if the attestation report passes local structural checks: provider match, measurement comparison, debug mode flag. But nobody verifies that the attestation corresponds to the hash submitted on-chain at provision time. A compromised operator can substitute a different TEE's attestation during key exchange. The keys are exchanged, secrets are injected, and nothing fails. The attestation mismatch is invisible.
+
+```rust
+// crates/tee/src/config.rs
+pub struct TeeKeyExchangeConfig {
+    pub session_ttl_secs: u64,
+    pub max_sessions: usize,
+    /// When enabled, key exchange performs dual verification:
+    /// 1. Local evidence check: is this a real TEE with the right measurement?
+    /// 2. On-chain hash comparison: does this attestation match the hash submitted
+    ///    at provision time (keccak256(attestationJsonBytes) stored in contract)?
+    ///
+    /// This prevents a compromised operator from substituting a different TEE's
+    /// attestation during key exchange.
+    #[serde(default)]
+    pub on_chain_verification: bool,
+}
+
+impl Default for TeeKeyExchangeConfig {
+    fn default() -> Self {
+        Self {
+            session_ttl_secs: 300,
+            max_sessions: 64,
+            on_chain_verification: false,  // must be set true in production
+        }
+    }
+}
+```
+
+This is not a papercut. It is the difference between a TEE system that can be spoofed and one that cannot. Every other gate below depends on knowing which enclave you are actually talking to.
+
+## Two Gates, Not One
+
+Most developers building on Blueprint treat payment gating and TEE attestation as independent configuration choices. Configure x402 for payments, wire up `TeeLayer` for attestation, deploy. But in production, they combine into a single promotion condition. A service request that passes payment verification but comes from a debug-mode enclave is not production-safe. A TEE attestation that checks out locally but was never cross-referenced against the on-chain hash is also not production-safe.
+
+The on-chain promotion path makes this concrete. A service moves from `PendingRequest` to `Active` only when `approvalCount == operatorCount` in `ServicesApprovals.sol`:
+
+```solidity
+// tnt-core/src/core/ServicesApprovals.sol
+function approveService(uint64 requestId, uint8 stakingPercent) external whenNotPaused nonReentrant {
+    // ...
+    _requestApprovals[requestId][msg.sender] = true;
+    req.approvalCount++;
+
+    emit ServiceApproved(requestId, msg.sender);
+
+    if (req.approvalCount == req.operatorCount) {
+        _activateService(requestId);
+    }
+}
+```
+
+`_activateService` is only called when every operator in the request has approved. A service with three operators named in the request does not activate after one approval or after two. It activates exactly once, when the count matches the operator count. Payment and staking verification happen before an operator can submit an approval at all: an operator that fails `_staking.isOperatorActive(msg.sender)` is rejected before the count advances.
+
+That is gate one, on-chain. Gate two is inside the enclave.
+
+## The Eight Conditions
+
+Before a Blueprint service with `ConfidentialityPolicy::TeeRequired` should be trusted in production, eight conditions must hold simultaneously. Any one failure means the service should not be promoted.
+
+### 1. debug_mode must be false
+
+```rust
+// crates/tee/src/attestation/claims.rs
+pub struct AttestationClaims {
+    /// Whether the TEE is running in debug mode.
+    /// Debug mode enclaves should never be trusted in production.
+    #[serde(default)]
+    pub debug_mode: bool,
+    // ...
+}
+```
+
+The comment is the policy. A Nitro enclave built with `--debug-mode` produces attestation that any verifier can inspect and any tool can spoof. The hardware isolation properties that make TEEs useful simply do not hold in debug mode. This field is populated from the raw attestation document. If the enclave set the debug flag, `debug_mode` is `true`, and promotion must be rejected.
+
+### 2. on_chain_verification must be enabled
+
+Already covered above. Without it, local attestation verification is the only check, and local verification cannot detect attestation substitution by a compromised operator. Set this to `true` in `TeeKeyExchangeConfig` for any production deployment.
+
+### 3. Attestation must not be expired
+
+```rust
+// crates/tee/src/attestation/report.rs
+impl AttestationReport {
+    pub fn is_expired(&self, max_age_secs: u64) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        now.saturating_sub(self.issued_at_unix) > max_age_secs
+    }
+}
+```
+
+The default `max_attestation_age_secs` in `TeeConfig` is 3600 seconds, or one hour. An expired attestation means the report was generated more than an hour ago. The enclave may have been rebooted, reprovisioned with a different binary, or had its measurement changed between when the report was generated and when key exchange is happening. Any of those events invalidate the on-chain hash comparison. `is_expired` must return `false` before key exchange is permitted.
+
+### 4. Measurement must match what is on-chain
+
+```rust
+// crates/tee/src/attestation/report.rs
+pub struct Measurement {
+    pub algorithm: String,
+    pub digest: String,  // normalized to lowercase hex
+}
+
+pub struct AttestationReport {
+    pub measurement: Measurement,
+    // ...
+}
+```
+
+The attestation report carries a hardware measurement: PCR values on Nitro, MRTD on TDX, the equivalent on SEV-SNP. At provision time, this measurement hash is submitted on-chain as `keccak256(attestationJsonBytes)`. During key exchange with `on_chain_verification: true`, the verifier re-fetches that on-chain hash and checks it against the current report's evidence digest. If the enclave binary changed between provision and key exchange, the measurement changes, the evidence digest changes, and the comparison fails. This is what makes TEE deployments immutable from the operator's perspective: you cannot swap the binary without breaking the proof.
+
+### 5. SecretInjectionPolicy must be SealedOnly
+
+```rust
+// crates/tee/src/config.rs
+pub enum SecretInjectionPolicy {
+    /// Only valid for non-TEE (container) deployments.
+    EnvOrSealed,
+    /// Container recreation is forbidden. Mandatory for all TEE deployments.
+    SealedOnly,
+}
+```
+
+The builder enforces this at construction time: any `TeeConfig` with a non-Disabled mode automatically gets `SealedOnly`. Configs deserialized from JSON or TOML go through `validate()` which applies the same check. The reason is not just security hygiene. Env-var injection via container recreation invalidates attestation, breaks sealed secrets, and loses the on-chain deployment ID. A deployed TEE service whose secrets can be changed via environment variable gives up the entire attestation chain.
+
+### 6. The blueprint must expose a container source
+
+```rust
+// crates/manager/src/protocol/tangle/event_handler.rs
+fn supports_tee(source: &BlueprintSource) -> bool {
+    matches!(source, BlueprintSource::Container(_))
+}
+
+fn ordered_source_indices(
+    sources: &[BlueprintSource],
+    preferred_source: SourceType,
+    confidentiality_policy: ConfidentialityPolicy,
+) -> Vec<usize> {
+    let require_tee = matches!(confidentiality_policy, ConfidentialityPolicy::TeeRequired);
+    let mut indexed: Vec<(usize, u8)> = sources
+        .iter()
+        .enumerate()
+        .filter(|(_, source)| !require_tee || supports_tee(source))
+        // ...
+}
+```
+
+When `ConfidentialityPolicy::TeeRequired`, the event handler filters available sources to containers only. GitHub binaries and remote URLs are excluded because they run as native processes outside any enclave boundary. If the blueprint exposes no container source, the manager returns `Error::TeeRuntimeUnavailable` and the service does not start:
+
+```rust
+if matches!(
+    metadata.confidentiality_policy,
+    ConfidentialityPolicy::TeeRequired
+) && ordered_source_idxs.is_empty()
+{
+    return Err(Error::TeeRuntimeUnavailable {
+        reason: "Blueprint requires TEE execution but exposes no container source"
+            .to_string(),
+    });
+}
+```
+
+### 7. All operators must have approved
+
+Covered in the contract section above. `req.approvalCount == req.operatorCount` is the exact condition. All operators named in the service request must call `approveService` before `_activateService` fires. A partial approval set means some operators have not committed their stake or agreed to the service parameters.
+
+### 8. Operator staking must be active
+
+Before any operator can submit an approval, `_staking.isOperatorActive(msg.sender)` must return `true`. The staking contract enforces that the operator has an active stake on-chain. Without active stake, the approval call reverts with `OperatorNotActive`. Payment verification on the client side happens before the initial service request is submitted: x402 payment headers are validated by the operator's gateway before the `JobCall` enters the execution pipeline. By the time a service request reaches the approval phase, the payment commitment is already part of the signed request that operators are approving.
+
+## How Operators Get Cryptographic Proof of Execution
+
+Once a service is active and jobs are running, operators need to know which enclave ran each job. That is what `TeeLayer` provides. It is a Tower middleware layer that, on every successful `JobResult::Ok`, injects three metadata keys into the result:
+
+```rust
+// crates/tee/src/middleware/tee_layer.rs
+pub const TEE_ATTESTATION_DIGEST_KEY: &str = "tee.attestation.digest";
+pub const TEE_PROVIDER_KEY: &str = "tee.provider";
+pub const TEE_MEASUREMENT_KEY: &str = "tee.measurement";
+```
+
+These are the SHA-256 digest of the attestation evidence, the provider name, and the measurement string. An operator who receives a job result can re-hash the evidence bytes and compare against the stored `TEE_ATTESTATION_DIGEST_KEY`. If the hash matches what was submitted at provision time, the operator has cryptographic proof that this specific job ran inside the specific enclave they approved.
+
+The attestation is injected from a shared `Arc<Mutex<Option<AttestationReport>>>`. The layer uses `try_lock` on the hot path to avoid blocking the service call. If the lock is contended, the metadata keys are omitted from that result with a warning. Job execution does not stall on attestation state reads.
+
+## The Key Exchange Session Lifecycle
+
+Sealed secrets are how configuration, API keys, and model weights enter a TEE without the operator ever seeing them. The flow is two-phase: the TEE generates an ephemeral X25519 keypair, attests the public key, and the client encrypts secrets to it after verifying the attestation.
+
+```rust
+// crates/tee/src/exchange/protocol.rs
+pub struct KeyExchangeSession {
+    pub session_id: String,
+    pub public_key: Vec<u8>,
+    private_key: Vec<u8>,  // zeroed on drop
+    pub created_at: u64,
+    pub ttl_secs: u64,
+}
+
+impl Drop for KeyExchangeSession {
+    fn drop(&mut self) {
+        self.private_key.zeroize();
+    }
+}
+```
+
+Private keys are zeroed on drop via the `zeroize` crate. The default session TTL is 300 seconds. Sessions are one-time use: `consume_session` atomically removes the session from the map on consumption, so the same session ID cannot be replayed.
+
+```rust
+// crates/tee/src/exchange/service.rs
+pub async fn consume_session(&self, session_id: &str) -> Result<KeyExchangeSession, TeeError> {
+    let mut sessions = self.sessions.lock().await;
+
+    let session = sessions
+        .get(session_id)
+        .ok_or_else(|| TeeError::KeyExchange(format!("session not found: {session_id}")))?;
+
+    if session.is_expired() {
+        sessions.remove(session_id);
+        return Err(TeeError::KeyExchange(format!("session expired: {session_id}")));
+    }
+
+    // Session is valid -- remove and return it (one-time use)
+    let session = sessions
+        .remove(session_id)
+        .expect("session exists; checked above");
+
+    Ok(session)
+}
+```
+
+A background cleanup task runs every `max(ttl_secs, 30)` seconds to evict expired sessions that were never consumed. The `TeeAuthService` holds an `AbortHandle` to this task, which is cancelled on drop, so there are no orphaned background tasks if the service is torn down.
+
+The maximum concurrent sessions defaults to 64. If the limit is reached, `create_session` evicts expired sessions first before rejecting with a capacity error. This prevents session exhaustion from stale entries accumulating.
+
+## The Production Checklist
+
+A Blueprint service with `ConfidentialityPolicy::TeeRequired` is production-ready when all eight conditions hold:
+
+| Condition | Where enforced | Default |
+|---|---|---|
+| `debug_mode: false` | `AttestationClaims` from hardware | false |
+| `on_chain_verification: true` | `TeeKeyExchangeConfig` | **false -- must override** |
+| Attestation not expired | `AttestationReport::is_expired()` | 3600s max age |
+| Measurement matches on-chain | `on_chain_verification` flow | disabled by default |
+| `SecretInjectionPolicy::SealedOnly` | `TeeConfig` builder | auto-enforced when TEE enabled |
+| Container source available | `ordered_source_indices` filter | fails hard if missing |
+| All operators approved | `approvalCount == operatorCount` | contract-enforced |
+| Operator staking active | `_staking.isOperatorActive` | contract-enforced |
+
+Six of eight are enforced automatically by the type system or contracts. The two that require explicit action: `on_chain_verification` must be set to `true`, and the blueprint must expose a container source when TEE is required. Everything else fails closed.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)

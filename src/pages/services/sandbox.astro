@@ -1,302 +1,1816 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import CodeTabs from '../../components/CodeTabs';
+import FAQ from '../../components/FAQ.astro';
+import StatsStrip from '../../components/ui/StatsStrip.astro';
+import SectionHead from '../../components/ui/SectionHead.astro';
+import CodeWindow from '../../components/ui/CodeWindow.astro';
+import ExamplePanel from '../../components/ui/ExamplePanel.astro';
+import FeatureCard from '../../components/ui/FeatureCard.astro';
+import Hero from '../../components/ui/Hero.astro';
+import StoryScroller from '../../components/ui/StoryScroller.astro';
+import Section from '../../components/ui/Section.astro';
+import BentoCell from '../../components/ui/BentoCell.astro';
+import CtaBlock from '../../components/ui/CtaBlock.astro';
+import simpleIcons from '@iconify-json/simple-icons/icons.json';
+
+const SI_VIEWBOX = `0 0 ${simpleIcons.width} ${simpleIcons.height}`;
+function siBody(name: string): string | null {
+  const icon = (simpleIcons.icons as Record<string, { body: string }>)[name];
+  return icon ? icon.body : null;
+}
+
+// Coding agent harnesses pre-installed in every box. Source of truth:
+// agent-dev-container/products/sandbox/cli-bridge backends. `logo` is a
+// simple-icons id; `logoSrc` (when set) overrides with a path to a static
+// SVG under /public/logos/ — used for brands not in simple-icons (opencode
+// is anomalyco; kimi/moonshot is custom).
+// `link` is the destination — either a github org/repo path (rendered with
+// the GitHub icon) or a full https:// URL when the project's CLI isn't
+// open-source (factory, amp). null = no link.
+const harnesses = [
+  { id: 'claude-code', label: 'Claude Code', vendor: 'Anthropic',   logo: 'anthropic',   logoSrc: null,                  link: 'anthropics/claude-code', meta: 'stream-json · session resume' },
+  { id: 'codex',       label: 'Codex',       vendor: 'OpenAI',      logo: 'openai',      logoSrc: null,                  link: 'openai/codex',           meta: 'JSONL events · thread sessions' },
+  { id: 'opencode',    label: 'OpenCode',    vendor: 'anomalyco',   logo: null,          logoSrc: '/logos/opencode.svg', link: 'anomalyco/opencode',     meta: 'multi-provider · BYOK' },
+  { id: 'kimi-code',   label: 'Kimi',        vendor: 'Moonshot AI', logo: null,          logoSrc: '/logos/kimi.svg',     link: 'MoonshotAI/kimi-cli',    meta: 'OAuth · stream-json' },
+  { id: 'amp',         label: 'Amp',         vendor: 'Sourcegraph', logo: 'sourcegraph', logoSrc: null,                  link: 'https://ampcode.com',    meta: 'tool-rich · enterprise' },
+  { id: 'factory',     label: 'Factory',     vendor: 'Factory.ai',  logo: null,          logoSrc: null,                  link: 'https://factory.ai',     meta: 'Droid agent · non-interactive' },
+  { id: 'forge',       label: 'Forge',       vendor: 'Forge Code',  logo: null,          logoSrc: null,                  link: 'antinomyhq/forge',       meta: 'BYOK · per-provider' },
+  { id: 'claudish',    label: 'Claudish',    vendor: 'proxy mode',  logo: 'anthropic',   logoSrc: null,                  link: null,                     meta: 'drop-in for any brain' },
+];
+
+// TEE / isolation provider logos for the escalation diagram. Phala has
+// no simple-icons entry; rendered as styled text instead.
+const teeProviders = [
+  { name: 'amazonwebservices', label: 'AWS Nitro' },
+  { name: 'googlecloud',       label: 'GCP Confidential Space' },
+  { name: 'microsoftazure',    label: 'Azure CVM' },
+  { name: null,                label: 'Phala TDX' },
+];
+
+const sbLifecycleStages = [
+  { id: 'spawn',    num: '01', title: 'Spawn.',    body: 'Sub-second cold start. Pick a base image or bring your own Dockerfile. <strong>Per-job isolation, no shared filesystem.</strong>' },
+  { id: 'run',      num: '02', title: 'Run.',      body: 'mTLS sidecar enforces policy. Filesystem, network egress, compute envelope all bounded. <strong>Logs stream out; secrets stay in.</strong>' },
+  { id: 'snapshot', num: '03', title: 'Snapshot.', body: 'Freeze any box mid-execution. Restore on a different host, in a different region, weeks later. <strong>Same PIDs, same memory, same answer.</strong>' },
+  { id: 'scale',    num: '04', title: 'Scale.',    body: 'Burst to thousands of concurrent boxes in seconds. Pay per second. <strong>Pin specific boxes if you need warm starts.</strong>' },
+];
+
+// ─── Showcase examples. nested groups (sandbox × tasks × language) ───
+const sbCreateSdk = `<span class="cw-k">import</span> <span class="cw-v">{ </span><span class="cw-f">SandboxClient</span><span class="cw-v"> }</span> <span class="cw-k">from</span> <span class="cw-s">"@tangle-network/sandbox"</span>;
+
+<span class="cw-k">const</span> <span class="cw-v">client</span> = <span class="cw-k">new</span> <span class="cw-f">SandboxClient</span>({ apiKey: process.env.<span class="cw-v">TANGLE_API_KEY</span> });
+<span class="cw-k">const</span> <span class="cw-v">box</span>    = <span class="cw-k">await</span> client.<span class="cw-f">create</span>({
+  image:      <span class="cw-s">"node:22"</span>,
+  cpu:        <span class="cw-n">4</span>,
+  memoryMB:   <span class="cw-n">8192</span>,
+  networking: <span class="cw-s">"restricted"</span>,   <span class="cw-c">// allowlist egress only</span>
+});
+
+<span class="cw-k">await</span> box.<span class="cw-f">exec</span>(<span class="cw-s">"git clone https://github.com/tangle-network/demo"</span>);
+<span class="cw-k">await</span> box.<span class="cw-f">exec</span>(<span class="cw-s">"pnpm install"</span>);
+<span class="cw-ok">✓</span> <span class="cw-v">ready in 0.8s</span>  <span class="cw-c">· sbx_a8f3c2d1 · 4 vCPU · 8 GB · SSH ready</span>`;
+
+const sbCreateCli = `<span class="cw-sh">$</span> <span class="cw-v">tangle sandbox create</span> \\
+  <span class="cw-k">--image</span>    <span class="cw-s">node:22</span> \\
+  <span class="cw-k">--cpu</span>      <span class="cw-n">4</span> \\
+  <span class="cw-k">--memory</span>   <span class="cw-n">8192</span> \\
+  <span class="cw-k">--network</span>  <span class="cw-s">restricted</span>
+
+<span class="cw-p">→</span> <span class="cw-v">sbx_a8f3c2d1</span>  <span class="cw-c">· ready in 0.8s · ssh tangle@sbx_a8f3c2d1</span>
+
+<span class="cw-sh">$</span> <span class="cw-v">tangle sandbox exec</span> <span class="cw-s">sbx_a8f3c2d1</span> <span class="cw-k">--</span> pnpm test
+<span class="cw-ok">✓</span> <span class="cw-v">47 passed</span>  <span class="cw-c">· 0 failed · 2.1s</span>`;
+
+const sbAgentSdk = `<span class="cw-k">import</span> <span class="cw-v">{ </span><span class="cw-f">SandboxClient</span><span class="cw-v"> }</span> <span class="cw-k">from</span> <span class="cw-s">"@tangle-network/sandbox"</span>;
+
+<span class="cw-k">const</span> <span class="cw-v">client</span> = <span class="cw-k">new</span> <span class="cw-f">SandboxClient</span>({ apiKey: process.env.<span class="cw-v">TANGLE_API_KEY</span> });
+<span class="cw-k">const</span> <span class="cw-v">box</span>    = <span class="cw-k">await</span> client.<span class="cw-f">create</span>({ image: <span class="cw-s">"node:22"</span> });
+
+<span class="cw-c">// Stream a coding agent. tool calls, file diffs, messages.</span>
+<span class="cw-k">for await</span> (<span class="cw-k">const</span> <span class="cw-v">event</span> <span class="cw-k">of</span> box.<span class="cw-f">streamTask</span>({
+  goal:     <span class="cw-s">"Refactor src/ to TypeScript and add tests"</span>,
+  maxTurns: <span class="cw-n">30</span>,
+  backend:  <span class="cw-s">"claude-code"</span>,
+})) {
+  <span class="cw-k">if</span> (event.type === <span class="cw-s">"tool_call"</span>) console.<span class="cw-f">log</span>(<span class="cw-s">\`▶ \${event.tool}\`</span>);
+  <span class="cw-k">if</span> (event.type === <span class="cw-s">"message"</span>)   process.stdout.<span class="cw-f">write</span>(event.content);
+  <span class="cw-k">if</span> (event.type === <span class="cw-s">"file_diff"</span>) await <span class="cw-f">apply</span>(event.diff);
+}
+
+<span class="cw-ok">✓</span> <span class="cw-v">Goal achieved</span>  <span class="cw-c">· 7 turns · 22s · 12 files changed</span>`;
+
+const sbAgentCli = `<span class="cw-sh">$</span> <span class="cw-v">tangle agent run</span> <span class="cw-s">sbx_a8f3c2d1</span> \\
+  <span class="cw-k">--goal</span>     <span class="cw-s">"Refactor src/ to TypeScript and add tests"</span> \\
+  <span class="cw-k">--backend</span>  <span class="cw-s">claude-code</span> \\
+  <span class="cw-k">--stream</span>
+
+<span class="cw-p">▶</span> <span class="cw-v">read_file</span> src/index.js
+<span class="cw-p">▶</span> <span class="cw-v">write_file</span> src/index.ts
+<span class="cw-p">▶</span> <span class="cw-v">run_tests</span>  <span class="cw-c">· 47 passed, 0 failed</span>
+<span class="cw-p">▶</span> <span class="cw-v">open_pr</span>    <span class="cw-c">· #18 created</span>
+
+<span class="cw-ok">✓</span> <span class="cw-v">Goal achieved</span>  <span class="cw-c">· 7 turns · 22s · 12 files</span>`;
+
+const sbSnapshotSdk = `<span class="cw-c">// Checkpoint full state. filesystem, packages, env.</span>
+<span class="cw-k">const</span> <span class="cw-v">snap</span> = <span class="cw-k">await</span> box.<span class="cw-f">snapshot</span>({
+  to: <span class="cw-s">"s3://my-bucket/pre-migrate"</span>,
+});
+<span class="cw-ok">✓</span> <span class="cw-v">snap_8f3a</span>  <span class="cw-c">· 1.2 GB · 4.3s</span>
+
+<span class="cw-c">// Restore into a fresh sandbox. identical state, any box.</span>
+<span class="cw-k">const</span> <span class="cw-v">fresh</span> = <span class="cw-k">await</span> client.<span class="cw-f">restore</span>({ snapshot: <span class="cw-s">"snap_8f3a"</span> });
+<span class="cw-ok">✓</span> <span class="cw-v">sbx_c9d1e2</span>  <span class="cw-c">· ready in 1.1s · bit-identical</span>`;
+
+const sbSnapshotCli = `<span class="cw-sh">$</span> <span class="cw-v">tangle sandbox snapshot</span> <span class="cw-s">sbx_a8f3c2d1</span> \\
+  <span class="cw-k">--to</span> <span class="cw-s">s3://my-bucket/pre-migrate</span>
+<span class="cw-p">→</span> <span class="cw-v">snap_8f3a</span>  <span class="cw-c">· 1.2 GB · 4.3s</span>
+
+<span class="cw-sh">$</span> <span class="cw-v">tangle sandbox restore</span> <span class="cw-s">snap_8f3a</span>
+<span class="cw-p">→</span> <span class="cw-v">sbx_c9d1e2</span>  <span class="cw-c">· ready in 1.1s · bit-identical state</span>`;
+
+const heroSdkCode = `<span class="cw-k">import</span> <span class="cw-v">{ </span><span class="cw-f">SandboxClient</span><span class="cw-v"> }</span> <span class="cw-k">from</span> <span class="cw-s">"@tangle-network/sandbox"</span>;
+
+<span class="cw-k">const</span> <span class="cw-v">client</span> = <span class="cw-k">new</span> <span class="cw-f">SandboxClient</span>({ apiKey: process.env.<span class="cw-v">TANGLE_API_KEY</span> });
+<span class="cw-k">const</span> <span class="cw-v">box</span> = <span class="cw-k">await</span> client.<span class="cw-f">create</span>({ image: <span class="cw-s">"node:22"</span> });
+
+<span class="cw-c">// Stream a coding agent inside the sandbox</span>
+<span class="cw-k">for await</span> (<span class="cw-k">const</span> <span class="cw-v">event</span> <span class="cw-k">of</span> box.<span class="cw-f">streamTask</span>(
+  <span class="cw-s">"Refactor src/ to TypeScript and add tests"</span>
+)) {
+  <span class="cw-k">if</span> (event.type === <span class="cw-s">"tool_call"</span>)
+    console.<span class="cw-f">log</span>(<span class="cw-s">\`tool: \${event.tool}\`</span>);
+  <span class="cw-k">if</span> (event.type === <span class="cw-s">"message"</span>)
+    process.stdout.<span class="cw-f">write</span>(event.content);
+}
+
+<span class="cw-ok">✓</span> <span class="cw-v">12 files converted</span>  <span class="cw-c">· 47 tests passing</span>
+<span class="cw-ok">✓</span> <span class="cw-v">PR #18 created</span>      <span class="cw-c">· src/ → TypeScript</span>`;
+
+const heroCliCode = `<span class="cw-c"># Install the CLI</span>
+<span class="cw-sh">$</span> <span class="cw-v">npm install -g</span> <span class="cw-s">@tangle-network/sandbox</span>
+
+<span class="cw-c"># Spin up an isolated container</span>
+<span class="cw-sh">$</span> <span class="cw-v">tangle sandbox create</span> <span class="cw-k">--image</span> <span class="cw-s">node:22</span>
+<span class="cw-p">→</span> <span class="cw-v">sbx_a8f3c2d1</span>  <span class="cw-c">· ready in 0.6s</span>
+
+<span class="cw-c"># Run a coding agent against it</span>
+<span class="cw-sh">$</span> <span class="cw-v">tangle agent run</span> <span class="cw-s">sbx_a8f3c2d1</span> \\
+<span class="cw-k">  --goal</span> <span class="cw-s">"Refactor src/ to TypeScript"</span> \\
+<span class="cw-k">  --stream</span>
+
+<span class="cw-ok">✓</span> <span class="cw-v">Goal achieved</span>  <span class="cw-c">· 4 turns · 18s · 0 errors</span>`;
+
+const iconShield = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+const iconLayers = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>';
+const iconCamera = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+const iconBot = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>';
+const iconUsers = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+const iconRefresh = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"/></svg>';
+
+const faqs = [
+  { question: 'What is the Sandbox SDK?', answer: 'A TypeScript SDK and CLI for spinning up isolated cloud containers. Each sandbox is a full Linux environment with root, filesystem, networking, and optional GPU, provisioned in under a second.' },
+  { question: 'Which agent backends work?', answer: 'OpenCode (default, multi-provider), Claude Code, OpenAI Codex, Sourcegraph AMP, and Factory Droids. Switch backends per request, or bring your own API key.' },
+  { question: 'What images and runtimes are supported?', answer: 'Any Docker image. Pre-built images for Node, Python, Rust, Go, Ethereum, Solana, and CUDA-enabled GPU workloads. Bring your own Dockerfile if you need a custom base.' },
+  { question: 'How do snapshot and restore work?', answer: 'Checkpoint the full sandbox (filesystem, packages, state), then restore instantly into a fresh sandbox. Bring your own S3-compatible bucket (S3, GCS, R2) for persistence.' },
+];
 ---
 
-<BaseLayout title="Sandbox SDK — Secure Cloud for AI" description="Spin up. Run agents. Pay per second. Zero DevOps.">
+<BaseLayout title="Sandbox | Isolated Cloud Runtime for AI Agents" description="Launch isolated Linux sandboxes for AI agents in sub-second cold starts. Bring any Docker image, stream logs, snapshot state, and scale secure runtimes on demand." image="/images/hero/glass-cylinders-poster.jpg" imageAlt="Tangle Sandbox isolated runtime">
 
   <style>
-    .sb-hero { position: relative; min-height: 100vh; display: flex; align-items: center; padding: 6rem 0 4rem; }
-    .sb-hero::before {
-      content: ''; position: absolute; inset: 0; z-index: 0;
-      background:
-        radial-gradient(ellipse 70% 60% at 30% 75%, rgba(74,222,128,0.07), transparent),
-        radial-gradient(ellipse 60% 50% at 75% 25%, rgba(34,211,238,0.05), transparent);
+    .sb-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 2.5rem;
     }
-    .sb-hero-inner { position: relative; z-index: 1; max-width: 80rem; margin: 0 auto; padding: 0 5%; display: grid; grid-template-columns: 1fr 1.3fr; gap: 4rem; align-items: center; }
-    .sb-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 16px; border-radius: 100px; border: 1px solid rgba(74,222,128,0.3); background: rgba(74,222,128,0.08); font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: #4ade80; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-bottom: 1.5rem; }
-    .sb-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #4ade80; animation: sb-pulse 2s infinite; }
-    @keyframes sb-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-    .sb-h1 { font-family: 'Satoshi', sans-serif; font-size: clamp(3rem, 5vw, 4.5rem); font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; color: white; margin-bottom: 1.5rem; }
-    .sb-h1 em { font-style: normal; background: linear-gradient(135deg, #4ade80, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .sb-sub { font-family: 'Satoshi', sans-serif; font-size: 1.15rem; font-weight: 500; line-height: 1.65; color: rgba(255,255,255,0.8); max-width: 440px; margin-bottom: 2rem; }
-    .sb-glow { position: relative; }
-    .sb-glow::before { content: ''; position: absolute; inset: -8px; border-radius: 18px; background: linear-gradient(135deg, rgba(74,222,128,0.12), rgba(34,211,238,0.06)); filter: blur(28px); pointer-events: none; }
 
-    /* Full-width terminal */
-    .sb-terminal-wrap { max-width: 72rem; margin: 0 auto; padding: 0 5%; }
-    .sb-terminal {
-      background: #0e0e1c;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      overflow: hidden;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 14px;
-      line-height: 1.8;
-    }
-    .sb-terminal-chrome {
-      display: flex; align-items: center; gap: 6px; padding: 14px 20px;
-      background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(255,255,255,0.04);
-    }
-    .sb-terminal-dot { width: 12px; height: 12px; border-radius: 50%; }
-    .sb-terminal-title { margin-left: 12px; font-size: 12px; color: rgba(255,255,255,0.25); }
-    .sb-terminal-body { padding: 1.5rem 2rem; }
-    .sb-line { display: block; min-height: 1.8em; }
-    .sb-prompt { color: #4ade80; }
-    .sb-cmd { color: #e2e8f0; }
-    .sb-flag { color: #22d3ee; }
-    .sb-string { color: #4ade80; }
-    .sb-dim { color: rgba(255,255,255,0.2); }
-    .sb-info { color: rgba(255,255,255,0.35); }
-    .sb-success { color: #4ade80; }
-    .sb-output { color: rgba(255,255,255,0.45); }
-    .sb-highlight { background: rgba(74,222,128,0.04); margin: 0 -2rem; padding: 0 2rem; }
-    .sb-accent { color: #22d3ee; }
-
-    /* Bento grid */
-    .sb-bento { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-width: 72rem; margin: 0 auto; }
-    .sb-bento-cell { background: #141428; border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 2rem 2.25rem; display: flex; flex-direction: column; justify-content: space-between; transition: all 0.4s; }
-    .sb-bento-cell:hover { background: rgba(255,255,255,0.04); border-color: rgba(74,222,128,0.2); box-shadow: 0 0 40px rgba(74,222,128,0.04); }
-    .sb-bento-cell.span-2 { grid-column: span 2; }
-    .sb-bento-label { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: rgba(74,222,128,0.7); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem; }
-    .sb-bento-title { font-family: 'Satoshi', sans-serif; font-size: 1.5rem; font-weight: 700; color: white; margin-bottom: 0.75rem; line-height: 1.2; }
-    .sb-bento-desc { font-family: 'Satoshi', sans-serif; font-size: 0.95rem; font-weight: 500; color: rgba(255,255,255,0.75); line-height: 1.6; }
-    .sb-bento-code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: rgba(255,255,255,0.8); background: rgba(0,0,0,0.5); padding: 1.25rem 1.5rem; border-radius: 12px; margin-top: 1.5rem; white-space: pre; overflow-x: auto; line-height: 1.75; border: 1px solid rgba(255,255,255,0.04); }
-    .sb-bento-code .g { color: #4ade80; }
-    .sb-bento-code .c { color: #22d3ee; }
-    .sb-bento-code .s { color: #a78bfa; }
-    .sb-bento-code .w { color: #e2e8f0; }
-    .sb-bento-code .d { color: rgba(255,255,255,0.3); }
-
-    /* Section headers */
-    .sb-section { padding: 8rem 5% 6rem; max-width: 80rem; margin: 0 auto; }
-    .sb-section-label { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: rgba(74,222,128,0.5); text-transform: uppercase; letter-spacing: 0.1em; text-align: center; margin-bottom: 0.75rem; }
-    .sb-section-title { font-family: 'Satoshi', sans-serif; font-size: clamp(2rem, 4vw, 3.5rem); font-weight: 700; color: white; text-align: center; line-height: 1.15; margin-bottom: 1rem; }
-    .sb-section-title em { font-style: normal; background: linear-gradient(45deg, #4ade80, #22d3ee); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .sb-section-sub { font-family: 'Satoshi', sans-serif; font-size: 1.1rem; font-weight: 500; color: rgba(255,255,255,0.8); text-align: center; max-width: 560px; margin: 0 auto 3rem; }
-
-    /* Pricing */
-    .sb-pricing { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-width: 72rem; margin: 0 auto; }
-    .sb-price-cell { background: #141428; border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 2.5rem 2rem; text-align: center; transition: all 0.4s; }
-    .sb-price-cell:hover { border-color: rgba(74,222,128,0.2); box-shadow: 0 0 40px rgba(74,222,128,0.04); }
-    .sb-price-cell.featured { background: rgba(74,222,128,0.04); border-color: rgba(74,222,128,0.2); }
-    .sb-price-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
-    .sb-price-cell.featured .sb-price-tag { color: rgba(74,222,128,0.7); }
-    .sb-price-amount { font-family: 'Satoshi', sans-serif; font-size: 3rem; font-weight: 800; color: white; line-height: 1; }
-    .sb-price-unit { font-family: 'Satoshi', sans-serif; font-size: 0.9rem; font-weight: 500; color: rgba(255,255,255,0.3); margin-top: 6px; }
-
-    /* Mobile */
     @media (max-width: 768px) {
-      .sb-hero-inner { grid-template-columns: 1fr; gap: 2rem; }
-      .sb-bento { grid-template-columns: 1fr; }
-      .sb-bento-cell.span-2 { grid-column: span 1; }
-      .sb-pricing { grid-template-columns: 1fr; }
-      .sb-terminal { font-size: 12px; }
-      .sb-terminal-body { padding: 1rem; }
+      .sb-grid-3 { grid-template-columns: 1fr; }
+    }
+
+    /* Lifecycle StoryScroller visuals */
+    .sb-story-kv { display: flex; flex-direction: column; }
+    .sb-story-row { display: flex; gap: 1rem; align-items: baseline; font-family: var(--font-mono); font-size: 0.8125rem; padding: 0.55rem 0; border-bottom: 1px dashed rgba(165,170,252,0.18); }
+    .sb-story-row:last-child { border-bottom: 0; }
+    .sb-story-key { color: var(--brand-cool); min-width: 6.5rem; }
+    .sb-story-val { color: var(--text-primary); }
+    .sb-story-ok { color: #34D399; }
+
+    .sb-story-stack { display: flex; flex-direction: column; gap: 0.625rem; }
+    .sb-story-box { display: flex; justify-content: space-between; align-items: center; padding: 0.875rem 1.125rem; background: rgba(52,211,153,0.05); border: 1px solid rgba(52,211,153,0.2); border-radius: 8px; font-family: var(--font-mono); font-size: 0.875rem; color: var(--text-primary); }
+    .sb-story-pill { font-family: var(--font-mono); font-size: 0.7rem; padding: 0.2rem 0.55rem; border-radius: 999px; letter-spacing: 0.04em; }
+    .sb-story-pill-ok { color: #34D399; background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.3); }
+    .sb-story-pill-info { color: #818CF8; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25); }
+
+    .sb-story-snap { display: flex; flex-direction: column; gap: 0.85rem; }
+    .sb-story-snap-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0.85rem; align-items: center; padding: 0.85rem 1rem; background: rgba(99,102,241,0.05); border: 1px solid rgba(99,102,241,0.18); border-radius: 8px; font-family: var(--font-mono); font-size: 0.8125rem; }
+    .sb-story-snap-row-restore { background: rgba(52,211,153,0.05); border-color: rgba(52,211,153,0.22); }
+    .sb-story-snap-side { color: var(--text-primary); }
+    .sb-story-snap-arrow { color: var(--brand-cool); font-size: 1.1rem; text-align: center; }
+    .sb-story-snap-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem 1.25rem; font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); padding-left: 0.25rem; }
+    .sb-story-snap-meta strong { color: var(--text-primary); font-weight: 700; }
+
+    /* Scale visual. redesigned 2026-04-25 to fix Drew's "uncreative
+       waste of space" call. Was 4 progress bars in a giant box; now a
+       dense 2×3 grid: hero counter + billing card on top, region map
+       and live spawn feed in the middle, percentile strip on bottom. */
+    .sb-story-scale-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto auto;
+      gap: 0.75rem;
+      width: 100%;
+    }
+    .sb-story-scale-card {
+      padding: 0.875rem 1rem;
+      background: rgba(99,102,241,0.06);
+      border: 1px solid rgba(99,102,241,0.18);
+      border-radius: 8px;
+    }
+    .sb-story-scale-card--big { background: rgba(99,102,241,0.10); border-color: rgba(99,102,241,0.32); }
+    .sb-story-scale-card-label { font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.4rem; }
+    .sb-story-scale-card-num { font-family: var(--font-display); font-size: 1.875rem; font-weight: 700; color: var(--text-primary); line-height: 1; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
+    .sb-story-scale-card--big .sb-story-scale-card-num { font-size: 2.375rem; background: linear-gradient(90deg, #A5AAFC, #818CF8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .sb-story-scale-card-trend { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
+    .sb-story-scale-trend-up { color: #34D399; font-weight: 700; }
+
+    .sb-story-scale-regions, .sb-story-scale-feed {
+      grid-column: span 1;
+      padding: 0.875rem 1rem;
+      background: rgba(20,19,40,0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+    }
+    .sb-story-scale-region-list { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.4rem; }
+    .sb-story-scale-region { display: grid; grid-template-columns: 6.5rem 1fr 2.5rem; gap: 0.5rem; align-items: center; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-secondary); }
+    .sb-story-scale-region-bar { height: 4px; background: rgba(255,255,255,0.04); border-radius: 2px; overflow: hidden; }
+    .sb-story-scale-region-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #818CF8, #A5AAFC); border-radius: 2px; }
+    .sb-story-scale-region:last-child .sb-story-scale-region-bar > span { background: linear-gradient(90deg, #34D399, #6EE7B7); }
+    .sb-story-scale-region :last-child { color: var(--text-primary); font-weight: 700; text-align: right; }
+
+    .sb-story-scale-feed-list { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.4rem; }
+    .sb-story-scale-feed-row { display: grid; grid-template-columns: 4.25rem 1fr 3rem; gap: 0.5rem; align-items: center; font-family: var(--font-mono); font-size: 0.6875rem; padding: 0.2rem 0; border-bottom: 1px dashed rgba(165,170,252,0.10); }
+    .sb-story-scale-feed-row:last-child { border-bottom: 0; }
+    .sb-story-scale-feed-time { color: var(--text-muted); }
+    .sb-story-scale-feed-img  { color: var(--brand-cool); }
+    .sb-story-scale-feed-ms   { color: #34D399; font-weight: 700; text-align: right; }
+
+    .sb-story-scale-perc {
+      grid-column: span 2;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      padding: 0.625rem 1rem;
+      background: rgba(20,19,40,0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+    }
+    .sb-story-scale-perc-item { display: flex; flex-direction: column; gap: 0.125rem; }
+    .sb-story-scale-perc-label { font-family: var(--font-mono); font-size: 0.625rem; font-weight: 700; letter-spacing: 0.08em; color: var(--text-muted); text-transform: uppercase; }
+    .sb-story-scale-perc-num   { font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--text-primary); }
+
+    .sb-story-foot { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); letter-spacing: 0.04em; margin-top: auto; padding-top: 0.875rem; border-top: 1px solid var(--border-subtle); }
+
+    /* ═══ R24 hero ═══ */
+    .sb-hero {
+      position: relative; overflow: hidden;
+      background: var(--depth-1);
+      min-height: 100vh; display: flex; align-items: center;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .sb-hero-bg { position: absolute; inset: 0; z-index: 0; opacity: 0.20; pointer-events: none; }
+    .sb-hero-bg video { width: 100%; height: 100%; object-fit: cover; }
+    .sb-hero-inner {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 84rem; margin: 0 auto;
+      padding: 5rem 6% 3rem;
+      display: flex; flex-direction: column; align-items: center; gap: 2.25rem;
+    }
+    .sb-hero-text { text-align: center; max-width: 52rem; display: flex; flex-direction: column; align-items: center; gap: 1.125rem; }
+    .sb-hero-tag {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.3rem 0.75rem;
+      background: rgba(52, 211, 153, 0.10);
+      border: 1px solid rgba(52, 211, 153, 0.32);
+      border-radius: 999px;
+      font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700;
+      letter-spacing: 0.14em; color: #34D399;
+    }
+    .sb-hero-tag-dot {
+      width: 7px; height: 7px; border-radius: 999px; background: #34D399;
+      box-shadow: 0 0 10px rgba(52, 211, 153, 0.7);
+      animation: sb-hero-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes sb-hero-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .sb-hero-title {
+      font-family: var(--font-display);
+      font-size: clamp(2.75rem, 6vw + 0.5rem, 5.25rem);
+      font-weight: 800; letter-spacing: -0.025em; line-height: 1.05;
+      color: var(--text-primary); margin: 0; text-wrap: balance;
+    }
+    .sb-hero-sub {
+      font-family: var(--font-sans);
+      font-size: clamp(1.0625rem, 1.3vw, 1.25rem);
+      line-height: 1.5; color: var(--text-secondary); margin: 0;
+      max-width: 38rem;
+    }
+    .sb-hero-ctas { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; margin-top: 0.5rem; }
+    .sb-hero-cta {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.875rem 1.5rem; border-radius: 10px;
+      font-family: var(--font-sans); font-size: 1rem; font-weight: 700;
+      line-height: 1.2; text-decoration: none;
+      transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
+    }
+    .sb-hero-cta--primary {
+      background: var(--brand-dim);
+      border: 1px solid var(--brand-dim);
+      color: white;
+      box-shadow: 0 8px 28px rgba(99, 102, 241, 0.42);
+    }
+    .sb-hero-cta--primary:hover {
+      background: var(--brand-primary); border-color: var(--brand-primary);
+      transform: translateY(-1px);
+      box-shadow: 0 10px 32px rgba(99, 102, 241, 0.55);
+    }
+    .sb-hero-cta--ghost {
+      background: transparent;
+      border: 1px solid var(--border-default);
+      color: var(--text-secondary); font-weight: 500;
+    }
+    .sb-hero-cta--ghost:hover {
+      background: var(--depth-3); border-color: var(--border-accent); color: var(--text-primary);
+    }
+    .sb-hero-install {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.45rem 0.875rem;
+      background: var(--depth-3);
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      font-family: var(--font-mono); font-size: 0.8125rem;
+      color: var(--text-primary);
+    }
+    .sb-hero-install-prompt { color: #34D399; font-weight: 700; }
+    .sb-hero-install code { background: none; padding: 0; color: inherit; }
+    /* Live-feel overlays anchored to the real screenshot. Pattern
+       lifted from /services/blueprint-agent. No fabricated UI. */
+    .sb-hero-shot-pill {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.7rem;
+      background: rgba(12, 11, 29, 0.78);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(74, 222, 128, 0.32);
+      border-radius: 999px;
+      font-family: var(--font-mono, ui-monospace, monospace);
+      font-size: 0.68rem;
+      letter-spacing: 0.14em;
+      color: #4ade80;
+      font-weight: 600;
+      text-transform: uppercase;
+      z-index: 2;
+    }
+    .sb-hero-shot-pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #4ade80;
+      box-shadow: 0 0 10px #4ade80;
+      animation: sb-hero-pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes sb-hero-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.45; transform: scale(1.25); }
+    }
+    .sb-hero-shot-status {
+      position: absolute;
+      bottom: 1rem;
+      right: 1rem;
+      max-width: 26rem;
+      padding: 0.7rem 0.875rem;
+      background: rgba(12, 11, 29, 0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(165, 170, 252, 0.18);
+      border-radius: 10px;
+      font-family: var(--font-mono, ui-monospace, monospace);
+      font-size: 0.7rem;
+      color: rgba(244, 244, 249, 0.85);
+      z-index: 2;
+      animation: sb-hero-status-in 1.2s ease-out 0.3s both;
+    }
+    @keyframes sb-hero-status-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .sb-hero-shot-status-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.3rem;
+    }
+    .sb-hero-shot-status-tag {
+      display: inline-block;
+      padding: 0.12rem 0.4rem;
+      background: rgba(74, 222, 128, 0.14);
+      border: 1px solid rgba(74, 222, 128, 0.3);
+      border-radius: 4px;
+      color: #4ade80;
+      font-size: 0.58rem;
+      letter-spacing: 0.14em;
+      font-weight: 600;
+    }
+    .sb-hero-shot-status-name {
+      color: #ffffff;
+      font-weight: 600;
+      font-size: 0.78rem;
+    }
+    .sb-hero-shot-status-meta {
+      display: flex;
+      gap: 0.5rem 0.625rem;
+      flex-wrap: wrap;
+      color: rgba(244, 244, 249, 0.55);
+      font-size: 0.65rem;
+    }
+    .sb-hero-shot-status-meta span:not(:last-child)::after {
+      content: '·';
+      margin-left: 0.625rem;
+      opacity: 0.4;
+    }
+    .sb-hero-shot-status-meta strong {
+      color: #ffffff;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .sb-hero-shot-pulse,
+      .sb-hero-shot-status { animation: none; }
+    }
+    @media (max-width: 768px) {
+      .sb-hero-shot-pill {
+        top: 0.5rem; right: 0.5rem;
+        font-size: 0.6rem; padding: 0.3rem 0.55rem;
+      }
+      .sb-hero-shot-status {
+        position: relative; bottom: auto; right: auto;
+        max-width: 100%; margin: 0.75rem 0.5rem 0.5rem;
+      }
+    }
+
+    .sb-hero-shot {
+      position: relative;
+      width: 100%; max-width: 84rem;
+      border-radius: 14px; overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      box-shadow:
+        0 28px 80px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(165, 170, 252, 0.10) inset;
+    }
+    .sb-hero-shot::before {
+      content: ''; position: absolute; inset: -24px;
+      background: linear-gradient(135deg, rgba(52,211,153,0.18), rgba(99,102,241,0.18));
+      filter: blur(36px); z-index: -1; pointer-events: none;
+    }
+    .sb-hero-shot img { display: block; width: 100%; height: auto; border-radius: inherit; }
+    /* Fallback rendered when sandbox-app.png isn't present yet. terminal
+       mock keyed off the same chrome dots + URL bar pattern. */
+    .sb-hero-shot-fallback { display: none; }
+    .sb-hero-shot--missing .sb-hero-shot-fallback {
+      display: flex; flex-direction: column;
+      background: #0c0b1d; aspect-ratio: 16 / 6;
+    }
+    .sb-hero-shot-chrome {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.625rem 0.875rem;
+      background: var(--depth-2);
+      border-bottom: 1px solid var(--border-default);
+    }
+    .sb-hero-shot-dot { width: 11px; height: 11px; border-radius: 999px; }
+    .sb-hero-shot-dot:nth-child(1) { background: #ff5f57; }
+    .sb-hero-shot-dot:nth-child(2) { background: #febc2e; }
+    .sb-hero-shot-dot:nth-child(3) { background: #28c840; }
+    .sb-hero-shot-url {
+      flex: 1; padding: 0.3rem 0.625rem;
+      background: var(--depth-1); border: 1px solid var(--border-subtle);
+      border-radius: 999px;
+      font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);
+      margin-left: 0.5rem;
+    }
+    .sb-hero-shot-body {
+      flex: 1; display: block;
+    }
+    .sb-hero-shot-term {
+      padding: 1.5rem 1.75rem;
+      font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.7;
+      color: var(--text-primary);
+    }
+    .sb-hero-shot-cursor {
+      display: inline-block; width: 7px; height: 14px; background: #818CF8;
+      vertical-align: middle;
+      animation: sb-hero-blink 1.1s steps(2, end) infinite;
+    }
+    @keyframes sb-hero-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0; } }
+    @media (max-width: 768px) {
+      .sb-hero-inner { padding: 4rem 5% 2rem; gap: 1.75rem; }
+    }
+
+    /* ═══ Scale + autoresearch ═══ */
+    .sb-scale-head { max-width: 56rem; margin: 0 0 2.5rem; }
+    .sb-scale-eyebrow {
+      font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700;
+      letter-spacing: 0.18em; color: #34D399; text-transform: uppercase;
+      margin-bottom: 1rem;
+    }
+    .sb-scale-title {
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 3.6vw, 3rem);
+      font-weight: 700; line-height: 1.1; letter-spacing: -0.02em;
+      color: var(--text-primary); margin: 0 0 1rem; text-wrap: balance;
+    }
+    .sb-scale-lede {
+      font-family: var(--font-sans); font-size: 1.0625rem; line-height: 1.6;
+      color: var(--text-secondary); max-width: 44rem; margin: 0;
+    }
+    .sb-scale-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto auto auto;
+      gap: 0.875rem;
+    }
+    .sb-scale-card {
+      padding: 1rem 1.125rem;
+      background: rgba(99, 102, 241, 0.06);
+      border: 1px solid rgba(99, 102, 241, 0.18);
+      border-radius: 10px;
+    }
+    .sb-scale-card--big { background: rgba(52, 211, 153, 0.10); border-color: rgba(52, 211, 153, 0.28); }
+    .sb-scale-card-label {
+      font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700;
+      letter-spacing: 0.10em; color: var(--text-muted); margin-bottom: 0.5rem;
+    }
+    .sb-scale-card-num {
+      font-family: var(--font-display); font-size: 2.5rem; font-weight: 800;
+      letter-spacing: -0.03em; line-height: 1; color: var(--text-primary); margin-bottom: 0.4rem;
+    }
+    .sb-scale-card--big .sb-scale-card-num {
+      background: linear-gradient(90deg, #6EE7B7, #34D399);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .sb-scale-card-trend { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary); }
+    .sb-scale-trend-up { color: #34D399; font-weight: 700; }
+
+    .sb-scale-regions, .sb-scale-feed {
+      grid-column: span 1;
+      padding: 1rem 1.125rem;
+      background: rgba(20, 19, 40, 0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+    }
+    .sb-scale-region-list { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.5rem; }
+    .sb-scale-region {
+      display: grid; grid-template-columns: 7rem 1fr 3rem; gap: 0.6rem; align-items: center;
+      font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-secondary);
+    }
+    .sb-scale-region-bar { height: 5px; background: rgba(255, 255, 255, 0.05); border-radius: 3px; overflow: hidden; }
+    .sb-scale-region-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #818CF8, #A5AAFC); border-radius: 3px; }
+    .sb-scale-region:last-child .sb-scale-region-bar > span { background: linear-gradient(90deg, #34D399, #6EE7B7); }
+    .sb-scale-region :last-child { color: var(--text-primary); font-weight: 700; text-align: right; }
+    .sb-scale-feed-list { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.5rem; }
+    .sb-scale-feed-row {
+      display: grid; grid-template-columns: 4.5rem 1fr 3rem; gap: 0.6rem; align-items: center;
+      font-family: var(--font-mono); font-size: 0.75rem;
+      padding: 0.225rem 0;
+      border-bottom: 1px dashed rgba(165, 170, 252, 0.10);
+    }
+    .sb-scale-feed-row:last-child { border-bottom: 0; }
+    .sb-scale-feed-time { color: var(--text-muted); }
+    .sb-scale-feed-img  { color: var(--brand-cool); }
+    .sb-scale-feed-ms   { color: #34D399; font-weight: 700; text-align: right; }
+    .sb-scale-perc {
+      grid-column: span 2;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.875rem;
+      padding: 0.875rem 1.125rem;
+      background: rgba(20, 19, 40, 0.4);
+      border: 1px solid var(--border-subtle);
+      border-radius: 10px;
+    }
+    .sb-scale-perc-item { display: flex; flex-direction: column; gap: 0.2rem; }
+    .sb-scale-perc-label {
+      font-family: var(--font-mono); font-size: 0.625rem; font-weight: 700;
+      letter-spacing: 0.10em; color: var(--text-muted); text-transform: uppercase;
+    }
+    .sb-scale-perc-num { font-family: var(--font-mono); font-size: 1.125rem; font-weight: 700; color: var(--text-primary); }
+    @media (max-width: 768px) {
+      .sb-scale-grid { grid-template-columns: 1fr; }
+      .sb-scale-perc { grid-column: span 1; grid-template-columns: repeat(2, 1fr); }
+    }
+
+    /* ═══ Scale v2 — single hero stat + 4 percentile chips + 1
+       hover-pause spawn feed. Replaces the prior 6-card metric soup
+       (Drew: "feels bad"). ═══ */
+    .sb-scale-v2 {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .sb-scale-v2-head {
+      text-align: center;
+      max-width: 56rem;
+      margin: 0 auto 2.5rem;
+    }
+    .sb-scale-v2-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.3rem 0.7rem;
+      background: rgba(74, 222, 128, 0.08);
+      border: 1px solid rgba(74, 222, 128, 0.22);
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.18em;
+      color: #4ade80;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+    .sb-scale-v2-pulse {
+      width: 7px; height: 7px; border-radius: 999px;
+      background: #4ade80; box-shadow: 0 0 10px #4ade80;
+      animation: sb-scale-v2-blink 1.6s ease-in-out infinite;
+    }
+    @keyframes sb-scale-v2-blink {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.45; transform: scale(1.2); }
+    }
+    .sb-scale-v2-title {
+      font-family: var(--font-display);
+      font-size: clamp(1.875rem, 3.6vw, 2.875rem);
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+      line-height: 1.08;
+      margin: 0 0 0.875rem;
+    }
+    .sb-scale-v2-lede {
+      font-size: 1rem;
+      line-height: 1.55;
+      color: var(--text-secondary);
+      margin: 0;
+    }
+
+    .sb-scale-v2-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .sb-scale-v2-stat {
+      padding: 1.25rem 1.25rem;
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+    }
+    .sb-scale-v2-stat-num {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .sb-scale-v2-stat-label {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+
+    .sb-scale-v2-feed {
+      background: rgba(255, 255, 255, 0.025);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .sb-scale-v2-feed-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 1.25rem;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .sb-scale-v2-feed-label { color: rgba(244, 244, 249, 0.5); font-weight: 600; }
+    .sb-scale-v2-feed-region { color: rgba(244, 244, 249, 0.35); }
+    .sb-scale-v2-feed-rows {
+      max-height: 14rem;
+      overflow: hidden;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 8%, black 92%, transparent 100%);
+      mask-image: linear-gradient(to bottom, transparent 0, black 8%, black 92%, transparent 100%);
+      animation: sb-scale-v2-scroll 28s linear infinite;
+    }
+    .sb-scale-v2-feed:hover .sb-scale-v2-feed-rows {
+      animation-play-state: paused;
+    }
+    @keyframes sb-scale-v2-scroll {
+      from { transform: translateY(0); }
+      to   { transform: translateY(-50%); }
+    }
+    .sb-scale-v2-feed-row {
+      display: grid;
+      grid-template-columns: 6.5rem 1fr 5rem;
+      gap: 1rem;
+      padding: 0.55rem 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: rgba(244, 244, 249, 0.78);
+    }
+    .sb-scale-v2-feed-time { color: rgba(244, 244, 249, 0.45); }
+    .sb-scale-v2-feed-img { color: #a5aafc; }
+    .sb-scale-v2-feed-ms { color: #4ade80; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .sb-scale-v2-pulse,
+      .sb-scale-v2-feed-rows { animation: none; }
+    }
+    @media (max-width: 768px) {
+      .sb-scale-v2-stats { grid-template-columns: repeat(2, 1fr); }
+      .sb-scale-v2-stat-num { font-size: 1.625rem; }
+      .sb-scale-v2-feed-row {
+        grid-template-columns: 5rem 1fr 4rem;
+        font-size: 0.72rem;
+        padding: 0.45rem 1rem;
+      }
+      .sb-scale-v2-feed-region { display: none; }
+    }
+
+    /* ═══ Problems we solve (vault) — section deleted; styles kept
+       for any straggling references but unused on this page. ═══ */
+    .sb-problems-head { max-width: 56rem; margin: 0 0 2.5rem; }
+    .sb-problems-eyebrow {
+      font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 700;
+      letter-spacing: 0.18em; color: #4F46E5; text-transform: uppercase;
+      margin-bottom: 1rem;
+    }
+    .sb-problems-title {
+      font-family: var(--font-display);
+      font-size: clamp(1.875rem, 3.4vw, 2.75rem);
+      font-weight: 700; line-height: 1.15; letter-spacing: -0.02em;
+      color: #191c24; margin: 0; text-wrap: balance;
+    }
+    .sb-problems-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem;
+    }
+    .sb-problem {
+      padding: 1.75rem;
+      background: #ffffff;
+      border: 1px solid rgba(99, 102, 241, 0.14);
+      border-radius: 12px;
+    }
+    .sb-problem-tag {
+      font-family: var(--font-mono); font-size: 0.625rem; font-weight: 700;
+      letter-spacing: 0.16em; color: #4338CA; text-transform: uppercase;
+      margin-bottom: 0.875rem;
+    }
+    .sb-problem-pain {
+      font-family: var(--font-display); font-weight: 600; font-size: 1.0625rem;
+      line-height: 1.45; color: #191c24; letter-spacing: -0.01em;
+      margin-bottom: 0.875rem;
+    }
+    .sb-problem-fix {
+      font-family: var(--font-sans); font-size: 0.9375rem; line-height: 1.55;
+      color: #3a3a50;
+      padding-top: 0.875rem;
+      border-top: 1px dashed rgba(99, 102, 241, 0.18);
+    }
+    @media (max-width: 768px) { .sb-problems-grid { grid-template-columns: 1fr; } }
+
+    /* ═══ Final dual-CTA (ship today / enterprise) ═══ */
+    .sb-final-cta {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    }
+    .sb-final-cta-card {
+      padding: 2rem;
+      border-radius: 14px;
+      display: flex; flex-direction: column; gap: 0.875rem;
+    }
+    .sb-final-cta-card--primary {
+      background: linear-gradient(135deg, rgba(79, 70, 229, 0.18), rgba(165, 170, 252, 0.06));
+      border: 1px solid rgba(79, 70, 229, 0.42);
+    }
+    .sb-final-cta-card--enterprise {
+      background: var(--depth-3);
+      border: 1px solid var(--border-default);
+    }
+    .sb-final-cta-tag {
+      font-family: var(--font-mono); font-size: 0.625rem; font-weight: 700;
+      letter-spacing: 0.16em; text-transform: uppercase;
+      color: #A5AAFC;
+    }
+    .sb-final-cta-card--enterprise .sb-final-cta-tag { color: var(--text-muted); }
+    .sb-final-cta-title {
+      font-family: var(--font-display); font-size: 1.875rem; font-weight: 700;
+      letter-spacing: -0.02em; line-height: 1.1;
+      color: var(--text-primary); margin: 0;
+    }
+    .sb-final-cta-body {
+      font-family: var(--font-sans); font-size: 1rem; line-height: 1.55;
+      color: var(--text-secondary); margin: 0; flex: 1;
+    }
+    .sb-final-cta-ctas { display: flex; gap: 0.625rem; flex-wrap: wrap; align-items: center; margin-top: 0.5rem; }
+    .sb-final-cta-link {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.625rem 1rem; border-radius: 8px;
+      font-family: var(--font-sans); font-size: 0.875rem; font-weight: 700;
+      text-decoration: none; transition: all 0.16s ease;
+    }
+    .sb-final-cta-link--filled {
+      background: var(--brand-dim); color: white;
+      box-shadow: 0 6px 20px rgba(79, 70, 229, 0.42);
+    }
+    .sb-final-cta-link--filled:hover {
+      background: var(--brand-primary); transform: translateY(-1px);
+      box-shadow: 0 8px 24px rgba(79, 70, 229, 0.55);
+    }
+    .sb-final-cta-link--ghost {
+      background: transparent; border: 1px solid var(--border-default);
+      color: var(--text-secondary); font-weight: 500;
+      font-family: var(--font-mono); font-size: 0.8125rem;
+    }
+    .sb-final-cta-link--ghost:hover {
+      background: rgba(255,255,255,0.04); border-color: var(--border-accent); color: var(--text-primary);
+    }
+    @media (max-width: 768px) { .sb-final-cta { grid-template-columns: 1fr; } }
+
+    @media (prefers-reduced-motion: reduce) {
+      .sb-hero-tag-dot, .sb-hero-shot-cursor { animation: none !important; }
+    }
+
+    /* ═══ R25. Built thin on purpose, 10x ═══
+       White section with 3 dark-card primitives, each with its own
+       domain-specific live mini-visual. Tighter head/body rhythm so
+       the empty top whitespace Drew flagged disappears. */
+    .sb-thin {
+      background: #f4f4f9;
+      border-top: 1px solid rgba(0, 0, 0, 0.06);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    .sb-thin-inner {
+      max-width: 84rem;
+      margin: 0 auto;
+      padding: 4.5rem 6%;
+    }
+    .sb-thin-head {
+      max-width: 56rem;
+      margin: 0 0 2.25rem;
+    }
+    .sb-thin-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: #047857;
+      text-transform: uppercase;
+      margin-bottom: 0.875rem;
+    }
+    .sb-thin-title {
+      font-family: var(--font-display);
+      font-size: clamp(2.25rem, 4.4vw, 3.5rem);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.025em;
+      color: #191c24;
+      margin: 0 0 1rem;
+      text-wrap: balance;
+    }
+    .sb-thin-grad {
+      background: linear-gradient(135deg, #4F46E5, #818CF8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .sb-thin-lede {
+      font-family: var(--font-sans);
+      font-size: 1.0625rem;
+      line-height: 1.6;
+      color: #3a3a50;
+      margin: 0;
+      max-width: 44rem;
+    }
+    /* Row layout: each primitive gets its own row with text on one side
+       and a domain-specific visual on the other. Alternates with --reverse. */
+    .sb-prim-row {
+      display: grid;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+      gap: 3rem;
+      align-items: center;
+      padding: 3.25rem 0;
+      border-top: 1px solid rgba(0, 0, 0, 0.07);
+    }
+    .sb-prim-row:last-child { border-bottom: 1px solid rgba(0, 0, 0, 0.07); }
+    .sb-prim-row--reverse .sb-prim-row-text { order: 2; }
+    .sb-prim-row--reverse .sb-prim-row-visual { order: 1; }
+    .sb-prim-row[data-accent="indigo"]  { --row-accent: #4F46E5; --row-accent-soft: rgba(79, 70, 229, 0.08); --row-accent-line: rgba(79, 70, 229, 0.22); }
+    .sb-prim-row[data-accent="emerald"] { --row-accent: #047857; --row-accent-soft: rgba(4, 120, 87, 0.08); --row-accent-line: rgba(4, 120, 87, 0.22); }
+    .sb-prim-row[data-accent="amber"]   { --row-accent: #B45309; --row-accent-soft: rgba(180, 83, 9, 0.08); --row-accent-line: rgba(180, 83, 9, 0.22); }
+    .sb-prim-row-text {
+      display: flex; flex-direction: column; gap: 0.875rem;
+      max-width: 32rem;
+    }
+    .sb-prim-tag {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--row-accent);
+      text-transform: uppercase;
+    }
+    .sb-prim-row-title {
+      font-family: var(--font-display);
+      font-size: 2.25rem;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.025em;
+      color: #191c24;
+      margin: 0;
+      text-wrap: balance;
+    }
+    .sb-prim-row-body {
+      font-family: var(--font-sans);
+      font-size: 1.0625rem;
+      line-height: 1.6;
+      color: #3a3a50;
+      margin: 0;
+    }
+    .sb-prim-row-body em { font-style: italic; color: #191c24; }
+    .sb-prim-cta {
+      align-self: flex-start;
+      margin-top: 0.5rem;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.625rem 1rem;
+      font-family: var(--font-sans);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--row-accent);
+      background: var(--row-accent-soft);
+      border: 1px solid var(--row-accent-line);
+      border-radius: 8px;
+      text-decoration: none;
+      transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+    .sb-prim-cta:hover {
+      background: color-mix(in oklab, var(--row-accent) 14%, transparent);
+      border-color: color-mix(in oklab, var(--row-accent) 38%, transparent);
+      transform: translateX(2px);
+    }
+    @media (max-width: 991px) {
+      .sb-prim-row { grid-template-columns: 1fr; gap: 1.75rem; padding: 2.25rem 0; }
+      .sb-prim-row--reverse .sb-prim-row-text { order: 1; }
+      .sb-prim-row--reverse .sb-prim-row-visual { order: 2; }
+    }
+
+    /* Row 1 visual — harness grid with company logos + GitHub links. */
+    .sb-harness-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.625rem;
+    }
+    @media (max-width: 600px) { .sb-harness-grid { grid-template-columns: 1fr; } }
+    .sb-harness-chip {
+      display: flex; align-items: center; gap: 0.875rem;
+      padding: 0.875rem 1rem;
+      background: #ffffff;
+      border: 1px solid #e2e3ee;
+      border-radius: 10px;
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .sb-harness-chip:hover {
+      border-color: rgba(79, 70, 229, 0.42);
+      transform: translateY(-1px);
+      box-shadow: 0 12px 28px -16px rgba(79, 70, 229, 0.32);
+    }
+    .sb-harness-chip-logo {
+      width: 28px; height: 28px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: #191c24;
+    }
+    .sb-harness-chip-logo svg { width: 100%; height: 100%; fill: currentColor; }
+    .sb-harness-chip-logo img {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      border-radius: 4px;
+    }
+    .sb-harness-chip-letter {
+      width: 28px; height: 28px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(79, 70, 229, 0.10);
+      color: #4F46E5;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      font-weight: 700;
+    }
+    .sb-harness-chip-text {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column; gap: 0.18rem;
+    }
+    .sb-harness-chip-label {
+      font-family: var(--font-display);
+      font-size: 1rem;
+      font-weight: 700;
+      color: #191c24;
+      letter-spacing: -0.01em;
+    }
+    .sb-harness-chip-meta {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: #5e5e7a;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sb-harness-chip-gh {
+      flex-shrink: 0;
+      width: 24px; height: 24px;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: #7A7CAA;
+      border-radius: 999px;
+      transition: color 0.18s ease, background 0.18s ease;
+    }
+    .sb-harness-chip:hover .sb-harness-chip-gh {
+      color: #4F46E5;
+      background: rgba(79, 70, 229, 0.08);
+    }
+
+    /* Row 2 visual — three isolation tiers with provider logos. */
+    .sb-iso-tiers {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    .sb-iso-tier {
+      padding: 1rem 1.125rem;
+      background: #ffffff;
+      border: 1px solid #e2e3ee;
+      border-radius: 10px;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .sb-iso-tier--today  { border-left: 3px solid #047857; }
+    .sb-iso-tier--onprem { border-left: 3px solid #B45309; opacity: 0.92; }
+    .sb-iso-tier--tee    { border-left: 3px solid #B45309; opacity: 0.92; }
+    .sb-iso-tier-band {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      color: #5e5e7a;
+      text-transform: uppercase;
+    }
+    .sb-iso-tier--today .sb-iso-tier-band { color: #047857; }
+    .sb-iso-tier--onprem .sb-iso-tier-band, .sb-iso-tier--tee .sb-iso-tier-band { color: #B45309; }
+    .sb-iso-tier-name {
+      font-family: var(--font-display);
+      font-size: 1.0625rem;
+      font-weight: 700;
+      color: #191c24;
+      letter-spacing: -0.01em;
+    }
+    .sb-iso-tier-providers {
+      display: flex; align-items: center; gap: 0.625rem;
+      flex-wrap: wrap;
+    }
+    .sb-iso-tier-logo {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px;
+      color: #3a3a50;
+    }
+    .sb-iso-tier-logo svg { width: 100%; height: 100%; fill: currentColor; }
+    .sb-iso-tier-text {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      padding: 0.25rem 0.5rem;
+      background: rgba(180, 83, 9, 0.08);
+      color: #B45309;
+      border: 1px solid rgba(180, 83, 9, 0.18);
+      border-radius: 4px;
+    }
+    .sb-iso-tier-bullets {
+      display: flex; flex-direction: column; gap: 0.22rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: #3a3a50;
+    }
+    .sb-iso-tier-bullets > div::before {
+      content: '·';
+      color: #7A7CAA;
+      margin-right: 0.5rem;
+    }
+
+    /* Row 3 visual — three-step session timeline. */
+    .sb-sess-timeline {
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .sb-sess-step {
+      display: grid;
+      grid-template-columns: 4rem 1fr;
+      gap: 1rem;
+      align-items: center;
+    }
+    .sb-sess-step-time {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: #B45309;
+      text-align: right;
+    }
+    .sb-sess-step-card {
+      padding: 0.875rem 1rem;
+      background: #ffffff;
+      border: 1px solid #e2e3ee;
+      border-radius: 10px;
+      display: flex; flex-direction: column; gap: 0.22rem;
+    }
+    .sb-sess-step--working .sb-sess-step-card  { border-left: 3px solid #4F46E5; }
+    .sb-sess-step--snapshot .sb-sess-step-card { border-left: 3px solid #B45309; background: rgba(245, 158, 11, 0.04); }
+    .sb-sess-step--resumed .sb-sess-step-card  { border-left: 3px solid #047857; }
+    .sb-sess-step-tag {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      color: #5e5e7a;
+      text-transform: uppercase;
+    }
+    .sb-sess-step-title {
+      font-family: var(--font-display);
+      font-size: 1.0625rem;
+      font-weight: 700;
+      color: #191c24;
+      letter-spacing: -0.01em;
+    }
+    .sb-sess-step-meta {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: #5e5e7a;
+    }
+    .sb-sess-arrow {
+      display: flex; align-items: center; gap: 0.625rem;
+      padding-left: 5rem;
+      color: #B45309;
+    }
+    .sb-sess-arrow::before {
+      content: '';
+      display: inline-block;
+      width: 1px; height: 22px;
+      background: linear-gradient(180deg, transparent, rgba(180, 83, 9, 0.55), transparent);
+    }
+    .sb-sess-arrow-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.04em;
+      color: #92400e;
+    }
+
+    /* Legacy three-card grid CSS retained for reference — unused now. */
+    .sb-thin-grid {
+      display: none;
+    }
+    .sb-thin-grid--legacy {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+    /* Cards live on a vault (light) surface — flipped from depth-2
+       to white. Inner mockups stay dark (they read as code/terminal)
+       which is the standard "code in a card" pattern. */
+    .sb-thin-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 0.875rem;
+      padding: 1.75rem 1.75rem 1.625rem;
+      background: #ffffff;
+      border: 1px solid #e2e3ee;
+      border-radius: 14px;
+      overflow: hidden;
+      isolation: isolate;
+      transition: border-color 0.22s ease, transform 0.22s ease, box-shadow 0.22s ease;
+    }
+    .sb-thin-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent-color, #6366F1), transparent);
+      opacity: 0.85;
+      z-index: 1;
+    }
+    .sb-thin-card:hover {
+      border-color: color-mix(in oklab, var(--accent-color, #6366F1) 35%, #e2e3ee);
+      transform: translateY(-2px);
+      box-shadow: 0 18px 36px -16px color-mix(in oklab, var(--accent-color, #6366F1) 35%, transparent);
+    }
+    .sb-thin-card[data-accent="indigo"]  { --accent-color: #6366F1; }
+    .sb-thin-card[data-accent="emerald"] { --accent-color: #10B981; }
+    .sb-thin-card[data-accent="amber"]   { --accent-color: #F59E0B; }
+
+    .sb-thin-card-head { display: flex; flex-direction: column; gap: 0.625rem; }
+    .sb-thin-tag {
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      color: var(--accent-color);
+    }
+    .sb-thin-card-name {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: #191c24;
+      margin: 0;
+    }
+    .sb-thin-card-body {
+      font-family: var(--font-sans);
+      font-size: 0.9375rem;
+      line-height: 1.55;
+      color: #3a3a50;
+      margin: 0 0 0.25rem;
+    }
+
+    /* Card 1. Isolated runtime: nested concentric boundary diagram (light) */
+    .sb-thin-iso {
+      margin-top: auto;
+      padding: 0.875rem;
+      background: #fafbff;
+      border: 1px solid rgba(99, 102, 241, 0.18);
+      border-radius: 10px;
+    }
+    .sb-thin-iso-outer {
+      position: relative;
+      padding: 0.75rem;
+      background: rgba(99, 102, 241, 0.04);
+      border: 1px dashed rgba(99, 102, 241, 0.32);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.625rem;
+    }
+    .sb-thin-iso-tag,
+    .sb-thin-iso-mid-tag,
+    .sb-thin-iso-inner-tag {
+      font-family: var(--font-mono);
+      font-size: 0.5625rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: #4F46E5;
+      align-self: flex-start;
+      padding: 0.12rem 0.4rem;
+      background: rgba(99, 102, 241, 0.10);
+      border-radius: 3px;
+    }
+    .sb-thin-iso-mid {
+      padding: 0.625rem;
+      background: rgba(99, 102, 241, 0.06);
+      border: 1px solid rgba(99, 102, 241, 0.22);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .sb-thin-iso-mid-rules {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: #3a3a50;
+    }
+    .sb-thin-iso-mid-rules > div { display: flex; align-items: center; gap: 0.45rem; }
+    .sb-thin-iso-rule-ok,
+    .sb-thin-iso-rule-no,
+    .sb-thin-iso-rule-onprem {
+      width: 6px; height: 6px; border-radius: 999px; flex-shrink: 0;
+    }
+    .sb-thin-iso-rule-ok { background: #059669; box-shadow: 0 0 6px rgba(5,150,105,0.45); }
+    .sb-thin-iso-rule-no { background: #DC2626; }
+    .sb-thin-iso-rule-onprem {
+      background: transparent;
+      border: 1.5px solid #B45309;
+    }
+    .sb-thin-iso-mid-tag--alt {
+      margin-top: 0.25rem;
+      color: #B45309;
+      background: rgba(180, 83, 9, 0.10);
+    }
+    .sb-thin-iso-inner {
+      padding: 0.625rem;
+      background: #ffffff;
+      border: 1px solid rgba(99, 102, 241, 0.22);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+    .sb-thin-iso-inner-prompt {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: #4F46E5;
+    }
+    .sb-thin-iso-cursor {
+      display: inline-block; width: 6px; height: 12px; background: #4F46E5;
+      vertical-align: middle;
+      animation: sb-thin-blink 1.1s steps(2, end) infinite;
+    }
+    @keyframes sb-thin-blink { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0; } }
+    .sb-thin-iso-inner-meta {
+      display: flex; gap: 0.625rem; flex-wrap: wrap;
+      font-family: var(--font-mono); font-size: 0.625rem; color: #5e5e7a;
+    }
+    .sb-thin-iso-inner-meta strong { color: #191c24; font-weight: 700; }
+
+    /* Card 1 visual. Pre-installed harness list (light, indigo) */
+    .sb-thin-harness {
+      margin-top: auto;
+      padding: 0.875rem;
+      background: #fafbff;
+      border: 1px solid rgba(99, 102, 241, 0.18);
+      border-radius: 10px;
+      display: flex; flex-direction: column; gap: 0.32rem;
+    }
+    .sb-thin-harness-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 0.625rem;
+      font-family: var(--font-mono); font-size: 0.6875rem;
+      padding: 0.32rem 0.5rem;
+      background: rgba(99, 102, 241, 0.04);
+      border: 1px solid rgba(99, 102, 241, 0.10);
+      border-radius: 6px;
+      transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .sb-thin-harness-row:hover {
+      border-color: rgba(99, 102, 241, 0.32);
+      background: rgba(99, 102, 241, 0.08);
+    }
+    .sb-thin-harness-name {
+      color: #4F46E5; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .sb-thin-harness-meta {
+      color: #5e5e7a;
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    @media (max-width: 640px) {
+      .sb-thin-harness-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .sb-thin-harness-meta {
+        text-align: left;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+      }
+    }
+    .sb-thin-harness-foot {
+      margin-top: 0.32rem;
+      padding: 0.45rem 0.625rem;
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px dashed rgba(99, 102, 241, 0.32);
+      border-radius: 6px;
+      font-family: var(--font-mono); font-size: 0.6875rem;
+      color: #3a3a50;
+      text-align: center;
+    }
+    .sb-thin-harness-foot code {
+      color: #4F46E5; font-weight: 700;
+      background: transparent;
+      padding: 0;
+    }
+
+    /* Card 2 visual (legacy). Image cycle — kept for backwards compat, unused */
+    .sb-thin-images {
+      margin-top: auto;
+      padding: 0.875rem;
+      background: #f3fbf6;
+      border: 1px solid rgba(16, 185, 129, 0.22);
+      border-radius: 10px;
+      display: flex; flex-direction: column; gap: 0.625rem;
+    }
+    .sb-thin-images-cycle {
+      display: flex; flex-direction: column; gap: 0.32rem;
+    }
+    .sb-thin-image-row {
+      display: grid; grid-template-columns: 7.5rem 1fr 2.5rem;
+      gap: 0.5rem; align-items: center;
+      font-family: var(--font-mono); font-size: 0.6875rem;
+      color: #3a3a50;
+      padding: 0.225rem 0;
+      border-bottom: 1px dashed rgba(16, 185, 129, 0.18);
+      transition: color 0.3s ease, opacity 0.3s ease;
+    }
+    .sb-thin-image-row:last-child { border-bottom: 0; }
+    .sb-thin-image-tag { color: #4F46E5; font-weight: 600; }
+    .sb-thin-image-bar { height: 4px; background: rgba(15, 23, 42, 0.08); border-radius: 2px; overflow: hidden; }
+    .sb-thin-image-bar > span { display: block; height: 100%; background: linear-gradient(90deg, #4F46E5, #818CF8); border-radius: 2px; }
+    .sb-thin-image-bar--ok > span { background: linear-gradient(90deg, #059669, #10B981); }
+    .sb-thin-image-ms { color: #047857; font-weight: 700; text-align: right; }
+    /* Cycle highlight: each row glows for ~1s on a 6.5s loop. */
+    .sb-thin-image-row { animation: sb-thin-image-pulse 6.5s ease-in-out infinite; }
+    .sb-thin-image-row--1 { animation-delay: 0s; }
+    .sb-thin-image-row--2 { animation-delay: -1.3s; }
+    .sb-thin-image-row--3 { animation-delay: -2.6s; }
+    .sb-thin-image-row--4 { animation-delay: -3.9s; }
+    .sb-thin-image-row--5 { animation-delay: -5.2s; }
+    @keyframes sb-thin-image-pulse {
+      0%, 14%, 100% { opacity: 0.62; }
+      4%, 10%       { opacity: 1; transform: translateX(2px); }
+    }
+    .sb-thin-images-foot {
+      display: flex; align-items: center; gap: 0.875rem;
+      padding-top: 0.5rem;
+      border-top: 1px dashed rgba(16, 185, 129, 0.28);
+      font-family: var(--font-mono); font-size: 0.6875rem; color: #3a3a50;
+    }
+    .sb-thin-images-foot strong { color: #047857; font-weight: 700; margin-right: 0.25rem; }
+    .sb-thin-images-warm {
+      margin-left: auto;
+      padding: 0.18rem 0.5rem;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.38);
+      border-radius: 999px;
+      color: #047857;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+
+    /* Card 3. Snapshot & restore: from→arrow→to with traveling packet (light) */
+    .sb-thin-snap {
+      margin-top: auto;
+      padding: 0.875rem;
+      background: #fffaf0;
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      border-radius: 10px;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .sb-thin-snap-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.55rem 0.75rem;
+      background: rgba(245, 158, 11, 0.10);
+      border: 1px solid rgba(245, 158, 11, 0.32);
+      border-radius: 6px;
+      font-family: var(--font-mono); font-size: 0.75rem;
+    }
+    .sb-thin-snap-row--to {
+      background: rgba(16, 185, 129, 0.08);
+      border-color: rgba(16, 185, 129, 0.38);
+    }
+    .sb-thin-snap-side { color: #191c24; font-weight: 700; }
+    .sb-thin-snap-meta { color: #B45309; font-size: 0.6875rem; }
+    .sb-thin-snap-row--to .sb-thin-snap-meta { color: #047857; }
+    .sb-thin-snap-arrow {
+      position: relative;
+      width: 100%; height: 48px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .sb-thin-snap-arrow svg { display: block; width: 100%; height: 36px; }
+    .sb-thin-snap-arrow-label {
+      font-family: var(--font-mono); font-size: 0.625rem;
+      color: #B45309; letter-spacing: 0.04em;
+      text-align: center;
+    }
+    .sb-thin-snap-deltas {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem;
+      padding-top: 0.5rem;
+      border-top: 1px dashed rgba(245, 158, 11, 0.32);
+    }
+    .sb-thin-snap-delta {
+      display: flex; flex-direction: column; gap: 0.125rem;
+      font-family: var(--font-mono); font-size: 0.625rem;
+      color: #5e5e7a;
+    }
+    .sb-thin-snap-delta strong {
+      color: #191c24; font-size: 0.75rem; font-weight: 700;
+    }
+    .sb-thin-snap-delta--ok strong { color: #047857; }
+
+    @media (max-width: 1024px) {
+      .sb-thin-grid { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .sb-thin-iso-cursor,
+      .sb-thin-image-row,
+      .sb-thin-snap-arrow svg circle { animation: none !important; opacity: 1; transform: none; }
     }
   </style>
 
   <!-- =======================================
-       HERO
+       HERO. BP-Agent pattern: title + 1-line sub + screenshot of the
+       actual app at sandbox.tangle.tools, scrolling INTO the app shot.
+       Drew (R24): "we need some way to show both the SDK and that the
+       app exists and you should go use it."
        ======================================= -->
-  <section class="sb-hero">
+  <section class="sb-hero" aria-label="Sandbox">
+    <div class="sb-hero-bg" aria-hidden="true">
+      <video autoplay loop muted playsinline poster="/images/hero/glass-cylinders-poster.jpg">
+        <source src="/videos/glass-cylinders.webm" type="video/webm" />
+        <source src="/videos/glass-cylinders.mp4" type="video/mp4" />
+      </video>
+    </div>
     <div class="sb-hero-inner">
-      <div>
-        <div class="sb-badge">Coming Soon</div>
-        <h1 class="sb-h1">Cloud in a<br/><em>command.</em></h1>
-        <p class="sb-sub">Spin up isolated environments, run AI agents inside them, stream results in real-time. One npm install, zero DevOps.</p>
-        <div class="wf-install-pill" style="margin-bottom: 1.5rem;">
-          <span class="prompt">$</span>
-          <code>npm install @tangle-network/sandbox</code>
-        </div>
-        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-          <a href="https://docs.tangle.tools" target="_blank" rel="noopener noreferrer" class="wf-btn-secondary" style="padding: 14px 28px;">Documentation</a>
-          <a href="https://discord.com/invite/cv8EfJu3Tn" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; border-radius: 48px; border: 1px solid rgba(255,255,255,0.1); color: white; font-family: 'Satoshi', sans-serif; font-size: 15px; font-weight: 600; text-decoration: none; transition: border-color 0.3s;">
-            Join Waitlist
+      <div class="sb-hero-text">
+        <h1 class="sb-hero-title">Sandboxes for <span class="wf-gradient-text">AI agents.</span></h1>
+        <p class="sb-hero-sub">A disposable Linux container in 0.6 seconds. Your agent gets root inside; we lock it down at the wall.</p>
+        <div class="sb-hero-ctas">
+          <a class="sb-hero-cta sb-hero-cta--primary" href="https://sandbox.tangle.tools" target="_blank" rel="noopener noreferrer">
+            Open the sandbox app
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+          <a class="sb-hero-cta sb-hero-cta--ghost" href="https://docs.tangle.tools/sandbox" target="_blank" rel="noopener noreferrer">
+            Read the SDK docs
           </a>
         </div>
+        <div class="sb-hero-install">
+          <span class="sb-hero-install-prompt">$</span>
+          <code>npm install @tangle-network/sandbox</code>
+        </div>
       </div>
-      <div class="sb-glow">
-        <div style="position: relative;">
-          <CodeTabs client:load variant="sandbox" />
+      <div class="sb-hero-shot">
+        <img src="/images/products/sandbox-app.png" alt="Sandbox app at sandbox.tangle.tools. file tree, terminal, live preview, sidecar policy" loading="eager" onerror="this.parentElement.classList.add('sb-hero-shot--missing'); this.style.display='none';" />
+        <!-- Fallback rendered when the screenshot doesn't exist yet.
+             Mirrors the real `tangle sandbox create` CLI output exactly
+             (verified against agent-dev-container/products/sandbox/cli). -->
+        <div class="sb-hero-shot-fallback" aria-hidden="true">
+          <div class="sb-hero-shot-chrome">
+            <span class="sb-hero-shot-dot"></span><span class="sb-hero-shot-dot"></span><span class="sb-hero-shot-dot"></span>
+            <div class="sb-hero-shot-url">~/agent-demo</div>
+          </div>
+          <div class="sb-hero-shot-body sb-hero-shot-body--single">
+            <div class="sb-hero-shot-term">
+              <div><span style="color:#A5AAFC;">$</span> tangle sandbox create --name agent-demo --environment node --ssh --wait</div>
+              <div style="color:#FCD34D;">⠋ Creating sandbox...</div>
+              <div style="color:#34D399;">✓ Sandbox created: sbx_abc123def456</div>
+              <div>&nbsp;</div>
+              <div style="color:#9696B8;">Sandbox Details</div>
+              <div style="color:#9696B8;">────────────────────────────</div>
+              <div>ID:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#E8E6F6;">sbx_abc123def456</span></div>
+              <div>Status:&nbsp;&nbsp;<span style="color:#34D399;">running</span></div>
+              <div>SSH:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#818CF8;">ssh root@api-1.sandbox.tangle.tools</span></div>
+              <div>&nbsp;</div>
+              <div><span style="color:#A5AAFC;">$</span> <span class="sb-hero-shot-cursor"></span></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- =======================================
-       FULL-WIDTH TERMINAL
-       ======================================= -->
-  <div class="sb-section">
-    <div class="sb-section-label">See It Work</div>
-    <div class="sb-section-title">Create. Connect. <em>Execute.</em></div>
-    <div class="sb-section-sub">From zero to running sandbox in under 10 seconds. SSH in, run code, stream output — all from one CLI.</div>
-  </div>
-  <div class="sb-terminal-wrap">
-    <div class="sb-terminal">
-      <div class="sb-terminal-chrome">
-        <div class="sb-terminal-dot" style="background: rgba(255,95,87,0.8);"></div>
-        <div class="sb-terminal-dot" style="background: rgba(254,188,46,0.8);"></div>
-        <div class="sb-terminal-dot" style="background: rgba(74,222,128,0.8);"></div>
-        <span class="sb-terminal-title">Terminal — tangle sandbox</span>
-      </div>
-      <div class="sb-terminal-body">
-        <span class="sb-line"><span class="sb-prompt">$</span> <span class="sb-cmd">tangle sandbox create</span> \</span>
-        <span class="sb-line sb-highlight">    <span class="sb-flag">--image</span> <span class="sb-string">ubuntu:22.04</span> \</span>
-        <span class="sb-line">    <span class="sb-flag">--gpu</span> <span class="sb-string">a100</span> <span class="sb-flag">--memory</span> <span class="sb-dim">16gb</span></span>
-        <span class="sb-line"></span>
-        <span class="sb-line"><span class="sb-info">sandbox-sdk v0.4.0</span></span>
-        <span class="sb-line"><span class="sb-info">Provisioning sandbox...</span></span>
-        <span class="sb-line"><span class="sb-success">  ✓ Sandbox created</span> <span class="sb-info">sbx_7k3m9x2p  ·  region: us-east  ·  3.2s</span></span>
-        <span class="sb-line"></span>
-        <span class="sb-line"><span class="sb-prompt">$</span> <span class="sb-cmd">tangle sandbox ssh</span> <span class="sb-accent">sbx_7k3m9x2p</span></span>
-        <span class="sb-line"><span class="sb-info">Connecting to sbx_7k3m9x2p...</span></span>
-        <span class="sb-line"></span>
-        <span class="sb-line"><span class="sb-success">root@sbx_7k3m9x2p</span><span class="sb-dim">:</span><span class="sb-accent">~</span><span class="sb-dim">#</span> <span class="sb-cmd">python3 train.py --epochs 50 --batch-size 64</span></span>
-        <span class="sb-line"><span class="sb-output">  Epoch 1/50  ████████████████████  loss: 0.834  acc: 0.72</span></span>
-        <span class="sb-line"><span class="sb-output">  Epoch 2/50  ████████████████████  loss: 0.412  acc: 0.85</span></span>
-        <span class="sb-line"><span class="sb-output">  Epoch 3/50  ████████████████████  loss: 0.198  acc: 0.93</span></span>
-        <span class="sb-line"></span>
-        <span class="sb-line"><span class="sb-prompt">$</span> <span class="sb-cmd">tangle sandbox list</span></span>
-        <span class="sb-line"><span class="sb-dim">  ID              IMAGE          GPU     STATUS    UPTIME    COST</span></span>
-        <span class="sb-line"><span class="sb-output">  sbx_7k3m9x2p   ubuntu:22.04   a100    running   4m 12s    $0.76</span></span>
-        <span class="sb-line"><span class="sb-output">  sbx_a1b2c3d4   node:20        —       paused    22m       $0.22</span></span>
-      </div>
-    </div>
-  </div>
+  <StatsStrip
+    items={[
+      { label: '0.6s p50 cold-start', icon: 'zap' },
+      { label: 'any Docker image · SSH access', icon: 'terminal' },
+      { label: 'mTLS sidecar · VM-grade boundary', icon: 'shield' },
+      { label: 'snapshot · restore · bring your S3', icon: 'layers' },
+    ]}
+  />
 
   <!-- =======================================
-       BENTO GRID
+       BUILT THIN ON PURPOSE. 10x. Drew (R25): "the white section
+       should remain and get 10x better." Each card now carries a
+       live, domain-specific mini-visual instead of an icon-and-text
+       FeatureCard. Three primitives = three different proof moments.
+
+       (R25 also kills the prior INTERACTIVE SHOWCASE. Drew: "Create.
+       Run agents. Snapshot. should be deleted." That section was a
+       redundant tabbed ExamplePanel; SDK awareness lives in the hero
+       install pill + final CTA now.)
        ======================================= -->
-  <div class="sb-section">
-    <div class="sb-section-label">Platform</div>
-    <div class="sb-section-title">TypeScript SDK. CLI. <em>Full control.</em></div>
-  </div>
-  <div style="max-width: 72rem; margin: 0 auto; padding: 0 5% 4rem;">
-    <div class="sb-bento">
-      <!-- Large: Docker Images -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">Docker Images</div>
-          <div class="sb-bento-title">Any image. Full root. GPU support.</div>
-          <div class="sb-bento-desc">Node, Python, Ubuntu, CUDA — or your own custom Dockerfile. Every sandbox gets full root access, custom dependencies, and optional GPU acceleration.</div>
-        </div>
-        <div class="sb-bento-code"><span class="g">$</span> <span class="w">tangle sandbox create</span> <span class="c">--image</span> <span class="s">pytorch/pytorch:2.1-cuda12</span> \
-    <span class="c">--gpu</span> <span class="w">a100</span> <span class="c">--memory</span> <span class="w">32gb</span> <span class="c">--disk</span> <span class="w">100gb</span>
-
-<span class="g">✓ Sandbox created</span>  ·  sbx_9f2k1m  ·  GPU: A100 80GB  ·  4.1s</div>
+  <section class="sb-thin">
+    <div class="sb-thin-inner">
+      <div class="sb-thin-head">
+        <div class="sb-thin-eyebrow">WHAT'S IN THE BOX</div>
+        <h2 class="sb-thin-title">Coding agents. Real isolation. <span class="sb-thin-grad">Sessions that don't drop.</span></h2>
+        <p class="sb-thin-lede">Three things, one box. The agents teams already use, the isolation tier you actually need, and session state that survives a closed laptop.</p>
       </div>
 
-      <!-- Small: AI Agent Runtime -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">AI Agent Runtime</div>
-          <div class="sb-bento-title">Built-in LLM proxy.</div>
-          <div class="sb-bento-desc">Run Claude Code, Codex, or custom agents with tool access and file I/O inside isolated containers.</div>
+      <!-- ─────────────────────────────────────────────────────────────
+           ROW 1 · Coding agents pre-installed. Each gets a chip with
+           the company logo + GitHub link. CTA submits a request for
+           harnesses we don't ship yet (lead-gen surface).
+           ───────────────────────────────────────────────────────────── -->
+      <div class="sb-prim-row" data-accent="indigo">
+        <div class="sb-prim-row-text">
+          <div class="sb-prim-tag">CODING AGENTS · ONE SDK</div>
+          <h3 class="sb-prim-row-title">The agents teams already use, behind one SDK.</h3>
+          <p class="sb-prim-row-body">Each box ships with the official harnesses installed and authenticated. SSH in and run them directly, or call them through one TypeScript SDK that abstracts the protocol differences — stream-json vs JSONL events vs OAuth flows — so a new model release isn't a new integration.</p>
+          <p class="sb-prim-row-body">Stream tokens out, resume sessions, fork checkpoints. Same shape across every harness.</p>
+          <a class="sb-prim-cta" href="mailto:hello@tangle.tools?subject=New%20harness%20request" rel="noopener">
+            Need one we don't ship yet? Tell us
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
         </div>
-        <div class="sb-bento-code"><span class="g">$</span> <span class="w">tangle agent task</span> <span class="s">sbx_id</span> \
-  <span class="c">"Build an API with auth"</span>
-<span class="g">✓</span> task complete · 42s</div>
+        <div class="sb-prim-row-visual">
+          <div class="sb-harness-grid" aria-hidden="false">
+            {harnesses.map((h) => {
+              const isExternal = !!h.link && h.link.startsWith('http');
+              const href = h.link ? (isExternal ? h.link : `https://github.com/${h.link}`) : '#';
+              const ariaSuffix = isExternal ? `${h.label} homepage` : `${h.label} on GitHub`;
+              return (
+                <a class="sb-harness-chip" href={href} target={h.link ? '_blank' : undefined} rel={h.link ? 'noopener noreferrer' : undefined}>
+                  <span class="sb-harness-chip-logo">
+                    {h.logoSrc
+                      ? <img src={h.logoSrc} alt="" loading="lazy" />
+                      : h.logo && siBody(h.logo)
+                        ? <svg viewBox={SI_VIEWBOX} aria-hidden="true" set:html={siBody(h.logo)} />
+                        : <span class="sb-harness-chip-letter">{h.label[0]}</span>}
+                  </span>
+                  <div class="sb-harness-chip-text">
+                    <div class="sb-harness-chip-label">{h.label}</div>
+                    <div class="sb-harness-chip-meta">{h.vendor} · {h.meta}</div>
+                  </div>
+                  {h.link && (
+                    <span class="sb-harness-chip-gh" aria-label={`View ${ariaSuffix}`}>
+                      {isExternal
+                        ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M7 7h10v10"/></svg>
+                        : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.36-3.87-1.36-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.73-1.53-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.16 1.18.92-.26 1.9-.39 2.88-.39s1.96.13 2.88.39c2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.75.11 3.04.74.81 1.18 1.84 1.18 3.1 0 4.42-2.69 5.4-5.25 5.68.41.36.78 1.06.78 2.15v3.18c0 .31.21.66.8.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>}
+                    </span>
+                  )}
+                </a>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      <!-- Small: SSH & Terminal -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">SSH & Terminal</div>
-          <div class="sb-bento-title">Connect your way.</div>
-          <div class="sb-bento-desc">SSH directly, use the browser terminal, or control programmatically via the TypeScript SDK.</div>
+      <!-- ─────────────────────────────────────────────────────────────
+           ROW 2 · Real isolation. Educational, three-tier escalation.
+           Container (Docker) → microVM (Firecracker, on-prem) →
+           TEE (AWS / GCP / Azure / Phala, on-prem). Reverse layout so
+           rows alternate visually.
+           ───────────────────────────────────────────────────────────── -->
+      <div class="sb-prim-row sb-prim-row--reverse" data-accent="emerald">
+        <div class="sb-prim-row-text">
+          <div class="sb-prim-tag">REAL ISOLATION · NOT MARKETING</div>
+          <h3 class="sb-prim-row-title">Container today. microVM or enclave on-prem.</h3>
+          <p class="sb-prim-row-body">On the shared cloud, every job runs in its own per-tenant Docker container as a non-root user. Secrets are injected after spawn — never in calldata — so an attacker who reads the request doesn't read the credentials. For most coding agents, that's the right tier: the blast radius of a misbehaving agent is one container, and the container gets thrown away.</p>
+          <p class="sb-prim-row-body">When you need stronger isolation, enterprise on-prem swaps the runtime driver for Firecracker microVMs (a hardware-virtualized boundary) or runs the workload inside a hardware TEE. In TEE mode, even your own operator can't read what's running — the box is sealed to the enclave's attestation key.</p>
         </div>
-        <div class="sb-bento-code"><span class="g">$</span> <span class="w">tangle sandbox ssh</span> <span class="s">sbx_id</span>
-<span class="d">root@sbx:</span><span class="c">~#</span> <span class="w">nvidia-smi</span>
-<span class="g">✓</span> A100 80GB · 0% util</div>
+        <div class="sb-prim-row-visual">
+          <div class="sb-iso-tiers">
+            <div class="sb-iso-tier sb-iso-tier--today">
+              <div class="sb-iso-tier-band">SHARED CLOUD · TODAY</div>
+              <div class="sb-iso-tier-name">Per-tenant container</div>
+              <div class="sb-iso-tier-providers">
+                {siBody('docker') && <span class="sb-iso-tier-logo" aria-label="Docker"><svg viewBox={SI_VIEWBOX} aria-hidden="true" set:html={siBody('docker')!} /></span>}
+              </div>
+              <div class="sb-iso-tier-bullets">
+                <div>non-root user · uid 1000</div>
+                <div>per-job filesystem + network</div>
+                <div>secrets injected post-spawn</div>
+              </div>
+            </div>
+            <div class="sb-iso-tier sb-iso-tier--onprem">
+              <div class="sb-iso-tier-band">ENTERPRISE · ON-PREM</div>
+              <div class="sb-iso-tier-name">Firecracker microVM</div>
+              <div class="sb-iso-tier-providers">
+                <span class="sb-iso-tier-text">firecracker</span>
+              </div>
+              <div class="sb-iso-tier-bullets">
+                <div>hardware-virtualized boundary</div>
+                <div>host kernel can't bypass</div>
+                <div>same SDK call, different driver</div>
+              </div>
+            </div>
+            <div class="sb-iso-tier sb-iso-tier--tee">
+              <div class="sb-iso-tier-band">ENTERPRISE · ATTESTED</div>
+              <div class="sb-iso-tier-name">Hardware enclave (TEE)</div>
+              <div class="sb-iso-tier-providers">
+                {teeProviders.map((p) => (
+                  p.name && siBody(p.name)
+                    ? <span class="sb-iso-tier-logo" title={p.label}><svg viewBox={SI_VIEWBOX} aria-hidden="true" set:html={siBody(p.name)!} /></span>
+                    : <span class="sb-iso-tier-text" title={p.label}>{p.label.split(' ')[0].toLowerCase()}</span>
+                ))}
+              </div>
+              <div class="sb-iso-tier-bullets">
+                <div>operator can't read inside</div>
+                <div>attestation-keyed secrets</div>
+                <div>compliance-grade boundary</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- Small: Snapshots -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">Snapshots</div>
-          <div class="sb-bento-title">Checkpoint anything.</div>
-          <div class="sb-bento-desc">Save state at any point. Restore from snapshots instantly. Bring your own S3 for persistence.</div>
+      <!-- ─────────────────────────────────────────────────────────────
+           ROW 3 · Sessions that survive disconnects. Educational copy
+           explaining WHY this is hard (live state — open file handles,
+           paused tool-calls, conversation context). Visual: timeline
+           of pause-on-A → snapshot → resume-on-B + fork-out-N.
+           ───────────────────────────────────────────────────────────── -->
+      <div class="sb-prim-row" data-accent="amber">
+        <div class="sb-prim-row-text">
+          <div class="sb-prim-tag">SESSION-NATIVE</div>
+          <h3 class="sb-prim-row-title">Sessions that survive disconnects.</h3>
+          <p class="sb-prim-row-body">An agent session has a lot of live state: open file handles, paused-mid-tool-call promises, the dependencies it just installed, the hour of conversation context. Most sandbox APIs treat <em>process exit</em> as <em>session over</em> — close the tab and you start from zero.</p>
+          <p class="sb-prim-row-body">We CRIU-checkpoint the whole box (filesystem, memory, PIDs) to your S3 bucket. Disconnect a session and reconnect from another machine, fork the same checkpoint into 100 parallel runs against an identical starting state, or restore a week-old run in a different region. The agent picks up mid-thought.</p>
         </div>
-        <div class="sb-bento-code"><span class="g">$</span> <span class="w">tangle sandbox snapshot</span> \
-  <span class="c">--name</span> <span class="s">"pre-deploy"</span>
-<span class="g">✓</span> saved · 2.1 GB · 0.8s</div>
-      </div>
-
-      <!-- Large: Pay Per Second -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">Pay Per Second</div>
-          <div class="sb-bento-title">No reserved instances. No minimums.</div>
-          <div class="sb-bento-desc">Idle sandboxes auto-hibernate. Metered billing from the first second. Destroy when done — you only pay for what you use.</div>
+        <div class="sb-prim-row-visual">
+          <div class="sb-sess-timeline">
+            <div class="sb-sess-step sb-sess-step--working">
+              <div class="sb-sess-step-time">t=0</div>
+              <div class="sb-sess-step-card">
+                <div class="sb-sess-step-tag">MACHINE A</div>
+                <div class="sb-sess-step-title">Working...</div>
+                <div class="sb-sess-step-meta">claude-code · 47 turns · 1.2 GB</div>
+              </div>
+            </div>
+            <div class="sb-sess-arrow"><span class="sb-sess-arrow-label">disconnect → snapshot to S3</span></div>
+            <div class="sb-sess-step sb-sess-step--snapshot">
+              <div class="sb-sess-step-time">t=3m</div>
+              <div class="sb-sess-step-card">
+                <div class="sb-sess-step-tag">SNAPSHOT</div>
+                <div class="sb-sess-step-title">Sealed to S3</div>
+                <div class="sb-sess-step-meta">CRIU · fs · memory · PIDs</div>
+              </div>
+            </div>
+            <div class="sb-sess-arrow"><span class="sb-sess-arrow-label">reconnect ← any region</span></div>
+            <div class="sb-sess-step sb-sess-step--resumed">
+              <div class="sb-sess-step-time">t=4m</div>
+              <div class="sb-sess-step-card">
+                <div class="sb-sess-step-tag">MACHINE B · OR FORK ×100</div>
+                <div class="sb-sess-step-title">Resumed mid-thought</div>
+                <div class="sb-sess-step-meta">turn 48 · same context · 1.1s restore</div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="sb-bento-code"><span class="g">$</span> <span class="w">tangle sandbox usage</span> <span class="c">--period</span> <span class="s">today</span>
-
-<span class="d">SANDBOX          TYPE    RUNTIME     COST</span>
-<span class="w">sbx_7k3m9x2p</span>    GPU     1h 23m      <span class="g">$14.94</span>
-<span class="w">sbx_a1b2c3d4</span>    CPU     4h 02m      <span class="g">$2.41</span>
-<span class="w">sbx_x9y8z7w6</span>    CPU     0h 08m      <span class="g">$0.08</span>
-<span class="d">─────────────────────────────────────</span>
-<span class="w">Total</span>                                <span class="g">$17.43</span></div>
-      </div>
-
-      <!-- Small: Isolation -->
-      <div class="sb-bento-cell">
-        <div>
-          <div class="sb-bento-label">Isolation</div>
-          <div class="sb-bento-title">Locked down by default.</div>
-          <div class="sb-bento-desc">Dropped capabilities, no privilege escalation. gVisor and Firecracker isolation options.</div>
-        </div>
-        <div class="sb-bento-code"><span class="c">[security]</span> caps: ALL dropped
-<span class="c">[runtime]</span> gVisor enabled
-<span class="g">✓</span> sandbox isolated</div>
       </div>
     </div>
-  </div>
+  </section>
+
 
   <!-- =======================================
-       PRICING
+       FAQ
        ======================================= -->
-  <div class="sb-section">
-    <div class="sb-section-label">Pricing</div>
-    <div class="sb-section-title">Pay per <em>second.</em></div>
-    <div class="sb-section-sub">No reserved instances. No minimums. Just compute.</div>
-  </div>
-  <div style="max-width: 72rem; margin: 0 auto; padding: 0 5% 4rem;">
-    <div class="sb-pricing">
-      <div class="sb-price-cell">
-        <div class="sb-price-tag">CPU</div>
-        <div class="sb-price-amount">$0.01</div>
-        <div class="sb-price-unit">/minute</div>
-      </div>
-      <div class="sb-price-cell featured">
-        <div class="sb-price-tag">GPU (A100)</div>
-        <div class="sb-price-amount">$0.18</div>
-        <div class="sb-price-unit">/minute</div>
-      </div>
-      <div class="sb-price-cell">
-        <div class="sb-price-tag">Storage</div>
-        <div class="sb-price-amount">$0.05</div>
-        <div class="sb-price-unit">/GB/day</div>
-      </div>
-    </div>
-  </div>
+  <Section variant="vault" pad="default">
+    <FAQ faqs={faqs} />
+  </Section>
 
   <!-- =======================================
-       CTA
+       FINAL CTA. dual CTA per Drew (R24): "go to the website to sign
+       up... if you're an enterprise to deploy on prem and reach out."
        ======================================= -->
-  <div class="wf-cta-card">
-    <img src="/images/webflow/pattern-cta-v1-brix-templates-01.svg" alt="" class="wf-cta-floating-01" />
-    <img src="/images/webflow/pattern-cta-v2-brix-templates-02.svg" alt="" class="wf-cta-floating-02" />
-    <div class="wf-cta-inner">
-      <div class="wf-cta-content">
-        <div class="wf-h4-2" style="margin-bottom: 12px;">The decentralized cloud is coming.</div>
-        <div class="wf-body-02 align-center" style="margin-bottom: 32px;">Create your first sandbox, run an AI agent, ship faster. Free tier included.</div>
-        <div class="wf-cta-button-row">
-          <a href="https://discord.com/invite/cv8EfJu3Tn" target="_blank" rel="noopener noreferrer" class="wf-btn-primary-white">Join Waitlist</a>
+  <Section variant="dark" pad="default" maxWidth="wide">
+    <div class="sb-final-cta">
+      <div class="sb-final-cta-card sb-final-cta-card--primary">
+        <div class="sb-final-cta-tag">SHIP TODAY</div>
+        <h3 class="sb-final-cta-title">Open the sandbox app.</h3>
+        <p class="sb-final-cta-body">Sign up at sandbox.tangle.tools. Spawn a box in your browser. Exec, snapshot, ship. The SDK does the same thing programmatically.</p>
+        <div class="sb-final-cta-ctas">
+          <a class="sb-final-cta-link sb-final-cta-link--filled" href="https://sandbox.tangle.tools" target="_blank" rel="noopener noreferrer">
+            Sign up at sandbox.tangle.tools
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+          <a class="sb-final-cta-link sb-final-cta-link--ghost" href="https://docs.tangle.tools/sandbox" target="_blank" rel="noopener noreferrer">npm install @tangle-network/sandbox</a>
+        </div>
+      </div>
+      <div class="sb-final-cta-card sb-final-cta-card--enterprise">
+        <div class="sb-final-cta-tag">ENTERPRISE</div>
+        <h3 class="sb-final-cta-title">Deploy on prem.</h3>
+        <p class="sb-final-cta-body">Run Tangle Sandbox inside your own VPC or bare-metal cluster. We run a paid pilot. Your security team reviews the sidecar source, your compliance boundary stays intact, your operators run the control plane. Same SDK, same SLAs.</p>
+        <div class="sb-final-cta-ctas">
+          <a class="sb-final-cta-link sb-final-cta-link--filled" href="mailto:hello@tangle.tools?subject=Sandbox%20on-prem%20inquiry">
+            Reach out
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </a>
+          <a class="sb-final-cta-link sb-final-cta-link--ghost" href="https://form.typeform.com/to/IE4hT9jW" target="_blank" rel="noopener noreferrer">Book intake call</a>
         </div>
       </div>
     </div>
-  </div>
+  </Section>
 
 </BaseLayout>

@@ -1,0 +1,345 @@
+---
+title: 'Pricing without hand-waving: wei pricing, token conversion, markup, and dynamic price tags'
+slug: pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags
+summary: >-
+  How Tangle's pricing engine lets operators set prices in USD and wei, convert to stablecoins with markup, sign tamper-proof quotes, and evolve from static config to dynamic pricing without redeploying.
+date: '2026-03-23'
+author: Drew Stone
+tags:
+  - x402
+  - blockchain
+  - pricing
+  - blueprint-sdk
+  - tangle
+  - api-monetization
+series: x402 Production Runway
+seriesOrder: 3
+coverImage: /images/covers/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags.png
+heroImage: /images/covers/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags.png
+imageAlt: 'Wei to token conversion pipeline diagram'
+---
+
+
+## The pricing problem nobody wants to solve
+
+Every API platform hits the same question eventually: how do you charge for compute? AWS solved it with a 200-page pricing calculator. Stripe solved it with a dashboard and a billing team. Most blockchain protocols punt entirely, letting operators pick a number and hope it covers costs.
+
+The hard version of this problem shows up when your operators are running heterogeneous workloads (CPU-bound inference, GPU rendering, long-running agent tasks) across different chains, settling in different tokens, with different exchange rates, and they need quotes that are cryptographically verifiable before a single cycle burns. Tangle's [pricing engine](https://github.com/tangle-network/blueprint/tree/main/crates/pricing-engine) was built for exactly this. The core of it is a conversion pipeline: operators price jobs in wei (the smallest ETH unit), and at settlement time the engine divides by 10^18 to get ETH, multiplies by an exchange rate (e.g., 3,200 USDC/ETH), applies an operator-defined markup in basis points, then scales to the token's smallest unit and floors the result to an integer. A job priced at 0.001 ETH with a 3,200 USDC/ETH rate and 2% markup (200 bps) yields 3,264,000 USDC micro-units, or $3.264. Every resulting quote is EIP-712 signed with expiry and replay protection.
+
+That conversion layer sits on top of a dual-denomination pricing system (USD for resource provisioning, wei for per-job calls), three pricing models, hardware benchmarking, and a full anti-abuse stack. This post walks through each layer, what the config looks like, and where the sharp edges are.
+
+## Blockchain API pricing: the conversion formula
+
+Before getting into the pricing engine's architecture, here's the function that makes cross-token settlement work. The [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs) function is the bridge between blockchain-native pricing and stablecoin payments:
+
+```rust
+pub fn convert_wei_to_amount(&self, wei_price: &U256) -> Result<String, X402Error> {
+    let wei_decimal = Decimal::from_str_exact(&wei_price.to_string())?;
+    let native_unit = Decimal::from(10u64.pow(18));
+    let native_amount = wei_decimal / native_unit;
+    let token_amount = native_amount * self.rate_per_native_unit;
+    let markup = Decimal::ONE + Decimal::from(self.markup_bps) / Decimal::from(10_000u32);
+    let final_amount = token_amount * markup;
+    let token_unit = Decimal::from(10u64.pow(u32::from(self.decimals)));
+    Ok((final_amount * token_unit).floor().to_string())
+}
+```
+
+Five steps, each doing one thing:
+
+1. **Wei to ETH**: divide by 10^18
+2. **ETH to token value**: multiply by the exchange rate (e.g., 3,200 USDC per ETH)
+3. **Apply markup**: basis points divided by 10,000, added to 1.0 (200 bps = 1.02x)
+4. **Scale to smallest unit**: multiply by 10^decimals (10^6 for USDC, 10^18 for DAI, 10^8 for WBTC)
+5. **Floor**: no fractional atomic units
+
+![Wei to Token Conversion Pipeline](/images/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags/wei-conversion-pipeline.png)
+
+The formula's output depends heavily on the token's decimal places. Here's the same 0.001 ETH job at a 3,200 rate with 200 bps markup across four tokens:
+
+| Token | Decimals | Smallest Unit | Raw Conversion | Final (with 2% markup) |
+|-------|----------|---------------|----------------|------------------------|
+| USDC  | 6        | micro-dollar  | 3,200,000      | 3,264,000              |
+| USDT  | 6        | micro-dollar  | 3,200,000      | 3,264,000              |
+| DAI   | 18       | wei-equivalent| 3,200,000,000,000,000,000 | 3,264,000,000,000,000,000 |
+| WBTC  | 8        | satoshi       | 320,000,000    | 326,400,000            |
+
+The USDC and USDT rows look identical because both use 6 decimals. DAI's 18 decimals produce enormous integers. WBTC's 8 decimals land in between. The floor operation matters most for low-decimal tokens on small transactions, where rounding could eat a meaningful fraction of the payment.
+
+![Wei Conversion Formula](/images/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags/pricing-math-4.png)
+
+## Two monetary worlds: USD and wei
+
+The pricing engine doesn't pick one denomination and force everything through it. Instead, it maintains two separate pricing paths that serve different purposes.
+
+**Resource-based pricing** works in USD with arbitrary decimal precision. Operators configure rates like "$0.001 per CPU core per second" in a TOML file, and the engine multiplies those rates against benchmarked hardware profiles and time-to-live values. This is the path for service provisioning, where the cost depends on what resources you're reserving.
+
+**Per-job pricing** works in wei, the smallest unit of ETH (1 ETH = 10^18 wei). Operators map each `(service_id, job_index)` pair to a raw wei amount stored as a string (because U256 values overflow standard integer types). This is the path for individual job execution, where the cost is a flat fee per call.
+
+```toml
+# Resource pricing: USD, decimal precision
+[default]
+resources = [
+  { kind = "CPU", count = 1, price_per_unit_rate = 0.001 },
+  { kind = "MemoryMB", count = 512, price_per_unit_rate = 0.0005 },
+  { kind = "GPU", count = 1, price_per_unit_rate = 0.01 },
+]
+
+# Job pricing: wei, string-encoded U256
+[1]
+0 = "1000000000000000"       # Job 0: 0.001 ETH
+6 = "20000000000000000"      # Job 6: 0.02 ETH
+7 = "250000000000000000"     # Job 7: 0.25 ETH
+```
+
+Why two systems instead of one? Because the cost structures are fundamentally different. A service that provisions a container with 4 CPUs and a GPU for 30 minutes has costs that scale with resources and time. An LLM inference call has a roughly fixed cost per invocation regardless of how long the operator's machine has been running. Forcing both through the same formula would mean either over-abstracting the resource model or under-specifying the job model.
+
+The split also matches how operators think about pricing. Infrastructure costs map naturally to USD rates per resource unit. Per-call API pricing maps naturally to "this job costs X." Asking operators to mentally convert between these two frames adds friction without adding clarity.
+
+## The resource pricing formula
+
+For resource-based pricing (the `PAY_ONCE` model), the engine computes total cost as the sum of each resource's cost: `count × price_per_unit_rate × ttl_blocks × block_time × security_factor`.
+
+The implementation in [`pricing.rs`](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/src/pricing.rs) breaks this into composable pieces:
+
+```rust
+pub fn calculate_resource_price(
+    count: u64,
+    price_per_unit_rate: Decimal,
+    ttl_blocks: u64,
+    security_requirements: Option<&AssetSecurityRequirements>,
+) -> Decimal {
+    let adjusted_base_cost = calculate_base_resource_cost(count, price_per_unit_rate);
+    let adjusted_time_cost = calculate_ttl_price_adjustment(ttl_blocks);
+    let security_factor = calculate_security_rate_adjustment(security_requirements);
+    adjusted_base_cost * adjusted_time_cost * security_factor
+}
+```
+
+![Resource-Based Pricing Formula](/images/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags/pricing-math-5.png)
+
+`block_time()` is hardcoded at 6 seconds. `security_factor` currently returns `Decimal::ONE`, a placeholder for future adjustment based on asset security requirements. The hook exists in the formula so that when security-weighted pricing ships, it slots in without changing the calculation structure.
+
+The interesting part is where `count` comes from. Rather than trusting operators to self-report their hardware, the engine **benchmarks the actual machine** for CPU, memory, storage, GPU, and network. These benchmark profiles are cached per blueprint ID in RocksDB. The engine then multiplies the benchmarked resource usage against the configured per-unit rates. If you're coming from cloud pricing, think of it as the operator publishing a rate card while the engine measures the meter.
+
+### Ten resource types, six on-chain
+
+The engine defines [ten resource types](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/src/types.rs): `CPU`, `MemoryMB`, `StorageMB`, `NetworkEgressMB`, `NetworkIngressMB`, `GPU`, `Request`, `Invocation`, `ExecutionTimeMS`, and `StorageIOPS`, plus a `Custom(String)` escape hatch.
+
+Only the first six map to on-chain resource commitments in the [signer](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/src/signer.rs). The rest (`Request`, `Invocation`, `ExecutionTimeMS`, `StorageIOPS`) are priced and included in the cost calculation, but they don't generate on-chain commitments. This distinction matters: on-chain commitments are what the protocol enforces. Off-chain resource types let operators factor in costs that are real but not worth the gas to commit individually.
+
+### Blueprint-specific overrides
+
+Pricing config supports per-blueprint overrides with a fallback chain. The engine looks up the `blueprint_id` first; if no match exists, it falls back to `default`:
+
+```toml
+[default]
+resources = [
+  { kind = "CPU", count = 1, price_per_unit_rate = 0.001 },
+]
+
+[42]
+resources = [
+  { kind = "CPU", count = 1, price_per_unit_rate = 0.0015 },
+]
+```
+
+Blueprint 42 gets premium CPU pricing. Everything else gets the default. This is a simple pattern, but it means operators can run dozens of blueprints with a single pricing config file, overriding only where the economics differ.
+
+## Three pricing models
+
+The protobuf definition in [`pricing.proto`](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/proto/pricing.proto) specifies three models:
+
+**PAY_ONCE (0)** is the resource-based model described above. It requires hardware benchmarks, computes cost from resource counts, rates, and TTL, and produces quotes for `createServiceFromQuotes()` on-chain. This is the model for long-running service provisioning.
+
+**SUBSCRIPTION (1)** is a flat rate per billing interval. No benchmarks needed.
+
+```toml
+[default]
+pricing_model = "subscription"
+subscription_rate = 0.001        # USD per interval
+subscription_interval = 86400    # 1 day in seconds
+
+[5]
+pricing_model = "subscription"
+subscription_rate = 0.005
+subscription_interval = 604800   # 1 week
+```
+
+**EVENT_DRIVEN (2)** is a flat rate per event or job invocation. Also no benchmarks.
+
+```toml
+[default]
+pricing_model = "event_driven"
+event_rate = 0.0001              # USD per event
+```
+
+The subscription and event-driven models bypass the benchmark-and-resource calculation entirely. They exist because not every service has costs that correlate with hardware usage. A notification service that sends webhooks has a per-event cost structure. A monitoring service that runs continuously has a subscription cost structure. Forcing these through resource-based pricing would produce nonsensical numbers.
+
+## Accepted token configuration
+
+Each token an operator accepts gets its own config block with the exchange rate, markup, and settlement details:
+
+```toml
+[[accepted_tokens]]
+network = "eip155:8453"
+asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+symbol = "USDC"
+decimals = 6
+pay_to = "0xYourOperatorAddressOnBase"
+rate_per_native_unit = "3200.00"
+markup_bps = 200
+transfer_method = "eip3009"
+eip3009_name = "USD Coin"
+eip3009_version = "2"
+```
+
+The `markup_bps` field is the operator's margin, defined in basis points (1 bp = 0.01%). Set it to 0 for break-even pricing. Set it to 500 (5%) if you want a buffer against exchange rate fluctuation. Set it to 2000 (20%) if you're running premium infrastructure and the market bears it.
+
+`rate_per_native_unit` is a static config value. There's no oracle feed or automatic rate refresh built into the engine. If ETH/USDC moves 10% in a day, your prices are 10% stale until you update the config. This is an explicit design choice: operators own their exchange rate assumptions. For operators running high-volume services, a cron job that polls a price feed (Chainlink, CoinGecko, or a centralized exchange API) and rewrites the TOML is the practical solution. The `Arc<Mutex<>>` runtime config described below makes it possible to update rates without restarting the server.
+
+## On-chain representation: the scale factor
+
+USD amounts need to live on-chain as integers. The engine uses a [10^9 scale factor](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/src/utils.rs) where 1 USD = 1,000,000,000 atomic units.
+
+```rust
+pub const PRICING_SCALE_PLACES: u32 = 9;
+
+pub fn decimal_to_scaled_amount(value: Decimal) -> Result<U256> {
+    let scaled = (value * pricing_scale()).trunc();
+    let int_value = scaled.to_u128()?;
+    Ok(U256::from(int_value))
+}
+```
+
+Zero prices are explicitly rejected. If you want a free tier, the engine forces you to implement that logic explicitly rather than setting a price of zero. This is a deliberate choice: a price of zero is ambiguous (is it free? is it misconfigured?), while explicit free-tier logic is unambiguous.
+
+## Trust nothing: the anti-abuse stack
+
+A pricing API that returns unsigned numbers over unauthenticated RPC invites abuse. The pricing engine layers four defenses.
+
+![Anti-Abuse Stack](/images/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags/anti-abuse-stack.png)
+
+### 1. Proof of work on every request
+
+Before the pricing engine will even process an RPC request, the client must solve a SHA-256 proof of work challenge. The default difficulty requires 20 leading zero bits. The challenge input is `SHA256(blueprint_id || timestamp)`, and the timestamp must be within 30 seconds of server time.
+
+The point is to make it expensive to spam the quoting endpoint. An attacker trying to scrape prices across thousands of configurations has to burn real CPU time for each request.
+
+### 2. EIP-712 signed quotes
+
+Every quote the engine returns is signed using EIP-712 structured data with domain `TangleQuote` version `1`. Service quotes commit the `totalCost`, `blueprintId`, `ttlBlocks`, security commitments, and resource commitments. Job quotes commit `serviceId`, `jobIndex`, `price`, `timestamp`, and `expiry`.
+
+A client can present a quote to a smart contract and the contract can verify that (a) the operator actually issued it, (b) it hasn't been tampered with, and (c) it covers exactly the resources and price claimed. No trust in the relay, the client, or any middleware.
+
+### 3. Configurable expiry with a hard ceiling
+
+Quotes have a configurable validity duration (`quote_validity_duration_secs`, default 5 minutes). The on-chain contract enforces a separate `maxQuoteAge` (default 1 hour) as a hard ceiling. Even if an operator sets quote validity to a week, the contract won't accept anything older than an hour.
+
+This two-layer expiry means operators can tune freshness for their use case (tighter for volatile prices, looser for stable services) while the protocol prevents ancient quotes from being replayed.
+
+### 4. On-chain replay protection
+
+After a quote is submitted on-chain, its digest is marked as used. Presenting the same signed quote twice fails. Combined with the expiry window, this creates a tight lifecycle: a quote is valid for minutes, usable exactly once, and cryptographically bound to specific parameters.
+
+## From static config to dynamic pricing
+
+The pricing system is designed as a stack that operators can climb incrementally.
+
+![From Static Config to Dynamic Pricing](/images/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags/pricing-levels.png)
+
+**Level 1: Static TOML.** Start with a `default_pricing.toml` and `job_pricing.toml`. Set your rates, deploy, done. This covers most operators who want simple, predictable pricing.
+
+**Level 2: Per-blueprint overrides.** Add sections for specific blueprint IDs with different rates. Still static config, but now you can price premium workloads differently from commodity ones.
+
+**Level 3: Runtime mutation.** The job pricing config lives behind an `Arc<Mutex<>>`, which means it can be updated programmatically at runtime without restarting the server:
+
+```rust
+let job_config = load_job_pricing_from_toml(
+    &std::fs::read_to_string("job_pricing.toml")?
+)?;
+let service = PricingEngineService::with_job_pricing(
+    config, benchmark_cache, pricing_config,
+    Arc::new(Mutex::new(job_config)),
+    signer,
+);
+```
+
+An operator could wire this to a monitoring system that adjusts prices based on load, time of day, or competitive dynamics. The config structure doesn't change; only the values behind the mutex do.
+
+**Level 4: x402 settlement with markup.** Layer on cross-chain stablecoin settlement with per-token exchange rates and markup:
+
+```rust
+let service = service.with_x402_settlement(x402_config);
+```
+
+The builder pattern (`with_job_pricing().with_subscription_pricing().with_x402_settlement()`) makes each level of sophistication an additive change rather than a rewrite.
+
+## Standalone quote signing
+
+Not every operator needs the full pricing engine. For simple cases where an operator knows the price and just needs a signed quote, the [`JobQuoteSigner`](https://github.com/tangle-network/blueprint/blob/main/crates/tangle-extra/src/job_quote.rs) can be used directly:
+
+```rust
+use blueprint_tangle_extra::job_quote::{
+    JobQuoteSigner, JobQuoteDetails, QuoteSigningDomain
+};
+
+let signer = JobQuoteSigner::new(
+    keypair,
+    QuoteSigningDomain { chain_id, verifying_contract }
+);
+
+let signed = signer.sign(&JobQuoteDetails {
+    service_id: 1,
+    job_index: 7,
+    price: U256::from(250_000_000_000_000_000u64), // 0.25 ETH
+    timestamp: now,
+    expiry: now + 3600,
+});
+```
+
+This is useful for operators who compute prices through their own logic (ML-based pricing, auction mechanisms, manual overrides) and just need the signing infrastructure.
+
+## Sharp edges worth knowing
+
+**Exchange rates are your responsibility.** The `rate_per_native_unit` in your token config is static. If you're accepting USDC and pricing in wei, a 15% ETH price swing means your USD-equivalent revenue shifts by 15%. High-volume operators should automate rate updates from a price feed.
+
+**Gas costs aren't factored in.** The pricing engine calculates the cost of compute, not the cost of submitting the quote on-chain. For expensive jobs (0.25 ETH), gas is a rounding error. For cheap jobs (0.001 ETH), gas might be a meaningful fraction of the price. Operators should account for this in their markup or base prices.
+
+**Benchmarks measure the machine, not the blueprint.** The benchmark system profiles the operator's hardware: CPU speed, memory bandwidth, storage throughput. It doesn't measure what a specific blueprint actually consumes during execution. If your blueprint uses 10% of available CPU, the benchmark still reflects 100% capacity. The `count` field in resource config is where operators specify expected per-unit resource consumption.
+
+**The security factor is a placeholder.** `calculate_security_rate_adjustment()` returns `Decimal::ONE` today. The function signature and its position in the pricing formula signal that security-weighted pricing is planned, but it doesn't affect prices yet.
+
+## Putting it together
+
+The pricing engine is built on a specific thesis: blockchain API pricing should be as structured and auditable as cloud pricing, but with cryptographic guarantees that cloud providers don't offer. An AWS pricing page tells you what things cost. A signed EIP-712 quote proves what things cost, who said so, when they said it, and that nobody changed the numbers in transit.
+
+For operators, the practical upshot is a system that starts simple (edit a TOML file, set your rates) and scales to sophisticated (dynamic pricing, multi-token settlement, per-blueprint overrides) without architectural changes. The pricing formula is transparent, the conversion math is explicit, and the anti-abuse stack is built in rather than bolted on.
+
+The next article in this series covers the settlement flow end-to-end: what happens after the client receives a signed quote, how the x402 payment proof is constructed, and how the on-chain verification contract validates everything before compute starts.
+
+## FAQ
+
+### How do operators decide what to charge per job in wei?
+
+The engine doesn't prescribe a specific method. Operators set the `(service_id, job_index) → wei_amount` mapping in `job_pricing.toml` based on their own cost analysis. For compute-heavy jobs, estimate your per-call infrastructure cost (GPU time, memory, network), convert to wei at current ETH rates, and add your desired margin. The `markup_bps` field in the x402 config gives you a separate knob for margin on the settlement side, so you can keep base prices at cost and let markup handle profit.
+
+### Can an operator accept multiple tokens on different chains?
+
+Yes, configure one `[[accepted_tokens]]` block per token/chain combination. Each block has its own exchange rate, markup, decimals, and pay-to address. A single operator can accept USDC on Base, USDT on Ethereum, and DAI on Arbitrum simultaneously. The conversion formula runs independently for each token, so different decimals and rates are handled automatically.
+
+### What happens if a quote expires before the client submits it?
+
+The on-chain contract rejects it. Quotes default to 5 minutes of validity (configurable via `quote_validity_duration_secs`), and the contract enforces a hard 1-hour `maxQuoteAge` ceiling regardless of the operator's setting. Clients should treat quotes as short-lived and re-fetch before submission if their pipeline has latency.
+
+### How does the proof-of-work difficulty affect client experience?
+
+At 20 leading zero bits (the default), solving takes roughly tens of milliseconds on modern hardware. Legitimate clients making occasional requests won't notice it. Attackers trying to scrape or spam the quoting endpoint at thousands of requests per second will. Operators can adjust the difficulty parameter if their threat model or client base requires it.
+
+### Can I use the pricing engine without x402 settlement?
+
+Yes. The x402 settlement layer is added via the `with_x402_settlement()` builder method and is entirely optional. Without it, the engine produces quotes denominated in the native unit (wei for jobs, scaled USD for resources) and operators handle settlement through their own mechanism or the standard on-chain `submitJob` flow.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)

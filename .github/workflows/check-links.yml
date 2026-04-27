@@ -1,0 +1,78 @@
+name: Check links
+
+# Runs on every PR + on push to main. Builds the static site, then
+# uses Lychee (Rust-based, faster + fewer false positives than
+# linkinator) to walk every internal route and validate every external
+# link. Fails the workflow on any 4xx/5xx that isn't in the safelist.
+#
+# Local equivalent: `pnpm check:links` (uses linkinator, no Rust required).
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'astro.config.mjs'
+      - '.github/workflows/check-links.yml'
+      - 'lychee.toml'
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Checkout @tangle-network/brand sibling
+        run: git clone --depth 1 https://github.com/tangle-network/brand.git ../brand
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Cache lychee results
+        uses: actions/cache@v4
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.sha }}
+          restore-keys: lychee-
+
+      - name: Lychee link check
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Walk built routes + all referenced external links.
+          # `--no-progress` keeps CI logs readable.
+          # `--cache` writes to .lycheecache for warm runs across PRs.
+          args: >-
+            --no-progress
+            --cache
+            --max-cache-age 1d
+            --base ${{ github.workspace }}/dist/client
+            --root-dir ${{ github.workspace }}/dist/client
+            --exclude-loopback
+            './dist/client/**/*.html'
+          # Fail the workflow on any non-success status (default true).
+          fail: true
+          format: markdown
+          output: ./lychee-report.md
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: ./lychee-report.md
+          if-no-files-found: ignore

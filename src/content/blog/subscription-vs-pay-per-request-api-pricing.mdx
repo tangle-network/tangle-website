@@ -1,0 +1,211 @@
+---
+title: "Subscription vs Pay-Per-Request API Pricing: Tradeoffs, Implementation, and When to Use Each"
+slug: subscription-vs-pay-per-request-api-pricing
+summary: >-
+  Subscription and pay-per-request are the two dominant API pricing models, and
+  each optimizes for a different kind of business. This post breaks down the
+  economic tradeoffs, implementation costs, and decision framework, with concrete
+  implementation patterns from Blueprint SDK's pricing engine.
+date: '2026-03-24'
+author: Drew Stone
+tags:
+  - api-pricing
+  - x402
+  - subscription
+  - monetization
+  - blueprint
+series: x402 Production Runway
+seriesOrder: 4
+coverImage: /images/covers/subscription-vs-pay-per-request-api-pricing.png
+heroImage: /images/covers/subscription-vs-pay-per-request-api-pricing.png
+imageAlt: 'Subscription vs Pay-Per-Request API Pricing flow diagram'
+---
+
+## Two Models, One Choice That Shapes Everything
+
+Pay-per-request API pricing charges consumers per call with no accounts or billing infrastructure. It fits sporadic usage, machine-to-machine calls, and operators who want zero billing ops. Subscription pricing charges a flat recurring fee, enabling customer relationships, volume discounts, feature gating, and predictable revenue, but it requires payment processing integration and account management. The right choice depends on call frequency (subscriptions win for high-volume, predictable usage), consumer type (organizations prefer subscriptions with invoices; autonomous agents prefer per-request), and how much billing infrastructure you're willing to maintain. Some architectures support both simultaneously, routing pay-per-request and subscription clients through the same service handlers via a unified job dispatch layer.
+
+This isn't a new problem. Twilio built a $4B business on pay-per-request (fractions of a cent per SMS). Slack charges per seat per month. AWS meters to the millisecond. According to OpenView's 2023 SaaS Benchmarks report, roughly 45% of SaaS companies now offer some form of usage-based pricing, up from 34% in 2020, and companies with usage-based models report 120% net dollar retention compared to 110% for pure subscription. The trend is clear: the industry is moving toward usage-based models, but subscriptions aren't going anywhere.
+
+![45% of SaaS companies now offer usage-based pricing](/images/blog/subscription-vs-pay-per-request-api-pricing/subscription-vs-pay-per-request-api-pricing-stat-3.png)
+
+What makes this question interesting right now is that blockchain settlement protocols like Coinbase and Cloudflare's [x402](https://x402.org) have made pay-per-request radically cheaper to implement. Where you once needed Stripe, an accounts database, and a credits ledger, you can now accept payment with a config file. Blueprint SDK's pricing engine takes this further by defining both models at the protocol level, letting operators configure their billing model without changing application code. This post uses Blueprint's implementation as a concrete reference, but the tradeoffs apply to any API service.
+
+## When to Use Which
+
+Before diving into implementation, here's the decision framework. Everything that follows supports this table.
+
+| Dimension | Pay-Per-Request | Subscription | Resource-Based |
+|---|---|---|---|
+| **Billing infrastructure** | Near zero (config files only) | Significant (Stripe, accounts, webhooks) | Moderate (benchmarking + metering) |
+| **Latency overhead** | 1-3 sec per call (on-chain settlement) | None per call (pre-authorized) | None per call (pre-authorized) |
+| **Customer visibility** | Anonymous wallets | Full identity, usage analytics | Full identity, usage analytics |
+| **Revenue predictability** | Variable, follows demand | Recurring, plannable | Variable, follows demand |
+| **Ideal call pattern** | Sporadic, high-value calls | Frequent, predictable volume | Long-running compute jobs |
+| **Consumer type** | Machines, agents, anonymous users | Organizations, teams | Infrastructure buyers |
+| **Volume discounts** | Not natively possible | Natural (tiered plans, credit packs) | Natural (bulk rates) |
+| **Ops cost to operator** | Minimal | High (billing UI, support, churn mgmt) | Moderate (benchmarking maintenance) |
+
+### Pay-per-request fits when:
+
+- **Calls are infrequent or unpredictable.** If users call your service once a week or once a month, a subscription is a hard sell. Per-request pricing lets them pay exactly for what they use.
+- **You want zero billing ops.** No Stripe account, no accounts to manage, no invoices to send, no chargebacks to dispute.
+- **Your consumers are machines, not people.** AI agents making API calls don't need a billing dashboard. They need a 402 response they can programmatically respond to.
+- **The value per call is high enough to justify the latency.** That 1-3 second settlement overhead is trivial for a $3 AI inference call. It's a dealbreaker for a $0.0001 data lookup.
+
+### Subscription fits when:
+
+- **Calls are frequent and predictable.** A service handling thousands of requests per day is a natural subscription product. The consumer wants cost certainty; the operator wants revenue predictability.
+- **You need customer relationships.** Tier-based feature gating, usage analytics, churn prevention, upselling: these require knowing who your customers are.
+- **You want to capture value above cost.** Subscriptions let you price on value delivered, not compute consumed. A $99/month plan for a service that saves hours of manual work is good economics regardless of server cost. Bessemer's 2024 Cloud Index shows that the highest-margin SaaS companies price on value, not cost, with top-quartile gross margins above 80%.
+- **Your consumers are organizations.** Companies want invoices, contracts, and SLAs. A "pay with your wallet per request" model doesn't fit procurement processes.
+
+Resource-based pricing (charging by actual compute consumed) fits a third niche: long-running GPU jobs, storage provisioning, infrastructure rentals. The price derives from hardware benchmarks, not a business decision. It's honest math, well-suited for commodity compute where transparency builds trust.
+
+## Pay-Per-Request: x402 and the Billing Stack Collapse
+
+HTTP status code 402 has been "reserved for future use" since 1999. Twenty-seven years later, Coinbase and Cloudflare's [x402 protocol](https://x402.org) gave it a real job. A client hits an endpoint, gets back a 402 response with pricing information, signs a stablecoin payment, and resends the request with an `X-PAYMENT` header containing proof of settlement. No API keys, no billing dashboard, no invoices.
+
+What makes this interesting for service operators is what it eliminates. A traditional paid API requires an account system, API key management, a credit balance ledger, reconciliation logic, dispute resolution, and fraud detection. With x402, the blockchain is the billing system. The wallet is the API key. The transaction receipt is the invoice.
+
+![Subscription vs pay-per-request payment flow architecture](/images/blog/subscription-vs-pay-per-request-api-pricing/subscription-vs-pay-per-request-api-pricing-flow-diagram.png)
+
+### Implementation
+
+The x402 gateway integrates into a Blueprint as a middleware layer. Two TOML files and a few lines of Rust:
+
+```rust
+let mut config = X402Config::from_toml("x402.toml")?;
+let pricing = load_job_pricing_from_toml(&std::fs::read_to_string("job_pricing.toml")?)?;
+let oracle = CachedRateProvider::new(CoinbaseOracle::new(), Duration::from_secs(60));
+refresh_rates(&mut config, &oracle, "ETH").await?;
+let (gateway, x402_producer) = X402Gateway::new(config, pricing)?;
+
+BlueprintRunner::builder((), BlueprintEnvironment::default())
+    .router(router())
+    .producer(x402_producer)
+    .background_service(gateway)
+    .run()
+    .await?;
+```
+
+Job prices are set in [wei](https://ethereum.org/en/developers/docs/intro-to-ether/#denominations-of-ether) per job type. Why wei? Because operators can accept multiple tokens across different chains, and wei provides a denomination-neutral base unit. At request time, the gateway runs a deterministic conversion:
+
+![x402 price conversion formula](/images/blog/subscription-vs-pay-per-request-api-pricing/subscription-vs-pay-per-request-api-pricing-math-2.png)
+
+Concretely: a 0.001 ETH job at an ETH price of $3,200 with a 200 basis point operator markup becomes `0.001 * 3200 * 1.02 = 3.264 USDC`.
+
+### Settlement-First Design
+
+The operator gets paid before doing any work. The [`X402Gateway`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) calls `.settle_before_execution()`, confirming the stablecoin transfer on-chain before the job handler fires. This adds 1-3 seconds of latency on Base for the facilitator round-trip, but it means the operator never does unpaid work.
+
+Compare this to traditional API billing, where you bill after the fact and hope the credit card doesn't bounce. The tradeoff is latency for certainty.
+
+### Access Control
+
+Three access modes, configured in `x402.toml`:
+
+- **Disabled** (default): no payment gateway active.
+- **PublicPaid**: anyone who sends valid payment can call the service.
+- **RestrictedPaid**: payment required, plus an on-chain `isPermittedCaller` check via `eth_call`. Paid service with an allowlist.
+
+### What You Give Up
+
+No customer relationships. No usage analytics per customer. No volume discounts. No feature gating. No trials. Every request is an anonymous economic transaction. If a customer calls your service 10,000 times a month, you have no way to offer them a better rate and no way to identify them.
+
+Exchange rates are static, operator-configured values. This removes runtime dependency on Chainlink or DEX price feeds, but operators need to manage their own rate refresh. The x402 gateway loads rates at startup and uses immutable pricing after initialization — rate updates require a restart or an external script that reconfigures and redeploys. Rate refresh is your responsibility.
+
+The [quote registry](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) is in-memory with a 300-second TTL. Quotes are lost on restart. For high-availability deployments, plan accordingly.
+
+## Subscription: Predictable Revenue, More Moving Parts
+
+Blueprint's pricing engine defines subscription as a first-class model via a [`PricingModelHint`](https://github.com/tangle-network/blueprint/blob/main/crates/pricing-engine/proto/pricing.proto) enum:
+
+```protobuf
+PAY_ONCE = 0;        // resource x rate x TTL
+SUBSCRIPTION = 1;    // flat rate per billing interval
+EVENT_DRIVEN = 2;    // flat rate per event
+```
+
+Subscription pricing is configured per service:
+
+```toml
+[default]
+pricing_model = "subscription"
+subscription_rate = 0.001
+subscription_interval = 86400    # daily (seconds)
+event_rate = 0.0001
+```
+
+Price calculation is simple: `subscription_rate * security_factor`. No resource benchmarking, no TTL math. Both subscription and event-driven pricing produce the same output as pay-per-request: a signed [EIP-712](https://eips.ethereum.org/EIPS/eip-712) quote with price, timestamp, and expiry. This uniformity matters because downstream job dispatch doesn't care which model generated the quote.
+
+The `EVENT_DRIVEN` variant sits between subscription and pure pay-per-request. It charges a flat rate per event without x402's full HTTP 402 handshake and stablecoin settlement. Think of it as "pay-per-call without the on-chain overhead."
+
+### What Subscriptions Enable in Practice
+
+The partner billing system in [blueprint-agent](https://github.com/tangle-network/blueprint-agent) shows what a production subscription looks like. Three tiers: Starter ($99/month, 500k credits), Growth ($349/month, 2M credits), Enterprise ($999/month, 10M credits). Credits convert at roughly 10,000 per dollar. Overages are calculated as `excessCredits * monthlyPriceCents / includedCredits` and charged via Stripe.
+
+This model enables things pay-per-request structurally cannot:
+
+- **Feature gating per tier**: quest limits, leaderboards, verification types, custom domains, SLA guarantees.
+- **Volume discounts**: credit packs at decreasing per-unit cost (100k for $10, 5M for $350).
+- **Customer relationships**: you know who your users are, what they use, and when they churn.
+- **Predictable revenue**: monthly recurring revenue is easier to plan around than variable per-request income.
+
+The cost is infrastructure. Stripe integration, webhook handlers for `invoice.payment_succeeded`, idempotency checks, credit pool management, and a billing UI. That's real engineering investment, and for small operators it can outweigh the pricing model's benefits.
+
+## The Architectural Trick: Running Both at Once
+
+Here's the design insight that makes this more than a binary choice. The x402 gateway converts incoming paid HTTP requests into [`JobCall`](https://github.com/tangle-network/blueprint/blob/main/crates/core/src/job/call.rs) values, the same type that every other trigger source produces: on-chain events, cron schedules, webhooks. Job handlers don't know how they were triggered.
+
+This means a single service can accept payments through multiple models simultaneously. An `X402Producer` handles pay-per-request clients. A subscription verification layer handles subscribers. Both feed the same router, the same job handlers, the same execution path.
+
+```
+x402 client ------> X402Producer ----\
+                                      +---> Router ---> Job Handlers
+subscription -----> SubProducer -----/
+```
+
+The `PricingModelHint` enum already supports this at the protocol level. The economic model becomes a configuration choice, not an architectural fork. This is the same pattern Twilio uses: programmatic callers pay per API call, while enterprise customers negotiate volume contracts, but the underlying telephony infrastructure doesn't care which billing model triggered the call.
+
+## The Economics, Spelled Out
+
+Consider a Blueprint running AI inference at $0.002 compute cost per call.
+
+**Pay-per-request at $0.01/call**: At 10,000 calls/month, that's $100 revenue, $20 cost, $80 margin. At 100 calls/month, it's $1 revenue. The operator earns proportionally but has no revenue floor.
+
+**Subscription at $99/month (500k credits)**: At 10,000 calls/month, the consumer uses 2% of their allocation. The operator gets $99 regardless. At 100,000 calls/month, the consumer still pays $99 and the operator's margin compresses.
+
+The math clarifies the tradeoff. Pay-per-request aligns revenue perfectly with usage but provides no predictability. Subscription provides a revenue floor but creates margin risk on heavy consumers. The right answer depends on your usage distribution: if most consumers cluster around a predictable volume, subscription wins. If usage is highly variable or long-tail, per-request is safer for the operator.
+
+## Roadmap: What's Not Shipped Yet
+
+The pricing engine's subscription model has config, calculation logic, and signed quote output. But there's no on-chain enforcement equivalent to the x402 gateway for subscriptions today. The partner billing system handles subscription enforcement through Stripe (off-chain). An on-chain subscription verification layer is the gap for fully trustless subscription services.
+
+The x402 facilitator at `facilitator.x402.org` is currently centralized. A decentralized facilitator Blueprint is spec'd but not shipped. For now, settlement routes through a single facilitator service.
+
+## FAQ
+
+### Can I run both subscription and pay-per-request on the same service?
+
+Yes. Both models produce the same `JobCall` type through different producers feeding the same router. The `PricingModelHint` enum defines both at the protocol level. You'd wire an `X402Producer` for pay-per-request alongside a subscription verification producer, both routing to identical job handlers.
+
+### How do I handle exchange rate drift with x402?
+
+Rates are static in your config, not oracle-fed. The x402 gateway loads rates at startup and doesn't hot-reload them — rate updates require a restart. For operators who want more frequent refreshes, the `CachedRateProvider` wrapping a `CoinbaseOracle` with a 60-second cache (used in the SDK examples) is a starting point for an external rate-refresh script. Rate freshness is the operator's responsibility.
+
+### What happens to x402 quotes if my service restarts?
+
+The `QuoteRegistry` is in-memory. On restart, all outstanding quotes are lost. The default 300-second TTL limits exposure. For high-availability deployments, you'd want very short TTLs or a persistent quote store, though neither is provided out of the box.
+
+### How does the per-event model differ from x402 pay-per-request?
+
+Both are usage-based, but they operate at different layers. x402 runs a full HTTP 402 handshake with on-chain stablecoin settlement per request. The event-driven model (`EVENT_DRIVEN` in the pricing engine) charges a flat rate per invocation through the pricing engine's quote system, without the HTTP 402 flow or settlement overhead. Event-driven is lighter-weight but relies on whatever payment enforcement layer is wired upstream.
+
+### What's the minimum setup to test x402 payments?
+
+Two TOML files: `job_pricing.toml` with per-job prices in wei, and `x402.toml` with gateway config and accepted tokens. Wire them into `BlueprintRunner` with `X402Gateway` and `x402_producer`. The `/x402/stats` endpoint gives you counters for `accepted`, `policy_denied`, `policy_error`, `replay_denied`, `enqueue_failed`, `job_not_found`, and `quote_conflict`. Test against Base testnet with test USDC.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)
