@@ -1,0 +1,582 @@
+---
+title: 'When The Model Itself Is Mutable'
+slug: self-improving-stack-post-training
+summary: >-
+  'How SFT, RLHF, process supervision, tool-use RL, and Microsoft Frontier Tuning differ from public prompt, skill, and harness loops.'
+date: '2026-05-30'
+author: Drew Stone
+tags: ['ai', 'agents', 'models', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 5
+---
+
+Most self-improving agent systems that product teams can ship without model-training infrastructure do not change model weights.
+
+They change prompts, skills, tools, traces, memory, runtime topology, harness code, and promotion gates.
+
+That is external-state self-improvement.
+
+Post-training changes the model itself.
+
+That is a different power level.
+
+The loop looks familiar:
+
+```text
+collect behavior
+score behavior
+construct training signal
+update candidate
+evaluate candidate
+promote or reject
+```
+
+But the mutable surface is no longer a prompt file or a worktree. It is `theta`, the model parameters, or some parameterized adapter attached to the model.
+
+Once `theta` moves, the boundary changes. The behavior becomes harder to inspect, harder to patch locally, harder to roll back partially, and harder to explain from a single trace. It can also generalize better than any prompt edit when the signal is strong enough.
+
+That is the point of this layer.
+
+## The Mutable Variable
+
+The previous posts treated the model as mostly fixed:
+
+```text
+y = model_theta(prompt, tools, memory, trace_context)
+```
+
+External optimization changed everything around `theta`:
+
+```text
+prompt
+skill
+retrieval corpus
+tool description
+driver topology
+verifier
+selector
+harness
+```
+
+Post-training changes `theta`, or a learned delta attached to it:
+
+```text
+theta_{t+1} = Update(theta_t, data, objective)
+theta' = theta_base + Delta_adapter
+```
+
+That small notation hides the whole difference.
+
+If a behavior is encoded in a prompt, the system has to load the prompt, preserve the instruction in context, and hope the model follows it. If the behavior is encoded in weights, the policy can express it before the prompt says anything.
+
+That is why model-level adaptation matters.
+
+It is also why it is dangerous.
+
+## The Post-Training Ladder
+
+There are several ways to move from behavior evidence to model updates.
+
+They are not interchangeable.
+
+| Method | Training signal | What it changes | Main risk |
+|---|---|---|---|
+| SFT | demonstrations | imitation of desired outputs | copies surface form without learning why it worked |
+| RLHF | human preferences through a reward model | policy behavior under a learned preference proxy | reward overoptimization |
+| RLAIF | model-generated preferences, often rule-conditioned | scalable preference signal | evaluator inherits model blind spots |
+| DPO | preference pairs | direct preference optimization without online RL | pair quality becomes the bottleneck |
+| Process supervision | step-level labels | intermediate reasoning behavior | expensive labels, hidden chain-of-thought policy concerns |
+| Verifiable RL | tests, proofs, schemas, exact rewards | task policy for domains with checkable outcomes | reward hacking around the verifier |
+| Tool-use RL | tool choice and argument policy | action policy in environments | sparse or badly shaped rewards |
+| Enterprise tuning | workflow traces, tools, evals, compliance constraints | domain-specific model and runtime behavior | privacy, overfitting, governance, rollback |
+
+The ladder moves from "imitate this answer" toward "optimize behavior in an environment."
+
+Agent systems care most about the environment end of the ladder.
+
+## Supervised Fine-Tuning
+
+Supervised fine-tuning is the simplest objective.
+
+Given demonstrations:
+
+```text
+D = {(x_i, y_i)}
+```
+
+train the model to put probability mass on the demonstrated output:
+
+```text
+L_SFT(theta) = - sum_i log pi_theta(y_i | x_i)
+```
+
+This is powerful when demonstrations are clean and the task distribution is stable.
+
+It is weak when the demonstration only shows the final artifact but not the decision boundary. A model can learn the style of a successful support response, code review, or tax memo without learning the latent policy that made it correct.
+
+For agents, SFT is often best viewed as initialization:
+
+```text
+teach the format
+teach the domain language
+teach basic tool conventions
+teach common interaction patterns
+```
+
+It is not a full self-improvement loop unless the system keeps collecting new demonstrations, filtering them, validating them, and retraining.
+
+## RLHF
+
+RLHF adds a preference model.
+
+The canonical shape is:
+
+```text
+1. collect demonstrations
+2. train an SFT policy
+3. collect preference comparisons
+4. train reward model r_phi(x, y)
+5. optimize pi_theta against r_phi with a KL penalty
+```
+
+Preference data looks like:
+
+```text
+(x, y_w, y_l)
+```
+
+where `y_w` is preferred over `y_l`.
+
+A common reward-model loss is:
+
+```text
+L_RM(phi) =
+  - log sigma(r_phi(x, y_w) - r_phi(x, y_l))
+```
+
+Then the policy objective becomes:
+
+```text
+max_theta E_{y ~ pi_theta(. | x)}[
+  r_phi(x, y) - beta KL(pi_theta(. | x) || pi_ref(. | x))
+]
+```
+
+The reward says "move toward preferred behavior." The KL term says "do not drift too far from the reference policy."
+
+This is where post-training becomes obviously different from prompt optimization. The model can internalize a preference across many future prompts.
+
+But reward models are proxies. If the policy optimizes the proxy too aggressively, it can learn to satisfy the reward model while degrading the actual target. That is Goodhart's law in gradient form.
+
+The gate has to test the trained policy on held-out tasks, adversarial probes, cost, safety, and product behavior. Reward alone is not enough.
+
+## PPO And GRPO
+
+PPO is the familiar online optimizer in many RLHF pipelines. It samples from the current policy, scores the samples, estimates an advantage, and updates the policy while clipping large policy-ratio moves:
+
+```text
+rho = pi_theta(y | x) / pi_old(y | x)
+L_PPO(theta) = E[min(rho A, clip(rho, 1 - eps, 1 + eps) A)]
+```
+
+The clipped objective is an engineering answer to a stability problem: if the policy moves too far in one update, the reward model can be exploited and the policy can drift.
+
+GRPO-style training changes the advantage estimate. Instead of training a separate critic to estimate value, sample a group of outputs for the same prompt and normalize rewards inside the group:
+
+```text
+A_i = (r_i - mean(r_1, ..., r_G)) / (std(r_1, ..., r_G) + eps)
+```
+
+That group-relative signal is why GRPO has become prominent in reasoning and tool-use RL discussions. It is not a free lunch. The reward still has to be meaningful, the group has to contain useful variation, and the heldout gate still has to catch reward hacking.
+
+## RLAIF
+
+RLAIF replaces some human preference labels with preference labels generated by a model.
+
+Constitutional AI is the clean historical example: a model critiques and revises responses under written principles, then preference models and RL use AI feedback conditioned on those principles.
+
+The benefit is scale. Human feedback is slow and expensive. AI feedback can produce many more comparisons and can cover repetitive cases.
+
+The risk is correlated error.
+
+If the evaluator has the same blind spot as the policy, the loop can amplify it. The written constitution or rubric matters because it anchors the evaluator to something outside the model's current taste.
+
+For agent systems, RLAIF should be treated like any other judge channel:
+
+```text
+pin the judge
+calibrate against human labels
+test inter-rater reliability
+track judge drift
+separate judge reward from deterministic verifiers
+keep heldout tasks hidden
+```
+
+AI feedback is not automatically objective feedback.
+
+## DPO
+
+Direct Preference Optimization removes the explicit reward-model and online-RL stages.
+
+For a preferred output `y_w` and rejected output `y_l`, DPO optimizes a classification-style objective over log-probability differences:
+
+```text
+L_DPO(theta) =
+  - log sigma(
+      beta [
+        log pi_theta(y_w | x) - log pi_ref(y_w | x)
+        - log pi_theta(y_l | x) + log pi_ref(y_l | x)
+      ]
+    )
+```
+
+The reference policy still matters. The preference pair still matters. The quality of the pair dataset becomes the training signal.
+
+DPO is attractive because it is simpler than PPO-style RLHF. It is not magic. It converts preference data into weight updates. If the pairs are contaminated, shallow, stale, or reward-hacked, the model still learns the wrong thing.
+
+The dataset is the objective.
+
+## Distillation
+
+Distillation transfers behavior from one model to another.
+
+The usual shape is:
+
+```text
+teacher model produces y_teacher
+student model trains on (x, y_teacher)
+```
+
+That can reduce cost, latency, or deployment size. It can also import the teacher's blind spots, refusals, shortcuts, and style artifacts.
+
+Distillation is not the same as a self-improvement loop. It is compression or transfer unless the student is evaluated, used to generate new evidence, and improved under a gate.
+
+Microsoft's MAI announcement is notable here because it says MAI-Thinking-1 was trained from the ground up on clean data without distillation from third-party models. That is a data-lineage and independence claim, not just a model-performance claim.
+
+## Process Supervision
+
+Outcome supervision scores the final answer.
+
+Process supervision scores intermediate steps.
+
+If an agent run is:
+
+```text
+tau = (x, a_1, o_1, a_2, o_2, ..., y)
+```
+
+then outcome reward is:
+
+```text
+R(tau)
+```
+
+Process reward is:
+
+```text
+R_process(tau) = sum_t gamma^t r_t(a_t, o_t, state_t)
+```
+
+The 2023 "Let's Verify Step by Step" result made this concrete for math reasoning: step-level feedback can outperform final-answer-only feedback when training reward models for hard reasoning.
+
+For agents, process supervision is even more natural. The system already has trace spans:
+
+```text
+planner chose wrong tool
+retrieval returned stale context
+tool argument was invalid
+verifier caught missing artifact
+retry repeated the same failed action
+```
+
+Those are process labels.
+
+The trace post argued that traces are the training data. At the model-training layer, traces become step-level reward, preference pairs, and verifiable reward records.
+
+## Verifiable Reward
+
+The strongest RL signals are not vibes. They are checks.
+
+For code, math, theorem proving, schemas, and tool tasks, some rewards are decidable:
+
+```text
+r = 1[tests_pass]
+r = 1[schema_valid]
+r = 1[proof_checks]
+r = 1[compile_succeeds]
+r = fraction_of_assertions_passed
+```
+
+This is why tool-use and coding RL are attractive. The environment can score behavior without a subjective judge for at least part of the task.
+
+DeepSeek-R1 is an important public example of reasoning behavior emerging through reinforcement learning, with the paper describing RL that incentivizes reasoning patterns such as self-reflection, verification, and strategy adaptation. ToolRL is a more specific tool-use example, studying reward design for tool selection and application and applying GRPO to tool tasks.
+
+The lesson is not "RL fixes reasoning."
+
+The lesson is:
+
+```text
+RL becomes much more credible when the reward is verifiable.
+```
+
+For product agents, that means the best training signals often come from verifiers already used in the harness:
+
+```text
+tests
+typechecks
+schema validation
+permission checks
+policy checks
+live smoke tests
+human acceptance events
+```
+
+## Frontier Tuning
+
+Microsoft's June 2, 2026 Frontier Tuning announcement is the current commercial version of the pattern this series has been circling.
+
+Microsoft describes Frontier Tuning as applying reinforcement learning inside a customer's compliance boundary using the customer's data, processes, and conventions. Their developer blog says the system has three parts:
+
+```text
+managed reinforcement learning environment
+customer workflow and domain inputs
+tuned output models, skills, and harness
+```
+
+It also says the RLE is used for both post-training and inference: during training it learns from workflows, tool usage, and eval signals; at inference it explores multiple frontier and fine-tuned models across turns to find stronger candidate paths before returning an answer.
+
+That is not just fine-tuning a prompt.
+
+It is an environment-level adaptation loop:
+
+```text
+enterprise workflows -> RLE -> model updates
+enterprise traces -> eval signals -> skill and harness updates
+enterprise data controls -> compliance boundary -> access-scoped model behavior
+```
+
+Microsoft's MAI announcement frames the same direction as a "hill-climbing machine" and explicitly points to traces of real work as valuable training data: steps, decisions, and actions that define how tasks get done inside an organization.
+
+That maps directly onto the stack:
+
+```text
+traces become training data
+evals become reward
+tools become environment
+skills become reusable policy
+harness becomes runtime substrate
+weights become another mutable surface
+```
+
+The difference is access. Most product teams can ship the first five layers. Frontier labs and large enterprise tuning systems can also move weights.
+
+## External Loops Versus Weight Loops
+
+External-state loops are weaker but auditable.
+
+They can edit:
+
+```text
+prompt files
+skill files
+knowledge bases
+retrieval corpora
+tool manifests
+runtime drivers
+harness code
+eval gates
+```
+
+They are easy to inspect:
+
+```text
+git diff
+trace replay
+scorecard diff
+rollback commit
+feature flag
+heldout gate
+```
+
+Weight-level loops are stronger but less locally inspectable.
+
+They can change behavior in ways no prompt diff shows. A model may become better at tool use, reasoning, or domain tone across many contexts. It may also acquire hidden shortcuts, reward-model artifacts, memorized private data, or brittle conventions.
+
+The practical rule:
+
+```text
+Keep behavior external when auditability matters more than compression.
+Move behavior into weights when the signal is strong, repeated, privacy-safe,
+and valuable enough to justify harder inspection.
+```
+
+Not every successful trace should become a gradient update.
+
+## The Data Boundary
+
+Model training changes the risk surface because training data is not just context. It can become behavior.
+
+A training-ready record needs:
+
+```text
+source provenance
+license and ownership
+privacy classification
+access boundary
+split tag
+deduplication hash
+synthetic-data marker
+reward source
+verifier version
+judge version
+contamination status
+```
+
+Generated data is especially tricky. Synthetic examples can help, but recursive training on model outputs can collapse diversity and accumulate errors. The 2024 Nature model-collapse paper shows the failure mode directly: repeated training on generated data can make models forget low-probability events and drift into their own distorted distribution.
+
+For self-improving agents, this means:
+
+```text
+do not train blindly on your own outputs
+do not mix search traces into holdout
+do not treat judge rationales as ground truth
+do not backpropagate private data outside its boundary
+do not let synthetic data lose its label
+```
+
+The post-training layer needs a data firewall, not just a dataset.
+
+## Where Tangle Fits
+
+The local Tangle packages do not fine-tune model weights.
+
+They produce the artifacts a training system would need.
+
+Local source audit on June 6, 2026:
+
+```text
+@tangle-network/agent-eval package source: 0.34.1
+@tangle-network/agent-runtime package source: 0.26.0
+```
+
+`agent-eval` provides the bridge from eval campaigns to training data:
+
+```text
+RunRecord
+trialsToRunRecords
+verificationReportToRunRecord
+extractPreferences
+extractVerifiableReward
+extractVerifiableRewardsFromRecords
+extractStepRewards
+prmTrainingPairs
+exportRewardModel
+off-policy estimators
+contamination probes
+compute curves
+reward-hacking checks
+training-data exporters
+```
+
+That is the right boundary. The package is not a training cluster. It converts traces, verifier reports, preferences, and scorecards into clean signals for a downstream trainer.
+
+`agent-runtime` provides the execution side:
+
+```text
+runLoop
+tool and sandbox execution
+driver topology
+agent surfaces
+worktree candidate lifecycle
+analyst loop
+OTLP export
+```
+
+Together they approximate the enterprise RLE shape without moving weights:
+
+```text
+runtime executes workflows
+eval captures traces and rewards
+analysts diagnose failures
+external surfaces mutate
+gates promote candidates
+RL bridge exports training signal
+```
+
+The final step, updating `theta`, remains outside the public product loop unless a real training backend is wired.
+
+## The Promotion Gate Gets Stricter
+
+A prompt rollback is a file revert.
+
+A model rollback is a model artifact rollback.
+
+That means the promotion gate has to be stricter:
+
+```text
+heldout quality lift
+profile-cell regression checks
+safety regression checks
+privacy leak probes
+contamination probes
+reward-hacking probes
+cost and latency checks
+calibration checks
+domain expert review for high-stakes use
+artifact lineage
+rollback plan
+```
+
+The release unit is not a clever answer. It is a model snapshot:
+
+```text
+model_id
+base_model_id
+training_data_manifest
+reward_manifest
+eval_manifest
+policy_manifest
+artifact_hash
+access_policy
+deprecation_plan
+```
+
+Without that lineage, model-level self-improvement is not a controlled system. It is just drift with a training budget.
+
+## The Layer Boundary
+
+Post-training is not "better prompt optimization."
+
+It is the point where improvement pressure enters the policy itself.
+
+External loops teach the system by changing what it sees, remembers, runs, and checks.
+
+Post-training teaches the model by changing what it is.
+
+Both can hill climb. Both can Goodhart. Both need traces and gates.
+
+The difference is reversibility.
+
+When the mutable surface is external state, the system remains legible. When the mutable surface is model behavior, the system can become more capable, but the operator owes a stronger data boundary, stronger heldout discipline, stronger artifact lineage, and a clearer answer to one question:
+
+```text
+Why does this behavior belong in weights instead of in the harness?
+```
+
+That is the post-training question.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Building a hill-climbing machine: Launching seven new MAI models](https://microsoft.ai/news/building-a-hillclimbing-machine-launching-seven-new-mai-models/)
+- [Frontier Tuning: Teaching AI to work the way you do](https://devblogs.microsoft.com/microsoft365dev/frontier-tuning-teaching-ai-to-work-the-way-you-do/)
+- [Training language models to follow instructions with human feedback](https://arxiv.org/abs/2203.02155)
+- [Constitutional AI: Harmlessness from AI Feedback](https://arxiv.org/abs/2212.08073)
+- [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/abs/2305.18290)
+- [Let's Verify Step by Step](https://arxiv.org/abs/2305.20050)
+- [DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning](https://arxiv.org/abs/2501.12948)
+- [ToolRL: Reward is All Tool Learning Needs](https://arxiv.org/abs/2504.13958)
+- [AI models collapse when trained on recursively generated data](https://www.nature.com/articles/s41586-024-07566-y)
+- Tangle `agent-eval` local source audit, package version `0.34.1`, inspected June 6, 2026.
+- Tangle `agent-runtime` local source audit, package version `0.26.0`, inspected June 6, 2026.

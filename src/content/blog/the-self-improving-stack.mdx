@@ -1,0 +1,490 @@
+---
+title: 'The Self-Improving Stack'
+slug: the-self-improving-stack
+summary: >-
+  'A series map for self-improving agent systems, from optimization theory and prompt search to runtime topology, traces, memory, and governance.'
+date: '2026-05-26'
+author: Drew Stone
+tags: ['agents', 'evals', 'systems', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 1
+---
+
+Self-improvement is not a model property.
+
+It is a system property.
+
+A model can sit inside a self-improving system, but the loop usually lives around it: prompts, skills, tools, traces, memory, evaluators, runtimes, harnesses, and release gates.
+
+That distinction matters because a lot of AI discourse collapses very different loops into one phrase:
+
+```text
+the system optimizes itself
+```
+
+That sentence is too vague.
+
+The useful questions are:
+
+```text
+what is allowed to change?
+what evidence says it improved?
+how are candidates generated?
+what gate decides promotion?
+what can go wrong when that layer changes?
+```
+
+Those five questions define the self-improving stack.
+
+## The Loop
+
+A self-improving agent system has a closed loop:
+
+```text
+run
+observe
+diagnose
+propose
+validate
+promote
+remember
+govern
+```
+
+The loop is only real when each verb has a concrete implementation.
+
+```text
+run: execute the agent under a scenario
+observe: capture a full trace, not only a score
+diagnose: identify failure modes and missing knowledge
+propose: generate a candidate change
+validate: test the candidate against baseline
+promote: replace baseline only if the gate passes
+remember: persist the right lesson for future runs
+govern: keep the optimizer inside its authority and evidence boundary
+```
+
+The system is not self-improving because it says "reflect." It is self-improving when a future run changes in the right direction because a previous run produced admissible evidence.
+
+The compact equation is:
+
+```text
+s_{t+1} =
+  Promote(s_t, c_t)
+  if Gate(Eval(Run(c_t), Run(s_t)), policy) passes
+  else s_t
+```
+
+where:
+
+```text
+s_t = current system state
+c_t = candidate state
+Run(.) = full agent trajectory under scenarios
+Eval(.) = measured evidence
+Gate(.) = promotion rule under policy
+```
+
+The system improves only when the promoted state performs better on the right distribution while staying inside cost, safety, integrity, and governance constraints.
+
+## The Stack
+
+The stack has layers because "candidate" can mean many different things.
+
+| Layer | Mutable surface | Search operator | Trusted feedback | Gate |
+|---|---|---|---|---|
+| Optimization theory | candidate state and objective | hill climbing, bandits, evolutionary search, Bayesian search | reward, loss, regret, Pareto frontier | statistical and structural validity |
+| Prompt optimization | instructions, examples, rubrics, LM program text | GEPA, MIPRO, DSPy, AxLLM-style search | task score, judge score, validation set | held-out prompt eval |
+| Skill optimization | reusable procedures and action policies | reflection, trace-to-skill, skill mutation | transfer success, recurrence reduction | skill invocation and transfer tests |
+| Runtime topology | drivers, fanout, reviewers, selectors, turn budgets | topology search, hand-designed patterns, meta-harness mutation | full trajectory score and cost | trace integrity plus budget gate |
+| Multi-agent coordination | roles, contracts, supervisors, workers | role decomposition, delegation, debate, vote | coordination quality, disagreement resolution | role isolation and selector audit |
+| Test-time compute | samples, branches, retries, verifier calls | best-of-N, tree search, adaptive allocation | compute-matched lift | Pareto dominance under equal compute |
+| Evaluation gates | scorecards, judges, baselines, release criteria | evaluator design and calibration | paired deltas, human calibration, deterministic checks | fail-closed promotion |
+| Trace systems | spans, artifacts, raw calls, replay records | trace mining and analyst loops | causal evidence from trajectories | capture integrity and replayability |
+| Harness evolution | source code around the agent | code search, meta-harness, worktree variants | benchmark and production evidence | release gate outside the mutation surface |
+| Post-training | model weights or adapters | SFT, RLHF, DPO, PPO, GRPO, tool-use RL | training loss, preferences, verifiable reward, deployment eval | model release and data-governance gate |
+| Memory and knowledge | persistent state across episodes | trace mining, proposal review, retrieval tuning | retrieval-conditioned task lift | source, freshness, scope, poisoning checks |
+| Governance | authority, risk controls, release policy | safety-case iteration | red-team, audit, incident, outcome evidence | accountable approval and rollback |
+
+This table is the core of the series.
+
+GEPA, SkillOpt, meta-harness, post-training, and memory flywheels all have the same outer skeleton:
+
+```text
+propose candidate
+run candidate
+measure candidate
+promote or reject
+```
+
+They are not the same system because they mutate different surfaces.
+
+A prompt optimizer cannot add a new sandbox boundary. A skill optimizer cannot guarantee a runtime will invoke the skill. A memory system cannot invent a fanout topology. A harness optimizer cannot safely approve itself if it owns the gate. Post-training can move model behavior, but it also moves the rollback and explanation boundary.
+
+The layer is not an implementation detail.
+
+The layer determines the reachable set.
+
+## Layer Confusion
+
+The most common mistake is using the optimizer from one layer to fix a failure in another.
+
+| Symptom | Tempting fix | Likely real layer |
+|---|---|---|
+| The agent says "parallelize" but still works serially | optimize the prompt | runtime topology |
+| A worker follows the persona but misses the task contract | rewrite the persona | multi-agent coordination |
+| The same tool argument bug recurs | add another reminder | skill or harness evolution |
+| Scores improve while traces get messier | tune the judge | evaluation gate and trace integrity |
+| A memory helps one task and poisons another | retrieve more context | memory gate and scope policy |
+| A benchmark improves only with more samples | claim better reasoning | test-time compute accounting |
+
+This is the practical reason to map every system by mutable surface first.
+
+## Where Prompt Optimization Stops
+
+Prompt optimization is real.
+
+It can discover better instructions, examples, decomposition strategies, rubric wording, and reflection text. Systems like GEPA and DSPy-style optimizers made that point concrete: language program text can be searched.
+
+But prompt search operates inside a fixed runtime.
+
+The objective is roughly:
+
+```text
+p* = argmax_p E[R(Run(h_fixed, p, x))]
+```
+
+The harness `h_fixed` is held constant.
+
+If the runtime lacks a worker pool, the prompt can ask for parallelism but cannot create it. If the tool graph lacks a verifier, the prompt can request verification but cannot execute one. If the evaluator leaks holdout answers, the prompt can overfit beautifully.
+
+This is why the series keeps separating:
+
+```text
+better wording
+better procedure
+better topology
+better evaluator
+better harness
+better model
+better memory
+better governance
+```
+
+Those are different control surfaces.
+
+## Skills Are Trainable State
+
+Skills sit between prompts and code.
+
+A skill is durable procedural memory:
+
+```text
+when this task class appears,
+use this decomposition,
+with these tools,
+under these checks,
+and stop under these conditions
+```
+
+That makes skills more reusable than a one-off prompt and less rigid than hard-coded application logic.
+
+The hard part is activation. A skill that never triggers is inert. A skill that triggers everywhere becomes a new bug. The gate has to test transfer:
+
+```text
+does the skill improve held-out tasks in the intended class?
+does it avoid harming nearby tasks outside the class?
+does it reduce repeated failures?
+```
+
+That is why skill optimization belongs in the stack but does not replace runtime design.
+
+## Topology Is The Action Space
+
+Agent behavior is not only model output.
+
+It is workflow shape:
+
+```text
+single shot
+refine loop
+fanout and vote
+planner plus worker
+researcher plus coder
+supervisor plus reviewer
+debate
+tree search
+human approval gate
+```
+
+The topology defines which actions exist and which observations can influence future actions.
+
+This matters for multi-agent systems. "Persona" is content. "Coordinator," "reviewer," "selector," "budget holder," and "release approver" are structural roles. You can optimize persona text, but coordination quality usually depends on contracts, routing, isolation, and selection.
+
+For `maxTurns=0` worker flows, learning does not happen inside the worker's conversation. It happens across runs:
+
+```text
+pre-run retrieval
+single worker attempt
+post-run trace capture
+analyst finding
+candidate change
+promotion gate
+next run
+```
+
+That is still self-improvement, but the loop lives in the harness.
+
+## Test-Time Compute Is The Baseline
+
+Before claiming that a new optimizer improved the agent, beat random or naive sampling at equal compute.
+
+A lot of agent improvements are really compute allocation changes:
+
+```text
+more samples
+more branches
+more retries
+more verifier calls
+more expensive judge
+more time
+```
+
+Those can be useful. They are not free.
+
+The fair comparison is:
+
+```text
+quality(candidate) - quality(baseline)
+cost(candidate) - cost(baseline)
+```
+
+A candidate that wins only by spending more may still be worth shipping, but the claim is different. It is a cost-quality trade, not pure intelligence gain.
+
+## The Gate Is The Optimizer
+
+The promotion gate decides what the system becomes.
+
+If the gate rewards shallow style, the system learns shallow style. If the gate leaks the answer, the system learns leakage. If the gate ignores cost, the system learns to spend. If the gate ignores safety, the system learns unsafe shortcuts.
+
+A usable gate is explicit:
+
+```text
+promote(c) iff
+  paired_delta(c, baseline, holdout) > threshold
+  and deterministic_verifiers(c) pass
+  and trace_integrity(c) passes
+  and cost(c) <= budget
+  and safety_regression(c) == false
+```
+
+That gate can be statistical, deterministic, human-reviewed, or all three.
+
+The key is that it is separate from the candidate.
+
+## Traces Are The Data
+
+Scores say that something happened.
+
+Traces say what happened.
+
+An agent trace needs enough information to explain the mechanism:
+
+```text
+which prompt
+which model
+which tools
+which arguments
+which observations
+which retrieved documents
+which artifacts
+which verifier
+which failure class
+which budget
+which outcome
+```
+
+Without traces, the system can only hill climb on a lossy projection.
+
+With traces, the system can diagnose:
+
+```text
+missing knowledge
+bad tool argument
+weak verifier
+wrong selector
+coordination failure
+memory poisoning
+budget breach
+unsafe side effect
+```
+
+That is why traces are not logging decoration. They are the training data for the external-state loop.
+
+## Harness Evolution Changes The Machine
+
+When prompt, skill, and topology tuning plateau, the mutable surface may need to be source code.
+
+Harness evolution changes:
+
+```text
+planner contracts
+tool routers
+selectors
+trace emitters
+verifiers
+benchmark adapters
+worktree lifecycle
+promotion gates
+memory write paths
+```
+
+This is powerful because it expands the reachable set.
+
+It is dangerous because the harness may contain the evaluator. The core rule from the governance layer is:
+
+```text
+the optimizer cannot own the gate that promotes it
+```
+
+If the candidate can rewrite the judge or release policy that approves it, the loop is no longer honest.
+
+## Post-Training Moves The Model Boundary
+
+Most systems discussed before the post-training layer mutate external state:
+
+```text
+prompt
+skill
+tool docs
+memory
+runtime
+harness
+evaluator
+```
+
+Post-training mutates model behavior itself:
+
+```text
+theta_{t+1} = Update(theta_t, data, objective)
+```
+
+or:
+
+```text
+theta' = theta_base + Delta_adapter
+```
+
+That can generalize better than prompt edits when the signal is strong. It also makes the behavior harder to inspect, partially roll back, and attribute to one trace.
+
+That is why post-training sits near the top of the stack. It is not "more advanced prompt optimization." It changes the policy.
+
+## Memory Is Not Automatically Learning
+
+Memory changes future runs by changing what persists.
+
+The update rule is:
+
+```text
+M_{t+1} =
+  Apply(M_t, u_t) if G_mem(u_t, trace, policy) passes
+  M_t             otherwise
+```
+
+A memory system is useful when:
+
+```text
+Score(with memory) - Score(without memory) > threshold
+```
+
+under cost, freshness, privacy, and poisoning constraints.
+
+Remembering more is not learning. Learning is remembering the right thing, retrieving it in the right context, and proving it improved behavior.
+
+## Governance Closes The Loop
+
+Governance is not the opposite of autonomy.
+
+Governance is what makes autonomy accountable.
+
+A self-improving system needs a safety case:
+
+```text
+claim
+scope
+evidence
+residual risk
+owner
+release gate
+rollback path
+```
+
+The system can propose improvements. The gate decides which improvements persist. The owner accepts residual risk.
+
+The minimum release rule is:
+
+```text
+ship(candidate) iff
+  improves(candidate)
+  and evidence_complete(candidate)
+  and controls_pass(candidate)
+  and owner_accepts_residual_risk(candidate)
+```
+
+Without that rule, self-improvement can become proxy hacking with better branding.
+
+## The Practical Test
+
+When someone says their agent improves itself, ask for the layer.
+
+```text
+What changed?
+Who proposed it?
+What evidence was captured?
+What baseline was beaten?
+What held-out set was protected?
+What gate approved it?
+What got more expensive?
+What became riskier?
+What can roll back?
+What persisted into the next run?
+```
+
+If those questions have concrete answers, there may be a real loop.
+
+If the answer is only "the model reflected," there probably is not.
+
+## Series Map
+
+- [Optimization Theory For Agent Builders](/posts/self-improving-stack-optimization-theory/) gives the language of search, hill climbing, objectives, and failure modes.
+- [Prompt Optimization Is Not The Whole Game](/posts/self-improving-stack-prompt-optimization/) explains where GEPA, DSPy, AxLLM, and MIPRO-style systems fit.
+- [Skills Are Trainable State](/posts/self-improving-stack-skill-optimization/) treats procedures as durable mutable state.
+- [Topology Is The Missing Action Space](/posts/self-improving-stack-agent-runtime-topology/) shows why the workflow graph matters.
+- [Personas Are Content, Coordination Is Structure](/posts/self-improving-stack-multi-agent-coordination/) separates role text from multi-agent control flow.
+- [Beat Random At Equal Compute First](/posts/self-improving-stack-test-time-compute/) sets the compute-matched baseline.
+- [The Gate Is The Optimizer](/posts/self-improving-stack-evaluation-gates/) explains promotion, judge reliability, and held-out evidence.
+- [Traces Are The Training Data](/posts/self-improving-stack-trace-systems/) argues that trajectories are the substrate of improvement.
+- [When The Harness Has To Evolve](/posts/self-improving-stack-harness-evolution/) covers code-level search and meta-harness evolution.
+- [When The Model Itself Is Mutable](/posts/self-improving-stack-post-training/) places SFT, RLHF, DPO, PPO, GRPO, tool-use RL, and frontier tuning.
+- [Memory Is Not Automatically Learning](/posts/self-improving-stack-memory-flywheels/) explains persistence, retrieval, source grounding, and poisoning.
+- [Self-Improvement Needs A Safety Case](/posts/self-improving-stack-governance/) closes with authority, governance, red teams, and release gates.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- Microsoft MAI hill-climbing, published 2026-06-02: https://microsoft.ai/news/building-a-hillclimbing-machine-launching-seven-new-mai-models/
+- GEPA, submitted 2025-07-25, revised 2026-02-14: https://arxiv.org/abs/2507.19457
+- MIPROv2 / DSPy, submitted 2024-06-17, revised 2024-10-06: https://arxiv.org/abs/2406.11695
+- SkillOpt, submitted 2026-05-22, revised 2026-05-25: https://arxiv.org/abs/2605.23904
+- Voyager, submitted 2023-05-25, revised 2023-10-19: https://arxiv.org/abs/2305.16291
+- Reflexion, submitted 2023-03-20, revised 2023-10-10: https://arxiv.org/abs/2303.11366
+- RAG, submitted 2020-05-22, revised 2021-04-12: https://arxiv.org/abs/2005.11401
+- InstructGPT, submitted 2022-03-04: https://arxiv.org/abs/2203.02155
+- Direct Preference Optimization, submitted 2023-05-29, revised 2024-07-29: https://arxiv.org/abs/2305.18290
+- DeepSeek-R1, submitted 2025-01-22, revised 2026-01-04: https://arxiv.org/abs/2501.12948
+- NIST AI RMF 1.0, released 2023-01-26, with the Generative AI Profile released 2024-07-26 and critical-infrastructure concept note released 2026-04-07: https://www.nist.gov/itl/ai-risk-management-framework
+- OWASP Top 10 for LLM Applications, project page verified 2026-06-06 with a 2025 version link: https://owasp.org/www-project-top-10-for-large-language-model-applications
+- `@tangle-network/agent-runtime` local package: `/Users/drew/webb/agent-runtime`
+- `@tangle-network/agent-eval` local package: `/Users/drew/webb/agent-eval`
+- `@tangle-network/agent-knowledge` local package: `/Users/drew/webb/agent-knowledge`

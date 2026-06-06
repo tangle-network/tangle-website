@@ -1,0 +1,594 @@
+---
+title: 'When The Harness Has To Evolve'
+slug: self-improving-stack-harness-evolution
+summary: >-
+  'Why meta-harness, AlphaEvolve-style code search, worktree isolation, and architecture frontiers matter after prompt and skill tuning plateau.'
+date: '2026-06-04'
+author: Drew Stone
+tags: ['agents', 'systems', 'architecture', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 10
+---
+
+When the prompt keeps asking for a capability the runtime cannot express, stop optimizing the prompt and change the machine.
+
+That is the harness-evolution moment.
+
+Prompt optimizers can discover better wording, examples, instructions, rubrics, and sometimes better high-level tactics. Skill optimizers can discover reusable procedures. Runtime topology can change how many workers act, who reviews them, and what gets selected.
+
+Harness evolution goes one layer higher.
+
+It changes the code that defines the agent's reachable behavior.
+
+That code might be a planner contract, a driver, a verifier, a budget policy, a benchmark adapter, a trace schema, a replay layer, a selector, a persona manifest, a tool router, or a worktree candidate lifecycle. The harness is not the model. It is the machine around the model that determines which actions exist, which observations are visible, which branches can run, which artifacts count, and which candidate is allowed to become production.
+
+So no, GEPA, SkillOpt, AlphaEvolve-style code search, and meta-harness are not all "doing the same thing" in the strong sense.
+
+They share an outer loop:
+
+```text
+propose candidate
+run candidate
+measure candidate
+select survivor
+repeat
+```
+
+They differ in the mutable surface.
+
+That distinction is everything.
+
+| Optimizer family | Mutable candidate | Reachable change | Hard limit |
+|---|---|---|---|
+| GEPA, MIPRO, DSPy, AxLLM-style prompt search | prompts, demos, instructions, signatures, rubrics | better policy text inside a fixed runtime | cannot add actions the runtime cannot execute |
+| Skill optimization | durable procedures and reusable task policies | better decomposition, tool habits, repair routines | cannot guarantee orchestration unless the runtime invokes the skill |
+| Runtime topology search | driver, fanout, reviewer, selector, budget, turn policy | different execution graph for the same task | cannot safely promote itself without an external gate |
+| Meta-harness and code evolution | source code around runtime, eval, traces, and candidate lifecycle | new action spaces, verifiers, adapters, and promotion protocols | can overfit or capture the evaluator if the outer gate is weak |
+
+## The Reachable Set
+
+Let a system have a mutable surface `s`.
+
+The surface might be:
+
+```text
+s_prompt = prompt text
+s_skill = procedural memory
+s_runtime = driver topology
+s_harness = source code around the agent
+```
+
+An optimizer has a mutation operator:
+
+```text
+M_s(candidate, evidence) -> candidate'
+```
+
+The set of systems it can reach after `k` mutations is:
+
+```text
+Reach(s_0, M_s, k)
+```
+
+If `M_s` only edits prompt text, the reachable set does not contain a new worktree isolation protocol, a new fanout scheduler, a new raw-provider capture sink, or a new verifier layer. The prompt can ask for those things. It cannot instantiate them if the runtime has no action that does so.
+
+This is the simplest mathematical reason prompt hill climbing plateaus:
+
+```text
+best_prompt = argmax_p E[R(run(h_fixed, p, x))]
+```
+
+The harness `h_fixed` is fixed. The optimizer is searching inside the behavior allowed by that harness.
+
+Harness evolution changes the outer variable:
+
+```text
+h* = argmax_h E_{x ~ D_holdout, z ~ Z}[R(tau(h, x, z))] - lambda^T C(tau(h, x, z))
+```
+
+where:
+
+```text
+h = harness candidate
+x = task or scenario
+z = seed, replicate, or profile cell
+tau = full trace trajectory
+R = reward, score, or verifier result
+C = cost vector
+lambda = cost weights
+```
+
+The promotion rule is not just the objective. It is a gate:
+
+```text
+promote(h) iff
+  quality(h, holdout) > quality(baseline, holdout)
+  and deterministic_verifiers(h) pass
+  and trace_integrity(h) passes
+  and cost(h) is inside budget
+  and h does not mutate the gate that judged it
+```
+
+That last clause is the dangerous one.
+
+If the harness can rewrite the evaluator that promotes it, the outer system needs a higher-order guard. Otherwise the optimizer can improve by making the measurement easier instead of making the agent better.
+
+## The Historical Shape
+
+Self-improvement has a long theoretical version and a newer engineering version.
+
+The theoretical version is the Gödel machine. Schmidhuber's 2006 formulation describes a self-referential problem solver that rewrites any part of its own code only after finding a proof that the rewrite is useful under its utility function. The appeal is enormous: the system is not taking a local heuristic step, it is proving that the rewrite is worth making.
+
+That is not how practical agent systems usually work in the systems covered here.
+
+Modern systems usually replace proof with empirical evaluation. They generate candidate code, run it, score it, retain useful variants, and preserve enough trace evidence to explain why the variant moved.
+
+AlphaDev was an early vivid example in 2023. It used reinforcement learning to search low-level algorithm space and found sorting routines that DeepMind translated into C++ implementations. The Nature paper reports improvements up to 70 percent for short sequences of length five and roughly 1.7 percent for longer sequences exceeding 250,000 elements.
+
+FunSearch, also from 2023, made the evaluator-driven shape clearer for LLMs. The key premise was that many scientific and mathematical problems are hard to solve but easy to evaluate. The system evolved code fragments, scored them with a systematic evaluator, maintained diversity, and used the best programs as context for future samples.
+
+AlphaEvolve generalized that idea toward codebases and infrastructure. The 2025 white paper describes an evolutionary coding agent that uses LLMs to make direct code changes, receives feedback from automated evaluators, and iteratively improves algorithms. The reported applications include Google infrastructure, matrix multiplication, chip design, scheduling, and LLM training components.
+
+The Darwin Gödel Machine moved the discussion closer to agent harnesses. Instead of optimizing one target function, it maintains an archive of coding agents. A foundation model samples an existing agent, edits its code, validates the child on benchmarks, and stores useful descendants. The arXiv version reports improvements on SWE-bench and Polyglot and explicitly names code editing tools, context management, and peer-review mechanisms as evolved agent capabilities.
+
+That is the practical line:
+
+```text
+proof-based self-rewrite
+-> evaluator-driven program search
+-> LLM-generated code mutation
+-> archives of self-improving agent harnesses
+-> production systems with gates, traces, worktrees, and rollback
+```
+
+The engineering problem is no longer whether code can be searched. It is which parts of the agent system should be mutable, how candidates are isolated, how evidence is preserved, and who prevents the search from learning the wrong gate.
+
+## What The Harness Is
+
+The harness is the code that turns model calls into a system.
+
+For an agent, it includes surfaces like:
+
+```text
+planner contract
+tool routing
+memory read and write policy
+retrieval policy
+driver topology
+subagent delegation
+supervisor policy
+budget ledger
+trace emitter
+artifact capture
+output parser
+validator
+selector
+promotion gate
+benchmark adapter
+worktree lifecycle
+```
+
+These are not cosmetic. They define the action space.
+
+A prompt can say:
+
+```text
+Fan out to three workers, ask one to critique, merge the best answer, and stop after the verifier passes.
+```
+
+That instruction only works if the runtime exposes fanout, workers, critique, merge, stop, and verifier operations. If the runtime only supports one serial LLM call, the instruction is theater. The model may describe parallelism, but the system did not execute parallelism.
+
+This is why multi-agent optimization cannot be reduced to persona wording.
+
+Personas matter. A driver persona that says "act as a strict reviewer" can change behavior. But a real supervisor is more than tone:
+
+```text
+observable state
+authority to spawn workers
+budget allocation
+tool access
+handoff contract
+stop rule
+conflict-resolution policy
+selection rule
+trace obligations
+```
+
+If those are not represented in the harness, the optimizer cannot search them as first-class variables.
+
+## The maxTurns=0 Case
+
+The `maxTurns=0` style of flow is a good stress test.
+
+If an individual worker has no local conversational loop, improvement pressure moves outward. The worker is no longer the main locus of adaptation. The driver, coordinator, fanout policy, prompt packet, output schema, and verifier become the important surfaces.
+
+The system can still be agentic, but the agency lives in the orchestration layer:
+
+```text
+coordinator receives task
+coordinator creates worker prompts
+workers run bounded episodes
+collector parses outputs
+verifier scores artifacts
+selector chooses candidate
+coordinator decides next episode or final answer
+```
+
+GEPA can optimize text inside that flow. It might learn directives like "parallelize independent file reads" or "ask the reviewer to focus on behavioral regressions." But GEPA does not automatically invent a new coordinator unless the coordinator is a mutable candidate representation and the eval rewards the resulting behavior.
+
+The rule:
+
+```text
+If the workflow move is not representable in the candidate, the optimizer cannot select it.
+```
+
+So for multi-agent systems, the important question is not "can the prompt mention fanout?" It is:
+
+```text
+Can the candidate change the fanout policy?
+Can it change the worker mix?
+Can it change the supervisor's observable state?
+Can it change the verifier?
+Can it change the selector?
+Can it change the episode boundary?
+Can it change how traces and artifacts are passed forward?
+```
+
+That is harness evolution.
+
+## Meta-Harness As Architecture Search
+
+Meta-harness is the operational version of this idea.
+
+It treats the harness as the search object.
+
+A good meta-harness loop has the following phases:
+
+```text
+discover harness
+freeze evals
+seed baseline
+read traces
+propose structural variant
+isolate candidate in worktree
+smoke test
+run full eval
+compare against frontier
+merge useful lineages
+run held-out gate
+promote or reject
+```
+
+The important word is structural.
+
+Changing `n = 8` to `n = 16` is not harness evolution. Changing a threshold is not harness evolution. Adding another sentence to a prompt is not harness evolution.
+
+Structural variants change mechanism:
+
+```text
+sequential retry -> fanout plus vote
+single judge -> deterministic verifier plus semantic judge
+summary-only trace -> span tree plus raw provider capture
+flat prompt -> declarative persona and tool surfaces
+single winner -> Pareto frontier with cost and latency
+one agent -> coordinator plus specialist workers
+best score -> held-out promotion gate
+one code path -> worktree-isolated candidate lifecycle
+```
+
+A meta-harness rejects variants that only tune knobs unless the knob is itself part of a broader mechanism change. The reason is not aesthetic. Knob tuning is cheaper and belongs to ordinary evolution. Meta-harness is expensive because it lets the system rewrite architecture.
+
+## Baseline Before Mutation
+
+Architecture search without a stable baseline is noise wearing a lab coat.
+
+At minimum:
+
+```text
+baseline_runs >= 3
+baseline_value = median(baseline_runs)
+spread <= acceptable_noise
+```
+
+If the baseline varies by more than the claimed improvement, the search cannot tell a better harness from a lucky harness.
+
+The same applies to candidate variants:
+
+```text
+candidate_runs >= 3
+candidate_delta = median(candidate_runs - paired_baseline_runs)
+```
+
+The strongest comparison is paired:
+
+```text
+delta_i = R(h_candidate, x_i, z_i) - R(h_baseline, x_i, z_i)
+```
+
+A candidate deserves promotion only when the paired evidence survives uncertainty, cost, deterministic checks, and holdout.
+
+## The Frontier
+
+Harness variants are rarely ordered by one scalar.
+
+One candidate may improve correctness and increase cost. Another may reduce latency while slightly lowering recall. Another may improve hard tasks and regress easy tasks.
+
+So meta-harness tracks a Pareto frontier.
+
+Candidate `a` dominates candidate `b` when:
+
+```text
+quality_a >= quality_b
+cost_a <= cost_b
+latency_a <= latency_b
+integrity_a >= integrity_b
+```
+
+with at least one strict improvement.
+
+The frontier is the set of non-dominated candidates.
+
+This matters because the next generation may need a lineage merge:
+
+```text
+variant A fixes retrieval misses
+variant B adds a stronger verifier
+variant C combines A and B without inheriting their regressions
+```
+
+Lineage merging is different from picking the current best score. It treats architecture as compositional. The value of a variant is not only its score, but the mechanism it contributes to future candidates.
+
+## Worktrees Are Part Of The Algorithm
+
+For harness evolution, candidate isolation is not a workflow nicety. It is part of the search algorithm.
+
+Each candidate carries:
+
+```text
+base ref
+worktree path
+changed files
+hypothesis
+trace evidence
+generation id
+parent id
+smoke result
+eval result
+cost ledger
+promotion verdict
+rollback handle
+```
+
+Without isolation, parallel proposers corrupt each other. Without a parent id, lineage is lost. Without a hypothesis, the search cannot learn from failure. Without a rollback handle, promotion is operationally unsafe.
+
+A candidate that edits the harness must be treated like a release artifact, not like a chat completion.
+
+## The Proxy-Metric Trap
+
+Architecture search is powerful enough to make bad metrics worse.
+
+A prompt optimizer can overfit a phrase. A harness optimizer can overfit the entire measurement apparatus.
+
+Examples:
+
+```text
+adds a selector that favors judge-friendly wording over correct artifacts
+changes the benchmark adapter to drop hard cases
+adds retries that hide deterministic failure under higher cost
+routes around a verifier instead of satisfying it
+improves the aggregate while breaking one high-value persona
+creates a worker topology that only works on the search split
+reduces latency by skipping trace capture
+```
+
+This is why harness evolution needs outer invariants:
+
+```text
+eval definitions are frozen during candidate search
+holdout labels are not visible to the candidate
+trace capture is mandatory
+backend integrity is checked before aggregation
+deterministic verifiers run before semantic judges
+cost and latency are promotion dimensions
+high-value profiles are inspected separately
+```
+
+If the optimizer can edit the gate and then pass the gate, it did not improve the product. It captured the evaluator.
+
+## Where The Tangle Packages Fit
+
+The local Tangle source audit on June 6, 2026 shows the split clearly.
+
+The audited source trees report `@tangle-network/agent-eval` package version `0.34.1` and `@tangle-network/agent-runtime` package version `0.26.0`. The runtime manifest currently depends on `@tangle-network/agent-eval` `^0.40.2`, so the mapping below is a source-placement claim rather than an npm compatibility claim.
+
+`@tangle-network/agent-eval` is the measurement and promotion substrate. The audited local source exposes:
+
+```text
+runEvalCampaign
+RunRecord
+AgentProfileCell
+appendScorecard/loadScorecard/diffScorecard
+HeldOutGate
+assertRealBackend
+RawProviderSink
+assertRunCaptured
+ReplayCache
+AnalystRegistry
+MultiLayerVerifier
+runProductionLoop
+runPromptEvolution
+runHarnessExperiment
+createSandboxCodeMutator
+createCompositeMutator
+paretoFrontier
+```
+
+That package is where the evaluator, trace, scorecard, analyst, frontier, and gate live.
+
+`@tangle-network/agent-runtime` is the execution and candidate-lifecycle substrate. The audited local source exposes:
+
+```text
+runLoop
+createRefineDriver
+createFanoutVoteDriver
+LoopTraceEvent
+defineAgent
+AgentSurfaces
+improvementDriver
+reflectiveGenerator
+agenticGenerator
+MCP delegation tools
+analyst loop
+OTLP export
+```
+
+The cleanup matters. The runtime improvement surface now has one driver that owns the candidate lifecycle:
+
+```text
+create worktree
+generate candidate
+finalize or discard
+repeat for population size
+return CodeSurface
+```
+
+The generator is the dial:
+
+```text
+reflectiveGenerator = cheap patch application from findings
+agenticGenerator = coding harness runs inside the candidate worktree
+```
+
+That is a good kernel shape. The lifecycle is centralized, while the candidate producer can vary by cost and depth.
+
+The full stack placement is:
+
+```text
+agent-runtime:
+  execute workflows
+  express drivers
+  run fanout/refine loops
+  declare mutable agent surfaces
+  create and finalize candidate worktrees
+
+agent-eval:
+  capture traces
+  run campaigns
+  score profile cells
+  analyze failures
+  verify artifacts
+  maintain frontiers
+  gate promotion
+```
+
+So meta-harness composes those packages instead of duplicating them.
+
+A practical meta-harness over this stack would use `agent-runtime` to generate and isolate code candidates, and `agent-eval` to measure, explain, compare, and gate them.
+
+## What Counts As A Real Harness Variant
+
+A real harness variant changes at least one of these:
+
+```text
+action space
+observation space
+control flow
+candidate representation
+verification stack
+selection policy
+trace ontology
+budget policy
+promotion policy
+rollback path
+```
+
+Examples:
+
+```text
+Add raw provider capture and fail-closed replay before judge recalibration.
+Replace single worker retry with fanout-vote plus deterministic validator.
+Add profile-cell stamping so driver and scorecard identity cannot diverge.
+Route analyst findings to declared file surfaces instead of fabricated paths.
+Split supervisor persona into authority contract, observation contract, and stop rule.
+Add worktree-isolated candidate generation with mandatory discard on failure.
+```
+
+Non-examples:
+
+```text
+Increase population size.
+Raise a judge threshold after seeing a candidate.
+Add "be rigorous" to the prompt.
+Rename a role from reviewer to supervisor.
+Let the candidate skip trace capture to reduce latency.
+Tune the metric until the candidate wins.
+```
+
+The difference is whether the reachable behavior changed.
+
+## The Search Space Is Not A Tensor You Get For Free
+
+It is tempting to imagine that a sufficiently smart optimizer can reason through the whole tensor space of agent workflows.
+
+It cannot, unless the system represents that space.
+
+An optimizer can only select over candidates it can express, run, and evaluate. If a workflow dimension is hidden in human habit, undocumented coordination, or ad hoc operator language, it is not in the candidate space.
+
+For example, the instruction "parallelize independent reads" can exist at several levels:
+
+```text
+human instruction to a coding agent
+prompt directive inside a worker policy
+skill file teaching an agent when to fan out
+driver topology that actually dispatches concurrent tasks
+runtime kernel with maxConcurrency and trace events
+meta-harness variant that changes the driver topology
+eval gate that rewards equal-quality lower wall time
+```
+
+Those are not equivalent. The higher layers can make the behavior more reliable because they remove dependence on one model remembering one instruction in one context window.
+
+The research-level question is representation:
+
+```text
+Which workflow dimensions are first-class variables?
+Which are merely text?
+Which are invisible operator habits?
+```
+
+Meta-harness earns its name only when it turns invisible operator habits into explicit mutable surfaces and then tests whether the change generalizes.
+
+## The Permanent Lesson
+
+Every optimizer is a hill climber over a representation.
+
+Prompt optimization climbs over strings.
+
+Skill optimization climbs over reusable procedures.
+
+Runtime optimization climbs over execution topology.
+
+Harness evolution climbs over the code that defines the topology, evaluator, trace capture, candidate lifecycle, and promotion boundary.
+
+The shared loop makes them look similar.
+
+The mutable surface makes them different.
+
+When the current surface cannot express the next improvement, the correct move is not more clever wording. It is to widen the representation, freeze the gate, preserve traces, isolate candidates, and let architecture variants compete under held-out evidence.
+
+That is when the harness has to evolve.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Gödel Machines: Self-Referential Universal Problem Solvers Making Provably Optimal Self-Improvements](https://arxiv.org/abs/cs/0309048)
+- [Faster sorting algorithms discovered using deep reinforcement learning](https://www.nature.com/articles/s41586-023-06004-9)
+- [Mathematical discoveries from program search with large language models](https://www.nature.com/articles/s41586-023-06924-6)
+- [AlphaEvolve: A Gemini-powered coding agent for designing advanced algorithms](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/)
+- [AlphaEvolve: A coding agent for scientific and algorithmic discovery](https://arxiv.org/abs/2506.13131)
+- [A Self-Improving Coding Agent](https://arxiv.org/abs/2504.15228)
+- [Darwin Godel Machine: Open-Ended Evolution of Self-Improving Agents](https://arxiv.org/abs/2505.22954)
+- [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)
+- Tangle `agent-eval` local source audit, package version `0.34.1`, inspected June 6, 2026.
+- Tangle `agent-runtime` local source audit, package version `0.26.0`, inspected June 6, 2026.

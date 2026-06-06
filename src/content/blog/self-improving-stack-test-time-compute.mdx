@@ -1,0 +1,555 @@
+---
+title: 'Beat Random At Equal Compute First'
+slug: self-improving-stack-test-time-compute
+summary: >-
+  'Why best-of-N, self-consistency, verifier reranking, and compute-matched controls are the baseline for agent topology claims.'
+date: '2026-06-03'
+author: Drew Stone
+tags: ['agents', 'evals', 'reasoning', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 9
+---
+
+More agents is not a strategy.
+
+It is a cost increase until it beats blind extra compute.
+
+That is the baseline every agent topology has to face. If a supervisor, debate loop, reflection loop, or specialist fanout wins only because it spent more samples, more tokens, more wall-clock, or more tool calls, the structure has not yet earned its complexity.
+
+The first gate is simple:
+
+```text
+Beat random at equal compute.
+```
+
+Not beat one greedy sample. Not beat the weakest baseline. Not beat a single run after quietly raising the turn budget. Beat the best simple use of the same budget.
+
+## What Test-Time Compute Means
+
+Test-time compute is extra computation spent after the model weights are fixed and the task is known.
+
+It can be spent on:
+
+- longer reasoning
+- repeated sampling
+- self-consistency
+- verifier reranking
+- tree search
+- iterative refinement
+- multi-agent fanout
+- tool use
+- debate
+- retrieval
+- code execution
+
+The key is that all of these are inference-time choices. They do not change model weights. They change how much work the system does and how that work is allocated.
+
+Let:
+
+```text
+x = task
+m = fixed model or model set
+h = harness and runtime
+s = strategy for spending test-time compute
+B = compute budget
+R = reward, score, or task success
+C = measured cost
+```
+
+The objective is:
+
+```text
+J(s | m, h, B) =
+  E_{x ~ D}[R(run(m, h, s, x, B))]
+  - lambda * E[C(run(m, h, s, x, B))]
+```
+
+The budget `B` is not one scalar in practice. It is a vector:
+
+```text
+B = {
+  samples,
+  tokens,
+  wall_clock,
+  model_calls,
+  tool_calls,
+  sandbox_minutes,
+  human_review_minutes,
+  dollars,
+  risk_budget
+}
+```
+
+A fair comparison fixes the relevant parts of `B`, or it reports the tradeoff instead of pretending the strategy itself improved.
+
+## The Baseline Ladder
+
+Every topology claim should climb a baseline ladder.
+
+**Single sample**
+
+The weakest baseline is one ordinary run:
+
+```text
+y_1 ~ q_m(y | x)
+score = R(y_1)
+```
+
+Beating this is not enough. Almost any extra compute can beat one sample on tasks with stochastic failures.
+
+**Random@k**
+
+Sample `k` candidates from the same model and prompt distribution, then select without additional information or with a fixed production selector:
+
+```text
+y_i ~ q_m(y | x), i = 1..k
+y_hat = sigma_blind({y_i})
+```
+
+This asks: what happens if we just buy more attempts?
+
+**Pass@k**
+
+For verifiable tasks, `pass@k` asks whether any candidate succeeds:
+
+```text
+pass@k = P(max_i R(y_i) = 1)
+```
+
+Under independent binary success probability `q`:
+
+```text
+pass@k = 1 - (1 - q)^k
+```
+
+That formula is the reason repeated sampling is hard to dismiss. Even a weak model can look strong if the task is verifiable and `k` is large enough.
+
+In code-eval practice, `pass@k` is often estimated from `n` sampled candidates where `c` pass the tests:
+
+```text
+pass_hat@k = 1 - C(n - c, k) / C(n, k)
+```
+
+where `C(a, b)` is the binomial coefficient, with `C(a, b) = 0` when `a < b`. This estimates the chance that at least one of `k` drawn samples would pass, without pretending the evaluator can deploy the answer key.
+
+But `pass@k` is not a deployable policy. It is an oracle coverage metric. It tells you whether a correct answer existed in the sample set, not whether your system could find it without labels.
+
+**Best-of-N with a selector**
+
+Now add a selector:
+
+```text
+y_hat = sigma(x, {y_1, ..., y_k})
+score = R(y_hat)
+```
+
+This is production-like only if `sigma` is available at deployment time. A hidden answer key, private unit tests, or human judge may be useful for measurement. It is not a runtime selector unless the product can actually call it.
+
+**Self-consistency**
+
+Self-consistency samples multiple reasoning paths and chooses the answer supported by the largest mass:
+
+```text
+z_i = reasoning path
+a_i = final answer extracted from z_i
+y_hat = argmax_a count(a_i = a)
+```
+
+It is powerful when correct answers are stable attractors and wrong answers are diverse. It is weaker for open-ended artifact quality, where many outputs are plausible and no answer string gets a majority.
+
+**Verifier rerank**
+
+A verifier or reward model scores candidates:
+
+```text
+y_hat = argmax_i V(x, y_i, trace_i)
+```
+
+This is where process reward models, unit tests, static analyzers, rubric judges, and domain verifiers enter. The selector becomes useful only to the extent that `V` correlates with true task success and does not overfit superficial features.
+
+**Guided compute**
+
+Guided strategies choose where to spend compute:
+
+```text
+expand branch
+refine branch
+spawn another sample
+call a verifier
+stop early
+```
+
+This includes tree search, branch-and-bound, adaptive sampling, debate, tool-assisted search, and agentic fanout. A guided strategy earns its complexity when it beats the best blind or simple selector baseline under the same budget.
+
+## Coverage Is Not Selection
+
+Large Language Monkeys is a useful corrective. Repeated sampling can uncover solutions at surprising rates, and coverage often scales smoothly with more attempts.
+
+That does not mean repeated sampling solves deployment.
+
+Coverage asks:
+
+```text
+Did any candidate contain a good answer?
+```
+
+Selection asks:
+
+```text
+Could the system identify that candidate without oracle labels?
+```
+
+The two curves can be very different.
+
+```text
+coverage_k = P(exists i: R(y_i) = 1)
+selection_k = E[R(sigma({y_i}))]
+```
+
+The gap is selector loss:
+
+```text
+selector_loss_k = coverage_k - selection_k
+```
+
+A system with high coverage and high selector loss is not ready. It can generate a correct answer somewhere in the pile, but it cannot reliably ship the right artifact.
+
+This matters for code agents. A 300-sample run can produce a passing patch somewhere. The product question is whether the runtime can find the patch, verify it, preserve the diff, reject the dangerous variants, and justify the cost.
+
+## Why Greedy Baselines Mislead
+
+A greedy one-shot baseline underestimates what the same model can do when used as a stochastic generator.
+
+This is old news in reasoning research. Self-consistency improved chain-of-thought performance by sampling multiple reasoning paths and marginalizing answers. Tree of Thoughts made branch expansion and evaluation explicit. Process-supervised reward models showed that step-level signals can improve search and reranking. Later test-time scaling work studied how to allocate inference compute more efficiently than naive best-of-N.
+
+The modern reasoning-model era made the same point visible at product scale. OpenAI's o1 work reported that performance improved with more train-time compute and more test-time "thinking" compute. The method details are not public, but the macro signal is clear: inference compute is now a major scaling axis, not an implementation detail.
+
+The consequence for agent builders is brutal:
+
+```text
+If your agent topology beats greedy but loses to simple repeated sampling,
+you built an expensive sampler.
+```
+
+That can still be useful. A sampler with a good selector may be exactly what the product needs. But it should be named honestly.
+
+## Parallel Versus Sequential Compute
+
+Extra compute has shapes.
+
+Parallel sampling:
+
+```text
+sample k independent attempts -> select
+```
+
+Sequential refinement:
+
+```text
+attempt -> critique -> revise -> critique -> revise
+```
+
+Tree search:
+
+```text
+expand frontier -> score partial states -> allocate next step
+```
+
+Debate:
+
+```text
+proposal -> criticism -> response -> judge
+```
+
+Tool-grounded search:
+
+```text
+hypothesis -> tool call -> observation -> update
+```
+
+None dominates everywhere.
+
+Parallel sampling works when the proposal distribution has enough mass on valid answers and selection is reliable. Sequential refinement works when feedback gives useful local gradients. Tree search works when partial states can be evaluated before the final answer. Debate works when hidden assumptions can be exposed by adversarial pressure. Tool-grounded search works when the environment returns discriminative evidence.
+
+The compute-optimal question is:
+
+```text
+For this task, model, verifier, and budget, which allocation has highest expected utility?
+```
+
+Snell et al. studied this directly for reasoning problems and found that compute-optimal allocation can be much more efficient than plain best-of-N. The important lesson is not one fixed strategy. It is conditional allocation: choose breadth, depth, refinement, or search based on prompt difficulty and verifier behavior.
+
+That makes test-time compute a control problem. The controller observes partial evidence:
+
+```text
+prompt difficulty estimate
+candidate confidence
+verifier margin
+branch diversity
+remaining budget
+latency deadline
+```
+
+and chooses the next action:
+
+```text
+sample | refine | verify | expand | stop
+```
+
+The policy is only good if those observations predict downstream reward. If the difficulty estimate is bad, adaptive compute becomes random budget jitter. If the verifier margin is miscalibrated, early stopping exits on fluent failures.
+
+## The Verifier Bottleneck
+
+Test-time compute shifts pressure onto selection.
+
+If the verifier is strong, repeated sampling becomes powerful. If the verifier is weak, more candidates can make things worse because the selector gets more chances to choose a fluent failure.
+
+A verifier can be:
+
+- exact unit tests
+- typechecks
+- proof checkers
+- simulation
+- retrieval-grounded fact checks
+- process reward models
+- outcome reward models
+- LLM judges
+- human reviewers
+
+Each has a failure profile.
+
+Unit tests can be incomplete. Typechecks miss semantics. Proof checkers only cover formalized claims. LLM judges can reward style, verbosity, or rubric mimicry. Human reviewers are expensive and inconsistent. PRMs can overfit the distribution of reasoning steps they were trained on.
+
+Verifier quality belongs in the objective:
+
+```text
+observed_score = V(x, y, trace)
+true_score = R(x, y)
+verifier_error = observed_score - true_score
+```
+
+If guided search optimizes `V` faster than `V` tracks `R`, the system reward-hacks its own evaluator.
+
+This is why the selector must be evaluated, not assumed.
+
+## Agent Topologies As Compute Allocators
+
+A multi-agent topology is a policy for spending test-time compute.
+
+The same budget can be spent as:
+
+```text
+8 independent workers
+4 workers + 1 verifier
+2 workers + 2 rounds of critique
+1 worker + 7 refinement turns
+1 tree search with frontier size 4 and depth 2
+1 tool-heavy agent with expensive environment checks
+```
+
+The topology claim is not:
+
+```text
+multi-agent > single-agent
+```
+
+The topology claim is:
+
+```text
+allocation_policy_multi(B) > allocation_policy_baseline(B)
+```
+
+at a measured budget `B`.
+
+That is why the previous post insisted that role names are not enough. The role structure matters only if it improves allocation, evidence, selection, or verification under budget.
+
+## Tangle Placement
+
+The refreshed Tangle runtime map makes this concrete.
+
+`@tangle-network/agent-runtime/loops` gives a clean test-time compute substrate:
+
+- `runLoop`: kernel with `maxIterations`, `maxConcurrency`, abort propagation, cost aggregation, and trace events.
+- `createFanoutVoteDriver`: spend compute on parallel attempts.
+- `createRefineDriver`: spend compute on sequential retry and validation.
+- `Driver`: custom allocation policy.
+- `Validator`: selector evidence.
+- `LoopTraceEvent`: branch, dispatch, decision, and cost observability.
+
+`@tangle-network/agent-runtime/conversation` gives the long-horizon version:
+
+- `maxTurns`: hard speaker-turn cap.
+- `maxCreditsCents`: hard cost cap.
+- `turnOrder`: allocation across participants.
+- `haltOn`: early stopping.
+- `ConversationJournal`: resumable transcript.
+- deterministic `turnId`: retry and trace correlation.
+- forwarded depth headers: recursion bound.
+
+`@tangle-network/agent-eval@0.34.1` supplies the evidence layer:
+
+- `AgentProfileCell`: records the model, prompt, tool, skill, runtime, and harness cell.
+- `runEvalCampaign`: compares variants and scenarios with capture integrity.
+- `HeldOutGate`: promotes only when held-out lift survives threshold and cost ceiling.
+- scorecards and release confidence: track accuracy, cost, latency, overfit gap, and failure modes.
+- `AnalystRegistry`: analyzes trace failure modes, knowledge gaps, knowledge poisoning, and improvements.
+
+This is the useful split:
+
+```text
+runtime spends compute
+eval proves whether the spend was worth it
+```
+
+## Evaluation Protocol
+
+A serious test-time compute eval starts with a budget table.
+
+```text
+budget:
+  samples: k
+  max_tokens_in: ...
+  max_tokens_out: ...
+  max_model_calls: ...
+  max_tool_calls: ...
+  max_wall_ms: ...
+  max_cost_usd: ...
+  max_turns: ...
+  max_concurrency: ...
+```
+
+Then compare strategies:
+
+```text
+1. Single greedy or default run.
+2. Random@k under the same model, prompt, and budget.
+3. Best-of-N with the deployable selector.
+4. Self-consistency where answer aggregation is meaningful.
+5. Verifier-rerank with the production verifier.
+6. Guided topology under the same budget.
+7. Adaptive topology with early stopping and budget reallocation.
+```
+
+Record:
+
+```text
+score
+pass_rate
+coverage_k
+selection_k
+selector_loss_k
+cost_usd
+tokens_in_out
+wall_ms
+model_calls
+tool_calls
+branch_failures
+trace_integrity
+```
+
+Also report dominance, not just mean score:
+
+```text
+strategy_a dominates strategy_b if:
+  score_a >= score_b
+  and cost_vector_a <= cost_vector_b componentwise
+  and at least one inequality is strict
+```
+
+A strategy that improves score while increasing cost is not wrong. It is on a tradeoff frontier. A strategy that is worse and more expensive is dead.
+
+Promotion should require:
+
+```text
+promote(strategy_new) if:
+  LCB_95(median(score_new - score_baseline on holdout)) > epsilon
+  and median_cost_new <= cost_ceiling
+  and median_latency_new <= latency_ceiling
+  and no baseline Pareto-dominates strategy_new
+  and trace_integrity == 1
+  and selector_loss_new <= selector_loss_ceiling
+  and deterministic_failures == 0
+```
+
+The baseline should be the strongest simple strategy the product could actually deploy, not a strawman.
+
+## Failure Modes
+
+Test-time compute fails in predictable ways.
+
+**Unmatched compute**
+
+The candidate wins because it used more samples, turns, tokens, or tools.
+
+**Oracle selection**
+
+The paper or eval reports `pass@k`, but the product has no selector that can find the passing candidate.
+
+**Verifier overfit**
+
+The strategy optimizes the judge's quirks faster than it improves the real artifact.
+
+**Retry theater**
+
+The system repeats the same failure mode and counts each retry as effort.
+
+**Hidden branching**
+
+The final answer says it explored alternatives, but the trace shows one branch.
+
+**Early-stop bias**
+
+The strategy stops quickly on easy tasks and spends heavily on hard tasks, but the report only shows mean score without cost distribution.
+
+**Tool-cost laundering**
+
+The token budget is matched, but one strategy uses much more sandbox time, browser time, API calls, or human review.
+
+**Coverage bragging**
+
+The system reports that one candidate succeeded somewhere in the batch but cannot select it reliably.
+
+## Working Rule
+
+Do not evaluate an agent topology against one sample.
+
+Evaluate it against the best boring way to spend the same budget.
+
+Use test-time compute when:
+
+- the task has stochastic failures
+- the verifier is strong enough to select
+- the domain rewards breadth or search
+- the product can afford higher latency or cost
+- traces can prove where the extra compute went
+
+Do not use test-time compute when:
+
+- the verifier is weak
+- the answer is easy enough for one sample
+- latency dominates quality
+- the same failure repeats across attempts
+- the strategy cannot beat random at equal budget
+
+The serious claim is not "we used more reasoning." It is:
+
+```text
+Given the same budget, this allocation policy produced better verified outcomes.
+```
+
+That is the first bar for runtime topology, multi-agent coordination, and self-improving harnesses.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Evaluating Large Language Models Trained on Code](https://arxiv.org/abs/2107.03374), checked June 6, 2026.
+- [Self-Consistency Improves Chain of Thought Reasoning in Language Models](https://arxiv.org/abs/2203.11171), checked June 6, 2026.
+- [Tree of Thoughts: Deliberate Problem Solving with Large Language Models](https://arxiv.org/abs/2305.10601), checked June 6, 2026.
+- [Let's Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf), checked June 6, 2026.
+- [Large Language Monkeys: Scaling Inference Compute with Repeated Sampling](https://arxiv.org/abs/2407.21787), checked June 6, 2026.
+- [Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters](https://arxiv.org/abs/2408.03314), checked June 6, 2026.
+- [Learning to reason with LLMs](https://openai.com/index/learning-to-reason-with-llms/), checked June 6, 2026.
+- [Reasoning on a Budget: A Survey of Adaptive and Controllable Test-Time Compute in LLMs](https://arxiv.org/abs/2507.02076), checked June 6, 2026.
+- Local `@tangle-network/agent-runtime@0.26.0` source audit: `runLoop`, drivers, conversation policy, journals, MCP delegation, June 6, 2026.
+- Local `@tangle-network/agent-eval@0.34.1` source audit: `AgentProfileCell`, `runEvalCampaign`, `HeldOutGate`, scorecards, release confidence, `AnalystRegistry`, June 6, 2026.

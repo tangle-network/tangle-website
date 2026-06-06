@@ -1,0 +1,647 @@
+---
+title: 'Memory Is Not Automatically Learning'
+slug: self-improving-stack-memory-flywheels
+summary: >-
+  'How episodic memory, knowledge gates, retrieval evals, negative knowledge, and production trace mining fit into self-improving agent systems.'
+date: '2026-05-31'
+author: Drew Stone
+tags: ['agents', 'memory', 'knowledge', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 6
+---
+
+Remembering more is not learning.
+
+Learning means the next run changes in the right direction.
+
+Memory is one way to change the next run without changing model weights. It lets an agent carry evidence, preferences, decisions, failures, and procedures across episodes. That makes memory powerful. It also makes memory dangerous.
+
+Persistent state is inherited by future behavior. A bad prompt can ruin one run. A bad memory can keep ruining runs until something expires, contradicts, or deletes it.
+
+So the important question is not "does the agent have memory?"
+
+The important question is:
+
+```text
+what is allowed to persist,
+who can retrieve it,
+what evidence supports it,
+how it is tested,
+and how it is retired?
+```
+
+That is the memory flywheel.
+
+## The State Variable
+
+The clean way to think about memory is as mutable external state.
+
+Let:
+
+```text
+M_t = memory state before episode t
+tau_t = full trace from episode t
+u_t = proposed memory write after episode t
+G_mem = memory write gate
+```
+
+Write candidates need structure:
+
+```text
+u_t =
+  kind
+  claim_or_procedure
+  evidence_refs
+  scope
+  confidence
+  sensitivity
+  freshness_policy
+  retrieval_policy
+```
+
+The update rule is:
+
+```text
+M_{t+1} =
+  Apply(M_t, u_t) if G_mem(u_t, tau_t, policy) passes
+  M_t             otherwise
+```
+
+At inference time, the memory layer changes the context seen by the policy:
+
+```text
+c_t = Retrieve(M_t, q_t, k, policy)
+y_t = pi_theta(x_t, c_t, tools)
+```
+
+where:
+
+```text
+x_t = task input
+q_t = retrieval query or retrieval plan
+k = retrieval budget
+c_t = retrieved context
+pi_theta = model policy with fixed weights theta
+y_t = output or next action
+```
+
+Memory is not magic. It is an intervention on the policy's input distribution.
+
+That gives us a measurable target:
+
+```text
+Delta_memory =
+  E[Score(pi_theta with M)] - E[Score(pi_theta without M)]
+```
+
+The unit test for memory is not "did retrieval return something?"
+
+The unit test is whether the memory intervention improved the downstream task, under cost, safety, freshness, and privacy constraints.
+
+## A Short History
+
+RAG made the basic distinction famous in 2020: a model can combine parametric memory in its weights with non-parametric memory in an external index. Lewis et al. explicitly framed provenance and updating world knowledge as open problems for parameter-only models.
+
+Agent memory then became more explicit.
+
+Generative Agents in 2023 stored natural-language experiences, synthesized reflections, and retrieved memories to plan social behavior. Reflexion in 2023 turned feedback into verbal reflections held in an episodic memory buffer, then used those reflections to improve later attempts without updating model weights. Voyager in 2023 pushed the procedural version: an embodied Minecraft agent built an ever-growing library of executable skills and reused them in new worlds.
+
+The same year, MemGPT treated memory management like virtual context management. MemoryBank focused on long-term conversational memory, including selective forgetting and reinforcement. LongMem explored model architectures that augment fixed models with long-term memory banks.
+
+By 2024 and 2025, the evaluation pressure sharpened. LongMemEval tested extraction, multi-session reasoning, temporal reasoning, knowledge updates, and abstention. Mem0 reported production-oriented memory extraction, consolidation, graph memory, latency, and token-cost results on LOCOMO. A-MEM moved toward dynamically organized agent memory, where adding a memory can update links and contextual attributes of older memories. AgeMem, submitted in January 2026 and revised in April 2026, frames memory operations as tool actions and trains long-term plus short-term memory management with reinforcement learning.
+
+The security story sharpened too. MemoryGraft, submitted on December 18, 2025, describes poisoned experience retrieval: malicious successful-looking records persist into an agent's memory and later steer behavior on semantically similar tasks.
+
+That is the line from RAG to agent memory:
+
+```text
+retrieve facts
+-> store experiences
+-> reflect across episodes
+-> store executable procedures
+-> manage memory as context
+-> evaluate multi-session behavior
+-> learn memory operations
+-> defend the memory trust boundary
+```
+
+The frontier is not "bigger memory."
+
+The frontier is controlled memory mutation.
+
+## The Memory Types
+
+Different memories mutate different parts of the system.
+
+| Memory type | Mutable unit | Used by | Evaluator | Main failure mode |
+|---|---|---|---|---|
+| Episodic | trace, episode summary, decision record | planner, analyst, supervisor | replay and outcome comparison | summary loses the causal detail |
+| Semantic | claim, page, source anchor, relation | retriever, answerer, researcher | citation, contradiction, freshness | false or stale fact becomes canonical |
+| Procedural | skill, checklist, tool habit, repair routine | driver, worker, coding agent | task success and transfer | local trick gets over-applied |
+| Preference | user, team, product, or persona preference | assistant, router, UI agent | satisfaction, explicit confirmation | preference is scoped too broadly |
+| Negative | invalid assumption, failed tactic, banned path | planner, verifier, selector | recurrence reduction | stale warning blocks correct behavior |
+| Source | raw document, trace artifact, anchor, quote | knowledge curator, judge | provenance and hash integrity | generated text is mistaken for source evidence |
+| Decision | chosen option, rejected option, rationale | future planner and reviewer | consistency under same constraints | old rationale survives after constraints change |
+
+This table matters because "memory" is too broad a word.
+
+A retrieved user preference, an executable skill, a stale API fact, a failed deployment lesson, and a product requirement are not the same kind of thing. They need separate scope, retrieval, and write policies.
+
+## The Flywheel
+
+A useful memory flywheel has seven steps:
+
+```text
+observe
+extract
+propose
+gate
+retrieve
+act
+evaluate
+```
+
+The trace supplies the raw material:
+
+```text
+tau_t =
+  task
+  messages
+  tool calls
+  observations
+  artifacts
+  verifier results
+  analyst findings
+  outcome
+```
+
+The extractor turns trace evidence into proposed writes:
+
+```text
+tau_t -> {u_1, u_2, ..., u_n}
+```
+
+The gate decides whether each write is safe, scoped, supported, and useful:
+
+```text
+G_mem(u_i) -> admit | reject | ask | quarantine | expire
+```
+
+The retriever selects admitted memory for a future task:
+
+```text
+Retrieve(M_{t+1}, q, policy) -> context
+```
+
+Then the evaluator measures whether the retrieval actually helped.
+
+That last step is where many memory systems become cargo cults. They store more, retrieve more, and show more context to the model, but never run the paired ablation:
+
+```text
+same task
+same model
+same tool surface
+with memory versus without memory
+```
+
+Without that ablation, memory success is often just retrieval theater.
+
+## The Write Gate
+
+The memory write gate is the admission controller.
+
+It asks different questions for different memory classes, but the core checks are stable:
+
+| Gate check | Question |
+|---|---|
+| Provenance | What evidence supports the write? |
+| Locus | Is this global, persona-scoped, task-scoped, project-scoped, or agent-scoped? |
+| Sensitivity | Is the content public, private, secret, or user-confirmed? |
+| Freshness | Does it expire? When was it last verified? |
+| Contradiction | Does it conflict with active claims or newer traces? |
+| Confidence | Is the evidence strong enough for the target use? |
+| Reversibility | Can the write be rolled back or superseded? |
+| Retrieval impact | Does it improve retrieval-conditioned behavior? |
+| Promotion | Has it passed held-out tasks or production replay? |
+
+The provenance check is the one that prevents the most subtle mistakes.
+
+A self-generated artifact is not the same thing as a source. An agent can write an analysis that says "API v2 requires field X." That analysis is useful trace evidence. It is not itself proof that the API requires field X. The source-grounded memory needs to point to the API documentation, a tool response, a schema file, or a verified runtime observation.
+
+Some memories do not need external source grounding. A user preference can be grounded in the user's own instruction. A local coding habit can be grounded in a repeated trace pattern. A decision record can be grounded in the decision meeting or session. But the scope must be explicit:
+
+```text
+operator preference for this repo
+team convention for this product
+task-local assumption
+global technical fact
+```
+
+Most poisoning problems start when a scoped memory is treated as global truth.
+
+One useful mental model is a scope lattice:
+
+```text
+run
+task
+project
+persona
+team
+organization
+global
+```
+
+Promotion up the lattice requires stronger evidence. A run-local observation can become a task memory after repeated traces. A task memory can become a project convention after review. A project convention rarely deserves to become a global technical fact.
+
+The gate can be written as a predicate:
+
+```text
+admit(u) iff
+  provenance(u) passes
+  and scope(u) is allowed for the target readers
+  and sensitivity(u) is allowed for the target storage
+  and freshness(u, now) >= required_freshness
+  and contradiction_check(u, M_t) passes
+  and expected_lift(u) - expected_cost(u) > threshold
+```
+
+The last term is estimated, then corrected by real evals after the memory is used.
+
+## Retrieval Is An Intervention
+
+Retrieval is not context stuffing.
+
+Retrieval changes the policy input:
+
+```text
+pi_theta(y | x)
+```
+
+becomes:
+
+```text
+pi_theta(y | x, c)
+```
+
+where `c` is retrieved context.
+
+That context can help, do nothing, or harm. It can help by supplying missing facts, preserving user preferences, recalling a successful procedure, or warning against a repeated mistake. It can harm by anchoring the model on irrelevant facts, stale procedures, false summaries, or over-broad preferences.
+
+The evaluator has to measure the whole effect:
+
+| Metric | What it catches |
+|---|---|
+| Recall@k | whether relevant memory can be found |
+| Precision@k | whether retrieved memory is mostly useful |
+| Contradiction rate | whether retrieval injects conflicting claims |
+| Freshness pass rate | whether retrieved sources are still valid |
+| Answer lift | whether final outputs improve |
+| Task lift | whether full agent trajectories improve |
+| Cost | whether memory increases latency, tokens, or tool calls |
+| Abstention quality | whether the system knows when memory is insufficient |
+
+Hit rate is not enough.
+
+A memory can be retrievable and harmful. A vector store can return semantically similar experience that is operationally wrong. A graph can link related facts that differ in scope. A persona memory can dominate a task where it does not apply.
+
+The promotion gate compares:
+
+```text
+Score_with_memory - Score_without_memory
+```
+
+and also:
+
+```text
+Cost_with_memory - Cost_without_memory
+```
+
+A memory layer that improves one benchmark by adding large latency and subtle privacy risk may be a bad production trade.
+
+## Negative Knowledge
+
+Negative knowledge is one of the most useful and most dangerous forms of memory.
+
+It records what not to do:
+
+```text
+do not use endpoint A after version 3
+do not assume screenshots live in path P
+do not ask the user for repo facts before inspecting the repo
+do not collapse supervisor and worker roles for this task class
+do not retry a failed deploy hook without checking logs
+```
+
+This is often the difference between an agent that keeps repeating a class of mistake and one that actually compounds.
+
+But negative knowledge needs expiration and scope.
+
+If endpoint A comes back, the old warning can block correct work. If a failed tactic only failed under a specific model, repo, budget, or date, the warning cannot become a universal law. If the negative memory is a vague sentence like "avoid parallelization here," it can suppress a good multi-agent strategy later.
+
+Good negative memory has this shape:
+
+```text
+claim: tactic T failed under condition C
+evidence: trace spans and artifacts
+scope: repo, tool, model, task class, or date range
+replacement: use tactic R instead
+expiry: when to re-check
+```
+
+Negative memory is not cynicism. It is a falsifiable constraint.
+
+## Memory Versus Skill
+
+Procedural memory is close to skill optimization, but the distinction is useful.
+
+A memory can say:
+
+```text
+when patching a repo, inspect status and the last few commits first
+```
+
+A skill can operationalize it:
+
+```text
+inputs: repo path
+preconditions: git worktree exists
+steps: status, log, reflog, open PRs
+verification: no live rebase, no mid-merge, branch context known
+```
+
+The skill has an invocation contract, parameters, steps, and verification. The memory is the durable lesson that motivates or updates the skill.
+
+Voyager's executable library sits on the skill side. Reflexion's verbal reflections sit on the episodic/procedural memory side. In production agents, the clean loop is:
+
+```text
+trace shows repeated procedural failure
+-> memory records the failure pattern
+-> skill proposal updates the reusable procedure
+-> held-out tasks test the skill
+-> memory stores the promotion evidence
+```
+
+This prevents the memory layer from becoming a bag of instructions that only work when the model happens to read them.
+
+## Multi-Agent Memory
+
+Multi-agent systems make memory harder because there is no single "the agent."
+
+There are drivers, workers, reviewers, supervisors, routers, judges, researchers, and coordinators. Each role needs a different memory view.
+
+A coding worker may need:
+
+```text
+repo conventions
+tool-call habits
+known failure modes
+current task artifacts
+```
+
+A supervisor may need:
+
+```text
+branch state
+worker assignments
+conflict map
+quality bar
+promotion gate
+```
+
+A judge may need:
+
+```text
+rubric
+reference outputs
+verifier traces
+leakage restrictions
+```
+
+A coordinator may need:
+
+```text
+fanout policy
+budget policy
+selector rules
+stop conditions
+```
+
+This is why a single optimized persona prompt is not enough. In a multi-agent flow, memory has to be routed by role and task. A worker does not need every supervisor constraint. A judge cannot retrieve candidate-internal rationales that contaminate independence. A coordinator cannot treat one worker's failed local path as a global ban unless the evidence says so.
+
+The same point applies to `maxTurns=0` agentic flows.
+
+If a subagent gets one shot, it cannot learn inside its own episode. The learning has to happen outside it:
+
+```text
+pre-run retrieval
+post-run trace capture
+cross-run write proposal
+promotion gate
+next-run retrieval
+```
+
+That is still a flywheel, but the flywheel lives in the harness and memory substrate, not inside the worker's conversational loop.
+
+Operator directives such as "parallelize independent reads" or "inspect the repo before asking" can become procedural or preference memory, but only if they are captured with scope and evidence. A prompt optimizer may discover a wording that says "parallelize," but it cannot invent a parallel execution graph if the runtime cannot fan out calls. A memory system can remember the directive. The runtime still needs the action surface to use it.
+
+Memory is not a substitute for topology.
+
+It is the substrate that lets topology improve across episodes.
+
+## Knowledge Poisoning
+
+Knowledge poisoning is not merely "the agent did not know something."
+
+A gap is:
+
+```text
+the agent needed X and did not have it
+```
+
+Poisoning is:
+
+```text
+the agent confidently used X, and X was wrong
+```
+
+The second case is worse because the agent does not ask. It acts.
+
+In December 2025, MemoryGraft named a concrete version of this attack surface: poison an agent's experience retrieval by making malicious successful-looking records persist into long-term memory. Later, semantically similar tasks retrieve those records and imitate the unsafe pattern.
+
+The general pattern is broader:
+
+```text
+stale wiki page
+outdated web result
+wrong prior-run summary
+tool description with old return shape
+system prompt copied from an older runtime
+successful-looking trace from a compromised task
+```
+
+The defense is not "trust memory less" in the abstract. The defense is dual verification:
+
+```text
+1. Did the agent act on the belief?
+2. Does trace or source evidence show the belief is false?
+```
+
+Only then can the system emit a poisoning finding. Otherwise it risks turning uncertainty into fake certainty.
+
+Poisoning remediation is also a memory write:
+
+```text
+mark stale
+supersede claim
+quarantine source
+lower confidence
+add expiry
+link contradiction evidence
+trigger held-out replay
+```
+
+Bad memory cannot just be deleted quietly. The system needs to learn why it was bad.
+
+## How Tangle Fits
+
+The local Tangle stack is close to the architecture described above.
+
+`@tangle-network/agent-knowledge` is the knowledge substrate. In the checked local source, version `1.3.0` describes itself as "source-grounded, eval-gated knowledge growth primitives for agents." Its exported surfaces include source records, source anchors, claims, relations, pages, graph search, readiness scoring, freshness tracking, safe write blocks, validation, proposal generation from analyst findings, research loops, and release reports.
+
+The important detail is that it models memory as structured knowledge, not loose text:
+
+```text
+SourceRecord
+SourceAnchor
+KnowledgeClaim
+KnowledgeRelation
+KnowledgePage
+KnowledgeIndex
+KnowledgeSearchResult
+KnowledgeLintFinding
+KnowledgeRelease
+```
+
+That shape supports the gate:
+
+```text
+refs
+confidence
+status
+validUntil
+lastVerifiedAt
+sourceIds
+allowedPathPrefixes
+lint findings
+release reports
+```
+
+`@tangle-network/agent-eval` supplies the analyst side. The local source includes knowledge-gap and knowledge-poisoning analyst specs. The knowledge-gap analyst asks what the agent lacked or what was stale, then attributes the gap to the layer responsible for holding it:
+
+```text
+agent-knowledge:wiki:<page>
+agent-knowledge:claim:<topic>
+agent-knowledge:raw:<source>
+agent-knowledge:stale:<page>
+websearch:outdated:<topic>
+tool-doc:<tool>
+system-prompt:<section>
+memory:<key>
+```
+
+The knowledge-poisoning analyst asks for confident wrong action, then requires the dual verification protocol:
+
+```text
+acted on false belief
+belief contradicted by trace evidence
+```
+
+`@tangle-network/agent-runtime` supplies the bridge. The local `createSurfaceKnowledgeAdapter` wraps `agent-knowledge` proposal generation and write-block application. It converts analyst findings into knowledge proposals, applies write blocks against a knowledge root, and optionally lints after apply.
+
+Put together, the stack can express this loop:
+
+```text
+production trace
+-> agent-eval analyst finding
+-> agent-knowledge proposal
+-> safe write block
+-> lint and readiness checks
+-> retrieved context
+-> future production run
+-> held-out and production evaluation
+```
+
+That is the memory flywheel as software.
+
+## The Readiness Gate
+
+The most underrated piece is readiness.
+
+Before an agent starts a task, the system can ask:
+
+```text
+what knowledge is required for this task?
+is it present?
+is it fresh?
+is it sensitive?
+how confident does it need to be?
+what happens if it is missing?
+```
+
+The local `agent-knowledge` readiness builder maps specs to requirements with fields such as:
+
+```text
+category
+acquisitionMode
+importance
+freshness
+sensitivity
+confidenceNeeded
+fallbackPolicy
+minSources
+minHits
+```
+
+That is a better frame than "give the model memories."
+
+For blocking requirements, absence blocks, asks, or triggers acquisition. For non-blocking requirements, absence can continue with caveats. For high-sensitivity requirements, retrieval may be disallowed for some roles. For realtime requirements, stale memory counts as missing.
+
+Readiness turns memory from a passive archive into a pre-flight gate.
+
+## The Core Test
+
+A memory system is doing real self-improvement when all of these are true:
+
+```text
+1. A trace produces a specific finding.
+2. The finding proposes a scoped memory write.
+3. The write is source-grounded or explicitly scoped to its evidence.
+4. The gate admits, rejects, asks, quarantines, or expires it.
+5. Future retrieval selects it only for appropriate roles and tasks.
+6. A paired eval shows task lift, not just retrieval activity.
+7. Staleness, contradiction, privacy, and poisoning have review paths.
+```
+
+If any part is missing, the system may still be useful, but it is not a disciplined learning loop.
+
+It may just be a larger prompt with a longer memory leak.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- RAG, 2020: https://arxiv.org/abs/2005.11401
+- Generative Agents, 2023: https://arxiv.org/abs/2304.03442
+- Reflexion, 2023: https://arxiv.org/abs/2303.11366
+- Voyager, 2023: https://arxiv.org/abs/2305.16291
+- MemoryBank, 2023: https://arxiv.org/abs/2305.10250
+- LongMem, 2023: https://arxiv.org/abs/2306.07174
+- MemGPT, 2023: https://arxiv.org/abs/2310.08560
+- LongMemEval, 2024 with 2025 revision: https://arxiv.org/abs/2410.10813
+- A-MEM, 2025: https://arxiv.org/abs/2502.12110
+- Mem0, 2025: https://arxiv.org/abs/2504.19413
+- MemoryGraft, 2025: https://arxiv.org/abs/2512.16962
+- AgeMem, 2026: https://arxiv.org/abs/2601.01885
+- `@tangle-network/agent-knowledge` local package: `/Users/drew/webb/agent-knowledge`
+- `@tangle-network/agent-eval` local package: `/Users/drew/webb/agent-eval`
+- `@tangle-network/agent-runtime` local package: `/Users/drew/webb/agent-runtime`
