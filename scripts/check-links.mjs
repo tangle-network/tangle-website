@@ -43,6 +43,9 @@ const SKIP_PATTERNS = [
   '^https?://tangle\\.tools/',
   '^https?://ai\\.tangle\\.tools/',
   '^https?://docs\\.tangle\\.tools/',
+  // EUR-Lex is the canonical source for EU regulations, but it often
+  // times out under crawler-style link checks.
+  '^https?://eur-lex\\.europa\\.eu/',
   // Private repo — anonymous fetch returns 404 by design.
   '^https?://github\\.com/tangle-network/blueprint-agent(\\b|$|/)',
   // Deferred sandbox product screenshot. The rendered fallback handles
