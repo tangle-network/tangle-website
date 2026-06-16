@@ -17,8 +17,9 @@
  *   - Single page: pnpm check:copy services/blueprint-agent
  *
  * Env:
- *   COPY_AUDIT_API_KEY  — defaults to TANGLE_ROUTER_USER_KEY pulled
- *                          from ~/company/devops/secrets/agent-state.env
+ *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
+ *                          TANGLE_ROUTER_USER_KEY pulled from
+ *                          ~/company/devops/secrets/agent-state.env
  *   COPY_AUDIT_MODEL    — default: gpt-5.5 via Tangle Router
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.0)
  *
@@ -48,7 +49,7 @@ if (!existsSync(ROOT)) {
 // fall back through router → direct OpenAI. The router's free tier is
 // 5 calls/day per key — fine for single-page audits, hits the wall on
 // full-site sweeps. Direct OpenAI bypasses the router entirely.
-let API_KEY = process.env.COPY_AUDIT_API_KEY;
+let API_KEY = process.env.COPY_AUDIT_API_KEY ?? process.env.TANGLE_API_KEY;
 let API_BASE = process.env.COPY_AUDIT_API_BASE ?? 'https://router.tangle.tools/v1';
 
 if (!API_KEY && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
@@ -82,7 +83,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
   }
 }
 if (!API_KEY) {
-  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, OPENAI_API_KEY, or TANGLE_ROUTER_USER_KEY.');
+  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, TANGLE_API_KEY, OPENAI_API_KEY, or TANGLE_ROUTER_USER_KEY.');
   process.exit(2);
 }
 
