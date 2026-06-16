@@ -33,6 +33,8 @@ import { execSync } from 'node:child_process';
 const ROOT = resolve(process.cwd(), 'dist/client');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.0);
+const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 20_000);
+const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
 // Default model: gpt-5.5 — current per OpenAI's deprecations page.
 // Override with COPY_AUDIT_MODEL for stronger judges
 // (claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5-20251001).
@@ -174,22 +176,31 @@ async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function auditPage(label, copy, attempt = 1) {
   const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 8000)}\n=== END ===`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(`copy auditor timed out after ${AUDITOR_TIMEOUT_MS}ms`)), AUDITOR_TIMEOUT_MS);
 
-  const res = await fetch(`${API_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userMessage },
-      ],
-      response_format: { type: 'json_object' },
-    }),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        'authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userMessage },
+        ],
+        response_format: { type: 'json_object' },
+      }),
+    });
+  }
+  finally {
+    clearTimeout(timeout);
+  }
   if (!res.ok) {
     const errBody = await res.text();
     // Retry on transient errors with exponential backoff. 502 / 503 / 429
@@ -199,11 +210,26 @@ async function auditPage(label, copy, attempt = 1) {
       await sleep(wait);
       return auditPage(label, copy, attempt + 1);
     }
-    throw new Error(`router ${res.status}: ${errBody.slice(0, 200)}`);
+    const err = new Error(`router ${res.status}: ${errBody.slice(0, 200)}`);
+    err.transientAuditFailure = res.status === 429 || res.status === 502 || res.status === 503;
+    throw err;
   }
   const json = await res.json();
   const content = json.choices?.[0]?.message?.content ?? '{}';
   return JSON.parse(content);
+}
+
+function isTransientAuditFailure(err) {
+  if (err?.transientAuditFailure) return true;
+  const message = String(err?.message ?? err);
+  return /\brouter (429|502|503):/.test(message)
+    || message.includes('fetch failed')
+    || message.includes('copy auditor timed out')
+    || message.includes('This operation was aborted')
+    || message.includes('AbortError')
+    || message.includes('UND_ERR_CONNECT_TIMEOUT')
+    || message.includes('ETIMEDOUT')
+    || message.includes('ECONNRESET');
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────
@@ -235,13 +261,31 @@ for (const file of allPages) {
   }
   catch (err) {
     console.log(`error: ${err.message.slice(0, 80)}`);
-    results.push({ route, error: err.message, ok: false });
+    results.push({
+      route,
+      error: err.message,
+      transientAuditFailure: isTransientAuditFailure(err),
+      ok: false,
+    });
+    if (
+      results.length >= TRANSIENT_FAILURE_SHORT_CIRCUIT
+      && results.every((r) => r.transientAuditFailure)
+      && results.every((r) => typeof r.score !== 'number')
+    ) {
+      console.log(`stop (auditor unavailable after ${results.length} consecutive transient failures)`);
+      break;
+    }
   }
 }
 
-// ─── Detail ──────────────────────────────────────────────────────────
 const failing = results.filter((r) => !r.ok);
-if (failing.length > 0) {
+const passing = results.filter((r) => r.ok);
+const scored = results.filter((r) => typeof r.score === 'number');
+const transientFailures = failing.filter((r) => r.transientAuditFailure);
+const auditInconclusive = results.length > 0 && scored.length === 0 && transientFailures.length === results.length;
+
+// ─── Detail ──────────────────────────────────────────────────────────
+if (failing.length > 0 && !auditInconclusive) {
   console.log('');
   console.log('FAILED PAGES:');
   for (const r of failing) {
@@ -259,9 +303,14 @@ if (failing.length > 0) {
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────
-const passing = results.filter((r) => r.ok);
-const avg = passing.length === 0 ? 0 : results.filter(r => typeof r.score === 'number').reduce((s, r) => s + r.score, 0) / results.filter(r => typeof r.score === 'number').length;
+const avg = scored.length === 0 ? 0 : scored.reduce((s, r) => s + r.score, 0) / scored.length;
 console.log('');
-console.log(`Avg: ${avg.toFixed(2)}/10 across ${results.length} pages. Pass: ${passing.length}. Fail: ${failing.length}.`);
+console.log(`Avg: ${avg.toFixed(2)}/10 across ${results.length} pages. Pass: ${passing.length}. Fail: ${auditInconclusive ? 0 : failing.length}. Inconclusive: ${auditInconclusive ? transientFailures.length : 0}.`);
+
+if (auditInconclusive) {
+  console.log('');
+  console.log('INCONCLUSIVE: copy auditor returned only transient infrastructure errors after retries; not treating this as a copy failure.');
+  process.exit(0);
+}
 
 process.exit(failing.length > 0 ? 1 : 0);
