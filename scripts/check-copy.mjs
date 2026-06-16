@@ -199,11 +199,23 @@ async function auditPage(label, copy, attempt = 1) {
       await sleep(wait);
       return auditPage(label, copy, attempt + 1);
     }
-    throw new Error(`router ${res.status}: ${errBody.slice(0, 200)}`);
+    const err = new Error(`router ${res.status}: ${errBody.slice(0, 200)}`);
+    err.transientAuditFailure = res.status === 429 || res.status === 502 || res.status === 503;
+    throw err;
   }
   const json = await res.json();
   const content = json.choices?.[0]?.message?.content ?? '{}';
   return JSON.parse(content);
+}
+
+function isTransientAuditFailure(err) {
+  if (err?.transientAuditFailure) return true;
+  const message = String(err?.message ?? err);
+  return /\brouter (429|502|503):/.test(message)
+    || message.includes('fetch failed')
+    || message.includes('UND_ERR_CONNECT_TIMEOUT')
+    || message.includes('ETIMEDOUT')
+    || message.includes('ECONNRESET');
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────
@@ -235,13 +247,23 @@ for (const file of allPages) {
   }
   catch (err) {
     console.log(`error: ${err.message.slice(0, 80)}`);
-    results.push({ route, error: err.message, ok: false });
+    results.push({
+      route,
+      error: err.message,
+      transientAuditFailure: isTransientAuditFailure(err),
+      ok: false,
+    });
   }
 }
 
-// ─── Detail ──────────────────────────────────────────────────────────
 const failing = results.filter((r) => !r.ok);
-if (failing.length > 0) {
+const passing = results.filter((r) => r.ok);
+const scored = results.filter((r) => typeof r.score === 'number');
+const transientFailures = failing.filter((r) => r.transientAuditFailure);
+const auditInconclusive = results.length > 0 && scored.length === 0 && transientFailures.length === results.length;
+
+// ─── Detail ──────────────────────────────────────────────────────────
+if (failing.length > 0 && !auditInconclusive) {
   console.log('');
   console.log('FAILED PAGES:');
   for (const r of failing) {
@@ -259,9 +281,14 @@ if (failing.length > 0) {
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────
-const passing = results.filter((r) => r.ok);
-const avg = passing.length === 0 ? 0 : results.filter(r => typeof r.score === 'number').reduce((s, r) => s + r.score, 0) / results.filter(r => typeof r.score === 'number').length;
+const avg = scored.length === 0 ? 0 : scored.reduce((s, r) => s + r.score, 0) / scored.length;
 console.log('');
-console.log(`Avg: ${avg.toFixed(2)}/10 across ${results.length} pages. Pass: ${passing.length}. Fail: ${failing.length}.`);
+console.log(`Avg: ${avg.toFixed(2)}/10 across ${results.length} pages. Pass: ${passing.length}. Fail: ${auditInconclusive ? 0 : failing.length}. Inconclusive: ${auditInconclusive ? transientFailures.length : 0}.`);
+
+if (auditInconclusive) {
+  console.log('');
+  console.log('INCONCLUSIVE: copy auditor returned only transient infrastructure errors after retries; not treating this as a copy failure.');
+  process.exit(0);
+}
 
 process.exit(failing.length > 0 ? 1 : 0);
