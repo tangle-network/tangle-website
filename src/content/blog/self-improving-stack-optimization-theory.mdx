@@ -1,0 +1,350 @@
+---
+title: 'Optimization Theory For Agent Builders'
+slug: self-improving-stack-optimization-theory
+summary: >-
+  A compact map from hill climbing and Bayesian search to GEPA, SkillOpt, Frontier Tuning, agent runtimes, and noisy promotion gates.
+date: '2026-05-29'
+author: Drew Stone
+tags: ['agents', 'evals', 'optimization', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 4
+---
+
+Every self-improving agent pitch eventually reduces to three questions.
+
+What can change? What gets scored? What is allowed to ship?
+
+GEPA evolves prompts. MIPRO searches over instructions and demonstrations. Ax brings those ideas into a TypeScript agent framework. SkillOpt trains a skill file as if it were an external parameter of a frozen agent. AlphaEvolve mutates code and keeps the versions that pass executable tests. Microsoft describes MAI and Frontier Tuning as a hill-climbing machine built around reinforcement learning environments, workflow traces, and model/runtime adaptation.
+
+So are these all doing the same thing?
+
+Yes at the skeleton level. No at the systems level.
+
+They do not touch the same artifact, require the same evaluator, or carry the same safety risk. But they share a loop:
+
+```text
+candidate -> rollout -> score -> compare -> keep, reject, or mutate
+```
+
+That is the useful mental model. Self-improvement is search under a budget, with a noisy objective, over a chosen surface.
+
+The better question is not "is this hill climbing?" It is:
+
+```text
+What surface is mutable, what score is trusted, and what gate decides promotion?
+```
+
+Answer that and GEPA, DSPy, Ax, SkillOpt, meta-harnesses, agent runtimes, and frontier tuning stop looking like disconnected inventions. They become points in the same design space.
+
+## The Shared Shape
+
+Let `s` be the candidate surface, meaning the thing the improvement loop is allowed to change.
+
+For a prompt optimizer, `s` might be a system prompt, a task instruction, a field description, or a few-shot example set. For SkillOpt, `s` is a persistent skill document. For a code-evolution system, `s` is a source file or algorithm. For a multi-agent system, `s` can be a graph of agents, tools, routing rules, budgets, and delegation policies. For post-training, `s` can be model weights or adapters.
+
+The objective looks like this:
+
+```text
+J(s) = E_{tau ~ D}[R(run(s, tau))] - lambda * C(s)
+```
+
+In English:
+
+- `D` is the task distribution.
+- `tau` is one task sampled from that distribution.
+- `run(s, tau)` is the trace produced when the system with surface `s` attempts the task.
+- `R` is the reward or score for that trace.
+- `C` is cost: tokens, latency, dollars, tool calls, human review time, risk.
+- `lambda` controls how much you care about cost.
+
+Most agent teams do not write the equation down. They still live inside it. If a support agent is optimized for accuracy while token cost is ignored, then `lambda` is effectively zero. If a product always picks the cheapest model regardless of success rate, the cost term is dominating the objective. If the judge rewards long answers, the reward function has silently made verbosity a feature.
+
+An optimizer is an operator:
+
+```text
+s_next = O(s_current, traces, feedback, budget)
+```
+
+`O` can be a human writing a new prompt. It can be Bayesian optimization. It can be an LLM reflecting on failures. It can be evolutionary mutation. It can be reinforcement learning. The operator matters, but a weak gate dominates a clever operator. A sophisticated mutator with a bad score function is just a faster way to overfit.
+
+The promotion rule separates engineering from theater:
+
+```text
+promote(s_new) if CI_low(J_holdout(s_new) - J_holdout(s_base)) > epsilon
+```
+
+Read it as: promote the new artifact only if it beats the baseline on held-out tasks by more than a meaningful margin, after uncertainty is accounted for.
+
+The exact statistics can vary. You might use paired deltas, bootstrap confidence intervals, permutation tests, Bayesian posteriors, or repeated rollouts. The principle is stable: the candidate must win on tasks it did not get to train on, under a comparison that does not confuse luck with progress.
+
+## This History Is Older Than LLMs
+
+LLMs made optimization feel conversational. The underlying shape is old.
+
+Hill climbing is the primitive version: start with a candidate, inspect a nearby candidate, keep it if it scores better, repeat. It is easy to understand, easy to implement, and easy to get stuck with. If every step must be locally better, a system can settle into a mediocre basin and never cross the valley toward a stronger design.
+
+Evolutionary algorithms widen the search. Keep a population, mutate candidates, recombine them, evaluate the variants, and preserve the ones worth exploring. This helps when the search space is rugged and discontinuous, which is exactly what language, code, and tool policies often are. A tiny wording change can do nothing. Another tiny wording change can flip a model from vague to precise. A small code mutation can break everything. Another one can uncover a real algorithmic improvement.
+
+Simulated annealing adds a different trick: sometimes accept a worse candidate early, then become more conservative later. The lesson for agent builders is not that every system needs literal annealing. It is that greedy local improvement is not always enough.
+
+Bayesian optimization appears when evaluations are expensive. You cannot afford to try every prompt, every model, every tool order, or every hyperparameter combination. So you build a surrogate model of the objective from previous trials and use an acquisition function to choose the next trial. A common acquisition function is expected improvement:
+
+```text
+EI(x) = E[max(f(x) - f_best, 0)]
+```
+
+Expected improvement balances exploration and exploitation. It favors candidates that look promising, but it also spends trials in uncertain regions because those trials may reveal a better basin.
+
+Bandits and best-of-N methods bring another useful lens. If you have several arms, prompts, models, routes, or answer candidates, allocate more attempts to the ones that look promising. This is not the same as improving the underlying artifact, but it can produce better test-time performance. That distinction matters because many agent systems blur training-time improvement and inference-time search.
+
+AutoML and neural architecture search made another move: treat the system design itself as searchable. Model architectures, feature pipelines, preprocessing rules, optimizers, and training settings became candidates. In LLM systems, the analogous artifacts are prompts, retrieval settings, tool descriptions, agent graphs, skills, memory policies, and evaluator prompts.
+
+The new thing is not search. The new thing is that natural language became a search medium.
+
+## Why Agents Are Usually Black-Box Optimization
+
+In ordinary neural network training, gradient descent works because the system is differentiable enough. You can compute how a small weight change affects the loss, then update the weights in the direction that reduces loss.
+
+Most agent systems do not have that luxury.
+
+The model may be remote. The provider may not expose gradients. The action space may include terminal commands, browser clicks, file edits, search queries, API calls, and human approvals. The system may run for many turns before success or failure becomes obvious. The judge may be another LLM. The same candidate may score differently across runs because sampling, retrieval, tools, and external state vary.
+
+The practical problem is closer to:
+
+```text
+argmax_s J(s)
+```
+
+where `J` is expensive, noisy, partially subjective, and easy to game.
+
+Trace capture becomes central here. A score without a trace is almost useless for improvement. If a coding agent fails, the next action depends on whether it misunderstood the task, chose the wrong file, ran the wrong test, ignored a failure, used a stale dependency, exceeded the turn budget, or got blocked by a missing credential. Those are different failure modes. A single scalar score collapses them.
+
+This is the core insight behind reflective optimizers. Language is not just the object being optimized. Language is also a diagnostic channel. A trace can be summarized, critiqued, and converted into a candidate change.
+
+## The Current Map
+
+As of June 5, 2026, the live ecosystem is best understood by layer.
+
+| Layer | Mutable surface | Optimizer style | Examples | Main risk |
+| --- | --- | --- | --- | --- |
+| Prompt or LM program | Instructions, signatures, demos, field descriptions | Bayesian search, bootstrapping, reflective evolution | DSPy MIPROv2, GEPA, AxGEPA, AxMiPRO | Overfitting to eval phrasing |
+| Skill | Persistent procedural document | Bounded text edits with held-out promotion | SkillOpt, Codex and Claude skills | Encoding brittle or poisoned habits |
+| Runtime topology | Agents, tools, turns, fanout, routing, budget policy | Architecture search plus trace-aware gates | agent-runtime, agent-eval, meta-harness | Optimizing the harness instead of the work |
+| Code or artifact | Source code, algorithms, configs | Evolutionary code search with executable evaluators | AlphaEvolve and OpenEvolve-style systems | Sandbox gaps, benchmark leakage, false tests |
+| Model behavior | Weights, adapters, embeddings, runtime policy | SFT, RL, environment training, frontier tuning | Microsoft Frontier Tuning / MAI, frontier-lab post-training | Governance, privacy, irreversible behavior shifts |
+
+This table compresses the argument. These systems rhyme because they all search. They differ because they search different coordinate systems.
+
+Prompt optimization is the most accessible layer. DSPy made it feel like programming rather than prompt archaeology: define signatures and modules, define a metric, then let optimizers improve the prompts or examples used inside the LM program. MIPROv2 bootstraps few-shot candidates, proposes data-aware instructions, then uses Bayesian optimization to search combinations of instructions and demonstrations. Ax brings a similar style into a production TypeScript surface with agents, flows, optimization artifacts, and GEPA/MiPRO-style optimizers.
+
+GEPA moves the center of gravity toward reflection and evolution. It samples trajectories, uses language feedback to diagnose what happened, proposes textual changes, and uses Pareto selection to combine useful lessons. The striking claim in the GEPA paper is not merely that prompt evolution works. It is that language feedback can be much more sample efficient than sparse scalar reward for certain compound AI systems.
+
+SkillOpt shifts the artifact from prompt to skill. A skill file is not a one-off instruction in a single prompt. It is durable external state. It can encode procedures, domain heuristics, tool policies, failure cases, and coordination patterns that survive across tasks. SkillOpt treats that document as trainable text. A separate optimizer model proposes bounded add, delete, or replace edits based on scored rollouts. Edits are accepted only when they improve held-out validation. That is a much more disciplined frame than "ask the agent to rewrite its own instructions."
+
+AlphaEvolve-style systems shift the artifact again, from text guidance to executable code. The mutator can propose algorithm changes, but the gate is a programmatic evaluator. Executable tests can be sharper than LLM judges. They can also be dangerously incomplete. If the tests leave a hole, search will find it.
+
+Frontier Tuning and MAI sit at a heavier layer. Microsoft describes a hill-climbing machine around more compute, better data, sharper evaluation, and reinforcement learning environments. Frontier Tuning, as announced at Build 2026, applies reinforcement learning inside an enterprise compliance boundary using workflow data, tool usage, eval signals, and domain conventions. It can produce tuned models, embeddings, skills, orchestration logic, and a runtime harness. That is model and system adaptation inside a controlled environment, not prompt search with better branding.
+
+The local agent-runtime and agent-eval story belongs in the runtime layer. A runtime decides what work actually runs: which agent is called, which tools exist, how many turns are available, whether subagents can fan out, how traces are emitted, and how failures propagate. An eval package decides whether the candidate earned promotion: held-out tasks, scorecards, trace analysts, failure taxonomies, and gates. In that frame, meta-harness is architecture search above ordinary prompt or skill tuning.
+
+## Why Prompt Optimization Does Not Automatically Solve Multi-Agent Workflow Design
+
+The confusion shows up hardest in multi-agent workflows.
+
+A driver persona can be optimized as text. A supervisor instruction can be optimized as text. Tool descriptions can be optimized as text. A subworker directive can be optimized as text.
+
+But a multi-agent workflow is not only text.
+
+Consider the way a human directs a coding agent:
+
+```text
+parallelize independent file reads
+inspect the codebase first
+do not stop at a plan
+run the tests
+do not leave sessions running
+protect user changes
+```
+
+Some of that is instruction text. Some of it is runtime capability. "Parallelize independent file reads" only matters if the agent has a tool wrapper that can execute independent calls concurrently. "Run the tests" only matters if the agent can access the repo, install dependencies, execute commands, and read failures. "Do not stop at a plan" only matters if the control loop allows more than one step. A `maxTurns=0` setting is not a personality flaw. It is a control-surface constraint.
+
+"Just GEPA it" is not a complete answer for multi-agent systems.
+
+GEPA can improve textual artifacts if the workflow is represented in text and the evaluator can score the result. It can discover better instructions for a coordinator. It can improve tool descriptions. It can learn from traces and propose wording that makes an agent more reliable.
+
+But GEPA does not search the full space of possible runtimes unless that space is exposed as the candidate surface. If the real improvement is "spawn three workers, assign disjoint files, merge findings, then run a verifier," the optimizer needs a way to mutate that policy and an evaluator that rewards the resulting trace. If the runtime cannot express fanout, no amount of prompt polish creates real parallelism.
+
+The practical split is:
+
+```text
+Prompt optimizer: improves local behavior expressed in text.
+Skill optimizer: improves durable procedure expressed in text.
+Runtime optimizer: improves the graph of actions, agents, tools, and budgets.
+Harness optimizer: improves the architecture of the system under evaluation.
+Model optimizer: changes the policy inside the model itself.
+```
+
+That split determines what kind of evidence you need.
+
+If a prompt changes, a held-out prompt eval may be enough. If a skill changes, you need multi-task evidence that the skill transfers and does not encode bad habits. If runtime topology changes, you need traces showing that the new graph actually changed execution in the intended way. If code changes, you need executable tests and sandboxing. If weights change, you need safety, privacy, and governance gates that are much stronger than a normal prompt eval.
+
+## The Math Of Promotion
+
+The simplest honest comparison is paired evaluation. Run the baseline and candidate on the same tasks, then compare per-task deltas:
+
+```text
+delta_i = score_i(candidate) - score_i(baseline)
+mean_delta = (1/n) * sum_i delta_i
+```
+
+If `mean_delta` is positive, the candidate looks better. But "looks better" is not enough. With stochastic systems, a candidate can win because it got easier samples, the judge was inconsistent, the model sampled lucky trajectories, or one outlier task dominated the average.
+
+So the promotion rule needs uncertainty:
+
+```text
+promote if lower_confidence_bound(mean_delta) > epsilon
+```
+
+`epsilon` matters. A candidate that improves a benchmark by 0.1 percentage points while increasing cost by 40 percent is not a meaningful improvement for most products. A candidate that improves a rare but high-severity failure mode may be worth it even if the average score barely moves. The margin should reflect the product decision, not only statistical significance.
+
+For agents, the score is rarely one-dimensional. Quality, cost, latency, robustness, safety, and trace integrity all matter. That leads to Pareto thinking:
+
+```text
+candidate A dominates B if:
+  quality_A >= quality_B
+  cost_A    <= cost_B
+  latency_A <= latency_B
+and at least one inequality is strict
+```
+
+Many real candidates do not dominate each other. One is better and slower. Another is cheaper and less robust. Another is safer but more verbose. This is why GEPA's Pareto framing is natural for compound systems, and why agent-eval style scorecards are more useful than a single magic number.
+
+The promotion packet should answer:
+
+- Did quality improve?
+- Did cost or latency regress?
+- Did robustness improve on held-out tasks?
+- Did the candidate fail on any protected scenario?
+- Is the win larger than expected noise?
+- Is the comparison compute-matched?
+- Does the trace show the intended behavioral change?
+
+The last question matters more than it sounds. A score can improve for the wrong reason. The candidate might call a stronger model, spend more tokens, use more retries, leak the answer from the benchmark, or exploit a judge preference. Without traces, you may promote a hack.
+
+## Compute-Matched Baselines
+
+A common mistake in agent evaluation is comparing an optimized system against a lazy baseline.
+
+If the optimizer tries 24 candidates and picks the best, the fair baseline is not a single human-written prompt evaluated once. A fairer baseline might include random@24, best-of-N over the original prompt, a stronger model at equal cost, or a human edit with the same time budget.
+
+The same issue appears at inference time. Suppose a new agent workflow performs better because it fans out to five subagents and votes. Is the prompt better, or did the system simply spend more compute? More compute for higher reliability can be the right product decision, but it should be named correctly.
+
+Optimization claims should be compute-matched whenever possible:
+
+```text
+Did the candidate beat random@k?
+Did it beat best-of-N?
+Did it beat a stronger model at the same cost?
+Did it beat the old system with the same retry budget?
+Did it win on held-out tasks, not only on the search set?
+```
+
+Test-time compute is part of the optimizer story. A system can improve by learning a better artifact, by spending more inference budget, or by doing both. Those are different levers.
+
+## Failure Modes
+
+Goodhart's law is not optional. When a measure becomes the target, the optimizer starts mining it.
+
+Eval leakage is the obvious version. If the optimizer sees benchmark tasks too directly, it can learn the benchmark style rather than the underlying skill. This is especially easy with prompt optimization because the candidate text can encode highly specific task cues.
+
+Judge drift is subtler. If the evaluator is an LLM, its standards may vary across time, model versions, prompts, or sampling settings. A candidate can appear to improve because the judge got more generous. Frozen judges, calibration sets, and trace audits help.
+
+Local optima are everywhere. A prompt can become more polished without becoming more strategic. A skill can accumulate rules that help a narrow class of tasks while hurting transfer. A runtime can add fanout and voting while hiding the fact that all workers share the same blind spot.
+
+Credit assignment is the hard one in multi-agent systems. If a task fails, what deserves blame? The driver prompt, the tool description, the retrieval corpus, the model choice, the coordinator, the subagent budget, the verifier, or the eval? Optimizing the wrong surface produces churn. The prompt changes because the prompt is easy to change, not because the prompt caused the failure.
+
+Cost blindness creates fake wins. If score improves because the candidate silently doubled tokens, added retries, or switched to a stronger model, the result may still be useful, but it is not a pure quality improvement.
+
+Harness hacking appears when the agent learns the evaluator instead of the task. Code agents can overfit tests. Prompt optimizers can overfit judge wording. Skill systems can accumulate advice that says "do what the benchmark expects" instead of "solve the problem."
+
+Skill poisoning is the persistent-state version. A bad rule in a one-off prompt dies with the session. A bad rule in a skill file can keep influencing future work. That is why SkillOpt's held-out validation and bounded edits are important design choices.
+
+## Which Layer Should You Optimize?
+
+A practical rule: optimize the lowest layer that actually explains the failure.
+
+If the system knows what to do but says it poorly, optimize the prompt.
+
+If the system repeats the same procedural mistake across sessions, optimize the skill.
+
+If the system fails because work is not decomposed, tools are called in the wrong order, or verification happens too late, optimize runtime topology.
+
+If the system needs to invent or improve an executable artifact, optimize code under real tests.
+
+If the system needs domain adaptation at scale and the behavior cannot be reliably expressed as external instructions, tune the model or train in a reinforcement learning environment.
+
+That rule prevents two bad habits.
+
+The first bad habit is prompt maximalism: trying to solve orchestration, memory, tool policy, and verification by adding more words to a system prompt.
+
+The second bad habit is infrastructure maximalism: building a complicated multi-agent runtime when the actual failure is a missing example or a vague instruction.
+
+Good optimization starts by choosing the right coordinate system.
+
+## The Agent Builder's Checklist
+
+Before running an improvement loop, write down:
+
+```text
+surface:       what can change?
+operator:      who or what proposes changes?
+train tasks:   what can the optimizer see?
+holdout tasks: what decides promotion?
+score:         what counts as success?
+cost:          what gets penalized?
+baseline:      what is the candidate compared against?
+trace:         what evidence explains the score?
+gate:          what prevents false promotion?
+rollback:      how do we undo a bad promotion?
+```
+
+If any line is blank, the system is not ready for autonomous improvement. It may still be ready for research. It may be ready for a human-in-the-loop experiment. But it is not ready to let the optimizer promote its own changes.
+
+The evaluation layer is not secondary. It is the thing that makes optimization legitimate. Agent-eval style traces, scorecards, held-out gates, and failure taxonomies are not paperwork. They are the control system that keeps the improvement loop attached to reality.
+
+## What Is Actually New Right Now
+
+The current wave is not just "better prompts." It is the movement of optimization outward from model weights into the artifacts around the model.
+
+DSPy and MIPRO made LM programs optimizable. GEPA showed that reflective text evolution can be highly sample efficient for compound systems. Ax is packaging these ideas for production TypeScript agents and flows. SkillOpt treats skills as durable trainable state, with discipline borrowed from model optimization. AlphaEvolve makes executable code the candidate surface. Microsoft Frontier Tuning points toward enterprise reinforcement learning environments where workflows, tools, models, skills, and harnesses co-evolve inside a compliance boundary.
+
+The through-line is simple:
+
+```text
+If you can represent it, vary it, score it, and gate it, you can optimize it.
+```
+
+The catch is just as simple:
+
+```text
+If you score the wrong thing, you optimize the wrong thing.
+```
+
+For agent builders, that is the whole game.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Microsoft AI: Building a hill-climbing machine](https://microsoft.ai/news/building-a-hillclimbing-machine-launching-seven-new-mai-models/)
+- [Microsoft Frontier Tuning](https://devblogs.microsoft.com/microsoft365dev/frontier-tuning-teaching-ai-to-work-the-way-you-do/)
+- [DSPy optimizer documentation](https://github.com/stanfordnlp/dspy/blob/main/docs/docs/learn/optimization/optimizers.md)
+- [DSPy MIPROv2 documentation](https://github.com/stanfordnlp/dspy/blob/main/docs/docs/api/optimizers/MIPROv2.md)
+- [AxLLM optimization guide](https://axllm.dev/optimize/)
+- [Large Language Models Are Human-Level Prompt Engineers](https://arxiv.org/abs/2211.01910)
+- [Large Language Models as Optimizers](https://arxiv.org/abs/2309.03409)
+- [TextGrad: Automatic Differentiation via Text](https://arxiv.org/abs/2406.07496)
+- [GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning](https://arxiv.org/abs/2507.19457)
+- [Optimizing Instructions and Demonstrations for Multi-Stage Language Model Programs](https://arxiv.org/abs/2406.11695)
+- [SkillOpt: Executive Strategy for Self-Evolving Agent Skills](https://arxiv.org/abs/2605.23904)
+- [AlphaEvolve: A coding agent for scientific and algorithmic discovery](https://arxiv.org/abs/2506.13131)

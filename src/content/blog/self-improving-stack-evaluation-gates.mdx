@@ -1,0 +1,582 @@
+---
+title: 'The Gate Is The Optimizer'
+slug: self-improving-stack-evaluation-gates
+summary: >-
+  Why held-out promotion, judge reliability, failure taxonomies, cost ceilings, and confidence intervals decide whether self-improvement is real.
+date: '2026-06-01'
+author: Drew Stone
+tags: ['agents', 'evals', 'systems', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 7
+---
+
+An optimizer can propose forever.
+
+The gate decides what becomes the system.
+
+That is why the gate is not an administrative detail after the interesting work. It is the objective boundary. GEPA, MIPRO, SkillOpt, runtime topology search, and meta-harness can all generate candidates. The gate decides which candidate is allowed to replace the baseline.
+
+If the gate is weak, every optimizer learns the gate.
+
+If the gate is honest, every optimizer has to improve the product.
+
+## What A Gate Is
+
+A gate is a promotion policy.
+
+Let:
+
+```text
+b = baseline system
+c = candidate system
+x = scenario
+p = agent profile cell
+z = seed or replicate id
+R = task reward or score
+C = measured cost vector
+T = trace integrity predicate
+D_search = search split
+D_holdout = held-out split
+```
+
+The gate is a function:
+
+```text
+G(c, b, D_holdout, p, z) -> {promote, reject}
+```
+
+It is allowed to inspect evidence. It is not allowed to move the goalpost after seeing the candidate.
+
+The simplest version is:
+
+```text
+promote(c) iff
+  quality(c, holdout) > quality(b, holdout)
+  and cost(c) <= cost_ceiling
+  and latency(c) <= latency_ceiling
+  and deterministic_failures(c) = 0
+  and trace_integrity(c) = 1
+```
+
+That version is readable, but still too loose. A real gate needs paired observations, uncertainty, split discipline, judge reliability, and regression protection.
+
+## The Gate Is Not A Leaderboard
+
+A leaderboard asks:
+
+```text
+Which system had the highest score?
+```
+
+A gate asks:
+
+```text
+Should this candidate replace this baseline for this product?
+```
+
+Those are different questions.
+
+Leaderboards are useful for orientation. They are bad promotion policies. They compress context, cost, latency, tool availability, profile differences, data leakage, and failure severity into one rank.
+
+Agent systems make this worse because candidates can improve the metric while damaging the workflow:
+
+- better aggregate score, worse high-value persona
+- better judge score, worse deterministic verifier
+- better single-shot result, worse cost
+- better easy tasks, worse hard tasks
+- better search split, worse holdout
+- better answer style, worse intent match
+- better visible output, broken trace capture
+
+The gate has to preserve the baseline unless the candidate earns replacement.
+
+## Paired Evidence
+
+Unpaired averages are fragile.
+
+Suppose the baseline sees one sample of tasks and the candidate sees another. A mean difference can be task mix, not improvement.
+
+The paired comparison fixes that:
+
+```text
+delta_i = R(c, x_i, p_i, z_i) - R(b, x_i, p_i, z_i)
+```
+
+where the candidate and baseline are evaluated on the same scenario, profile, and replicate. Then the question becomes:
+
+```text
+Is median(delta_i) reliably positive on held-out items?
+```
+
+The median is useful because agent scores often have heavy tails. One catastrophic failure or one lucky success can distort a mean. The median asks whether the typical paired task improved.
+
+A practical promotion rule:
+
+```text
+n_pairs >= n_min
+LCB_95(median(delta)) > epsilon
+```
+
+`LCB_95` is the lower confidence bound. If the lower bound clears the threshold, the gate has evidence that the lift is not just random luck.
+
+This is where bootstrap confidence intervals are useful. You resample paired deltas, compute the median for each resample, and inspect the lower quantile:
+
+```text
+delta = [delta_1, ..., delta_n]
+for r in 1..B:
+  sample n deltas with replacement
+  m_r = median(sample)
+
+LCB_95 = quantile({m_r}, 0.025)  // two-sided 95 interval
+```
+
+The gate promotes only when the pessimistic estimate is still good enough.
+
+## Search Split Versus Holdout
+
+Optimizers need data to search.
+
+Gates need data the optimizer did not tune against.
+
+That gives two split families:
+
+```text
+D_search  = used to propose, mutate, rank, debug, and iterate
+D_holdout = used to decide promotion
+```
+
+The failure mode is:
+
+```text
+score(c, search) goes up
+score(c, holdout) goes down
+```
+
+So the gate needs an overfit check:
+
+```text
+gap_c = mean_score(c, search) - mean_score(c, holdout)
+gap_b = mean_score(b, search) - mean_score(b, holdout)
+
+reject(c) if gap_c > gap_b + tau
+```
+
+This says the candidate may look better on the search split, but it cannot be much more search-specialized than the baseline. `tau` is slack, not forgiveness. It accounts for sampling noise and legitimate split difficulty differences.
+
+The gate configuration has to be fixed before the candidate is scored:
+
+```text
+scenario ids
+split ids
+metric weights
+deterministic checks
+judge versions
+budget ceilings
+minimum paired runs
+epsilon
+alpha
+```
+
+If those change after seeing the candidate, the run is a new experiment. It is not the same gate.
+
+## Cost Is Part Of Correctness
+
+The previous post argued that test-time compute has to beat random at equal budget. Evaluation gates enforce the product version of the same rule.
+
+Cost is a vector:
+
+```text
+C = {
+  dollars,
+  input_tokens,
+  output_tokens,
+  wall_ms,
+  model_calls,
+  tool_calls,
+  sandbox_minutes,
+  human_review_minutes,
+  risk_budget
+}
+```
+
+A candidate that improves score by 2 points and costs 20 times more is not automatically bad. It might be worth it. But it is not the same product.
+
+So the gate should separate quality from efficiency:
+
+```text
+quality_gate(c, b) = LCB_95(median(delta)) > epsilon
+efficiency_gate(c) = median_cost(c) <= cost_ceiling
+latency_gate(c) = p95_wall_ms(c) <= latency_ceiling
+```
+
+Then promotion is conjunctive:
+
+```text
+promote(c) iff
+  quality_gate(c, b)
+  and efficiency_gate(c)
+  and latency_gate(c)
+```
+
+When the candidate clears quality but fails cost, that is valuable evidence. It says the optimizer found a better behavior that is too expensive for the current product envelope.
+
+## Deterministic Failures Dominate Judges
+
+LLM judges are useful. They are also weak authorities.
+
+If a patch fails tests, a judge saying "looks good" does not rescue it. If a workflow violates permissions, a rubric score does not excuse it. If the trace has no real backend activity, a pass rate is meaningless.
+
+Gate precedence is:
+
+```text
+deterministic verifier
+  > trace integrity
+  > backend integrity
+  > cost and latency policy
+  > calibrated semantic judge
+  > aggregate score
+```
+
+The order matters. A judge is allowed to score ambiguous quality. It is not allowed to override hard evidence.
+
+This is the difference between an eval and a release gate. An eval reports. A release gate refuses.
+
+## Judge Reliability
+
+Open-ended agent work needs semantic evaluation. Exact unit tests do not cover "did the agent satisfy the user's intent" or "is the answer useful enough to ship."
+
+LLM-as-judge research made this practical. G-Eval showed that prompted GPT-4 style evaluators could align better with human judgments on natural-language tasks than older automatic metrics. MT-Bench and Chatbot Arena showed that strong model judges can approximate human preference for open-ended dialogue, while also documenting position bias, verbosity bias, self-enhancement bias, and limited reasoning.
+
+The lesson is not "use an LLM judge and trust it."
+
+The lesson is:
+
+```text
+Use judges where deterministic verification is unavailable,
+then evaluate the judge as a measurement instrument.
+```
+
+Let:
+
+```text
+V(x, y, trace) = judge score
+R(x, y) = true product outcome
+```
+
+A judge gate needs calibration:
+
+```text
+calibration_error = E[R | V = s] - s
+```
+
+and agreement:
+
+```text
+agreement = P(sign(V_a - V_b) = sign(H_a - H_b))
+```
+
+where `H` is a human preference or trusted adjudicator. For ordinal rubrics, rank correlation is often more useful than raw score correlation:
+
+```text
+rho = Spearman(V, H)
+```
+
+A gate should track judge drift over time. If the judge model, rubric, prompt, or examples change, the score distribution can move even when the agent behavior does not.
+
+That is why judge identity belongs in the profile cell.
+
+## Scorecards Are Cells, Not Averages
+
+HELM pushed a simple but important idea: language model evaluation should expose multiple metrics and scenarios, not only one headline number.
+
+Agent evaluation needs the same idea, but with runtime context.
+
+A scorecard cell is keyed by:
+
+```text
+cell = (scenario_id, profile_hash)
+```
+
+The profile material covers:
+
+```text
+model
+prompt hash
+harness
+source profile hash
+dimensions
+```
+
+Tool surface, skill surface, runtime topology, judge version, backend, and tenant or persona metadata belong in the source profile or dimensions. The important property is not where each field lives. The important property is that behaviorally different runs land in different cells.
+
+Then every commit appends a new observation:
+
+```text
+scorecard[cell].timeline += {
+  commit,
+  scores,
+  composite,
+  per_dimension,
+  run_ids
+}
+```
+
+This prevents aggregate masking. A candidate can improve the mean while regressing one persona, one tool boundary, one model backend, or one scenario family.
+
+Regression detection should combine effect size and statistical confidence:
+
+```text
+delta = current - baseline
+d = CohenD(current_scores, baseline_scores)
+p = WelchT(current_scores, baseline_scores)
+
+regressed if delta < 0 and abs(d) >= d_min and p <= alpha
+```
+
+If sample size is too small for statistics, use a conservative raw-delta threshold and mark the evidence weak.
+
+## Backend Integrity
+
+One of the easiest ways to get a false eval is to never call the model.
+
+The system can run every scenario, produce every row, and still be blind if the backend was a stub, a bridge was down, auth failed, or the provider route silently returned canned output.
+
+Backend integrity has to be a gate, not a warning.
+
+The minimal fingerprint:
+
+```text
+real_backend(record) iff
+  token_usage.input > 0
+  or token_usage.output > 0
+```
+
+Then:
+
+```text
+reject if every record is stub
+reject_or_quarantine if records are mixed real and stub
+flag if output tokens exist but cost is zero
+```
+
+The mixed case matters. A partial backend failure is missing data, not agent failure. Treating missing data as bad agent behavior poisons the optimizer. It teaches the system to "fix" a candidate that was never actually evaluated.
+
+## Semantic Fulfillment
+
+For agents, the central question is often not:
+
+```text
+Did the output look fluent?
+```
+
+It is:
+
+```text
+Did the system do what the user asked?
+```
+
+That needs an intent-match layer. The evaluator should compare user request, available context, trace, and final artifact. It should distinguish:
+
+- solved the requested task
+- solved a nearby task
+- gave generic advice
+- refused incorrectly
+- changed forbidden files
+- skipped the hard part
+- produced plausible but ungrounded work
+
+This is especially important for multi-agent systems. A coordinator can produce a clean final answer while worker traces show that the crucial evidence never arrived.
+
+## Failure Taxonomies
+
+A scalar score tells the optimizer which candidate won.
+
+A failure taxonomy tells the next optimizer where to search.
+
+Examples:
+
+```text
+reasoning_error
+tool_selection_error
+tool_argument_error
+bad_retrieval
+missing_codebase_context
+missing_credentials
+integration_auth_expired
+budget_exceeded
+format_drift
+insufficient_evidence
+ambiguous_user_intent
+knowledge_readiness_blocked
+```
+
+The taxonomy turns eval into diagnosis. A prompt optimizer can respond to instruction-following failures. A skill optimizer can respond to repeated procedure failures. A runtime topology optimizer can respond to tool selection, budget, or missing-context failures. A knowledge system can respond to bad retrieval or stale external data.
+
+Without a taxonomy, every loss becomes "make the prompt better."
+
+## Release Confidence
+
+The release gate is broader than the held-out gate.
+
+The held-out gate answers:
+
+```text
+Did candidate beat baseline on held-out paired evidence?
+```
+
+The release confidence layer asks:
+
+```text
+Is there enough evidence to ship this change?
+```
+
+A useful release confidence scorecard has five axes:
+
+```text
+corpus:
+  scenarios, split coverage, manifest integrity
+
+quality:
+  pass rate, mean score, deterministic verifier status
+
+generalization:
+  holdout runs, search-holdout gap, paired gate decision
+
+diagnostics:
+  failure rows have actionable side information
+
+efficiency:
+  mean cost, p95 wall time, budget compliance
+```
+
+The important phrase is fail closed. Missing corpus, missing holdout, missing traces, missing backend evidence, or missing diagnostics is not neutral. It is a reason to reject promotion until the evidence exists.
+
+In compact form:
+
+```text
+release_promote(c) iff
+  held_out_gate(c, b) = promote
+  and corpus_axis(c) = pass
+  and quality_axis(c) = pass
+  and generalization_axis(c) = pass
+  and diagnostics_axis(c) = pass
+  and efficiency_axis(c) = pass
+```
+
+The release gate composes evidence. It does not average away missing evidence.
+
+## Where Tangle Fits
+
+Local package audit on June 6, 2026:
+
+```text
+@tangle-network/agent-eval@0.34.1
+@tangle-network/agent-runtime@0.26.0
+```
+
+`agent-runtime` spends compute. `agent-eval` decides whether the spend earned promotion.
+
+The relevant `agent-eval` surface:
+
+- `runEvalCampaign`: runs variant by scenario by seed matrices, requires non-empty variants and scenarios, requires `commitSha`, fingerprints campaign inputs, and captures run integrity.
+- `HeldOutGate`: evaluates paired holdout deltas against a named baseline, bootstrap lower confidence bound, overfit gap, productive-run minimum, and optional cost ceiling.
+- `evaluateReleaseConfidence`: composes corpus, quality, generalization, diagnostics, and efficiency into a production-facing scorecard.
+- `recordRunsToScorecard`, `loadScorecard`, `diffScorecard`: maintain an append-only scenario by profile timeline and detect regressions.
+- `AgentProfileCell`: records profile id, source profile hash, harness, model, prompt hash, and dimensions so score changes are attributable to a stable run identity.
+- `assertRealBackend`: rejects blind evals where every run has zero token activity.
+- `runIntentMatchJudge`: evaluates semantic fulfillment.
+- `FAILURE_CLASSES`: gives failure analysis a typed ontology.
+- `AnalystRegistry` with `DEFAULT_TRACE_ANALYST_KINDS`: chains failure-mode, knowledge-gap, knowledge-poisoning, and improvement analysts.
+- `runProductionLoop`: ties observed traces, clustered failures, mutation, held-out gate, release confidence, and candidate promotion into one loop.
+
+The relevant `agent-runtime` surface:
+
+- `runLoop`: executes bounded refine or fanout loops with cost aggregation and trace events.
+- `createRefineDriver`: spends compute sequentially.
+- `createFanoutVoteDriver`: spends compute across parallel variants.
+- `Validator`: supplies selector evidence.
+- `conversation`: enforces `maxTurns`, `maxCreditsCents`, `turnOrder`, `haltOn`, journals, and deterministic turn ids.
+- MCP delegation: makes specialist code and research work observable rather than hidden inside one prompt.
+
+The boundary is clean:
+
+```text
+runtime creates candidate behavior
+eval determines whether behavior can replace the baseline
+```
+
+## Gate Failure Modes
+
+**Holdout leakage**
+
+The optimizer sees examples, labels, judge rationales, or traces from the promotion split.
+
+**Unpaired comparisons**
+
+Candidate and baseline see different tasks, profiles, or seeds.
+
+**Mean-only promotion**
+
+The aggregate improves while a high-value cell regresses.
+
+**Judge monoculture**
+
+One judge model, one rubric, and one prompt define the whole objective.
+
+**Deterministic override**
+
+A judge passes an artifact that failed tests, permissions, build, or safety policy.
+
+**Backend blindness**
+
+The eval ran against stubs, missing auth, or a dead bridge.
+
+**Cost laundering**
+
+The score improves only by spending more hidden compute, tools, sandbox time, or human review.
+
+**Trace amnesia**
+
+The final output is scored, but the branch, tool, verifier, and selector evidence is missing.
+
+**Failure flattening**
+
+All failures collapse into one scalar, so the next optimizer has no diagnostic direction.
+
+## Working Rule
+
+The optimizer proposes.
+
+The gate governs.
+
+A self-improving agent system needs a gate that can answer:
+
+```text
+What changed?
+Which baseline did it beat?
+Which held-out tasks did it beat it on?
+How much uncertainty remains?
+Which profiles regressed?
+Which deterministic checks failed?
+Which judge scored it?
+Was the backend real?
+What did it cost?
+What failure modes remain?
+Can the trace prove all of that?
+```
+
+If the answer is missing, the candidate stays a candidate.
+
+The gate is where self-improvement stops being a story about better prompts and becomes a release discipline.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Holistic Evaluation of Language Models](https://arxiv.org/abs/2211.09110), checked June 6, 2026.
+- [G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment](https://arxiv.org/abs/2303.16634), checked June 6, 2026.
+- [Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena](https://arxiv.org/abs/2306.05685), checked June 6, 2026.
+- [Evaluating Large Language Models Trained on Code](https://arxiv.org/abs/2107.03374), checked June 6, 2026.
+- [SWE-bench: Can Language Models Resolve Real-World GitHub Issues?](https://arxiv.org/abs/2310.06770), checked June 6, 2026.
+- Local `@tangle-network/agent-eval@0.34.1` source audit: `HeldOutGate`, `runEvalCampaign`, `evaluateReleaseConfidence`, scorecard, `AgentProfileCell`, `assertRealBackend`, `runIntentMatchJudge`, `FAILURE_CLASSES`, `AnalystRegistry`, `DEFAULT_TRACE_ANALYST_KINDS`, `runProductionLoop`, June 6, 2026.
+- Local `@tangle-network/agent-runtime@0.26.0` source audit: `runLoop`, `createRefineDriver`, `createFanoutVoteDriver`, `Validator`, conversation policy, journals, MCP delegation, June 6, 2026.

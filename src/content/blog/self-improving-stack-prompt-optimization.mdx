@@ -1,0 +1,382 @@
+---
+title: 'Prompt Optimization Is Not The Whole Game'
+slug: self-improving-stack-prompt-optimization
+summary: >-
+  Where GEPA, DSPy, MIPRO, AxLLM, and related prompt optimizers fit inside a larger self-improving agent stack.
+date: '2026-05-27'
+author: Drew Stone
+tags: ['agents', 'prompts', 'evals', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 2
+---
+
+Prompt optimization is a real optimization discipline, not a theory of the whole agent.
+
+GEPA, MIPRO, DSPy, AxLLM, TextGrad, OPRO, and APE all search through language-shaped control surfaces. They can improve instructions, demonstrations, field descriptions, tool docs, judge rubrics, and the prompts embedded inside multi-stage LM programs.
+
+They are not automatically searching the full agent system.
+
+That distinction matters because modern agents do not fail only because the prompt is poorly worded. They fail because the tool surface is wrong, the retrieval policy is stale, the runtime cannot express fanout, the evaluator rewards the wrong behavior, the model is underpowered, the trace is incomplete, the budget is too tight, or the coordinator is operating with the wrong topology.
+
+Prompt optimization is the right layer when a text surface has causal leverage over the failure. It is the wrong layer when the missing capability lives outside text.
+
+The serious version of the question is:
+
+```text
+Which factors are mutable, which factors are held fixed, and which evaluator is trusted enough to promote a candidate?
+```
+
+Answer that and the ecosystem becomes legible as a set of search problems over different coordinate systems.
+
+## The Object Being Optimized
+
+Let:
+
+```text
+p = prompt artifact or prompt-like text surface
+d = selected demonstrations or exemplars
+m = model or backend
+h = runtime and harness
+x = task sampled from the eval distribution D
+y = system output or full trajectory
+R = reward, metric, judge, or scoring function
+C = cost, latency, risk, or resource usage
+```
+
+A prompt optimizer is usually solving:
+
+```text
+J(p, d | m, h) = E_{x ~ D}[R(run(m, h, p, d, x))] - lambda * E[C(run(m, h, p, d, x))]
+```
+
+The conditional bar matters. It says the optimizer is improving `p` and maybe `d` while model `m` and runtime `h` are treated as fixed. If the model, toolset, router, memory, worker count, turn budget, or evaluator also changes, the experiment no longer estimates a pure prompt effect. It estimates a confounded system effect.
+
+This is experimental design, not pedantry. A candidate prompt can look better because the model changed. A model can look better because the prompt changed. A workflow can look better because the judge prompt became easier. A multi-agent coordinator can look better because a runtime silently raised its turn budget.
+
+Prompt optimization is cleanest when the causal path is:
+
+```text
+text surface -> model behavior -> output or trajectory -> score
+```
+
+The measurement becomes contaminated when the actual path is:
+
+```text
+text surface -> planner hint -> runtime capability missing -> no action -> evaluator still gives partial credit
+```
+
+The first path is a causal optimization claim. The second is a measurement artifact.
+
+## Prompt Surface, Not Just Prompt String
+
+The word "prompt" hides several artifacts that behave differently under optimization.
+
+A raw chat prompt is one string. A production LM program usually has structure: signatures, modules, field names, output schemas, validators, demonstrations, adapters, tool descriptions, retrieval instructions, and judge rubrics. DSPy made this distinction explicit by asking developers to define programs with signatures and modules, then compile those programs against examples and metrics. MIPROv2 optimizes instructions and few-shot demonstrations inside that structured program, not a single textarea.
+
+The mutable prompt surface can include:
+
+- System instructions.
+- Task instructions.
+- Planner or decomposer instructions.
+- Per-tool descriptions and argument docs.
+- Output field descriptions.
+- JSON schema constraints.
+- Few-shot examples.
+- Demonstration ordering.
+- Judge rubrics.
+- Refusal and safety policies.
+- Retrieval and citation instructions.
+- Coordinator and worker role descriptions.
+
+Those surfaces do not have the same blast radius. A field description tweak is local. A coordinator policy can redirect the whole trajectory. A judge rubric can change the metric itself. A tool description can create or prevent unsafe tool calls. A demo set can leak holdout examples.
+
+So the first engineering move is to name the surface:
+
+```text
+surface = {
+  kind: 'system-prompt' | 'tool-doc' | 'demo-set' | 'judge-rubric' | 'planner-policy',
+  owner: component_name,
+  schema: allowed_shape,
+  constraints: invariants_to_preserve
+}
+```
+
+If you cannot name the surface, you cannot run a disciplined optimizer over it.
+
+## The Historical Lineage
+
+As of June 5, 2026, the prompt-optimization lineage is best read as a sequence of increasingly structured candidate encodings.
+
+Automatic Prompt Engineer (APE), published in 2022 and revised in 2023, treated the instruction as the program. An LLM proposes instruction candidates, another LM follows those instructions, and a score function selects the best candidate. This is black-box search over natural-language instructions.
+
+OPRO, published in 2023 and accepted at ICLR 2024, made the optimizer itself a language model. The prompt to the optimizer contains prior solutions and their scores. The model proposes the next solutions. For prompt optimization, the solutions are instructions that maximize task accuracy.
+
+MIPRO, published for EMNLP 2024, moved from single prompts to multi-stage language model programs. The key move is factorization: optimize the free-form instructions and demonstrations of every module, even when module-level labels or gradients are not available. MIPRO uses program-aware and data-aware proposal mechanisms, stochastic minibatch evaluation, and a surrogate-guided meta-optimization process.
+
+TextGrad, published in 2024, framed the problem as automatic differentiation through text. It treats textual feedback from LLMs as a gradient-like signal that can be propagated to variables in a compound AI computation graph. The "gradient" is not a numeric derivative. It is structured natural-language criticism that says what to change and why.
+
+GEPA, published in 2025, pushes hardest on reflective prompt evolution. It samples trajectories from compound AI systems, reflects on trace-level feedback in natural language, proposes prompt updates, and keeps complementary candidates through Pareto-style selection. Its empirical claim is important: natural-language reflection can be more sample efficient than sparse scalar reinforcement learning on some compound AI tasks.
+
+AxLLM brings these ideas into a TypeScript-first programming surface. Ax programs expose typed inputs, outputs, examples, optimizers, and saved optimization artifacts. AxMiPRO and AxGEPA make prompt and LM-program optimization feel closer to production code than to notebook-only experimentation.
+
+This is the through-line:
+
+```text
+APE: generate instruction candidates, score them.
+OPRO: use an LLM as the optimizer over scored candidates.
+MIPRO: optimize instructions and demos across LM-program modules.
+TextGrad: propagate textual feedback through a computation graph.
+GEPA: evolve prompts from trace reflection and Pareto selection.
+AxLLM: expose these optimization patterns in a typed production surface.
+```
+
+They share a black-box or language-mediated search skeleton. They differ in candidate representation, proposal operator, feedback channel, and selection rule.
+
+## What The Optimizers Assume
+
+The useful comparison is not "which optimizer is best?" It is "what objective and action space does this optimizer assume?"
+
+| System | Mutable surface | Proposal operator | Evaluator | Promotion risk |
+| --- | --- | --- | --- | --- |
+| APE | instruction text | LLM proposes candidates from examples | task score | shallow instruction overfit |
+| OPRO | natural-language solution prompt | LLM proposes from history of scored candidates | task score | optimizer prompt sensitivity |
+| MIPROv2 | module instructions and demos | bootstrapping, instruction proposal, Bayesian optimization | DSPy metric over train/val sets | demo leakage, module credit assignment |
+| TextGrad | text variables in a computation graph | textual feedback propagation | user-defined objective | feedback drift, weak variable constraints |
+| GEPA | prompts in compound AI systems | trace reflection, mutation, Pareto selection | trajectory score plus textual feedback | eval overfit, trace feedback contamination |
+| AxLLM | typed LM programs and optimizer artifacts | AxMiPRO, AxGEPA, hyperparameter search | user metrics and validation examples | production artifact drift |
+
+The table hides an uncomfortable fact: prompt optimization can optimize the evaluator relationship as much as task behavior. If the judge is an LLM and the candidate prompt learns the judge's preferences, the system may become better at the benchmark without becoming better at the job.
+
+That is why held-out evaluation is not an optional nicety. It is the difference between improvement and benchmark adaptation.
+
+## GEPA And MIPRO Are Not The Same Move
+
+MIPROv2 is strongest when you have a structured LM program, examples, and a metric. Its core object is the combination of instructions and demonstrations across predictors. It uses bootstrapped demos and instruction proposal, then searches combinations with Bayesian optimization. The optimizer is learning which instruction/demo configurations work for the metric under the program graph.
+
+GEPA is strongest when trace feedback contains semantic information the optimizer can use. A scalar score says "bad." A trajectory plus feedback says "the verifier ignored the second evidence source," "the tool call used the wrong argument," or "the final answer satisfied format but missed the user's intent." GEPA uses that language-native error signal to propose targeted mutations against the prompt set.
+
+The difference is easiest to express as operator design:
+
+```text
+MIPRO:
+  candidate = instruction choices x demo choices
+  feedback = metric values over examples
+  search = surrogate-guided exploration
+
+GEPA:
+  candidate = prompt set for a compound system
+  feedback = trace evidence + textual critique + score
+  search = reflective mutation + Pareto preservation
+```
+
+MIPRO asks, "Which instruction and demo combination scores best under this program and metric?" GEPA asks, "What did the traces teach us, and which candidate variants preserve complementary lessons?"
+
+That distinction becomes central for agents. Agent failures are often procedural and trajectory-level. The wrong tool call, missing verification step, premature stop, or poor delegation policy may not be visible from final answer text alone. GEPA-style reflection has more leverage when the trace is rich enough to explain the failure.
+
+## Where Multi-Agent Workflows Break The Simplification
+
+A multi-agent system is not a bigger prompt. It is a factored system:
+
+```text
+agent system = text surfaces
+             x model choices
+             x tool/action space
+             x memory/retrieval policy
+             x runtime topology
+             x turn and cost budgets
+             x evaluator stack
+             x promotion policy
+```
+
+Prompt optimizers explore the factors you expose to them. If the candidate encoding only contains a supervisor prompt, the optimizer can only mutate supervisor text. It cannot invent a real fanout executor, persistent memory, sandbox policy, multi-worker merge protocol, or verifier pass unless those dimensions are present in the candidate representation.
+
+This is the exact issue with coordinator and worker personas.
+
+You can optimize a coordinator persona to say:
+
+```text
+Fan out independent subtasks.
+Run specialists in parallel.
+Merge findings.
+Escalate disagreement to a supervisor.
+Verify before final output.
+```
+
+That may improve behavior if the runtime already exposes the necessary actions. It will not create those actions. A text instruction to parallelize is operational only if the agent has a tool or runtime primitive that dispatches work concurrently. A text instruction to continue until verified only works if the loop budget and stop semantics allow it. A text instruction to use memory only works if memory is available, scoped, and retrievable.
+
+`maxTurns` is a runtime semantic, not a style preference. If zero means "no autonomous turns," then the prompt cannot create a multi-step process. If zero means "unbounded," the optimization problem becomes budget and safety control. Either way, the parameter belongs to `h`, the runtime/harness side of `J(p, d | m, h)`.
+
+The correct formal move is to expand the candidate:
+
+```text
+s = {
+  prompts,
+  demos,
+  tools,
+  topology,
+  memory_policy,
+  budget_policy,
+  evaluator_config
+}
+
+J(s) = E_{x ~ D}[R(run(s, x))] - lambda_cost*C - lambda_risk*K
+```
+
+Now the loop is no longer pure prompt optimization. It is system optimization. GEPA-style reflection may still be part of the proposal operator, but the mutable surface is larger than prompts.
+
+This is where meta-harnesses enter. A meta-harness does not merely tune wording inside one harness. It searches over code, architecture, eval plumbing, candidate generators, and workflow topology. Its failure mode is also larger: it can improve the harness while weakening the real product task. That is why trace integrity and held-out promotion become stricter as the mutable surface expands.
+
+## The Tangle Placement
+
+The Tangle packages fit as substrate, not as another prompt optimizer.
+
+`@tangle-network/agent-runtime` owns the execution side: chat-turn lifecycle, task lifecycle, `defineAgent`, model admission, trace hooks, loop drivers, MCP delegation, and declarative surfaces. In its local docs, `defineAgent` declares the surfaces an analyst or optimizer can edit: prompts, tools, skills, knowledge requirements, rubrics, and run functions. The runtime is where "parallelize" becomes a real driver such as refine or fanout-vote, rather than a sentence in a supervisor prompt.
+
+`@tangle-network/agent-eval` owns the evidence and promotion side: eval campaigns, prompt evolution, multi-shot optimization, reflective mutation, held-out gates, Pareto objectives, scorecards, trace analysts, causal attribution, and cost-aware promotion. Its local prompt-evolution loop is explicitly population-based: score variants across scenario and repetition, choose Pareto survivors, ask a mutator for replacements, repeat until convergence or budget. Its held-out gate treats "better prompt" as honest only when quality lift survives paired comparison and cost stays within budget.
+
+That means the stack split is:
+
+```text
+GEPA/MIPRO/Ax/DSPy:
+  proposal and search over prompt or LM-program surfaces
+
+agent-runtime:
+  execution semantics, topology, tools, loops, surfaces, trace emission
+
+agent-eval:
+  scoring, trace analysis, causal attribution, gates, promotion evidence
+
+meta-harness:
+  architecture-level search over the system that runs and evaluates agents
+```
+
+This composition keeps each layer honest. Prompt optimizers mutate text. Runtime exposes real action and topology. Eval decides promotion under controlled comparisons. Meta-harness touches architecture only when the lower layers plateau or the traces show the wrong surface is being optimized.
+
+## The Evaluation Protocol
+
+A serious prompt optimization run should leave an audit trail strong enough for another engineer to reproduce the claim or reject it.
+
+Minimum protocol:
+
+```text
+1. Freeze model, runtime, toolset, schema, and evaluator.
+2. Split examples into search, validation, and holdout.
+3. Register baseline prompt/config hash.
+4. Generate candidates with stable ids and rationales.
+5. Run paired comparisons on identical scenario/seed cells.
+6. Preserve full traces, not only final scores.
+7. Reject candidates that violate schema or safety invariants.
+8. Promote only on held-out lift, cost budget, and regression checks.
+```
+
+For stochastic agents, paired deltas are the basic unit:
+
+```text
+delta_i = score_i(candidate) - score_i(baseline)
+```
+
+Promotion should look more like:
+
+```text
+promote(candidate) if:
+  LCB_95(median(delta_i on holdout)) > epsilon
+  and median_cost(candidate) <= cost_ceiling
+  and schema(candidate) == schema(baseline)
+  and deterministic_failures(candidate) == 0
+  and safety_regressions(candidate) == 0
+```
+
+The exact statistic can vary. Bootstrap confidence intervals, Wilcoxon signed-rank tests, permutation tests, Bayesian posteriors, and repeated-run power analysis all have a place. The invariant is that the candidate must beat the baseline under a comparison that blocks confounders.
+
+For multi-agent systems, add factorial attribution:
+
+```text
+cells = model x prompt x topology x scenario x seed
+```
+
+If the candidate wins, you want to know why. Was the lift from prompt wording, model choice, topology, scenario mix, or an interaction? `agent-eval` has a local causal attribution primitive for exactly this style of factorial decomposition. The point is not academic neatness. It prevents the team from shipping a prompt change while the actual effect came from a model swap or runtime setting.
+
+## Failure Modes
+
+Prompt optimizers fail in predictable ways.
+
+They overfit benchmark phrasing. They learn judge preferences. They inflate verbosity because the judge rewards coverage. They smuggle holdout facts into demos. They break output schemas. They add brittle instructions that transfer poorly across models. They optimize away uncertainty language. They increase token cost. They conflict with system policy. They learn from contaminated traces. They improve a narrow eval while degrading the real workflow.
+
+The most dangerous failure is surface misattribution:
+
+```text
+observed failure: agent did not verify output
+wrong fix: add "always verify" to prompt
+right diagnosis: runtime stops after first draft, verifier tool is absent, or eval ignores missing verification
+```
+
+The text fix may help a little. It is still optimizing the wrong factor.
+
+Another common failure is evaluator coupling:
+
+```text
+candidate prompt -> answer phrasing closer to judge rubric -> higher score
+candidate prompt -> no real increase in task success
+```
+
+This is why high-stakes surfaces need multiple evaluators: deterministic checks where possible, calibrated LLM judges where needed, human labels for anchor sets, and downstream outcome correlation when production data exists.
+
+Prompt optimization is not unsafe because text is weak. It is unsafe when text is the only thing being measured.
+
+## A Working Rule
+
+Use prompt or LM-program optimization when the traces show a representational failure:
+
+- The instruction is ambiguous.
+- The model misreads field semantics.
+- The demo set is unrepresentative.
+- The output format is unstable.
+- The tool description causes wrong arguments.
+- The judge rubric is under-specified.
+- The planner forgets a required check that is available in the runtime.
+
+Do not use prompt optimization as the primary fix when the traces show a capability or topology failure:
+
+- The tool does not exist.
+- The runtime cannot dispatch parallel work.
+- Memory is missing, stale, or wrongly scoped.
+- Retrieval cannot reach the needed source.
+- The model cannot solve the task under the budget.
+- The evaluator rewards the wrong behavior.
+- The harness hides errors.
+- The loop stops before the required actions can occur.
+
+Robust agent stacks do not pick one optimizer and call it the answer. They route failures to the layer with causal control:
+
+```text
+wording failure -> prompt optimizer
+procedure failure -> skill optimizer
+tool-doc failure -> tool-surface optimizer
+memory failure -> knowledge or retrieval update
+coordination failure -> runtime/topology search
+evaluator failure -> harness and judge repair
+model capability failure -> model selection, fine-tuning, or post-training
+```
+
+That is the core answer to "are they doing the same thing?"
+
+They share the same skeleton: propose, run, score, compare, mutate, promote.
+
+They do not optimize the same surface.
+
+Prompt optimization is one coordinate in the larger search space. It is powerful because language is now both a control surface and a feedback channel. It is limited because real agents are not made of language alone. Strong systems use GEPA, MIPRO, DSPy, AxLLM, and TextGrad-style methods where text has leverage, then hand off to runtime, eval, skill, memory, code, or model optimization when traces prove the bottleneck lives somewhere else.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning](https://arxiv.org/abs/2507.19457), 2025.
+- [DSPy GEPA optimization docs](https://dspy.ai/getting-started/gepa-optimization/), checked June 5, 2026.
+- [DSPy MIPROv2 API docs](https://dspy.ai/api/optimizers/MIPROv2/), checked June 5, 2026.
+- [Optimizing Instructions and Demonstrations for Multi-Stage Language Model Programs](https://arxiv.org/abs/2406.11695), MIPRO, EMNLP 2024.
+- [AxLLM optimization guide](https://axllm.dev/optimize/), checked June 5, 2026.
+- [TextGrad: Automatic Differentiation via Text](https://arxiv.org/abs/2406.07496), 2024.
+- [Large Language Models as Optimizers](https://arxiv.org/abs/2309.03409), OPRO, ICLR 2024.
+- [Large Language Models Are Human-Level Prompt Engineers](https://arxiv.org/abs/2211.01910), APE, 2022.
+- [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime), checked June 5, 2026.
+- [Tangle agent-eval repository](https://github.com/tangle-network/agent-eval), checked June 5, 2026.

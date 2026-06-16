@@ -1,0 +1,402 @@
+---
+title: 'Topology Is The Missing Action Space'
+slug: self-improving-stack-agent-runtime-topology
+summary: >-
+  Why multi-agent self-improvement needs explicit runtime primitives for fanout, refine, select, parallelism, supervision, budgets, and replay.
+date: '2026-06-05'
+author: Drew Stone
+tags: ['agents', 'runtime', 'systems', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 11
+---
+
+"Parallelize the work" is not a style preference.
+
+For a human operator talking to a coding agent, it is a request for a different execution graph: spawn independent executions, cap concurrency, isolate state, collect traces, score results, select or merge outputs, cancel losers, and account for cost. If the runtime cannot express those moves, a prompt can only ask the model to simulate the shape.
+
+This is the missing action space in many agent systems.
+
+Prompt optimization tunes text. Skill optimization trains durable procedure. Runtime topology optimization changes what can actually happen during execution.
+
+## What Topology Means
+
+An agent runtime topology is the executable shape of the work.
+
+It is not the persona. It is not the supervisor prompt. It is not the model's private chain of thought. It is the control structure that decides which agent runs, with which tools, in what order, under what budget, with what state isolation, and with what termination rule.
+
+A minimal topology has:
+
+```text
+nodes = agents, tools, validators, selectors, human gates
+edges = sequence, fanout, handoff, retry, interrupt, merge
+state = trace, memory, artifacts, budgets, run handles
+policy = planning, selection, cancellation, promotion, replay
+```
+
+The runtime action space is the set of moves the system can execute:
+
+```text
+A_runtime = {
+  call_tool,
+  call_agent,
+  delegate,
+  fork,
+  parallel,
+  refine,
+  select,
+  merge,
+  interrupt,
+  abort,
+  checkpoint,
+  replay
+}
+```
+
+If `parallel` is not in `A_runtime`, no optimized prompt can make true parallelism appear. If `checkpoint` and `replay` are absent, a long-running agent has no durable execution boundary. If `select` is only an LLM preference expressed in prose, the system has no enforceable winner rule.
+
+The deep question is:
+
+```text
+Which topology moves are first-class runtime actions, and which are merely instructions?
+```
+
+That one distinction determines whether multi-agent self-improvement is engineering or theater.
+
+## The Optimization Problem
+
+Let:
+
+```text
+g = runtime topology
+pi = runtime policy over moves in A_runtime
+m = model/backend set
+p = prompts and role descriptions
+k = active skills
+u = tools and external affordances
+x = task from distribution D
+R = trajectory reward or eval score
+C = cost, latency, compute, human review, or risk
+```
+
+Runtime topology optimization estimates:
+
+```text
+J(g, pi | m, p, k, u) = E_{x ~ D}[R(run(g, pi, m, p, k, u, x))] - lambda * E[C(run(g, pi, m, p, k, u, x))]
+```
+
+Prompt and skill optimization usually keep `g` fixed. Topology optimization changes `g`, `pi`, or both.
+
+This is not gradient descent over a dense parameter tensor. It is discrete search over executable program structure: graph edges, worker counts, branch policies, selectors, validators, budget ledgers, replay boundaries, and promotion gates.
+
+This is a larger search space. It includes:
+
+- whether to solve sequentially or in parallel
+- how many workers to spawn
+- which worker profiles to use
+- whether to refine, vote, merge, or hand off
+- when to stop
+- what budget to enforce
+- which verifier is authoritative
+- whether failures retry, abort, or escalate
+- whether state is shared, forked, or isolated
+
+The objective is still the same skeleton: propose, run, score, compare, update, promote. The mutable surface is now the control program.
+
+## Why Persona Prompts Are Too Weak
+
+A supervisor prompt can say:
+
+```text
+Assign independent subtasks to specialist workers.
+Have them work in parallel.
+Merge their findings.
+Ask a verifier to check the final result.
+Stop when the verifier passes.
+```
+
+That text only has leverage if the runtime has matching actions.
+
+The prompt can choose among available tools. It cannot create an async task queue. It cannot isolate worktrees. It cannot enforce max concurrency. It cannot guarantee all worker traces are captured. It cannot make a verifier's decision final if the loop ignores that decision. It cannot resume after process death if the execution was never journaled.
+
+This is why `maxTurns`, `maxIterations`, `maxConcurrency`, timeout, and budget are not writing advice. They are part of the policy surface.
+
+`maxTurns = 0` is especially revealing. Depending on the harness, it can mean no autonomous continuation, unbounded continuation, or delegation to an outer driver that owns turn accounting. Those are three different systems. A prompt optimizer cannot infer the intended semantics unless the harness makes them explicit and the traces expose the result.
+
+The same logic applies to supervisors and coordinators. Personification can shape priors, tone, and local judgment. It does not grant authority. The runtime decides whether supervision is a real control point.
+
+## The Current Runtime Map
+
+As of June 5, 2026, the agent framework ecosystem is converging on the same idea: topology is moving out of prose and into runtime primitives.
+
+LangGraph describes itself as a low-level orchestration framework and runtime for long-running, stateful agents, with persistence, fault tolerance, streaming, interrupts, memory, subgraphs, human-in-the-loop, and tracing. Its core point is not a better prompt template. It is executable graph state.
+
+AutoGen AgentChat exposes teams and named multi-agent patterns: selector group chat, swarm, Magentic-One, and GraphFlow workflows over directed graphs of agents. Again, the interesting object is not the agent bio. It is the coordination pattern.
+
+OpenAI's Agents SDK documentation separates orchestration via LLM from orchestration via code. It names handoffs, agents as tools, evaluator loops, and parallel execution as distinct patterns. The docs make the tradeoff explicit: code-level orchestration is more deterministic and predictable in speed, cost, and performance.
+
+Temporal is not an agent framework, but it matters for the runtime conversation because it gives workflow systems durable primitives: workflows, activities, workers, child workflows, cancellation, timers, versioning, and message passing. Long-running agents need the same class of execution guarantees when outputs matter.
+
+No single framework settles the question. The shared signal is that serious systems are making execution shape explicit.
+
+## The Tangle Runtime Surface
+
+`@tangle-network/agent-runtime` belongs exactly at this layer.
+
+The inspected package surface exposes:
+
+- `runLoop`: topology-agnostic loop kernel over sandbox executions.
+- `Driver`: the object that owns topology through `plan()` and `decide()`.
+- `createRefineDriver`: single-task iterative refinement until validator pass or cap.
+- `createFanoutVoteDriver`: N parallel attempts, score valid outputs, pick winner or fail.
+- `AgentRunSpec`: profile plus task-to-prompt formatter for one runnable agent.
+- `OutputAdapter`: event stream to typed output.
+- `Validator`: output to score and pass/fail verdict.
+- MCP delegation tools: `delegate_code`, `delegate_research`, `delegation_status`, `delegation_history`, and `delegate_feedback`.
+
+The important split is in the type surface:
+
+```text
+kernel owns: iteration accounting, concurrency, aborts, cost, traces
+driver owns: topology
+validator owns: scoring
+output adapter owns: parsing
+agent spec owns: executable profile and prompt formatting
+```
+
+The decomposition matters. Swapping a `Driver` changes topology without changing the model, prompt, skill body, validator, or output parser. The execution graph becomes a replaceable runtime object rather than a paragraph inside a supervisor prompt.
+
+For `refine`, the driver emits one task per iteration until the validator accepts the output or a cap is reached:
+
+```text
+attempt -> validate -> if invalid, attempt again -> stop on pass or cap
+```
+
+For `fanout-vote`, the driver emits N attempts in the first iteration, lets the kernel run them in parallel subject to `maxConcurrency`, then selects the highest-scoring valid output:
+
+```text
+spawn N -> validate each -> select valid winner -> fail if none valid
+```
+
+The MCP delegation layer turns this topology into an agent-callable surface. `delegate_code` can launch specialist coder agents that produce validated patches, return immediately with a `taskId`, and let the caller poll for completion. With `variants > 1`, multiple coder harnesses attempt the task in parallel and the highest-scoring patch wins. `delegate_research` does the same shape for evidence-bearing research, with source diversity, citation density, recency, gap coverage, and namespace isolation in the scoring contract.
+
+That is executable topology. A prompt that says "parallelize" is not.
+
+## The Boundary Matters
+
+Some useful concepts are not present in the inspected local `agent-runtime` package surface:
+
+The useful conclusion is not "missing feature." It is a sharper map:
+
+```text
+shipped in the checked source:
+  runLoop, refine, fanout-vote, multi-harness coder/research delegation
+
+obvious next primitives:
+  dynamic driver, typed program DSL, supervisor scope, budget ledger, durable replay
+```
+
+This boundary is load-bearing. A substrate map is wrong if it treats unshipped names as APIs. If a runtime does not yet expose `Supervisor` or `Scope`, the concept can still be named as a target surface. It cannot be treated as a shipped API.
+
+The next layer would make recursive execution explicit:
+
+```text
+scope = {
+  budget_remaining,
+  depth_remaining,
+  allowed_tools,
+  allowed_agents,
+  trace_parent,
+  cancellation_token
+}
+
+spawn(scope, child_spec) -> child_scope
+```
+
+That is what a supervisor needs to be more than a persona. It needs a scoped ability to allocate work, conserve budget, observe child traces, merge results, and abort or retry branches.
+
+## Selector Versus Judge
+
+Topology creates a new failure mode: confusing the selector with the judge.
+
+A judge scores an output. A selector chooses the next branch, winner, or action. In simple systems they can be the same function. In serious agent systems they should be separated.
+
+A judge is epistemic. It estimates quality. A selector is executive. It spends budget, cancels branches, returns artifacts, and determines which trajectory becomes system behavior.
+
+```text
+judge(output, trace) -> score, dimensions, rationale
+selector(candidates, scores, policy) -> next branch or winner
+```
+
+Why separate them?
+
+Because selection is a runtime authority. It decides which branch continues, which worker wins, which patch is returned, which tool call is blocked, and when the system stops spending money. If an LLM judge gives a score, but the runtime selector ignores cost, safety, or deterministic failures, the topology is weak even if the judge is smart.
+
+This is why `agent-eval` belongs next to `agent-runtime`. Runtime decides what work actually ran. Eval decides whether the output, trace, and cost evidence are strong enough to promote the topology or its parameters.
+
+## Compute Matching
+
+Topology optimization has to control compute.
+
+If candidate A gets one worker and candidate B gets eight workers, B may win because it spent more, not because its topology is better. That can still be a valid product decision, but it is not a compute-matched comparison.
+
+A runtime topology benchmark should record:
+
+```text
+workers spawned
+iterations used
+wall-clock latency
+tokens in/out
+tool calls
+LLM calls
+failed branches
+cancelled branches
+human approvals
+cost_usd
+```
+
+Then promotion can distinguish:
+
+```text
+quality lift at same budget
+quality lift for higher budget
+latency reduction at same quality
+cost reduction at same quality
+risk reduction with acceptable quality loss
+```
+
+Without this ledger, topology search will usually rediscover "try more things" and call it intelligence.
+
+## Multi-Agent Optimization
+
+A multi-agent candidate is not one prompt. It is a structured object:
+
+```text
+s = {
+  topology,
+  role_prompts,
+  active_skills_by_role,
+  agent_profiles,
+  tool_policy,
+  memory_policy,
+  validator_stack,
+  selector_policy,
+  budget_policy
+}
+```
+
+If only `role_prompts` are mutable, GEPA can improve personas. If `active_skills_by_role` and `skill_bodies` are mutable, SkillOpt-style methods can improve durable procedure. If `topology` and `selector_policy` are mutable, the optimizer is now searching runtime architecture.
+
+This is the answer to the "can GEPA optimize the whole multi-agent workflow?" question. It can optimize text surfaces that influence the workflow. It searches topology only if topology is serialized as a candidate, executed by the runtime, observed in traces, and scored by an evaluator. Otherwise it can discover better instructions about coordination, not better coordination mechanisms.
+
+That expanded action space is powerful, but it raises the bar for evidence.
+
+The trace must show:
+
+- which branches were spawned
+- what each branch saw
+- which tools each branch used
+- which state was shared or isolated
+- which validator scored each output
+- why the selector picked the winner
+- which branches were cancelled
+- what budget was consumed
+- whether replay would produce the same control path
+
+Without that trace, you cannot tell whether the topology helped, whether one branch got lucky, or whether the selector quietly ignored the evidence.
+
+## Evaluation Protocol
+
+A serious runtime topology eval should treat topology changes as architecture changes.
+
+Minimum protocol:
+
+```text
+1. Freeze model, prompts, skills, tools, dataset, and evaluator where possible.
+2. Register baseline topology hash and candidate topology hash.
+3. Run paired scenario/seed comparisons.
+4. Record every branch, tool call, validator result, selector decision, and cost.
+5. Compare under at least one compute-matched budget.
+6. Run stress cases for timeouts, branch failure, cancellation, and partial results.
+7. Reject candidates that hide errors, exceed budget, lose traces, or skip gates.
+8. Promote only on held-out lift, cost/latency policy, and trace integrity.
+```
+
+Promotion can look like:
+
+```text
+promote(g_new) if:
+  LCB_95(median(score_new - score_base on holdout)) > epsilon
+  and median_cost_new <= cost_ceiling
+  and median_latency_new <= latency_ceiling
+  and trace_integrity == 1
+  and deterministic_failures == 0
+  and safety_regressions == 0
+```
+
+For topology, `trace_integrity` is not optional. A candidate that wins while losing branch traces, skipping validator spans, or hiding failed children is not a better runtime. It is an unobservable runtime.
+
+## Failure Modes
+
+Runtime topology fails in recognizable ways.
+
+It hides coordination in prose. It spawns workers without isolation. It lets branches clobber the same files. It votes with a weak judge. It retries the same failure shape. It spends more compute and calls that progress. It cancels useful branches too early. It never cancels losing branches. It loses traces. It lets a supervisor override deterministic failures. It treats human approval as final approval rather than a scoped interrupt. It has no replay semantics, so every bug is a rumor.
+
+The most common failure is fake fanout:
+
+```text
+prompt says: split the task among specialists
+runtime does: one model call with specialist names in text
+trace says: one branch
+```
+
+The fix is not a better coordinator prompt. The fix is an actual fanout primitive.
+
+Another failure is unpriced parallelism:
+
+```text
+candidate topology spawns 8 workers
+baseline topology spawns 1 worker
+candidate wins by 4 points
+candidate costs 12x more
+promotion report says "better"
+```
+
+That is not necessarily wrong. It is incomplete. The product decision depends on whether the gain is worth the compute, latency, and operational complexity.
+
+## A Working Rule
+
+Use prompt optimization when the failure is wording.
+
+Use skill optimization when the failure is recurring procedure.
+
+Use runtime topology optimization when the failure is execution shape:
+
+- The system needs parallel branches.
+- The system needs a verifier loop.
+- The system needs specialist delegation.
+- The system needs human interruption and resume.
+- The system needs state isolation.
+- The system needs branch cancellation.
+- The system needs compute-matched selection.
+- The system needs replayable traces.
+
+Do not hide these requirements in a persona.
+
+If "parallelize" matters, make it a runtime action. If "supervise" matters, give the supervisor authority over scoped branches and budgets. If "verify" matters, make the validator a gate. If "stop" matters, make termination a policy, not a vibe.
+
+The operational test is simple: if the desired improvement would change the system's sequence diagram, it belongs in topology. If it only changes how an existing node thinks or writes, it may belong in a prompt or skill.
+
+Topology is where agent systems stop being advice and become execution.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime), checked June 5, 2026.
+- [Tangle agent-runtime package](https://github.com/tangle-network/agent-runtime/blob/main/package.json), checked June 5, 2026.
+- Local `@tangle-network/agent-runtime` source audit: `runLoop`, `Driver`, `createRefineDriver`, `createFanoutVoteDriver`, MCP delegation tools, June 5, 2026.
+- [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview), checked June 5, 2026.
+- [AutoGen AgentChat docs](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/index.html), checked June 5, 2026.
+- [OpenAI Agents SDK orchestration docs](https://openai.github.io/openai-agents-python/multi_agent/), checked June 5, 2026.
+- [OpenAI Agents SDK handoffs docs](https://openai.github.io/openai-agents-python/handoffs/), checked June 5, 2026.
+- [Temporal TypeScript SDK developer guide](https://docs.temporal.io/develop/typescript), checked June 5, 2026.

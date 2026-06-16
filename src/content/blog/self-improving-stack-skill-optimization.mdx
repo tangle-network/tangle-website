@@ -1,0 +1,363 @@
+---
+title: 'Skills Are Trainable State'
+slug: self-improving-stack-skill-optimization
+summary: >-
+  How SkillOpt, Voyager-style skill libraries, and agent skills turn durable procedure into an optimization surface.
+date: '2026-05-28'
+author: Drew Stone
+tags: ['agents', 'skills', 'evals', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 3
+---
+
+A prompt steers an agent inside the current context.
+
+A skill records procedure the agent can reactivate in future contexts.
+
+Prompt optimization searches over text that steers a run. Skill optimization searches over external procedural state that survives across runs. It is closer to training a reusable policy artifact than improving one instruction block.
+
+SkillOpt is important because it operationalizes that distinction. It takes a natural-language skill document, treats it as the trainable state of a frozen agent, runs tasks, reflects on scored trajectories, proposes bounded edits, accepts only validation-improving updates, and exports a deployable `best_skill.md`.
+
+The model weights do not move. The agent's procedure does.
+
+## What Counts As A Skill?
+
+The term "skill" is overloaded, so the first move is to separate the artifact from adjacent control surfaces.
+
+A skill is a durable, reusable procedure that the agent can load, retrieve, or execute when a task matches some condition. It can be natural language, code, a bundle of instructions plus scripts, or an entry in an executable skill library.
+
+It is not identical to a prompt, memory, tool, or runtime.
+
+| Artifact | What it stores | How it affects behavior | Main risk |
+| --- | --- | --- | --- |
+| Prompt | in-context instruction | steers the current run | prompt overfit |
+| Memory | facts, preferences, past observations | changes what context is recalled | stale or poisoned state |
+| Tool | executable affordance | expands the action space | unsafe side effects |
+| Skill | reusable procedure | changes how the agent operates across tasks | persistent bad habits |
+| Runtime | loop, topology, budgets, dispatch | controls what actually executes | fake autonomy or hidden confounding |
+
+Claude Code skills make this practical: a `SKILL.md` file has frontmatter for discovery and markdown instructions for execution, optionally with supporting files and scripts. Anthropic's docs describe skills as dynamically loaded task procedures, with progressive disclosure so long instructions are loaded only when relevant. That is an operational distinction, not cosmetic packaging.
+
+The same idea shows up in research systems. Voyager builds an ever-growing library of executable code skills in Minecraft, retrieves them for new tasks, and composes them over time. Trace2Skill distills trajectory-local lessons into transferable skill directories. CoEvoSkills evolves multi-file skill packages with a co-evolving verifier. SkillOpt trains a compact natural-language skill document through rollouts, edits, and validation gates.
+
+The common theme:
+
+```text
+skill = persistent procedure + activation condition + operational scope
+```
+
+If the procedure does not persist, it is a prompt. If it persists but only stores observations, it is memory. If it can directly act on the world, it is a tool. If it controls the loop that invokes tools and agents, it is runtime.
+
+That middle layer is why skill optimization deserves its own post.
+
+## The Optimization Problem
+
+Let:
+
+```text
+k = skill artifact
+a = activation policy or retrieval policy for the skill
+m = model or backend
+h = harness and runtime
+p = ordinary prompt context
+x = task from distribution D
+R = task reward or eval score
+C = cost, latency, token load, or risk
+```
+
+Skill optimization estimates:
+
+```text
+J(k, a | m, h, p) = E_{x ~ D}[R(run(m, h, p, k, a, x))] - lambda * E[C(run(m, h, p, k, a, x))]
+```
+
+The conditional variables matter. If a skill is evaluated while the model, tools, runtime, evaluator, or prompt also change, the measured lift is not a clean skill effect. The correct cell is an agent profile:
+
+```text
+profile = hash(model, skills, prompt_version, tools, metadata)
+```
+
+That is exactly how `@tangle-network/agent-eval` treats profiles locally: skills are behavior-bearing fields in the profile hash. Two profiles with the same model but different active skills are different benchmark cells.
+
+The skill layer has two coupled optimization targets:
+
+```text
+skill quality: does the loaded procedure improve the task?
+activation quality: does the right skill load at the right time?
+```
+
+Most prompt optimizers focus on the first term and ignore the second. Skill systems cannot. A strong skill that never triggers is dead. A mediocre skill that triggers everywhere becomes global prompt pollution.
+
+## The Lineage
+
+Voyager is the canonical early demonstration of skill libraries as lifelong learning for agents. It did not fine-tune model weights. It used GPT-4 as a black-box model, explored Minecraft, wrote executable code skills, stored them in a library, retrieved them for later tasks, and improved programs using environment feedback and self-verification. The key idea was compounding: once a behavior becomes a reusable skill, future tasks can build on it instead of rediscovering it.
+
+Claude-style skills pushed the idea into everyday agent operation. A skill can package instructions, scripts, templates, examples, and reference material. It loads only when relevant. This makes skill state more modular than a giant always-on instruction file and more procedural than plain memory.
+
+Trace2Skill added another move: distill broad execution trajectories into reusable skill directories. Instead of asking a model to invent a skill from parametric knowledge, it induces operating procedures from failures, workarounds, and successful traces. That is closer to postmortem-to-procedure synthesis.
+
+CoEvoSkills focuses on complex multi-file skill packages. Its distinction is verification: a skill generator evolves the package while a surrogate verifier co-evolves to provide actionable feedback when ground-truth tests are unavailable.
+
+SkillOpt makes the optimizer abstraction explicit.
+
+## What SkillOpt Adds
+
+As of June 5, 2026, SkillOpt is one of the clearest attempts to make skill training look like an optimizer rather than loose self-revision.
+
+The loop is:
+
+```text
+current skill
+  -> rollout on scored tasks
+  -> reflect over successes and failures
+  -> propose bounded add/delete/replace edits
+  -> validate candidate skill
+  -> accept only if held-out selection improves
+  -> export best_skill.md
+```
+
+The target agent is frozen. A separate optimizer model proposes edits. The candidate update is bounded by a textual learning-rate budget, so the skill cannot be rewritten arbitrarily every epoch. Rejected edits are kept as negative evidence. A slow or meta update gives the optimizer longer-horizon memory without bloating deployment. The deployed artifact is the skill file.
+
+That matters for inference cost:
+
+```text
+training time: optimizer model + rollouts + gates
+deployment time: target model + final skill
+```
+
+SkillOpt's paper reports best or tied-best performance across 52 evaluated model, benchmark, and harness cells, covering six benchmarks, seven target models, and direct chat, Codex, and Claude Code execution harnesses. It also reports transfer of optimized skill artifacts across model scales, between Codex and Claude Code, and to a nearby benchmark without further optimization.
+
+The exact numbers will age. The durable system claim is:
+
+```text
+external procedure can be trained while the policy model stays fixed
+```
+
+That is a different layer from prompt optimization. Prompt search asks what text should steer this program. Skill optimization asks what reusable procedure the agent should inherit next time.
+
+## Why Skills Are Not Just Longer Prompts
+
+A skill has lifecycle.
+
+It can be discovered, loaded, versioned, disabled, shared, reviewed, evaluated, transferred, and revoked. It can carry examples and scripts. It can have activation metadata. It can be attached to a project, user, organization, plugin, benchmark profile, or agent role.
+
+A prompt usually disappears when the run ends.
+
+This lifecycle makes the objective different:
+
+```text
+prompt success = better behavior on the current eval distribution
+skill success = better behavior on future tasks where activation is justified
+```
+
+That future-facing property makes skills more powerful and more dangerous. A bad prompt can damage one generation. A bad skill can train the whole operator into a recurring failure mode.
+
+Skill optimization therefore needs tests that prompt optimization can sometimes skip:
+
+- Activation precision: does the skill load only when relevant?
+- Activation recall: does the skill load when needed?
+- Transfer: does it help across models, harnesses, and nearby task distributions?
+- Interference: does it degrade tasks outside its scope?
+- Conflict: does it contradict other active skills?
+- Staleness: does it encode old APIs, old regulations, or old project structure?
+- Security: does it expand tool use or data access in unsafe ways?
+
+If a skill system does not test these, it is not training durable state. It is accumulating unreviewed behavioral debt.
+
+## The Safety Problem Is Semantic
+
+Skills are operational text. They are not passive documentation.
+
+That is why the 2026 security work on `SKILL.md` supply-chain attacks is important. The attack surface is not only malicious code inside a skill package. Natural-language metadata and instructions can influence discovery, ranking, selection, loading, and governance. An adversarial skill can win retrieval, frame itself as safer or more relevant, and evade review through wording alone.
+
+This changes the promotion criteria for skill optimization.
+
+Prompt injection tests are not enough. A skill gate also needs:
+
+```text
+registry safety: should this skill be admitted?
+selection safety: when does the agent choose it?
+content safety: what procedure does it teach?
+tool safety: what capabilities does it exercise?
+interaction safety: what other skills does it conflict with?
+revocation safety: can we disable it and recover?
+```
+
+This is where skill optimization differs from skill generation. Generating a useful skill is only half the problem. Operating a skill ecosystem requires provenance, versioning, linting, evals, trust boundaries, and rollback.
+
+Ecosystem data points in the same direction. A 2026 data-driven analysis of 40,285 publicly listed skills found rapid publication bursts, redundancy, heavy concentration in software workflows, and safety risks around state-changing or system-level actions. A world with thousands of skills needs selection and governance, not only more skill files.
+
+## The Tangle Placement
+
+In the Tangle stack, skills belong in the behavior profile and in the improvement surface.
+
+`@tangle-network/agent-eval` already fingerprints skills inside `AgentProfile`. The profile hash includes model, active skills, prompt version, tools, and metadata. That means adding, removing, or changing a skill should create a new scorecard cell. This is the right eval primitive because a skill is behavior-bearing state.
+
+`@tangle-network/agent-eval` also has steering changes for `skill_add` and `skill_remove`. That makes skills an explicit intervention, not an untracked side effect.
+
+`@tangle-network/agent-runtime` declares mutable agent surfaces through `defineAgent`: prompts, tools, rubrics, knowledge, personas, runtime instructions, memory, RAG, and output schemas. Its local docs describe prompts, skills, and tools as levers the analyst loop can edit. The checked surface resolver routes findings to concrete files for prompts, tool docs, knowledge, memory, runtime instructions, and schema. A skill optimizer slots naturally beside that: propose skill edits or skill set changes, run the profile through eval, and promote only through the same held-out gate.
+
+The architectural split is:
+
+```text
+SkillOpt:
+  candidate generator for skill text
+
+agent-runtime:
+  where skills are declared, loaded, scoped, and paired with tools/runtime
+
+agent-eval:
+  profile hashing, scorecards, trace diagnosis, held-out gates, promotion evidence
+
+meta-harness:
+  decides when skill edits are insufficient and runtime architecture must change
+```
+
+This prevents a common mistake: treating a skill as capability creation. A skill can teach an agent to use a verifier. It cannot create the verifier tool. A skill can teach a coordinator to fan out work. It cannot create a concurrent dispatch primitive. A skill can teach a coding agent to preserve user changes. It cannot fix a runtime that runs destructive commands.
+
+Skills encode procedure. Runtime supplies affordance.
+
+## The Multi-Agent Version
+
+In a multi-agent system, skills become role-local operating procedures.
+
+A driver can have a skill for triage. A researcher can have a source-grounding skill. A coding worker can have a repository-orientation skill. A supervisor can have a dispute-resolution skill. A verifier can have a regression-analysis skill.
+
+That sounds like persona design, but it is more concrete. A persona says who the agent is in the task. A skill says what procedure it should execute when a class of situation appears.
+
+For multi-agent optimization, the candidate becomes:
+
+```text
+s = {
+  role_prompts,
+  active_skills_by_role,
+  skill_bodies,
+  tool_policy,
+  topology,
+  budget_policy
+}
+```
+
+If only `skill_bodies` are mutable, the optimizer can improve durable procedure. If `active_skills_by_role` is mutable, it can learn which roles need which procedures. If `topology` is mutable, it becomes runtime architecture search. These are different search spaces.
+
+This matters for the "driver and supervisor" problem. A SkillOpt-style loop can learn that the supervisor should require parallel evidence collection before accepting a plan. It cannot make parallel evidence collection happen unless the runtime exposes subagent dispatch, task queues, merge semantics, and a budget that allows the work.
+
+The correct question is:
+
+```text
+Is the failure caused by missing procedure, missing activation, missing affordance, or wrong topology?
+```
+
+Only the first two are skill optimization problems.
+
+## Evaluation Protocol
+
+A serious skill optimization protocol should treat a skill change like a behavior-bearing release.
+
+Minimum protocol:
+
+```text
+1. Freeze model, prompt version, tools, runtime, and evaluator.
+2. Register baseline agent profile hash.
+3. Split tasks into search, validation, holdout, and transfer sets.
+4. Run with and without the skill to estimate marginal effect.
+5. Track activation decisions as first-class events.
+6. Preserve full traces, not only task scores.
+7. Reject skills that violate tool, security, schema, or scope constraints.
+8. Promote only if held-out lift clears uncertainty and cost gates.
+9. Run interference tests outside the declared skill scope.
+10. Record version, provenance, rejected edits, and rollback path.
+```
+
+The core comparison is paired:
+
+```text
+delta_i = score_i(profile_with_skill) - score_i(profile_without_skill)
+```
+
+For activation:
+
+```text
+precision = relevant_loaded / loaded
+recall = relevant_loaded / relevant_tasks
+```
+
+For promotion:
+
+```text
+promote(k_new) if:
+  LCB_95(median(delta_i on holdout)) > epsilon
+  and activation_precision >= p_min
+  and activation_recall >= r_min
+  and interference_delta >= -eta
+  and security_regressions == 0
+  and median_cost <= cost_ceiling
+```
+
+A skill that improves its target task but triggers on unrelated work is not a clean win. A skill that improves a benchmark but requires a 3x token load every turn may not be deployable. A skill that improves one model while harming another may still be useful, but it needs model-specific scoping.
+
+## Failure Modes
+
+Skill systems fail differently from prompt systems.
+
+They fossilize bad habits. They preserve workarounds after the underlying bug is fixed. They over-trigger because their description is too broad. They under-trigger because their metadata is too narrow. They conflict with newer project rules. They hide risky tool use inside procedural language. They transfer poorly across harnesses. They bloat context. They become redundant with other skills. They teach a workaround for a missing runtime primitive instead of forcing the primitive to be built.
+
+The most important failure is procedural poisoning:
+
+```text
+one lucky success -> generalized rule -> repeated future failures
+```
+
+This is the same shape as overfitting, but more persistent. A prompt overfit tends to stay inside an experiment. A skill overfit becomes part of the operator.
+
+Another failure is activation gaming:
+
+```text
+skill description becomes broad -> skill loads often -> eval improves on benchmark -> unrelated tasks degrade
+```
+
+This is why the activation policy `a` belongs in the objective. Optimizing only the body `k` is incomplete.
+
+## A Working Rule
+
+Use skill optimization when traces show a recurring procedural failure:
+
+- The agent forgets the same verification step across tasks.
+- The agent repeatedly misuses a tool despite correct tool docs.
+- The agent needs a compact operating procedure for a domain.
+- The same postmortem lesson appears in many traces.
+- The procedure should transfer across sessions, models, or harnesses.
+- The fix should deploy without extra inference-time optimizer calls.
+
+Do not use skill optimization when the missing layer is not procedure:
+
+- The tool does not exist.
+- The runtime cannot express the required topology.
+- The evaluator is wrong.
+- The memory store contains stale facts.
+- The task needs new knowledge, not a new procedure.
+- The model cannot execute the procedure under the budget.
+- The skill would encode a temporary workaround that should be deleted after the real fix.
+
+Skill optimization is the right middle layer in the self-improving stack.
+
+Prompt optimization tunes immediate instruction. Skill optimization trains durable procedure. Runtime optimization changes the action graph. Harness optimization changes what gets measured and how candidates ship. Weight-space training changes the model itself.
+
+They share the same skeleton: propose, run, score, compare, update, promote.
+
+They do not train the same state.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [SkillOpt project page](https://microsoft.github.io/SkillOpt/), checked June 5, 2026.
+- [SkillOpt: Executive Strategy for Self-Evolving Agent Skills](https://arxiv.org/abs/2605.23904), revised May 25, 2026.
+- [Microsoft SkillOpt repository](https://github.com/microsoft/SkillOpt), checked June 5, 2026.
+- [Voyager: An Open-Ended Embodied Agent with Large Language Models](https://arxiv.org/abs/2305.16291), 2023.
+- [Trace2Skill: Distill Trajectory-Local Lessons into Transferable Agent Skills](https://arxiv.org/abs/2603.25158), revised June 4, 2026.
+- [CoEvoSkills: Self-Evolving Agent Skills via Co-Evolutionary Verification](https://arxiv.org/abs/2604.01687), 2026.
+- [Claude Code skills docs](https://code.claude.com/docs/en/skills), checked June 5, 2026.
+- [Anthropic help center: What are skills?](https://support.claude.com/en/articles/12512176-what-are-skills), checked June 5, 2026.
+- [Agent Skills: A Data-Driven Analysis of Claude Skills](https://arxiv.org/abs/2602.08004), 2026.
+- [Under the Hood of SKILL.md: Semantic Supply-chain Attacks on AI Agent Skill Registry](https://arxiv.org/abs/2605.11418), 2026.

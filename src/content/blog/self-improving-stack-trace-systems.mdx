@@ -1,0 +1,650 @@
+---
+title: 'Traces Are The Training Data'
+slug: self-improving-stack-trace-systems
+summary: >-
+  Why self-improving agents need full trajectories, tool spans, analyst findings, provenance, and replay instead of final scores alone.
+date: '2026-06-02'
+author: Drew Stone
+tags: ['agents', 'traces', 'evals', 'self-improvement']
+series: 'the-self-improving-stack'
+seriesOrder: 8
+---
+
+Scores tell you that something happened.
+
+Traces tell you what happened.
+
+That difference is the difference between tuning a system and optimizing an unidentified projection.
+
+A self-improving agent can only improve from the information it preserves. If the run record says "failed, score 0.42," the optimizer can only infer weak global pressure. If the trace says the planner chose the wrong tool, the tool call used a stale argument, the retrieval span returned irrelevant context, the judge penalized a missing artifact, and the retry loop repeated the same action three times, the optimizer has a causal surface.
+
+The trace is not decoration around the eval.
+
+The trace is the data.
+
+## The Information Loss Problem
+
+An agent run is a trajectory:
+
+```text
+tau = (x, s_0, a_1, o_1, s_1, ..., a_T, o_T, y)
+```
+
+where:
+
+```text
+x = task
+s_t = internal and external state
+a_t = action
+o_t = observation
+y = outcome
+```
+
+A final score from a fixed scorer is a projection:
+
+```text
+score = R(tau)
+```
+
+That projection is intentionally lossy. It collapses a long sequence of decisions, calls, costs, artifacts, and observations into one number.
+
+Optimization needs the lost variables.
+
+The crude information-theory version:
+
+```text
+I(tau; failure_cause) >= I(score; failure_cause)
+```
+
+When `score = R(tau)` and the scorer is fixed, the score is a deterministic projection of the trajectory. By the data processing inequality, that projection cannot contain more information about the failure cause than the trajectory itself. Usually it contains dramatically less.
+
+This does not mean every byte is equally useful. It means the system must preserve the variables that can explain responsible mechanism:
+
+```text
+which model answered
+which prompt was used
+which branch ran
+which tool was called
+which arguments were passed
+which observations came back
+which artifact changed
+which verifier judged it
+which budget was spent
+which failure class was assigned
+```
+
+Without those variables, the optimizer is moving an unidentified intervention against an unidentified mechanism.
+
+## Trace Versus Summary
+
+A summary says:
+
+```text
+The agent tried to use the API, failed, and produced a partial answer.
+```
+
+A trace says:
+
+```text
+tool span:
+  toolName = github.search
+  args = { query: "HeldOutGate cost ceiling" }
+  result.count = 0
+
+llm span:
+  model = ...
+  promptSha = ...
+  output = "No such API exists"
+
+retrieval span:
+  hits = [...]
+
+judge span:
+  dimension = source_grounding
+  score = 0.2
+  targetSpanId = ...
+```
+
+The summary is readable. The trace is inspectable.
+
+Summaries are useful outputs of traces. They are not replacements for traces. Once the mechanism is compressed away, no later analyst can recover it.
+
+## What A Trace Must Capture
+
+A useful agent trace has several layers.
+
+**Run identity**
+
+```text
+runId
+scenarioId
+candidateId
+datasetVersion
+codeSha
+promptSha
+modelFingerprint
+seed
+envFingerprint
+parentRunId
+projectId
+chatId
+layer
+```
+
+This makes the run attributable. Without identity, the score cannot be tied to a candidate, commit, profile, prompt, model, or scenario.
+
+**Span tree**
+
+```text
+agent span
+llm span
+tool span
+retrieval span
+judge span
+sandbox span
+custom span
+```
+
+The span tree gives causality and nesting. A tool call can be under a planner branch. A judge can target a specific span. A sandbox failure can be tied to the code artifact it ran.
+
+**Events**
+
+```text
+budget_decrement
+budget_breach
+state_mutation
+policy_violation
+redaction_applied
+error
+custom
+```
+
+Events capture point-in-time facts that are not whole spans.
+
+**Budget ledger**
+
+```text
+tokens
+wallMs
+calls
+usd
+remaining
+breached
+```
+
+This lets the evaluator distinguish a smarter policy from a more expensive one.
+
+**Artifacts**
+
+```text
+diffs
+files
+logs
+screenshots
+test reports
+retrieved documents
+judge reports
+```
+
+Artifacts make traces material. A span saying "patched file" is weaker than an artifact hash and storage pointer for the patch.
+
+**Outcome**
+
+```text
+score
+pass
+failureClass
+notes
+```
+
+The outcome is still necessary. It is the label. It is just not enough by itself.
+
+## Trace Granularity
+
+The trace is detailed enough when it can answer a counterfactual:
+
+```text
+If this action, observation, tool result, verifier result, or budget event had changed,
+would the outcome have changed?
+```
+
+Too coarse:
+
+```text
+agent failed at research
+```
+
+This does not identify whether the failure was query formation, source choice, stale retrieval, missing credentials, synthesis, or judge mismatch.
+
+Too fine:
+
+```text
+every token, cursor movement, and private secret copied into a permanent record
+```
+
+This increases cost and risk without necessarily improving diagnosis.
+
+The target is sufficient structure:
+
+```text
+enough fields to localize the responsible mechanism
+enough ids to join evidence across run record, trace, artifact, scorecard, and finding
+enough redaction to preserve privacy and auditability
+```
+
+## Raw Provider Capture
+
+Structured LLM spans record intent.
+
+Raw provider capture records what actually went over the wire.
+
+That distinction matters. A proxy can report a different model name than the model that answered. A streaming parser can drop a field. Token usage can be missing. A retry can produce the final answer while the span only shows the last attempt. A judge can run on stale output.
+
+So the trace system needs both:
+
+```text
+LlmSpan:
+  model
+  messages
+  output
+  token usage
+  cost
+
+RawProviderEvent:
+  request body
+  response body
+  endpoint
+  baseUrl
+  provider
+  model
+  attemptIndex
+  statusCode
+  durationMs
+  redactedFields
+```
+
+The raw event is not for dashboards. It is for forensics, replay, and audit.
+
+The rule:
+
+```text
+Every LLM span that affects a score needs matching raw request evidence.
+```
+
+If the structured span exists but the raw provider event is missing, the run is not launch-grade evidence.
+
+## Replay
+
+Raw capture turns old runs into reusable experimental material.
+
+If a run has recorded request and response events, a replay cache can map:
+
+```text
+canonical_request -> captured_response
+```
+
+That enables:
+
+- judge replay without new model calls
+- rubric comparison on identical outputs
+- determinism audits
+- failure triage without spending fresh tokens
+- regression analysis across new evaluators
+
+Replay is especially important for judge calibration. If two judges score different fresh samples, disagreement may be sampling noise. If two judges score the same replayed outputs, disagreement is evaluator behavior.
+
+The replay miss policy matters:
+
+```text
+throw
+fallback_to_network
+fail_closed
+```
+
+For determinism audits and promotion gates, fail closed. A silent network fallback turns replay into a new experiment.
+
+## Trace Integrity
+
+Trace capture is not binary. It can fail partially.
+
+The integrity check is:
+
+```text
+run exists
+llm span count >= minimum
+tool span count >= minimum, when tools are expected
+judge span count >= minimum, when judges are expected
+raw provider events exist
+raw provider events cover llm spans
+outcome exists
+```
+
+In compact form:
+
+```text
+trace_integrity(tau) =
+  run_present
+  and expected_spans_present
+  and raw_coverage_ok
+  and outcome_present
+```
+
+Promotion gates treat missing trace evidence as missing evidence, not as a neutral value.
+
+The highest-cost failure is an orphan LLM span:
+
+```text
+structured llm span exists
+raw request is missing
+```
+
+That usually means capture was wired to the wrong sink, the call bypassed the instrumented client, or the route changed under the harness.
+
+## Backend Integrity
+
+Trace integrity asks whether the run was captured.
+
+Backend integrity asks whether the backend was real.
+
+The minimal signal:
+
+```text
+stub_record = tokenUsage.input == 0 and tokenUsage.output == 0
+```
+
+Then:
+
+```text
+all stub records -> reject
+mixed real and stub records -> quarantine or reject in CI
+real tokens with zero cost -> cost ledger bug
+```
+
+This is not a small bookkeeping issue. If a campaign runs against stubs, every downstream statistic is corrupted: scorecard deltas, held-out gates, analyst findings, and optimizer decisions.
+
+The right interpretation of a stub campaign is:
+
+```text
+We did not evaluate the agent.
+```
+
+not:
+
+```text
+The agent failed every task.
+```
+
+## Analyst Findings
+
+The trace is raw material. Analysts turn it into structured diagnosis.
+
+A useful finding has:
+
+```text
+finding_id
+analyst_id
+severity
+area
+claim
+rationale
+evidence_refs
+recommended_action
+validation_plan
+confidence
+subject
+```
+
+The `evidence_refs` field is the key. A finding without a span, event, artifact, metric, or prior finding reference is an unsupported assertion.
+
+The analyst layer supports multiple lenses:
+
+```text
+failure-mode
+knowledge-gap
+knowledge-poisoning
+improvement
+```
+
+Those lenses answer different questions:
+
+- What failed?
+- What knowledge was missing?
+- What knowledge was wrong or harmful?
+- What change is worth testing next?
+
+That is how traces become optimizer input.
+
+```text
+tau -> findings -> candidate mutation -> eval -> gate
+```
+
+The output is not "a summary of the run." The output is a set of attributed hypotheses with validation plans.
+
+## The Leakage Firewall
+
+Traces can create hidden oracles.
+
+The system has to separate runtime observations from evaluation labels.
+
+Allowed at runtime:
+
+```text
+tool outputs
+compiler errors
+test failures available to the product
+retrieval results
+user feedback
+budget remaining
+branch status
+```
+
+Forbidden as runtime steering signals:
+
+```text
+holdout labels
+private judge scores
+answer keys
+post-hoc evaluator rationales
+promotion decisions
+human review notes unavailable in production
+```
+
+The rule:
+
+```text
+If the production system cannot observe it, the runtime policy cannot use it.
+```
+
+The optimizer can train from eval traces after the run. The runtime cannot peek at the gate during the run.
+
+This matters for GEPA-style prompt optimization, skill optimization, and topology search. They may use trace-derived feedback to propose candidates. They may not smuggle holdout answers into the candidate.
+
+## Privacy And Redaction
+
+Traces are powerful because they are detailed.
+
+That also makes them dangerous.
+
+A trace can contain credentials, user data, private documents, file paths, source code, prompts, screenshots, and integration responses.
+
+The trace system needs two simultaneous properties:
+
+```text
+enough detail for causality
+enough redaction for safety
+```
+
+Redaction has to happen at capture time for obvious secrets:
+
+```text
+Authorization
+X-Api-Key
+Cookie
+password
+secret
+token
+access_token
+refresh_token
+```
+
+But redaction is not just deletion. It records what was removed:
+
+```text
+redactedFields = [...]
+```
+
+That lets a reviewer distinguish "the tool never sent auth" from "auth existed but was redacted."
+
+Over-redaction destroys causality. Under-redaction leaks data. The practical compromise is typed redaction plus artifact-level access control.
+
+## Where OpenTelemetry Fits
+
+OpenTelemetry is the right outer shape for distributed traces.
+
+As of June 6, 2026, the OpenTelemetry generative AI semantic conventions are marked Development and include GenAI model spans, agent spans, events, metrics, exceptions, OpenAI conventions, Anthropic conventions, and MCP conventions.
+
+That is useful common infrastructure. It gives agent traces a path into existing collectors, dashboards, retention policies, and incident tooling.
+
+But agent self-improvement needs more than generic spans. It needs first-class concepts that ordinary service traces do not enforce:
+
+```text
+candidate id
+scenario id
+split tag
+prompt hash
+config hash
+failure class
+judge verdict
+artifact hash
+budget ledger
+profile cell
+raw provider event
+promotion decision
+analyst finding
+```
+
+The right design is not "OTel or agent schema." It is:
+
+```text
+OTel-compatible transport
+agent-specific schema
+promotion-grade integrity checks
+```
+
+## Where Tangle Fits
+
+Local package audit on June 6, 2026:
+
+```text
+@tangle-network/agent-eval@0.34.1
+@tangle-network/agent-runtime@0.26.0
+```
+
+`agent-eval` provides the trace and analysis layer:
+
+- `TraceSchema v1`: `Run`, `Span`, `TraceEvent`, `BudgetLedgerEntry`, `Artifact`, and failure taxonomy.
+- `TraceEmitter`: run lifecycle, hierarchical span helpers, run-complete hooks.
+- `RawProviderSink`: request, response, and error capture with redaction and retry attempt indexes.
+- `assertRunCaptured`: span, raw event, raw coverage, and outcome integrity.
+- `ReplayCache` and `createReplayFetch`: replay captured provider calls.
+- `RunRecord`: promotion-grade analysis row with model snapshot, prompt hash, config hash, commit, cost, token usage, split tag, outcome, and optional `AgentProfileCell`.
+- `InMemoryTraceStore` and `FileSystemTraceStore`: in-process and append-only trace persistence.
+- `AnalystRegistry`: runs isolated analysts over trace stores, run records, artifacts, judge inputs, or custom inputs.
+- `AnalystFinding`: content-addressed findings with evidence references and validation plans.
+- `OtlpFileTraceStore`: production trace consumption path.
+
+`agent-runtime` provides execution traces:
+
+- `runLoop`: emits topology events for loop start, iteration start, iteration dispatch, iteration end, decisions, and loop end.
+- `LoopTraceEvent`: records driver, agent run names, task hashes, iteration placement, history length, winner, cost, duration, and iteration count.
+- `createRefineDriver` and `createFanoutVoteDriver`: create different trace shapes for sequential and parallel compute.
+- conversation journals: preserve multi-turn runs, halt reasons, cost caps, turn order, deterministic turn ids, and resumability.
+- OTLP exporter: ships loop trace events to an OpenTelemetry collector without adding a full SDK dependency.
+
+This split matters:
+
+```text
+runtime emits behavior
+eval preserves and analyzes behavior
+gates decide whether behavior can ship
+```
+
+## Failure Modes
+
+**Score-only learning**
+
+The optimizer sees a scalar and no mechanism.
+
+**Summary collapse**
+
+An LLM summary replaces the span tree, tool arguments, artifacts, and raw events.
+
+**Orphan spans**
+
+Structured spans exist without raw provider evidence.
+
+**Backend blindness**
+
+The campaign ran against stubs or partial backend failure.
+
+**Trace amnesia**
+
+The final answer is captured, but failed branches, retries, and rejected candidates are missing.
+
+**Judge leakage**
+
+Private evaluator labels or rationales leak into runtime policy.
+
+**Artifact loss**
+
+The trace references a patch, screenshot, log, or retrieved document that no longer exists.
+
+**Redaction erasure**
+
+Sensitive fields are removed without recording what was removed, destroying the ability to diagnose missing auth or missing tenant scope.
+
+**Unjoined identity**
+
+Run records, traces, scorecard cells, and analyst findings use different ids, so the evidence cannot be joined.
+
+## Working Rule
+
+Do not optimize from final scores alone.
+
+Preserve the trajectory.
+
+An agent trace must answer:
+
+```text
+Who ran?
+Against which scenario?
+With which model and prompt?
+Through which topology?
+Which actions were taken?
+Which observations came back?
+Which artifacts changed?
+Which verifier judged them?
+What did it cost?
+What failed?
+Which evidence supports that diagnosis?
+Can the run be replayed?
+Can the gate trust the capture?
+```
+
+If it cannot answer those questions, it is not training data for a self-improving agent. It is an anecdote about a run.
+
+The trace is where agent behavior becomes learnable.
+
+## Source Trail
+
+Source freshness checked on 2026-06-06.
+
+- [ReAct: Synergizing Reasoning and Acting in Language Models](https://arxiv.org/abs/2210.03629), checked June 6, 2026.
+- [Reflexion: Language Agents with Verbal Reinforcement Learning](https://arxiv.org/abs/2303.11366), checked June 6, 2026.
+- [CRITIC: Large Language Models Can Self-Correct with Tool-Interactive Critiquing](https://arxiv.org/abs/2305.11738), checked June 6, 2026.
+- [Can Large Language Models Really Improve by Self-critiquing Their Own Plans?](https://arxiv.org/abs/2310.08118), checked June 6, 2026.
+- [OpenTelemetry semantic conventions for generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), checked June 6, 2026.
+- [OpenTelemetry semantic conventions for generative client AI spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/), checked June 6, 2026.
+- [OpenTelemetry semantic conventions for GenAI agent and framework spans](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/), checked June 6, 2026.
+- Local `@tangle-network/agent-eval@0.34.1` source audit: trace schema, `TraceEmitter`, `RawProviderSink`, `assertRunCaptured`, replay, `RunRecord`, `AnalystRegistry`, `AnalystFinding`, `OtlpFileTraceStore`, June 6, 2026.
+- Local `@tangle-network/agent-runtime@0.26.0` source audit: `runLoop`, `LoopTraceEvent`, refine/fanout drivers, conversation journals, OTLP exporter, June 6, 2026.
