@@ -1,0 +1,98 @@
+---
+title: 'OpenAI-Compatible Routers for Agents: Model Discovery, Fallback, and Usage Attribution'
+slug: openai-compatible-routers-for-agents
+summary: >-
+  OpenAI-compatible routers help agents discover models, route calls, attribute usage, and change providers without rewriting every call site.
+date: '2026-06-20'
+author: Drew Stone
+tags:
+  - agents
+  - router
+  - infrastructure
+series: Agent Intent Infrastructure
+seriesOrder: 4
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'Model router diagram showing discovery, health checks, fallback, and usage attribution'
+---
+
+An OpenAI-compatible router lets agents keep one chat-completions shape while the platform handles model discovery, provider routing, usage attribution, health, and fallback policy. Tangle Router exposes OpenAI-compatible discovery through `/v1/models`, plus health, status, OpenAPI, and a machine-readable manifest. Use a router when the agent estate needs model choice, billing headers, fallback, or anonymous provider abstraction. Do not add a router if one fixed model and one fixed bill are enough.
+
+The point is not to hide every provider detail. The point is to keep agents from hardcoding model IDs, pricing assumptions, and fallback behavior throughout the codebase.
+
+## Safe Discovery
+
+```bash
+curl -fsS https://router.tangle.tools/.well-known/tangle-agent.json
+curl -fsS https://router.tangle.tools/openapi.json
+curl -fsS https://router.tangle.tools/api/health
+curl -fsS https://router.tangle.tools/v1/models
+```
+
+The Router manifest names `@tangle-network/tcloud`, `TANGLE_API_KEY`, health checks, status checks, and `/v1/models`. The OpenAPI file describes the public request shape. The model list is intentionally discoverable before an agent hardcodes a target.
+
+## When A Router Helps
+
+| Need | Router value |
+| --- | --- |
+| model discovery | list routeable models before integration |
+| fallback | move policy out of app code |
+| attribution | attach usage and billing metadata |
+| provider changes | keep OpenAI-compatible call sites stable |
+| agent services | route calls from agents, sandboxes, and paid services |
+
+This pairs with [AI agent sandbox](/blog/ai-agent-sandbox) because sandboxed agents still need model calls. It also pairs with [deploying paid AI agent services](/blog/deploy-paid-ai-agent-service), where auth, payment, and model routing meet at the service boundary.
+
+## Router Readiness Checklist
+
+Do not ship a router integration after only one successful chat call. Check the runtime contract:
+
+| Check | Why |
+| --- | --- |
+| `/v1/models` | avoid hardcoded unavailable model IDs |
+| health and status | distinguish provider outage from app bug |
+| usage metadata | attribute cost back to job, user, or agent |
+| supported parameters | avoid assuming tools or structured output exists |
+| fallback policy | know whether failure should retry, downgrade, or stop |
+
+Those checks matter more for agents than chat UIs because agents call models repeatedly inside longer workflows.
+
+## OpenAI Compatibility Is A Contract Shape
+
+OpenAI compatibility means the request and response pattern follows the common chat-completions interface. The source of truth is still the actual API contract. Compare Tangle Router's OpenAPI with the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat), [OpenRouter's model routing docs](https://openrouter.ai/docs), and the [OpenAPI specification](https://spec.openapis.org/oas/latest.html). Compatibility should reduce call-site churn; it should not remove health checks, auth checks, or cost controls.
+
+## What To Measure After Integration
+
+Router quality shows up over time, not in a single response:
+
+| Metric | Bad signal |
+| --- | --- |
+| model-not-found rate | agents are choosing stale model IDs |
+| fallback frequency | primary route is unhealthy or under-provisioned |
+| cost per task | model choice is drifting without attribution |
+| unsupported parameter errors | agent code assumes provider features blindly |
+| latency by route | fallback or provider mix is hurting user flow |
+
+The first dashboard can be simple. Log model ID, routeability, provider, token usage, cost, latency, and task ID. Without that, a router becomes another opaque dependency.
+
+## What This Does Not Prove
+
+A router does not make every model interchangeable. Tools, structured outputs, context windows, latency, refusals, and multimodal support vary. Agents should discover supported parameters and routeability before generating code that assumes a capability exists.
+
+## Start
+
+Call `/v1/models` before hardcoding model IDs. Then use the Router manifest and OpenAPI as the source for integration code. For agent-facing discovery patterns, read [how AI agents discover products](/blog/how-ai-agents-discover-products).
+
+## FAQ
+
+### What is an OpenAI-compatible router?
+
+It is an API layer that preserves a familiar OpenAI-style request shape while routing calls across model providers or model policies.
+
+### When should agents use a model router?
+
+Use a router when agents need model discovery, fallback, usage attribution, billing separation, or provider abstraction.
+
+### When should I avoid a router?
+
+Avoid a router when one known model, one account, and one simple call path are enough.
