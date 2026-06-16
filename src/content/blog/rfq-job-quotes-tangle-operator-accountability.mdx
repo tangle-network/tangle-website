@@ -1,0 +1,262 @@
+---
+title: 'RFQ Job Quotes on Tangle: Signed Commitments, Result Enforcement, and Operator Accountability'
+slug: rfq-job-quotes-tangle-operator-accountability
+summary: >-
+  How Tangle's RFQ system turns operator price quotes into cryptographic commitments, restricts result submission to quoted operators, and slashes non-delivery with a 3.5-day dispute window.
+description: "How Tangle's RFQ system turns operator job quotes into on-chain commitments: EIP-712 signing, a quoted-operator gate that hard-reverts unauthorized result submissions, per-operator quoted-price payment, and a 3.5-day slashing dispute window for non-delivery."
+date: '2026-03-28'
+author: Drew Stone
+tags:
+  - x402
+  - blueprint
+  - rfq
+  - operator-accountability
+  - smart-contracts
+series: x402 Production Runway
+seriesOrder: 11
+coverImage: /images/covers/rfq-job-quotes-tangle-operator-accountability.png
+heroImage: /images/covers/rfq-job-quotes-tangle-operator-accountability.png
+imageAlt: 'RFQ job quotes: cryptographic commitments, result enforcement, operator accountability'
+---
+
+Imagine hiring a contractor. They give you a written estimate: specific job, specific price, signed. You hand them a deposit. They don't show up. What do you do?
+
+In the physical world, you chase them in small claims court and hope for the best. In Tangle's request-for-quote system, you don't need to. When an operator quotes a job, they sign a cryptographic commitment using their private key. That signature is submitted on-chain alongside the job call, locking in their identity and their price before any compute runs. If the operator fails to deliver, their stake is on the line via a slashing mechanism with a 3.5-day dispute window.
+
+What makes this non-obvious: the accountability mechanism isn't just about price. It's about *who can submit a result*. Only operators who signed a quote for a specific job can submit results for that job. Any other operator calling `submitResult` gets a hard revert. This single design decision closes the free-rider problem and makes the quote a genuine commitment, not a suggestion.
+
+## The Accountability Chain at a Glance
+
+The full RFQ lifecycle in five steps:
+
+1. **Quote**: Operator signs `JobQuoteDetails` off-chain with EIP-712, binding their key to a specific price, job, and expiry.
+2. **On-chain commitment**: Caller submits signed quotes via `submitJobFromQuote()`. Signatures are verified, payment collected atomically, operators locked into `_jobQuotedOperators`.
+3. **Quoted-operator gate**: Any `submitResult` call checks `_jobQuotedOperators`; non-quoted addresses revert with `NotQuotedOperator`.
+4. **Payment at quoted price**: On job finalization, `_distributeRFQJobPayment` pays each operator their exact `_jobQuotedPrices` entry, not a proportional pool split.
+5. **Slashing for non-delivery**: Slash authority (service owner, blueprint owner, or `querySlashingOrigin()`) proposes a slash with IPFS evidence; 3.5-day dispute window; `executeSlash` reduces blueprint-scoped stake.
+
+This differs from keeper networks or simple payment escrow in a critical way: keeper networks let any registered keeper fill a task, so there's no pre-committed identity. Payment escrow ensures money is held but doesn't restrict who delivers the work. The quoted-operator gate combines both properties (pre-committed identity *and* result-submission restriction) so that the person who priced the job is the only person who can collect for it.
+
+## What Is an RFQ Flow?
+
+RFQ stands for request-for-quote. The flow is: a caller asks multiple operators for prices before committing to a job, operators respond with signed quotes off-chain, and the caller submits the winning quotes (one or more) on-chain along with the job. The protocol verifies each signature, checks expiry, and locks the quoted operators into the job call.
+
+This contrasts with Tangle's standard `submitJob` path, where any operator registered in the service can pick up and execute work. RFQ is for cases where the caller wants to know the price upfront and wants specific operators committed to delivery.
+
+## How Does an Operator Sign a Job Quote?
+
+An operator quote is a [`JobQuoteDetails`](https://github.com/tangle-network/tnt-core/blob/main/src/libraries/Types.sol) struct containing five fields:
+
+```solidity
+struct JobQuoteDetails {
+    uint64 serviceId;   // Which service instance
+    uint8 jobIndex;     // Which job type within the service
+    uint256 price;      // Operator's price in wei (native token)
+    uint64 timestamp;   // When the quote was generated
+    uint64 expiry;      // Hard expiry timestamp
+}
+```
+
+Price is denominated in wei. Operators accept multiple tokens across chains, and wei gives a denomination-neutral unit that the protocol can reason about without needing to know which token is in play.
+
+Operators sign this struct using EIP-712 structured data signing. EIP-712 is a standard for signing typed, structured data on Ethereum , it produces human-readable signing prompts in wallets and prevents signatures meant for one context (say, a token transfer) from being replayed in another (a job quote). The [`SignatureLib`](https://github.com/tangle-network/tnt-core/blob/main/src/libraries/SignatureLib.sol) defines the typehash:
+
+```solidity
+bytes32 internal constant JOB_QUOTE_TYPEHASH =
+    keccak256("JobQuoteDetails(uint64 serviceId,uint8 jobIndex,uint256 price,uint64 timestamp,uint64 expiry)");
+```
+
+In Rust, operators use the [`JobQuoteSigner`](https://github.com/tangle-network/blueprint/blob/main/crates/tangle-extra/src/job_quote.rs) from `tangle-extra`:
+
+```rust
+let domain = QuoteSigningDomain { chain_id: 1, verifying_contract: contract_addr };
+let mut signer = JobQuoteSigner::new(keypair, domain)?;
+
+let details = JobQuoteDetails {
+    service_id: 1,
+    job_index: 0,
+    price: U256::from(1_000_000_000_000_000_000u128), // 1 ETH in wei
+    timestamp: 1700000000,
+    expiry: 1700003600,  // +1 hour
+};
+
+let signed = signer.sign(&details)?;
+```
+
+One critical detail: the signing uses `sign_prehash_recoverable` on the raw EIP-712 keccak256 digest rather than `SignerMut::sign()`. This avoids a double-hash problem where SHA-256 wraps the keccak256, producing a digest that no standard EVM recovery function can verify. The domain separator uses `"TangleQuote"` v1.
+
+The resulting [`SignedJobQuote`](https://github.com/tangle-network/tnt-core/blob/main/src/libraries/Types.sol) bundles the details, the signature bytes, and the operator's address:
+
+```solidity
+struct SignedJobQuote {
+    JobQuoteDetails details;
+    bytes signature;
+    address operator;
+}
+```
+
+The caller collects signed quotes from one or more operators, then submits them on-chain.
+
+## How Does On-Chain Quote Validation Work?
+
+The entry point is [`submitJobFromQuote`](https://github.com/tangle-network/tnt-core/blob/main/src/core/JobsRFQ.sol) in `JobsRFQ.sol`:
+
+```solidity
+function submitJobFromQuote(
+    uint64 serviceId,
+    uint8 jobIndex,
+    bytes calldata inputs,
+    Types.SignedJobQuote[] calldata quotes
+) external payable whenNotPaused nonReentrant returns (uint64 callId)
+```
+
+The validation chain runs before any state is written. For the job itself: no empty quote array, service must be active and not expired, caller must be in `_permittedCallers[serviceId]`, job index must exist, inputs must pass schema validation.
+
+Then, per quote, the contract checks in order:
+
+1. `serviceId` in the quote matches the submitted `serviceId`
+2. `jobIndex` in the quote matches
+3. No duplicate operators across the quotes array
+4. Operator is active in this service
+5. Operator is globally active
+6. `price >= MINIMUM_PAYMENT_AMOUNT` (or zero, for free jobs)
+7. Signature verification via [`SignatureLib.verifyAndMarkJobQuoteUsed`](https://github.com/tangle-network/tnt-core/blob/main/src/libraries/SignatureLib.sol)
+
+That last step runs four sub-checks:
+
+```
+1. block.timestamp > quote.details.expiry           → QuoteExpired
+2. block.timestamp > quote.details.timestamp + maxQuoteAge  → QuoteTimestampTooOld
+3. usedQuotes[digest] is already set                → QuoteAlreadyUsed
+4. recovered signer != quote.operator               → InvalidQuoteSignature
+```
+
+The freshness check uses `MAX_QUOTE_AGE = 1 hours` from [`ProtocolConfig.sol`](https://github.com/tangle-network/tnt-core/blob/main/src/config/ProtocolConfig.sol), though deployments can override this. The effect: even if an operator sets a generous `expiry`, the protocol also enforces that the quote was freshly generated. A quote with a 24-hour `expiry` but a `timestamp` from 90 minutes ago fails at step 2.
+
+Replay protection is a simple mapping: `usedQuotes[digest] = true` after first use. The same signed quote cannot be submitted twice for two different jobs.
+
+If everything passes, payment is collected atomically via `PaymentLib.collectPayment()`. The quoted price for each operator is stored separately:
+
+```
+_jobQuotedPrices[serviceId][callId][operator] = quote.details.price
+_jobQuotedOperators[serviceId][callId].add(operator)
+```
+
+The job is recorded as `isRFQ: true`. That flag is what drives the result enforcement logic.
+
+## Why Can Only Quoted Operators Submit Results?
+
+The quoted-operator gate is the core accountability mechanism. When any operator calls `submitResult`, the protocol runs [`_validateResultSubmissionState`](https://github.com/tangle-network/tnt-core/blob/main/src/core/JobsSubmission.sol):
+
+```solidity
+if (job.isRFQ && !_jobQuotedOperators[serviceId][callId].contains(msg.sender)) {
+    revert Errors.NotQuotedOperator(serviceId, callId);
+}
+```
+
+Non-quoted operators get a hard revert. No fallback, no override.
+
+This check fires after verifying that the operator is active in the service and globally active, that the job isn't already completed, and that this operator hasn't already submitted a result. But those checks don't override the quoted-operator gate.
+
+Consider what happens without this restriction. An operator could quote cheaply to win a job, fail to run it, and then another unquoted operator could submit a result and collect payment. The failing operator faces no consequence. With the gate, non-delivery has real consequences: only the quoted operator can satisfy the job, and if they don't, slashing is the mechanism that accounts for the failure.
+
+Unlike keeper networks, where any registered keeper can fill a task and the question is just who gets there first, the RFQ model pre-commits identity. The operator who priced the job is the only one who can deliver it. That's what makes the price commitment meaningful.
+
+You can query the quoted operators and their prices via view functions:
+
+```solidity
+function getJobQuotedOperators(uint64 serviceId, uint64 callId)
+    external view returns (address[] memory operators)
+
+function getJobQuotedPrice(uint64 serviceId, uint64 callId, address operator)
+    external view returns (uint256 price)
+```
+
+## How Are Payments Distributed at Quoted Prices?
+
+When the job finalizes, `_maybeFinalizeJob` in [`JobsSubmission.sol`](https://github.com/tangle-network/tnt-core/blob/main/src/core/JobsSubmission.sol) branches based on the `isRFQ` flag:
+
+```solidity
+if (job.isRFQ) {
+    _distributeRFQJobPayment(serviceId, callId, job.payment);
+} else {
+    _distributeJobPayment(serviceId, job.payment);
+}
+```
+
+For RFQ jobs, each operator receives their exact quoted price from `_jobQuotedPrices[serviceId][callId][operator]`, not a proportional split of the total. The standard `_distributeJobPayment` splits the pot across all participating operators based on their weight; `_distributeRFQJobPayment` honors the per-operator commitment made at quote time. The function is declared `virtual`, so the actual distribution is handled in a separate payments facet.
+
+## What Happens When a Quoted Operator Fails to Deliver?
+
+Slashing handles non-delivery. The mechanism is intentionally not automatic. Automatic slashing on failure would be a serious attack surface, since any caller could claim non-delivery and trigger it. Instead, addresses with slash authority must observe the failure, collect evidence, and initiate the process.
+
+Slash authority extends to three classes: the service owner, the blueprint owner, and any address returned by `IBlueprintServiceManager.querySlashingOrigin()`. This matters for cases where accountability is delegated to a monitoring agent or DAO.
+
+The [Slashing.sol](https://github.com/tangle-network/tnt-core/blob/main/src/core/Slashing.sol) contract exposes `proposeSlash`:
+
+```solidity
+function proposeSlash(
+    uint64 serviceId,
+    address operator,
+    uint16 slashBps,    // basis points: 0-10000
+    bytes32 evidence    // IPFS CID or other reference
+) external returns (uint64 slashId)
+```
+
+`slashBps` is capped by `maxSlashBps` in the protocol config. Setting it above `BPS_DENOMINATOR` (10000) reverts. The `evidence` field is a `bytes32` reference, typically an IPFS CID , the contract stores it but does not validate the format.
+
+After proposal, there is a dispute window of `DISPUTE_WINDOW_ROUNDS = 14` rounds at `ROUND_DURATION_SECONDS = 21,600` seconds per round: exactly 3.5 days. During this window, the operator or a `SLASH_ADMIN_ROLE` address can call `disputeSlash(slashId, reason)` to contest the proposal. After the window closes, `executeSlash` reduces the operator's stake:
+
+```solidity
+function executeSlash(uint64 slashId) external nonReentrant returns (uint256 actualSlashed)
+```
+
+Slashing is scoped to the blueprint, not the operator's entire stake. The call goes to `_staking.slashForBlueprint(operator, blueprintId, serviceId, effectiveSlashBps, evidence)`, so only delegators exposed to this specific blueprint are affected. An operator running multiple services across multiple blueprints doesn't lose stake from unrelated delegators.
+
+Pending slashes also block delegator withdrawals. `_staking.incrementPendingSlash(operator)` is called on proposal and decremented on execute or cancel, preventing a failing operator from withdrawing stake before slashing resolves.
+
+## How Does RFQ Differ From x402 Pre-Pay?
+
+Both models let operators charge for compute, but they operate at different layers and with different trust models.
+
+x402 is HTTP-layer payment. A client hits an endpoint, receives a 402 response with pricing information, signs a stablecoin payment on-chain (often cross-chain via CCTP or similar), and retransmits the request with the payment proof in a header. The server verifies the payment cryptographically before touching the request. Settlement happens before compute runs. There's no job identity on Tangle's protocol layer, no operator identity commitment, and no slashing exposure. From the protocol's perspective, it's stateless: pay, get compute, done.
+
+RFQ is protocol-layer payment with operator identity commitment. The operator's key is their bond. They sign a specific price for a specific job, that signature is submitted on-chain, and they are cryptographically locked to deliver. Payment is collected at submission time (like x402), but result submission is gated to the quoted operator, and non-delivery creates slashing exposure. The accountability extends beyond the transaction itself.
+
+The practical difference: x402 is well-suited for stateless pay-per-call endpoints where any backend can serve the request and failure just means a new request. RFQ is suited for jobs where operator identity matters, where you want price certainty before commit, and where you need protocol-level accountability for failure.
+
+Both can coexist: an operator might expose an x402 endpoint for fast, anonymous HTTP access to lightweight inference, and use RFQ for compute-heavy jobs where the caller wants price commitment and delivery guarantees.
+
+## What the Audit Trail Looks Like
+
+Every step of the RFQ lifecycle is on-chain or auditable:
+
+- Quote signatures are submitted in calldata, permanently on-chain
+- `_jobQuotedOperators` and `_jobQuotedPrices` are queryable via view functions
+- Slash proposals emit events with `slashId`, `operator`, `slashBps`, and `evidence`
+- The `usedQuotes[digest]` mapping prevents any quote from being reused
+
+A caller can verify, after the fact, exactly which operators committed to a job, at what price, and whether they delivered.
+
+---
+
+## FAQ
+
+**Can a caller submit quotes from operators who are not registered in the service?**
+No. Per-quote validation checks `operatorIsActive(serviceId, operator)` before processing the signature. An unregistered or inactive operator's quote causes the entire `submitJobFromQuote` call to revert.
+
+**What if a quote has a generous expiry but was generated 90 minutes ago?**
+It fails the freshness check. `MAX_QUOTE_AGE = 1 hour` means the protocol enforces that `block.timestamp <= quote.details.timestamp + maxQuoteAge`. A quote with a 24-hour `expiry` but a `timestamp` from 90 minutes ago is rejected as too old, regardless of the `expiry` field.
+
+**Who can propose a slash for non-delivery, and on what grounds?**
+The service owner, the blueprint owner, and any address returned by `querySlashingOrigin()` can propose a slash. The contract does not restrict the grounds , any IPFS evidence reference is accepted. The 3.5-day dispute window is the operator's recourse against malicious or mistaken proposals.
+
+**Does slashing affect all of an operator's stake across Tangle?**
+No. Slashing is blueprint-scoped via `slashForBlueprint`. Only delegators who opted into this specific blueprint are exposed. An operator's stake in unrelated services is not affected.
+
+**What happens if a quoted operator submits a result after another quoted operator already completed the job?**
+The job completion check fires first in `_validateResultSubmissionState`. Once `job.completed = true`, subsequent result submissions from any operator, quoted or not, revert. The quoted-operator gate only applies to non-completed jobs.
+
+---
+
+**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)

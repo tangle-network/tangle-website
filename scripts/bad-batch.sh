@@ -13,12 +13,12 @@ BASE_URL="${1:-http://localhost:4321}"
 SECRETS=~/company/devops/secrets/agent-state.env
 
 if [[ ! -f "$SECRETS" ]]; then
-  echo "missing $SECRETS — can't decrypt TANGLE_ROUTER_USER_KEY" >&2
+  echo "missing $SECRETS — can't decrypt TANGLE_API_KEY" >&2
   exit 1
 fi
 
 if [[ "${TANGLE_USER:-0}" == "1" ]]; then
-  export OPENAI_API_KEY="$(dotenvx get TANGLE_ROUTER_USER_KEY -f "$SECRETS")"
+  export OPENAI_API_KEY="$(dotenvx get TANGLE_API_KEY -f "$SECRETS")"
   export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://router.tangle.tools/v1}"
 else
   export OPENAI_API_KEY="$(dotenvx get OPENAI_API_KEY -f "$SECRETS")"
@@ -31,7 +31,7 @@ export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://router.tangle.tools/v1}"
 MODEL="${BAD_MODEL:-gpt-5.5}"  # gpt-5.5 (released 2026-04-23) gives product-strategy critique, not CSS noise
 
 if [[ -z "$OPENAI_API_KEY" ]]; then
-  echo "TANGLE_ROUTER_USER_KEY decrypt returned empty" >&2
+  echo "TANGLE_API_KEY decrypt returned empty" >&2
   exit 1
 fi
 

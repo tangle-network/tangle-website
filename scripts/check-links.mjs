@@ -37,6 +37,17 @@ const SKIP_PATTERNS = [
   // been merged to ai.tangle.tools production yet. Drop this skip
   // once that PR lands so dead `/partner/<slug>` links fail CI.
   '^https?://ai\\.tangle\\.tools/partner/',
+  // Own-domain URLs are validated by the deployment pipeline. Local
+  // feature-branch builds may generate canonical URLs for pages/assets
+  // that do not exist on production until the branch is deployed.
+  '^https?://tangle\\.tools/',
+  '^https?://ai\\.tangle\\.tools/',
+  '^https?://docs\\.tangle\\.tools/',
+  // Private repo — anonymous fetch returns 404 by design.
+  '^https?://github\\.com/tangle-network/blueprint-agent(\\b|$|/)',
+  // Deferred sandbox product screenshot. The rendered fallback handles
+  // absence; keep this aligned with lychee.toml until the image lands.
+  'images/products/sandbox-app\\.png$',
 ];
 
 const checker = new LinkChecker();
