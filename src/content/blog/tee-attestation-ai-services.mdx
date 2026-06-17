@@ -2,8 +2,10 @@
 title: 'TEE Attestation for AI Services'
 slug: tee-attestation-ai-services
 summary: >-
-  TEE attestation can prove code identity, hardware state, and execution boundary for AI services, but it does not prove task quality.
-date: '2026-06-28'
+  TEE attestation can prove code identity and execution boundary for AI
+  services. It cannot prove task quality, model correctness, or payment
+  fairness by itself.
+date: '2026-06-17'
 author: Drew Stone
 tags:
   - agents
@@ -12,85 +14,131 @@ tags:
 series: Agent Intent Infrastructure
 seriesOrder: 12
 coverImage: /images/covers/agent-intent-infrastructure.svg
-heroImage: /images/covers/agent-intent-infrastructure.svg
 imageAlt: 'TEE attestation diagram separating code identity, execution boundary, payment checks, and result verification'
 ---
 
-TEE attestation for AI services proves properties of the execution boundary: what code was loaded, what hardware-backed environment is in use, and whether a verifier can bind a result to that environment. It does not prove the model chose the right action, the answer is correct, or the service deserves payment. In Tangle, attestation is one control in a larger trust model with Blueprint execution, x402 payment, operator health, traces, and result verification.
+TEE attestation is valuable when it is precise. It can tell a caller that expected code ran inside a hardware-backed execution boundary and that a verifier accepted the report. It cannot tell the caller that the model reasoned correctly, the answer is useful, or the paid service deserved the money.
 
-Precision matters here. "Trusted execution" is useful only when everyone knows what is being trusted.
+That distinction matters for AI services because the phrase "trusted execution" gets overloaded. Trusted where? Trusted to run what? Trusted by which verifier? Bound to which result? In Tangle, TEE attestation is one control inside a wider service model: Blueprint execution, operator health, x402 payment checks, traces, and result verification.
 
-## Proves / Does Not Prove
+## Quick Answer
 
-| Claim | TEE attestation can prove? |
+Use TEE attestation to prove execution properties: code identity, environment identity, measurement, verifier policy, and secret release boundary.
+
+Do not use TEE attestation as a proof of AI correctness. A hallucinating model can hallucinate inside a TEE. A bad task can run inside a TEE. A paid job can execute inside a TEE and still return a useless result.
+
+## What Attestation Can Prove
+
+| Claim | Attestation answer |
 | --- | --- |
-| code identity | yes, if measurement and verification are wired correctly |
-| hardware-backed execution boundary | yes, subject to platform guarantees |
-| secret handling boundary | partly, with correct key release policy |
-| model reasoning quality | no |
-| task result correctness | no |
-| payment fairness | no, needs payment and result verification |
+| expected code loaded | yes, if measurement is pinned |
+| hardware-backed boundary used | yes, subject to platform guarantees |
+| verifier accepted the report | yes, if verifier identity is known |
+| secrets released under policy | partly, if key release is bound to measurement |
+| output came from this run | only if result binding is implemented |
+| model answer is correct | no |
+| service should be paid | no, needs payment and result rules |
 
-Read Tangle's existing posts on [Trusted Execution on Tangle](/blog/trusted-execution-on-tangle), [How Tangle Verifies Work](/blog/how-tangle-verifies-work), and [Blueprint TEE x402 production gating](/blog/blueprint-tee-x402-production-gating) for the local architecture.
+The last three rows are where weak TEE posts usually blur the line. Attestation narrows where code ran. It does not grade what the code produced.
 
-## Where It Fits
+## Artifact Shape
 
-TEE attestation sits between deployment and verification:
+A useful attestation artifact should be boring and inspectable:
+
+```json
+{
+  "service": "blueprint-code-audit",
+  "blueprintId": "bp_123",
+  "operator": "0xOperator",
+  "measurement": "sha256:...",
+  "teePlatform": "sev-snp",
+  "verifier": "tangle-verifier-policy-v1",
+  "inputHash": "sha256:...",
+  "outputHash": "sha256:...",
+  "timestamp": "2026-06-17T10:00:00Z",
+  "traceId": "trace_789"
+}
+```
+
+If the output hash is missing, the attestation may prove only that code booted. If the verifier policy is missing, the caller does not know who accepted the report. If the input hash is missing, the artifact is detached from the task.
+
+## Where Tangle Fits
+
+Tangle's role is to keep attestation from becoming a floating PDF attached to a result. The service path should bind the report to the job:
+
+| Layer | What it contributes |
+| --- | --- |
+| Blueprint | job definition, runtime requirements, operator policy |
+| TEE | measured execution boundary |
+| x402 | payment challenge, proof, receipt |
+| operator health | whether the service is alive and accountable |
+| trace | what happened during the job |
+| result verification | whether the output is acceptable |
+
+For the local architecture, read [Trusted Execution on Tangle](/blog/trusted-execution-on-tangle), [How Tangle Verifies Work](/blog/how-tangle-verifies-work), and [Blueprint TEE x402 production gating](/blog/blueprint-tee-x402-production-gating).
+
+## Review Checklist
+
+Before trusting a TEE-backed AI service, ask:
+
+| Question | Bad answer |
+| --- | --- |
+| what measurement is expected? | "the enclave ran our code" |
+| who verifies the report? | "the platform handles it" |
+| how are secrets released? | "they are in env vars" |
+| how is output bound to attestation? | "the result came back after the report" |
+| what checks task quality? | "TEE proves it" |
+| what happens if verification fails? | "the user can retry" |
+
+The service should fail closed. If measurement, verifier policy, payment receipt, or result binding is missing, the caller should not treat the result as trusted.
+
+## Result Verification Is Separate
+
+For deterministic jobs, verification might be replay, checksum, signature validation, or on-chain proof. For AI jobs, verification is messier: eval suites, policy checks, human review, downstream tests, or acceptance criteria. That is not a weakness of TEE. It is a category boundary.
+
+```text
+TEE attestation answers: did expected code run in the expected boundary?
+Result verification answers: did the service produce an acceptable result?
+Payment verification answers: did the caller satisfy the price?
+```
+
+Production systems need all three when money or trust is involved.
+
+## External Reference Points
+
+The hardware and cloud categories are documented by platform providers: [Intel SGX](https://www.intel.com/content/www/us/en/products/docs/accelerator-engines/software-guard-extensions.html), [AMD SEV-SNP](https://www.amd.com/en/developer/sev.html), and Google Cloud [Confidential Computing](https://cloud.google.com/confidential-computing/docs). Those sources explain execution boundaries. They do not claim AI task quality.
+
+## What This Does Not Prove
+
+TEE attestation does not make an agent safe. It does not remove the need for sandbox policy, payment checks, operator monitoring, or result review. It reduces one class of uncertainty: what code ran where.
+
+The right test is whether the attestation artifact changes a decision. If a buyer cannot use it to accept, reject, replay, or escalate a result, the artifact is decoration.
+
+## Start
+
+Begin with discovery, then demand the binding points:
 
 ```bash
 curl -fsS https://agents.tangle.tools/.well-known/tangle-agent.json
 curl -fsS https://router.tangle.tools/.well-known/tangle-agent.json
 ```
 
-Those discovery calls do not attest code. They show where an agent can find service contracts. Actual attestation must bind a service identity, measured code, hardware report, verifier policy, and result path.
-
-## Attestation Review Checklist
-
-Before accepting a TEE claim, ask for the binding points:
-
-| Question | Why it matters |
-| --- | --- |
-| what code measurement is expected? | prevents "some enclave ran something" claims |
-| who verifies the report? | identifies the trust root |
-| when are secrets released? | separates boot trust from runtime policy |
-| how is the result tied to the run? | avoids detached attestation artifacts |
-| what checks task quality? | keeps runtime trust separate from correctness |
-
-That last question is the one buyers usually skip. TEE narrows where code ran; it does not grade what the code produced.
-
-## Pair It With Result Verification
-
-The production trust model should separate two proofs:
-
-| Proof | Question answered |
-| --- | --- |
-| attestation | did expected code run inside the expected boundary? |
-| result verification | did the service produce an acceptable result? |
-
-For deterministic jobs, result verification may be a replay, checksum, or on-chain check. For AI jobs, it may be an eval, human review, policy check, or downstream acceptance test. Conflating those two proofs is how "trusted execution" becomes marketing instead of engineering.
-
-## External Reference Points
-
-The underlying category is documented by hardware and cloud providers: [Intel SGX](https://www.intel.com/content/www/us/en/products/docs/accelerator-engines/software-guard-extensions.html), [AMD SEV-SNP](https://www.amd.com/en/developer/sev.html), and Google Cloud [Confidential Computing](https://cloud.google.com/confidential-computing/docs). Those sources describe execution boundaries, not agent task quality.
-
-## What This Does Not Prove
-
-Attestation does not prove the output is correct. A malicious or poorly specified task can run inside a trusted boundary. A model can hallucinate inside a trusted boundary. A paid job can execute in a TEE and still need result checks before settlement or reputation changes.
-
-## Start
-
-Use attestation as one control, not the whole trust model. Pair it with result verification, payment verification, operator health, and trace review before treating an AI service as production-grade.
+For a TEE-backed Blueprint, ask for the measurement, verifier policy, input hash, output hash, receipt, trace ID, and failure behavior before treating the service as production-grade.
 
 ## FAQ
 
 ### What does TEE attestation prove for AI services?
 
-It can prove code identity, hardware-backed execution state, and the execution boundary used by the service.
+It can prove code identity, hardware-backed execution state, verifier acceptance, and execution boundary when those fields are wired correctly.
 
 ### Does TEE attestation prove an AI result is correct?
 
-No. It proves execution properties, not task quality or reasoning correctness.
+No. It proves execution properties. Correctness still needs result verification, evals, acceptance tests, or human review depending on the workload.
 
 ### How should Tangle builders use attestation?
 
-Use it with Blueprint execution, x402 payment checks, operator health, traces, and result verification.
+Use it as one control in a Blueprint service path: bind it to payment receipt, job input, job output, operator health, trace ID, and result verification.
+
+### What makes an attestation artifact useful?
+
+It is useful when it includes measurement, verifier policy, input hash, output hash, operator identity, timestamp, and trace ID so a caller can make a trust decision.
