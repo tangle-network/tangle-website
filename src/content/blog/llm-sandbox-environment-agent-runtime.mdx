@@ -1,0 +1,129 @@
+---
+title: 'LLM Sandbox Environment For Agent Runs'
+slug: llm-sandbox-environment-agent-runtime
+summary: >-
+  A real LLM sandbox environment isolates tools, records side effects, survives reconnects, and gives reviewers enough evidence to approve or reject an agent run.
+date: '2026-06-17'
+author: Drew Stone
+tags:
+  - sandbox-sdk
+  - llm-agents
+  - agent-runtime
+series: Agent Runtime Infrastructure
+seriesOrder: 5
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'LLM sandbox environment showing tool calls, command output, file state, and session replay'
+---
+
+An LLM sandbox environment is where a model is allowed to act. That permission changes the risk profile. A chat response can be wrong and still harmless. A tool-using model can delete files, leak tokens, spam an API, or ship a broken patch. The sandbox has to separate "the model proposed a plan" from "the model ran code and changed state."
+
+Tangle Sandbox SDK is built for the second case: agents that execute commands, touch files, stream progress, and need reviewable traces.
+
+## The Boundary
+
+The sandbox boundary should answer five questions before the first tool call runs.
+
+| Question | Required answer |
+| --- | --- |
+| what can run? | images, packages, tools, and shell access are explicit |
+| what can leave? | network, credentials, files, and artifacts are scoped |
+| what is recorded? | prompts, commands, outputs, files, and errors are captured |
+| what survives? | sessions can resume and snapshots can preserve state |
+| who reviews? | the output is packaged for a human or automated gate |
+
+Transport security such as [TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446) protects connections. Runtime isolation such as [Firecracker](https://firecracker-microvm.github.io/) or container standards such as the [OCI runtime spec](https://github.com/opencontainers/runtime-spec) protect execution boundaries. The agent platform still needs to decide what the model may do.
+
+## Minimal Run Pattern
+
+An LLM sandbox environment should be easy to smoke-test:
+
+```bash
+curl -fsS https://sandbox.tangle.tools/health
+curl -fsS https://sandbox.tangle.tools/v1/public-templates
+npm install @tangle-network/sandbox
+```
+
+```ts
+import { Sandbox } from '@tangle-network/sandbox'
+
+const sandbox = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: 'https://sandbox.tangle.tools'
+})
+
+const box = await sandbox.create({ image: 'universal' })
+const test = await box.exec('git status --short && pnpm test')
+await box.delete()
+```
+
+The important part is not the command itself. It is that the command becomes evidence with a result, timestamp, and environment boundary.
+
+## Why Session Streams Matter
+
+LLM tasks are often longer than a request-response cycle. The browser closes. The model retries. The shell command keeps running. A useful sandbox keeps session state independent from the UI tab.
+
+| Event | What should happen |
+| --- | --- |
+| user refreshes | reconnect to the same session stream |
+| command hangs | timeout and record the partial output |
+| model edits files | diff stays tied to the session |
+| reviewer opens later | trace and final state are still available |
+
+That is why [AI Dev Container For Production Agents](/blog/ai-dev-container-production-agent-runtime) and [Secure Container For AI Agents](/blog/trusted-execution-on-tangle) are runtime topics, not only infrastructure topics.
+
+## Safe Defaults
+
+Start with narrow tools. Add capability only when the product needs it.
+
+| Capability | Default stance |
+| --- | --- |
+| shell | allowed, logged, time-bounded |
+| filesystem | isolated per session |
+| network | explicit and observable |
+| credentials | short-lived and scoped |
+| long tasks | streamed and resumable |
+| cleanup | automatic by lifecycle policy |
+
+The platform should fail closed: no silent secret sharing, no invisible shell commands, no forgotten sandboxes.
+
+## Rollout Sequence
+
+Treat sandbox rollout like production infrastructure.
+
+| Phase | Gate |
+| --- | --- |
+| local smoke | create, exec, stream, delete |
+| fixture repo | agent edits a disposable project |
+| internal repo | scoped token, tests, and review packet |
+| customer workflow | policy, monitoring, billing, and support path |
+
+Each phase should prove that the previous artifacts are still available. If the UI can reconnect but the trace is gone, the runtime is not ready. If the agent can edit files but the reviewer cannot inspect the diff and commands, the system is not ready for customer work.
+
+Keep the first customer workflow boring: one repo, one task type, one approval path, and one cleanup rule. Broader tool access can come after the evidence loop holds under real use.
+
+## What This Does Not Prove
+
+A sandbox does not make LLM output correct. It makes side effects bounded and visible. You still need tests, policy checks, code review, and product-specific acceptance criteria.
+
+## Decision Rule
+
+Use a managed LLM sandbox environment when the model can run commands, use credentials, or modify files. Use plain chat when the model is only drafting text.
+
+## FAQ
+
+### What is an LLM sandbox environment?
+
+It is an isolated runtime where an LLM-powered agent can execute tools, run commands, edit files, and preserve the evidence from those actions.
+
+### Why not run the agent directly on my server?
+
+Direct execution mixes model behavior with production state. A sandbox gives each run its own boundary, log, and cleanup path.
+
+### Does a sandbox prevent every security issue?
+
+No. It reduces blast radius and improves evidence. Security still depends on credential scope, network policy, review gates, and the application around the sandbox.
+
+### How does Tangle fit?
+
+Tangle Sandbox SDK provides the managed environment and session layer that agent products use to run code safely enough to review.
