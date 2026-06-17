@@ -1,0 +1,116 @@
+---
+title: 'AI Dev Container For Production Agents'
+slug: ai-dev-container-production-agent-runtime
+summary: >-
+  An AI dev container needs isolation, command execution, replayable sessions, trace export, and hard failure handling before agents touch real repositories.
+date: '2026-06-17'
+author: Drew Stone
+tags:
+  - sandbox-sdk
+  - agent-runtime
+  - ai-infrastructure
+series: Agent Runtime Infrastructure
+seriesOrder: 4
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'Agent runtime workspace showing isolated filesystem, shell execution, session stream, and trace evidence'
+---
+
+An AI dev container is the workspace where an agent can read files, run commands, edit code, and leave evidence behind. The search term sounds like a Docker problem. In production, it is a control problem: who created the environment, what tools can run, how long state survives, how streams resume, and what proof remains after a failed task. Tangle Sandbox SDK treats the dev container as runtime infrastructure for agents, not as a disposable shell.
+
+For the broader runtime model, read [AI Agent Sandbox](/blog/ai-agent-sandbox) and [Agent Runtime Environment](/blog/agent-runtime-environments).
+
+## What The Container Must Control
+
+| Requirement | Production question |
+| --- | --- |
+| isolation | can one agent run untrusted code without touching another tenant? |
+| filesystem | can the agent create, diff, snapshot, and inspect files? |
+| shell access | are commands captured with stdout, stderr, exit code, and timing? |
+| session stream | can a UI reconnect without losing the task history? |
+| trace evidence | can a reviewer see what the agent did before accepting a PR? |
+| cleanup | does the environment terminate when the work is over? |
+
+The isolation layer can use proven primitives such as [Firecracker microVMs](https://firecracker-microvm.github.io/), container runtime standards from the [OCI runtime spec](https://github.com/opencontainers/runtime-spec), and host hardening from the [Docker security model](https://docs.docker.com/engine/security/). The agent product still has to coordinate sessions, state, and evidence above those primitives.
+
+## Tangle Sandbox SDK Path
+
+The SDK path is intentionally small. Create a sandbox, run a command, inspect the result, and destroy the environment.
+
+```bash
+npm install @tangle-network/sandbox
+export TANGLE_API_KEY=sk-tan-...
+export SANDBOX_BASE_URL=https://sandbox.tangle.tools
+```
+
+```ts
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools'
+})
+
+const box = await client.create({ image: 'universal', name: 'agent-smoke' })
+const result = await box.exec('node --version && npm --version')
+console.log(result.stdout)
+await box.delete()
+```
+
+That is the smoke test. The real product work starts after that: task prompts, long-running commands, streamed logs, snapshots, retries, and review packets.
+
+## Evidence Before Autonomy
+
+Do not call something an agent runtime because it can run `npm test`. A production AI dev container should preserve enough evidence for a human or another agent to decide whether the output is safe to merge.
+
+| Artifact | Why it matters |
+| --- | --- |
+| command log | proves which commands ran and what they returned |
+| file diff | shows exactly what the agent changed |
+| session events | lets the UI reconnect and lets reviewers replay the work |
+| snapshot | makes the final state reproducible |
+| trace summary | turns a long session into inspectable decisions |
+
+Tangle's runtime stack connects this to [How AI Agents Discover Products](/blog/how-ai-agents-discover-products): an agent should be able to find the product, call the API, and produce inspectable output without a human hand-writing every step.
+
+## Acceptance Policy
+
+Before letting an agent work on a real repository, write the policy for a passing run.
+
+| Policy item | Example requirement |
+| --- | --- |
+| command budget | max duration and allowed commands |
+| network access | default route plus blocked destinations |
+| secret scope | temporary token with minimum permissions |
+| merge evidence | diff, tests, and session trace required |
+| cleanup | sandbox deletion or snapshot retention rule |
+
+The policy should live outside the prompt. A model can forget instructions. The runtime should enforce command timeouts, scoped credentials, cleanup, and artifact capture. That is the difference between a helpful dev container and an unsafe remote shell.
+
+## What This Does Not Prove
+
+An AI dev container does not prove the agent made a good change. It proves the agent worked inside a bounded environment and left evidence. Correctness still comes from tests, code review, policy checks, and product-specific acceptance gates.
+
+The right failure mode is boring and explicit: command failed, files changed, tests missing, review required.
+
+## Decision Rule
+
+Use a managed AI dev container when agents need to touch real code, secrets are scoped, session streams matter, and reviewers need a durable record. A bare container is enough for local experiments. A product-facing agent needs runtime evidence.
+
+## FAQ
+
+### What is an AI dev container?
+
+An AI dev container is an isolated development workspace where an agent can run commands, edit files, and keep a record of its work.
+
+### Is an AI dev container the same as Docker?
+
+No. Docker can be one isolation layer, but an agent runtime also needs session management, command capture, snapshots, cleanup, and review evidence.
+
+### What does Tangle Sandbox SDK add?
+
+It gives agents a managed sandbox API for creating environments, executing commands, streaming sessions, taking snapshots, and exporting traces.
+
+### When should I use a managed sandbox?
+
+Use one when agent output may affect production code, customer data, deployments, or money. The managed layer gives you boundaries and evidence.
