@@ -2,8 +2,10 @@
 title: 'x402 Payments for AI Agents'
 slug: x402-payments-for-ai-agents
 summary: >-
-  x402 lets AI agents pay per HTTP request through a 402 challenge, payment proof, and retry flow instead of starting with a human SaaS checkout.
-date: '2026-06-21'
+  x402 lets AI agents pay per HTTP request through a 402 challenge, payment
+  proof, and retry flow. For Tangle, it is the payment edge for callable
+  Blueprint services, not a replacement for verification.
+date: '2026-06-17'
 author: Drew Stone
 tags:
   - agents
@@ -12,90 +14,140 @@ tags:
 series: Agent Intent Infrastructure
 seriesOrder: 5
 coverImage: /images/covers/agent-intent-infrastructure.svg
-heroImage: /images/covers/agent-intent-infrastructure.svg
 imageAlt: 'x402 payment sequence showing request, 402 challenge, payment proof, retry, and paid response'
 ---
 
-x402 payments let an AI agent hit a paid HTTP endpoint, receive a `402 Payment Required` challenge, attach payment proof, and retry the request without creating a seat-based SaaS account first. That matters when the buyer is a program. In Tangle, x402 fits the path from Agent Builder to paid Blueprint services: an agent discovers the service, sees the payment requirement, pays per request, and gets a verifiable job result. Use x402 when the commercial unit is an API call, not a user license.
+x402 payments are useful because agents are bad SaaS customers. They do not want to pick a plan, enter a card, wait for a dashboard, and copy an API key into a settings page. They want to call a capability, learn the price, decide whether it is worth paying, attach proof, and continue.
 
-The familiar SaaS path starts with a human: sign up, enter card, create API key, add credits, call endpoint. Agent-to-agent commerce needs a smaller loop.
+That is the x402 shape: a normal HTTP request receives `402 Payment Required`, the response describes the payment requirement, the caller submits payment proof, and the paid retry executes. In Tangle, x402 belongs at the edge of paid Blueprint services. It tells an agent how to buy one unit of work. It does not prove the work was good.
 
-## The x402 Flow
+## Quick Answer
+
+Use x402 when the buyer is a program and the commercial unit is a request: one browser task, one inference call, one sandbox run, one attestation check, one code audit, one quote, one document conversion.
+
+Do not use x402 as a substitute for service verification. Payment proves the caller paid. It does not prove the operator returned a correct result.
+
+## The Flow
+
+The minimal shape looks like this:
 
 ```http
-GET /paid-agent/run HTTP/1.1
+POST /v1/blueprints/code-audit/run HTTP/1.1
+Content-Type: application/json
+Idempotency-Key: audit-2026-06-17-001
+
+{"repo":"https://github.com/acme/app","scope":"changed-files"}
 
 HTTP/1.1 402 Payment Required
-X-Accept-Payment: ...
+Content-Type: application/json
 
-GET /paid-agent/run HTTP/1.1
+{
+  "x402Version": 1,
+  "amount": "250000",
+  "asset": "USDC",
+  "network": "base",
+  "payTo": "0xOperatorOrEscrow",
+  "expiresAt": "2026-06-17T10:30:00Z",
+  "idempotencyKey": "audit-2026-06-17-001"
+}
+
+POST /v1/blueprints/code-audit/run HTTP/1.1
+Content-Type: application/json
+Idempotency-Key: audit-2026-06-17-001
 X-PAYMENT: <payment-proof>
 
+{"repo":"https://github.com/acme/app","scope":"changed-files"}
+
 HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "jobId": "job_123",
+  "receiptId": "pay_456",
+  "traceId": "trace_789",
+  "result": {"status":"completed"}
+}
 ```
 
-That shape is described by [x402.org](https://www.x402.org/), [Coinbase Developer Platform's x402 docs](https://docs.cdp.coinbase.com/x402/welcome), and Cloudflare's article on [pay per crawl and x402](https://blog.cloudflare.com/x402/). Stripe's [agentic commerce docs](https://docs.stripe.com/agentic-commerce) show the same direction from another payment stack: programs are becoming buyers.
+The important parts are the idempotency key, expiry, accepted asset/network, receipt ID, and trace ID. Without those, an agent cannot retry safely or tie payment to the result.
 
-## Where Tangle Uses The Pattern
+Primary references: [x402.org](https://www.x402.org/), [Coinbase x402 docs](https://docs.cdp.coinbase.com/x402/welcome), [Cloudflare on x402](https://blog.cloudflare.com/x402/), and Stripe's [agentic commerce docs](https://docs.stripe.com/agentic-commerce).
 
-Tangle connects x402 to service execution. A Blueprint can expose a paid API, price a job, verify payment, then dispatch work through the service runtime. The deeper implementation path is covered in [How Blueprint SDK Turns x402 Payments into Runnable Jobs](/blog/blueprint-sdk-x402-payments-runnable-jobs) and [The x402 Facilitator Problem](/blog/decentralizing-x402-facilitator).
+## Where Tangle Uses It
 
-For agents, the important contract is:
+Tangle connects x402 to services that operators can run. A Blueprint defines jobs. Operators run them. A caller hits a paid endpoint, satisfies the payment requirement, and receives a result plus evidence.
 
-| Step | Agent question |
+That matters for agent products because a model can discover and buy capabilities at runtime:
+
+| Agent need | Tangle surface |
 | --- | --- |
-| discover | what service exists and what does it cost? |
-| request | what endpoint do I call? |
-| challenge | what payment proof is accepted? |
-| retry | did the paid request execute? |
-| verify | what evidence proves the result? |
+| discover the service | manifest, docs, Router, marketplace |
+| price the job | x402 challenge or quote |
+| execute work | Blueprint job |
+| preserve evidence | trace, logs, receipt, artifact hash |
+| verify result | Blueprint-specific verification path |
 
-## Builder Checklist
+For the implementation path, read [How Blueprint SDK Turns x402 Payments into Runnable Jobs](/blog/blueprint-sdk-x402-payments-runnable-jobs), [The x402 Facilitator Problem](/blog/decentralizing-x402-facilitator), and [Blueprint SDK Deployment Guide](/blog/blueprint-sdk-deployment-guide).
 
-An x402 endpoint is not production-ready because it returns a 402 once. Check the full path:
+## The Production Contract
 
-| Check | Failure caught |
+An agent-facing x402 endpoint should return structured data. Human-readable prose is not enough.
+
+| Field | Why the agent needs it |
 | --- | --- |
-| challenge body | agent cannot price or satisfy the request |
-| payment header parsing | paid retry never reaches service code |
-| facilitator or verifier status | payment path is down while API is healthy |
-| idempotency | retry charges or executes twice |
-| result verification | service gets paid for unusable output |
+| `amount` | decide whether the work is worth buying |
+| `asset` and `network` | know whether it can pay |
+| `payTo` or facilitator data | construct payment proof |
+| `expiresAt` | avoid submitting stale proof |
+| `idempotencyKey` | retry without double execution |
+| `receiptId` | bind payment to a job |
+| `traceId` | inspect what happened after payment |
 
-The last two are where agent services get expensive. Agents retry aggressively unless the contract tells them when to stop.
+The best x402 endpoint is boring. The agent sends the same job body twice: first without payment, then with proof. The server uses the idempotency key to prevent duplicate execution.
 
-## Agent-Facing Contract
+## Failure Modes
 
-For agents, the endpoint should make the paid path explicit:
+The dangerous failures are not exotic:
 
-| Contract field | Agent use |
+| Failure | Consequence |
 | --- | --- |
-| accepted network | decide whether it can pay |
-| asset and amount | price the task before execution |
-| idempotency key | retry without double execution |
-| payment expiry | know when to refresh proof |
-| receipt or trace ID | tie payment to result verification |
+| no idempotency | retry charges or runs twice |
+| challenge missing expiry | stale proofs and ambiguous retry behavior |
+| payment succeeds, job fails | caller paid but got no useful work |
+| job succeeds, receipt missing | payment and result cannot be reconciled |
+| result unverified | service gets paid for unusable output |
 
-If the 402 response is only human-readable prose, the agent has to infer too much. If it is structured, the agent can decide whether to pay, retry, stop, or ask for a human approval.
+This is why x402 should sit beside health checks, result verification, and traces. A paid job is not production-ready because it can collect payment. It is production-ready when a caller can tell what was bought, what ran, what returned, and what to do if it failed.
 
-## What This Does Not Prove
+## What x402 Does Not Prove
 
-x402 does not remove every trust question. A payment can be verified while the service result is still wrong. A facilitator can be available while the operator is unhealthy. A paid job still needs health checks, result verification, observability, and refund or retry behavior.
+x402 does not prove a model answer is correct. It does not prove an operator is healthy. It does not prove an enclave measurement is valid. It does not replace slashing, refunds, retries, logs, receipts, or result verification.
+
+It solves a narrower problem: a program can satisfy an HTTP payment requirement without a human SaaS checkout. That is enough to change distribution for small, composable agent services, but it is not the whole trust model.
 
 ## Start
 
-Use x402 when the customer is a programmatic buyer. Pair it with [Blueprint Agent](/services/blueprint-agent), Router discovery, and explicit service health checks before taking payment in production.
+Use x402 when a service should be callable and payable by software. Pair it with [Blueprint Agent](/services/blueprint-agent), [Tangle Sandbox](/services/sandbox), and explicit result verification before taking real money in production.
+
+```bash
+curl -i https://sandbox.tangle.tools/health
+curl -fsS https://agents.tangle.tools/.well-known/tangle-agent.json
+```
 
 ## FAQ
 
 ### What is x402 for AI agents?
 
-x402 is an HTTP payment pattern where an agent receives a 402 challenge, attaches payment proof, retries the request, and receives the paid response.
+x402 is an HTTP payment pattern where an agent receives a `402 Payment Required` challenge, attaches payment proof, retries the same request, and receives the paid response.
 
 ### Does x402 replace API keys?
 
-It can reduce the need for account-first API access, but production services may still use auth, policy, rate limits, and monitoring.
+Not always. It can remove account-first checkout for paid requests, but production services may still need auth, policy, rate limits, monitoring, and approval flows.
 
-### Why does x402 matter for agent services?
+### Why does x402 matter for Tangle Blueprints?
 
-It lets programs buy API work per request instead of forcing every buyer through a human subscription checkout.
+Blueprints expose callable services. x402 gives those services a request-level payment edge so agents can discover a capability, price it, pay for it, and receive a result with evidence.
+
+### What should an x402 endpoint return?
+
+It should return structured payment requirements, accepted asset and network, expiry, idempotency key, receipt ID, trace ID, and enough result evidence for the caller to verify what happened.

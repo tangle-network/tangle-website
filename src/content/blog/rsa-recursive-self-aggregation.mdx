@@ -2,9 +2,9 @@
 title: 'Better Answers Without Bigger Models: We Shipped RSA'
 slug: rsa-recursive-self-aggregation
 summary: >-
-  Recursive Self-Aggregation is a test-time scaling strategy that amplifies
-  cheap model output toward expensive-model quality. One gateway flag on
-  Tangle Router. Paper, implementation, and benchmark.
+  Recursive Self-Aggregation is a test-time scaling strategy that spends extra
+  inference calls on candidate aggregation. Tangle Router exposes it as a
+  request-time strategy, with budget checks and explicit latency tradeoffs.
 date: '2026-04-15'
 author: Drew Stone
 tags:
@@ -13,67 +13,111 @@ tags:
   - research
 ---
 
-A test-time scaling strategy called Recursive Self-Aggregation (RSA) shipped as a gateway option on [Tangle Router](https://router.tangle.tools). Pick any cheap model from the 671+ catalog, add one flag, and RSA amplifies its output quality toward expensive-model territory. The paper shows a 4B model matching frontier reasoning models. Our benchmark shows Claude Haiku + RSA matching Opus on 3/6 tasks and beating it on 1.
+There is a version of "use a better model" that is too blunt. Sometimes the cheaper model already knows enough, but one sample is brittle. It misses a constraint, takes the wrong branch, or writes the first plausible answer. Recursive Self-Aggregation, RSA, attacks that failure mode by spending test-time compute on a population of answers and repeatedly asking the model to aggregate them.
 
-## What the paper proves
+Tangle Router exposes RSA as a gateway strategy on the normal chat-completions path. The important product point is not that RSA is free. It is that a caller can trade latency and extra calls for answer quality without changing the model API.
 
-[Venkatraman et al., 2025](https://arxiv.org/abs/2509.26626) — a collaboration across Mila, McGill, Lawrence Livermore National Lab, and the University of Edinburgh — show that test-time compute spent on **aggregation** beats test-time compute spent on majority voting or self-refinement. The method:
+For the surrounding runtime, read [OpenAI-compatible routers for agents](/blog/openai-compatible-routers-for-agents) and [How AI agents discover products](/blog/how-ai-agents-discover-products). RSA is one request-time strategy inside that larger routing surface.
 
-1. Generate N candidate reasoning chains in parallel.
-2. For each slot in the population, randomly subsample K candidates and ask the same LLM to aggregate them into one improved solution.
-3. Repeat for T rounds.
-4. Return `population[0]` — by then, the population has converged.
+## Quick Answer
 
-Total calls: `N + N*T`. No external verifier. The LLM self-corrects by cross-referencing candidates during aggregation.
+Use RSA when a request can tolerate extra latency and the answer quality matters more than a single cheap completion: planning, code generation, structured analysis, eval pipelines, research summaries, and async agent steps.
 
-On ARC-AGI-2, Gemini 3 Flash + RSA lands in the same quality band as Gemini 3 Deep Think at roughly one-tenth of Deep Think's cost. Qwen3-4B-Instruct-2507 + RSA reaches competitive performance with DeepSeek-R1 and o3-mini (high) across AIME-25, HMMT-25, Reasoning Gym, LiveCodeBench-v6, and SuperGPQA.
+Do not use RSA for every chat turn. It multiplies calls. If the task is interactive, cheap, or already verifier-backed, the extra fan-out may be wasted.
 
-## How we built it
+## What The Paper Shows
 
-RSA shipped as a gateway option on the existing `/v1/chat/completions` endpoint. One flag:
+[Venkatraman et al.](https://arxiv.org/abs/2509.26626) study a simple but useful idea: generate a population of candidate reasoning chains, aggregate random subsets into improved answers, repeat, then return one converged candidate. In shorthand:
+
+```text
+generate N candidates
+repeat T rounds:
+  for each candidate slot:
+    sample K candidates
+    ask the model to aggregate them
+return population[0]
+```
+
+The method is interesting because it does not require a separate verifier. That is also the risk. If the model family is confidently wrong, aggregation can polish the wrong answer. RSA is a test-time scaling strategy, not a correctness proof.
+
+## Tangle Router Shape
+
+RSA fits naturally in a Router because the caller should not have to build a parallel inference harness. The request stays OpenAI-compatible, with the strategy carried in gateway options:
 
 ```json
 {
   "model": "google/gemini-3-flash",
-  "messages": [{"role": "user", "content": "..."}],
+  "messages": [
+    { "role": "user", "content": "Write and justify the migration plan." }
+  ],
   "gateway": {
-    "rsa": { "n": 16, "k": 4, "t": 5 }
+    "rsa": { "n": 8, "k": 3, "t": 3 }
   }
 }
 ```
 
-Fallback chains, BYOK, compliance routing, response caching — everything else still works. Opt in per request.
+The call budget is `N + N*T`. With `n=8` and `t=3`, the Router expects 32 model calls. With `n=16` and `t=5`, it expects 96. That number has to be visible before the first fan-out starts.
 
-The production implementation is small. `rsaInfer()` takes an opaque callback `infer(body) → Response`. It knows nothing about routing tiers, auth, operators, or billing. The callback handles all of that. RSA composes with every gateway option the Router already supports, and the module is testable against mocks without mocking any Router internals.
+## Budget Gate
 
-## What it costs
+RSA without a budget gate is an outage waiting to happen. The Router should estimate maximum spend before launching the population:
 
-Assumptions: ~500 input + ~500 output tokens per call.
+| Setting | Calls | Production concern |
+| --- | --- | --- |
+| `n=4, t=2` | 12 | useful smoke test |
+| `n=8, t=3` | 32 | reasonable async quality pass |
+| `n=16, t=5` | 96 | expensive, slow, needs explicit approval |
 
-| Configuration | Calls per request | Cost estimate |
-|---|---|---|
-| Single Gemini 3 Flash | 1 | ~$0.001 |
-| Single Gemini 3 Deep Think | 1 | ~$1.00 |
-| Flash + RSA (N=8, K=3, T=3) | 32 | ~$0.03 |
-| Flash + RSA (N=16, K=4, T=5) | 96 | ~$0.10 |
+If the caller cannot cover the projected spend, the request should fail before work begins. In a paid service path, that means returning a payment or credit requirement instead of starting partial fan-out.
 
-Before fan-out, the Router estimates `(N + N*T) × per-call cost` and returns a 402 if the user's credit balance can't cover it. Budget pre-check is non-optional.
+## What It Costs In Latency
 
-## What RSA is not for
+RSA buys quality by spending serial rounds. The first population can run in parallel. Each aggregation round depends on the previous population. That means wall-clock latency grows with `T`, even if each round fans out internally.
 
-You're trading wall-clock latency for quality per dollar. T=5 rounds runs ~10-15 seconds end-to-end.
+Use RSA when the output is worth waiting for:
 
-Use RSA for async workloads, eval pipelines, agent planning steps, code generation, structured analysis. Don't use it for interactive chat or real-time agent loops.
+| Good fit | Bad fit |
+| --- | --- |
+| async agent planning | live chat typing |
+| code generation before PR | autocomplete |
+| eval and judge tasks | tiny extraction |
+| research synthesis | low-stakes summarization |
+| migration plans | latency-sensitive tool calls |
 
-## Two more strategies
+The useful default is not "turn RSA on." The useful default is "make RSA selectable at the step where the agent would otherwise ask a human to think harder."
 
-**Mixture-of-Agents (MoA).** RSA with a different model per population slot. Claude + Gemini + GPT-5 + DeepSeek generating; one primary model aggregating.
+## Evidence To Capture
+
+An RSA run should return more than the final answer when the caller is debugging quality:
+
+```json
+{
+  "strategy": "rsa",
+  "model": "google/gemini-3-flash",
+  "n": 8,
+  "k": 3,
+  "t": 3,
+  "calls_planned": 32,
+  "calls_completed": 32,
+  "latency_ms": 12480,
+  "stop_reason": "completed",
+  "trace_id": "router-run-id"
+}
+```
+
+The candidate text does not always need to be returned to the end user, but the trace should exist. Otherwise a bad RSA answer is impossible to inspect.
+
+## Two Extensions
+
+Mixture-of-Agents uses different models in the population and one model as aggregator:
 
 ```json
 {
   "gateway": {
     "rsa": {
-      "n": 4, "k": 3, "t": 2,
+      "n": 4,
+      "k": 3,
+      "t": 2,
       "models": [
         "anthropic/claude-sonnet-4-6",
         "google/gemini-3-flash",
@@ -85,14 +129,42 @@ Use RSA for async workloads, eval pipelines, agent planning steps, code generati
 }
 ```
 
-**Best-of-N with user-supplied scorers.** Generate N candidates, score them, return the winner. Webhook scorer (your HTTP endpoint) or LLM-as-judge.
+Best-of-N is the verifier-backed cousin: generate candidates, score them with a user-supplied scorer, and return the winner. If you have a real scorer, use it. RSA is more useful when you do not.
 
-## Reproduce the numbers
+## What RSA Does Not Prove
 
-[`tangle-network/rsa-benchmark`](https://github.com/tangle-network/rsa-benchmark) is a public repo with a prompt suite, a runner comparing baseline against three RSA configs, and CSV + JSON output per run. Max projected spend for a full run: under $5.
+RSA does not prove a model is correct. It does not replace domain evaluation. It does not make a weak model safe for high-stakes execution. It increases the search and aggregation budget at inference time.
 
-## Links
+The benchmark that matters for your product is simple: compare baseline, RSA, and a stronger model on the same tasks, with equal reporting of cost, latency, and failure cases. If RSA wins on quality per dollar and the latency is acceptable, use it. If the stronger model wins cleanly, use the stronger model.
 
-- Paper: [arxiv.org/abs/2509.26626](https://arxiv.org/abs/2509.26626)
-- Benchmark: [github.com/tangle-network/rsa-benchmark](https://github.com/tangle-network/rsa-benchmark)
-- Landing: [router.tangle.tools/rsa](https://router.tangle.tools/rsa)
+## Start
+
+Open [Tangle Router](https://router.tangle.tools), read the [RSA paper](https://arxiv.org/abs/2509.26626), and run a small strategy first:
+
+```json
+{
+  "gateway": {
+    "rsa": { "n": 4, "k": 2, "t": 2 }
+  }
+}
+```
+
+Then increase `n` and `t` only after you know the task benefits from aggregation.
+
+## FAQ
+
+### What is Recursive Self-Aggregation?
+
+Recursive Self-Aggregation is a test-time scaling method that generates multiple candidate answers, repeatedly aggregates subsets of them, and returns a converged answer.
+
+### Does RSA make a small model as good as a frontier model?
+
+Sometimes it can close a gap on specific tasks, but that is workload-dependent. It should be benchmarked against both the baseline model and a stronger model with cost and latency included.
+
+### Why put RSA in Tangle Router?
+
+The Router can run RSA behind the same chat-completions surface, estimate cost before fan-out, preserve traces, and let agents choose the strategy per request.
+
+### When should I avoid RSA?
+
+Avoid RSA for low-latency chat, tiny extraction tasks, high-stakes tasks without verification, or any workload where extra samples do not improve the measured outcome.
