@@ -1,0 +1,464 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const services = [
+  {
+    name: 'Blueprint Agent',
+    domain: 'ai.tangle.tools',
+    href: 'https://ai.tangle.tools',
+    checkUrl: 'https://ai.tangle.tools',
+    description: 'Hosted workbench for Blueprint agent workflows.',
+  },
+  {
+    name: 'Sandbox Infrastructure',
+    domain: 'sandbox.tangle.tools',
+    href: 'https://sandbox.tangle.tools',
+    checkUrl: 'https://sandbox.tangle.tools',
+    description: 'Isolated execution infrastructure for agent and dev-container workloads.',
+  },
+  {
+    name: 'Router Infrastructure',
+    domain: 'router.tangle.tools',
+    href: 'https://router.tangle.tools',
+    checkUrl: 'https://router.tangle.tools',
+    probeMode: 'protected',
+    description: 'Hosted routing layer for model and agent traffic.',
+    note: 'This endpoint blocks browser-origin health probes. Use the direct link or server-side monitoring for HTTP status.',
+  },
+  {
+    name: 'Browser Agent',
+    domain: 'browser.tangle.tools',
+    href: 'https://browser.tangle.tools',
+    checkUrl: 'https://browser.tangle.tools',
+    description: 'Browser automation surface for QA, workflows, and screenshots.',
+  },
+  {
+    name: 'Audit Agent',
+    domain: 'audits.tangle.tools',
+    href: 'https://audits.tangle.tools',
+    checkUrl: 'https://audits.tangle.tools/v1/health',
+    description: 'Security audit workflows and audit report generation.',
+  },
+  {
+    name: 'Docs',
+    domain: 'docs.tangle.tools',
+    href: 'https://docs.tangle.tools',
+    checkUrl: 'https://docs.tangle.tools',
+    description: 'Documentation, release notes, and developer reference material.',
+  },
+];
+---
+
+<BaseLayout
+  title="Status"
+  description="Public reachability status for Tangle Blueprint Agent, sandbox infrastructure, router infrastructure, browser agents, audit agents, and docs."
+>
+  <div class="status-page">
+    <section class="status-hero">
+      <div>
+        <p class="status-eyebrow">Status</p>
+        <h1>Public service reachability</h1>
+        <p>
+          This page checks whether public Tangle product and infrastructure surfaces are reachable from your browser.
+          It is a lightweight public status view for customers and auditors.
+        </p>
+      </div>
+      <aside class="status-note">
+        <span>Check type</span>
+        <strong>Browser reachability</strong>
+        <p>Static site checks cannot read every upstream HTTP status because these services do not all expose cross-origin health responses.</p>
+      </aside>
+    </section>
+
+    <section class="status-section">
+      <div class="status-toolbar">
+        <div>
+          <p class="status-eyebrow">Services</p>
+          <h2>Applications and infrastructure</h2>
+        </div>
+        <button type="button" class="status-refresh" data-status-refresh>Refresh checks</button>
+      </div>
+
+      <div class="status-grid" aria-live="polite">
+        {services.map((service) => (
+          <article
+            class="status-card"
+            data-status-card
+            data-check-url={service.checkUrl}
+            data-probe-mode={service.probeMode ?? 'browser'}
+            data-service-name={service.name}
+          >
+            <div class="status-card-head">
+              <div>
+                <h3>{service.name}</h3>
+                <a href={service.href} target="_blank" rel="noopener noreferrer">{service.domain}</a>
+              </div>
+              <span class="status-pill status-pill--checking" data-status-pill>
+                <span class="status-dot" aria-hidden="true"></span>
+                <span data-status-label>Checking</span>
+              </span>
+            </div>
+            <p>{service.description}</p>
+            {service.note && <p class="status-card-note">{service.note}</p>}
+            <div class="status-meta">
+              <span>Last checked</span>
+              <strong data-status-time>Pending</strong>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="status-contact">
+      <div>
+        <p class="status-eyebrow">Support</p>
+        <h2>Need an incident update?</h2>
+        <p>
+          For a customer-impacting issue, email <a href="mailto:security@tangle.tools">security@tangle.tools</a> or <a href="mailto:hello@tangle.tools">hello@tangle.tools</a>.
+        </p>
+      </div>
+      <a href="https://docs.tangle.tools/release-notes" target="_blank" rel="noopener noreferrer">Release notes</a>
+    </section>
+  </div>
+</BaseLayout>
+
+<script>
+  const cards = Array.from(document.querySelectorAll('[data-status-card]'));
+  const refreshButton = document.querySelector('[data-status-refresh]');
+
+  const formatCheckTime = () => new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(new Date());
+
+  const setState = (card, state, label) => {
+    const pill = card.querySelector('[data-status-pill]');
+    const labelNode = card.querySelector('[data-status-label]');
+    const timeNode = card.querySelector('[data-status-time]');
+
+    pill?.classList.remove('status-pill--checking', 'status-pill--ok', 'status-pill--down', 'status-pill--protected');
+    pill?.classList.add(`status-pill--${state}`);
+    if (labelNode) labelNode.textContent = label;
+    if (timeNode) timeNode.textContent = formatCheckTime();
+  };
+
+  const checkCard = async (card) => {
+    const checkUrl = card.getAttribute('data-check-url');
+    if (!checkUrl) return;
+
+    if (card.getAttribute('data-probe-mode') === 'protected') {
+      setState(card, 'protected', 'Protected');
+      const timeNode = card.querySelector('[data-status-time]');
+      if (timeNode) timeNode.textContent = 'Direct link';
+      return;
+    }
+
+    setState(card, 'checking', 'Checking');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+
+    try {
+      await fetch(checkUrl, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      setState(card, 'ok', 'Reachable');
+    } catch {
+      setState(card, 'down', 'Not reachable');
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  };
+
+  const runChecks = () => {
+    cards.forEach((card) => {
+      void checkCard(card);
+    });
+  };
+
+  refreshButton?.addEventListener('click', runChecks);
+  runChecks();
+</script>
+
+<style>
+  .status-page {
+    min-height: 100vh;
+    background: #f4f4f9;
+    color: #111827;
+  }
+
+  .status-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 26rem);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: end;
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: clamp(7rem, 12vw, 9rem) 5% clamp(3rem, 6vw, 5rem);
+  }
+
+  .status-eyebrow {
+    margin: 0 0 0.85rem;
+    color: #047857;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .status-hero h1,
+  .status-toolbar h2,
+  .status-contact h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    color: #111827;
+    letter-spacing: 0;
+  }
+
+  .status-hero h1 {
+    max-width: 52rem;
+    font-size: clamp(2.5rem, 6vw, 5.5rem);
+    line-height: 0.97;
+    font-weight: 800;
+  }
+
+  .status-hero p {
+    max-width: 44rem;
+    margin: 1.25rem 0 0;
+    color: #3a3a50;
+    font-size: clamp(1rem, 1.45vw, 1.2rem);
+    line-height: 1.65;
+  }
+
+  .status-note {
+    display: grid;
+    gap: 0.55rem;
+    padding: 1.25rem;
+    border: 1px solid rgba(25, 28, 36, 0.08);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
+  }
+
+  .status-note span {
+    color: #5e5e7a;
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .status-note strong {
+    color: #111827;
+    font-size: 1.1rem;
+  }
+
+  .status-note p {
+    margin: 0;
+    color: #3a3a50;
+    font-size: 0.95rem;
+    line-height: 1.55;
+  }
+
+  .status-section,
+  .status-contact {
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: clamp(3rem, 6vw, 4.5rem) 5%;
+  }
+
+  .status-section {
+    border-top: 1px solid rgba(25, 28, 36, 0.08);
+  }
+
+  .status-toolbar {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .status-toolbar h2,
+  .status-contact h2 {
+    font-size: clamp(1.8rem, 3.5vw, 3rem);
+    line-height: 1.08;
+    font-weight: 800;
+  }
+
+  .status-refresh,
+  .status-contact > a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.75rem;
+    padding: 0.7rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(4, 120, 87, 0.22);
+    background: #ffffff;
+    color: #065F46;
+    font-weight: 800;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+  }
+
+  .status-card {
+    display: grid;
+    gap: 1rem;
+    min-height: 15rem;
+    padding: 1rem;
+    border: 1px solid rgba(25, 28, 36, 0.08);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .status-card-head {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .status-card h3 {
+    margin: 0 0 0.25rem;
+    color: #111827;
+    font-size: 1rem;
+    line-height: 1.25;
+  }
+
+  .status-card a {
+    color: #3730A3;
+    font-size: 0.88rem;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+  }
+
+  .status-card p {
+    margin: 0;
+    color: #3a3a50;
+    line-height: 1.58;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 1.9rem;
+    padding: 0.35rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .status-dot {
+    width: 0.48rem;
+    height: 0.48rem;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .status-pill--checking {
+    background: #EEF2FF;
+    color: #3730A3;
+  }
+
+  .status-pill--ok {
+    background: #D1FAE5;
+    color: #047857;
+  }
+
+  .status-pill--down {
+    background: #FEE2E2;
+    color: #B91C1C;
+  }
+
+  .status-pill--protected {
+    background: #FEF3C7;
+    color: #92400E;
+  }
+
+  .status-card-note {
+    padding: 0.75rem;
+    border-radius: 6px;
+    background: #FFFBEB;
+    color: #78350F !important;
+    font-size: 0.88rem;
+  }
+
+  .status-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(25, 28, 36, 0.08);
+    color: #5e5e7a;
+    font-size: 0.82rem;
+  }
+
+  .status-meta strong {
+    color: #111827;
+    text-align: right;
+  }
+
+  .status-contact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    border-top: 1px solid rgba(25, 28, 36, 0.08);
+  }
+
+  .status-contact p {
+    max-width: 46rem;
+    margin: 1rem 0 0;
+    color: #3a3a50;
+    line-height: 1.62;
+  }
+
+  .status-contact a {
+    color: #065F46;
+    font-weight: 800;
+  }
+
+  @media (max-width: 980px) {
+    .status-hero,
+    .status-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .status-hero {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .status-hero,
+    .status-section,
+    .status-contact {
+      padding-inline: 1rem;
+    }
+
+    .status-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .status-toolbar,
+    .status-contact {
+      align-items: stretch;
+      flex-direction: column;
+    }
+  }
+</style>
