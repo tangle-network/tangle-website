@@ -388,6 +388,14 @@ Both producers are polled concurrently in the same event loop. The gateway runs 
 
 ## Which Deployment Target Should You Use?
 
+| Target | Use it when | Ingress path | Proof boundary |
+|---|---|---|---|
+| `DockerLocal` | You are testing handlers, pricing, and payment headers on one machine | Local gateway binds next to the runner | Process logs and local config only; no remote endpoint registration |
+| `VirtualMachine` | One operator wants a durable production runner without Kubernetes | Provider network reaches the gateway; SecureBridge handles manager-to-VM traffic | mTLS certificates plus private IP validation protect remote execution |
+| `ManagedKubernetes` | You need multiple pods, rollouts, and provider-managed load balancing | Service or ingress routes x402 traffic to pods that run the gateway | Kubernetes rollout state plus runner health determine promotion readiness |
+| `GenericKubernetes` | You already operate a cluster or need staging/on-prem parity | Existing kube context and your tunnel/network layer route to the gateway | Cluster policy is yours; Blueprint only owns runner lifecycle |
+| `BareMetal` | You control physical or leased hosts and accept SSH-based operations | Host networking exposes the gateway; SecureBridge authenticates private endpoints | Host inventory, cert rotation, and endpoint registration are the operational risk |
+
 **DockerLocal, no SecureBridge:** Development. No provisioning, no TLS tunnel, no external cloud credentials needed. Run `cargo run` locally, test x402 payment flow with a local facilitator.
 
 **VirtualMachine (AWS, GCP, DigitalOcean, Vultr, Hetzner) with SecureBridge mTLS:** Production single-operator. The manager SSHes into provisioned VMs, starts containers, and registers `RemoteEndpoint` in SecureBridge. The x402 gateway binds on the remote VM and is reachable via the provider's networking. SecureBridge handles manager-to-instance communication authenticated with client certs from `/etc/blueprint/certs/`.
@@ -409,6 +417,24 @@ It also means x402 payment ingress scales with your runner. Add more pods and yo
 The tradeoff is that the x402 HTTP endpoint is co-located with the job runner rather than edge-deployed. If you need CDN-level caching of price discovery responses or geographic distribution of payment ingress endpoints, you would put a lightweight HTTP proxy in front. The price and auth-dry-run endpoints are stateless and safe to cache. The job execution endpoint requires the live runner. That one cannot be edge-cached by definition.
 
 For most Blueprint service operators, particularly ones using Tangle for decentralized AVS infrastructure, the co-location model is the right default. The runner is already the first layer worth scaling. Adding another independent service to manage introduces complexity that only pays off at scales most early-stage services will not hit.
+
+## FAQ
+
+### Should x402 run as a separate proxy in front of the Blueprint runner?
+
+Not by default. In the Blueprint SDK design, `X402Gateway` runs as a `BackgroundService` in the same runner process that handles on-chain jobs. That keeps payment-gated HTTP jobs, Tangle jobs, health checks, and shutdown behavior under one lifecycle. Put a proxy in front only when you need CDN routing, edge TLS termination, or provider-specific ingress controls.
+
+### Which deployment target should a first production operator choose?
+
+Use `VirtualMachine` when you want the smallest production surface: one durable host, SecureBridge mTLS, and a single runner process. Use managed Kubernetes when you already need rolling deploys, pod autoscaling, and provider load balancers. Use `DockerLocal` only for local tests and integration loops.
+
+### What has to be private in a remote provider deployment?
+
+SecureBridge expects remote execution endpoints to resolve to loopback or private IP ranges. Public exposure belongs at the x402 HTTP ingress layer or a controlled load balancer, not at the manager-to-instance execution channel. Treat private networking, certificate rotation, and endpoint registration as one deployment boundary.
+
+### Where should I look for the underlying standards?
+
+Start with the [x402 protocol repository](https://github.com/coinbase/x402), the [Kubernetes service model](https://kubernetes.io/docs/concepts/services-networking/service/), and the [TLS client authentication guidance in RFC 8446](https://www.rfc-editor.org/rfc/rfc8446). For the Tangle-side implementation, read the [Blueprint SDK source](https://github.com/tangle-network/blueprint) and the previous post on [operator economics](/blog/blueprint-x402-operator-economics-distribution).
 
 ---
 
