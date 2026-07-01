@@ -4,6 +4,10 @@
 
 Tangle blog posts should read like a senior builder explaining infrastructure they have used, shipped, or verified.
 
+Blog is a broad surface.
+It can carry technical explainers, product essays, comparisons, launch notes, field reports, research threads, and posts about anything Tangle has done.
+Do not force every post into "technical deep dive" voice.
+
 The target blend:
 
 ```text
@@ -23,6 +27,8 @@ concrete builder pressure
 - Do not use "The Object Being Optimized", "Evaluation Protocol", "Working Rule", or "Source Trail" as repeated default headings across a series.
 - Do not overuse one-sentence paragraphs.
 - Do not turn every idea into a table or fenced text block.
+- Do not use raw inventory counts as proof of seriousness. A blog index should show reader paths, not "80 posts published".
+- Do not use markdown scaffolding as the whole presentation layer. Long posts need at least one artifact: diagram, table, screenshot, trace, code sample, terminal proof, or designed cover.
 - Do not write generic "field overview" prose before saying why Tangle, a builder, or an operator cares.
 - Do not close with a restated thesis.
 - Avoid AI cadence: "It is not X. It is Y.", "The useful question is...", "The serious version is...", "That is why...", "Here's the thing", "Turns out".

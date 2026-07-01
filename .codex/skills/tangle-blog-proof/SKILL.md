@@ -19,6 +19,12 @@ When checking an edited/new post, run:
 node .codex/skills/tangle-blog-proof/scripts/check-post.mjs src/content/blog/<slug>.mdx
 ```
 
+When checking the full blog surface, run:
+
+```bash
+pnpm check:blog
+```
+
 Then run the repo's normal validation when the change is substantive:
 
 ```bash
@@ -36,6 +42,9 @@ The script catches structure, not judgment. Also check:
 - Competitor comparisons are fair and based on current primary sources.
 - The CTA is specific enough for a builder or agent to act on.
 - The post does not end with a summary that merely restates the thesis.
+- Blog and research pages do not market raw post counts or other inventory totals.
+- Blog index navigation works by series, topic, date, or argument.
+- Long posts are not only markdown scaffolding; they carry at least one artifact such as a cover, diagram, table, screenshot, trace, code block, or terminal proof.
 
 ## Output
 
