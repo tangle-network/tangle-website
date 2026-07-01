@@ -11,6 +11,7 @@ Score each dimension 1-5.
 | Style | Research-note template | Builder voice with varied structure |
 | Conversion | No next action | Specific install, curl, manifest, CTA, or decision |
 | Evidence | Unsupported claims | Primary sources, internal links, proof blocks |
+| Presentation | Markdown scaffolding only | Artifact, diagram, table, screenshot, trace, or designed cover supports the argument |
 
 ## Rewrite Pass Order
 
@@ -21,6 +22,7 @@ Score each dimension 1-5.
 5. Retrieval: add answer capsule, comparison table, and FAQ where useful.
 6. Tangle: move specific product mechanism earlier.
 7. Ending: replace summary with decision or readiness test.
+8. Presentation: add or preserve a real artifact when the post is long, code-heavy, or abstract.
 
 ## Existing Series Diagnosis
 

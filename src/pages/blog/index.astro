@@ -1,68 +1,144 @@
 ---
-import BaseLayout from '../../layouts/BaseLayout.astro';
-import BlogCover from '../../components/BlogCover.astro';
-import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro'
+import BlogCover from '../../components/BlogCover.astro'
+import { getCollection } from 'astro:content'
 
-const posts = await getCollection('blog', ({ data }) => !data.draft);
+const posts = await getCollection('blog', ({ data }) => !data.draft)
 
 const sortedPosts = posts.sort(
   (a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime(),
-);
+)
 
-const featuredPost = sortedPosts[0];
-const remainingPosts = sortedPosts.slice(1);
-
+const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
 const formatDate = (date: string) =>
   new Date(date).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-  });
+  })
+
+const topicLabels: Record<string, string> = {
+  agents: 'Agents',
+  'browser-agent': 'Browser',
+  x402: 'x402',
+  'tax-agent': 'Tax agent',
+  'blueprint-agent': 'Blueprint agent',
+  'tangle-protocol': 'Protocol',
+  'code-auditor': 'Code audit',
+}
+
+const topicOptions = Object.keys(topicLabels).filter((topic) =>
+  sortedPosts.some((post) => post.data.tags.includes(topic)),
+)
+
+const seriesMap = new Map<string, typeof sortedPosts>()
+for (const post of sortedPosts) {
+  const series = normalizeSeries(post.data.series)
+  if (!seriesMap.has(series)) seriesMap.set(series, [])
+  seriesMap.get(series)?.push(post)
+}
+
+const seriesGroups = [...seriesMap.entries()]
+  .map(([name, entries]) => {
+    const ordered = [...entries].sort((a, b) => {
+      const orderA = a.data.seriesOrder ?? 999
+      const orderB = b.data.seriesOrder ?? 999
+      if (orderA !== orderB) return orderA - orderB
+      return new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
+    })
+
+    const representative = ordered.find((post) => post.data.coverImage || post.data.heroImage) ?? ordered[0]
+    const latest = [...entries].sort(
+      (a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime(),
+    )[0]
+
+    return {
+      name,
+      representative,
+      latest,
+      topics: [...new Set(entries.flatMap((post) => post.data.tags))],
+    }
+  })
+  .sort((a, b) => {
+    if (a.name === 'Standalone') return 1
+    if (b.name === 'Standalone') return -1
+    return a.name.localeCompare(b.name)
+  })
 ---
 
 <BaseLayout
   title="Blog"
-  description="Architecture notes, implementation guides, and production lessons from the Tangle stack."
+  description="Implementation notes, product essays, research threads, and field reports from the Tangle stack."
 >
   <script is:inline>
-    document.body.classList.add('page-editorial');
+    document.body.classList.add('page-editorial')
   </script>
 
   <section class="blog-page" aria-labelledby="blog-title">
     <div class="blog-shell">
       <header class="blog-hero">
-        <h1 id="blog-title">Technical deep dives.</h1>
-        <p>Architecture notes, implementation guides, and production lessons from the Tangle stack.</p>
+        <h1 id="blog-title">Writing from Tangle.</h1>
+        <p>Implementation notes, product essays, research threads, and field reports from agent infrastructure work.</p>
       </header>
 
-      {featuredPost && (
-        <a href={`/blog/${featuredPost.data.slug}`} class="featured-post">
-          <BlogCover
-            title={featuredPost.data.title}
-            summary={featuredPost.data.summary}
-            series={featuredPost.data.series}
-            seriesOrder={featuredPost.data.seriesOrder}
-            tags={featuredPost.data.tags}
-            coverImage={featuredPost.data.coverImage}
-            imageAlt={featuredPost.data.imageAlt || featuredPost.data.title}
-            variant="hero"
-          />
-          <div class="featured-post-copy">
-            <time datetime={featuredPost.data.date}>{formatDate(featuredPost.data.date)}</time>
-            <h2>{featuredPost.data.title}</h2>
-            <p>{featuredPost.data.summary}</p>
-          </div>
-        </a>
-      )}
+      <section class="series-index" aria-labelledby="series-title">
+        <div class="section-heading">
+          <h2 id="series-title">Series</h2>
+          <p>Follow a topic through its strongest thread, then branch into the archive.</p>
+        </div>
+
+        <div class="series-grid">
+          {seriesGroups.map((group) => (
+            <a
+              href={`/blog/${group.latest.data.slug}`}
+              class="series-card"
+              data-series-card
+              data-series={group.name}
+              data-topics={group.topics.join(' ')}
+            >
+              <BlogCover
+                title={group.name}
+                summary={group.latest.data.summary}
+                series={group.name}
+                tags={group.topics}
+                coverImage={group.representative.data.coverImage}
+                imageAlt={group.representative.data.imageAlt || group.name}
+              />
+              <div class="series-card-copy">
+                <h3>{group.name}</h3>
+                <p>{group.latest.data.summary}</p>
+                <time datetime={group.latest.data.date}>{formatDate(group.latest.data.date)}</time>
+              </div>
+            </a>
+          ))}
+        </div>
+      </section>
 
       <section class="post-index" aria-labelledby="post-index-title">
-        <div class="post-index-head">
-          <h2 id="post-index-title">All posts</h2>
-          <span>{posts.length} published</span>
+        <div class="section-heading post-index-heading">
+          <div>
+            <h2 id="post-index-title">Archive</h2>
+            <p>Filter by the work you are trying to understand, not by site inventory.</p>
+          </div>
+          <div class="topic-filter" aria-label="Filter posts by topic">
+            <button type="button" class="topic-filter-button is-active" data-topic-filter="all">All</button>
+            {topicOptions.map((topic) => (
+              <button type="button" class="topic-filter-button" data-topic-filter={topic}>
+                {topicLabels[topic]}
+              </button>
+            ))}
+          </div>
         </div>
-        <div class="post-list">
-          {remainingPosts.map((post) => (
-            <a href={`/blog/${post.data.slug}`} class="post-row">
+
+        <div class="post-list" data-post-list>
+          {sortedPosts.map((post) => (
+            <a
+              href={`/blog/${post.data.slug}`}
+              class="post-row"
+              data-post-row
+              data-series={normalizeSeries(post.data.series)}
+              data-topics={post.data.tags.join(' ')}
+            >
               <time datetime={post.data.date}>{formatDate(post.data.date)}</time>
               <div>
                 <h3>{post.data.title}</h3>
@@ -74,6 +150,29 @@ const formatDate = (date: string) =>
       </section>
     </div>
   </section>
+
+  <script is:inline>
+    const buttons = [...document.querySelectorAll('[data-topic-filter]')]
+    const rows = [...document.querySelectorAll('[data-post-row]')]
+    const cards = [...document.querySelectorAll('[data-series-card]')]
+
+    for (const button of buttons) {
+      button.addEventListener('click', () => {
+        const topic = button.getAttribute('data-topic-filter')
+        for (const option of buttons) option.classList.toggle('is-active', option === button)
+
+        for (const row of rows) {
+          const topics = row.getAttribute('data-topics') || ''
+          row.hidden = topic !== 'all' && !topics.split(' ').includes(topic)
+        }
+
+        for (const card of cards) {
+          const topics = card.getAttribute('data-topics') || ''
+          card.hidden = topic !== 'all' && !topics.split(' ').includes(topic)
+        }
+      })
+    }
+  </script>
 </BaseLayout>
 
 <style>
@@ -85,18 +184,18 @@ const formatDate = (date: string) =>
   }
 
   .blog-shell {
-    width: min(76rem, 100%);
+    width: min(78rem, 100%);
     margin: 0 auto;
   }
 
   .blog-hero {
-    max-width: 48rem;
-    margin-bottom: 3rem;
+    max-width: 55rem;
+    margin-bottom: 3.5rem;
   }
 
   .blog-hero h1,
-  .featured-post h2,
-  .post-index h2,
+  .section-heading h2,
+  .series-card h3,
   .post-row h3 {
     margin: 0;
     font-family: var(--font-display);
@@ -106,83 +205,137 @@ const formatDate = (date: string) =>
   }
 
   .blog-hero h1 {
-    font-size: clamp(3.2rem, 6vw, 5.4rem);
+    font-size: clamp(3.2rem, 6vw, 5.5rem);
     font-weight: 800;
     line-height: 1;
   }
 
+  .blog-hero p,
+  .section-heading p,
+  .series-card p,
+  .post-row p {
+    color: #4a4c5f;
+  }
+
   .blog-hero p {
-    max-width: 42rem;
+    max-width: 44rem;
     margin: 1.25rem 0 0;
     font-size: clamp(1.08rem, 2vw, 1.28rem);
     line-height: 1.58;
-    color: #45465a;
   }
 
-  .featured-post {
-    display: grid;
-    grid-template-columns: minmax(18rem, 0.8fr) minmax(0, 1fr);
+  .series-index {
+    margin-top: 3rem;
+  }
+
+  .section-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
     gap: 2rem;
-    align-items: center;
-    padding: 1rem;
-    border: 1px solid rgba(25, 28, 36, 0.1);
+    margin-bottom: 1.2rem;
+  }
+
+  .section-heading h2 {
+    font-size: clamp(1.7rem, 3vw, 2.55rem);
+    font-weight: 800;
+    line-height: 1.05;
+  }
+
+  .section-heading p {
+    max-width: 34rem;
+    margin: 0.45rem 0 0;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  .series-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .series-card {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid rgba(25, 28, 36, 0.12);
     border-radius: 8px;
-    background: #ffffff;
+    background: rgba(255, 255, 255, 0.74);
     color: inherit;
     text-decoration: none;
-    box-shadow: 0 18px 60px rgba(20, 22, 34, 0.07);
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
   }
 
-  .featured-post :global(.blog-cover) {
-    min-height: 21rem;
+  .series-card:hover h3,
+  .post-row:hover h3 {
+    color: #4f46e5;
   }
 
-  .featured-post-copy {
-    padding-right: clamp(0rem, 2vw, 1.5rem);
+  .series-card-copy {
+    padding: 1rem 1rem 1.1rem;
   }
 
-  .featured-post time,
-  .post-index-head span,
+  .series-card h3 {
+    font-size: 1.1rem;
+    font-weight: 760;
+    line-height: 1.18;
+  }
+
+  .series-card p {
+    margin: 0.55rem 0 0;
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+
+  .series-card time,
   .post-row time {
+    display: block;
     font-family: var(--font-mono);
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     font-weight: 700;
-    color: #5b5ff0;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    color: #64677a;
   }
 
-  .featured-post h2 {
-    max-width: 42rem;
-    margin-top: 0.85rem;
-    font-size: clamp(2rem, 4vw, 3.65rem);
-    font-weight: 800;
-    line-height: 1.02;
-  }
-
-  .featured-post p {
-    max-width: 42rem;
-    margin: 1rem 0 0;
-    color: #45465a;
-    font-size: 1.05rem;
-    line-height: 1.62;
+  .series-card time {
+    margin-top: 0.9rem;
   }
 
   .post-index {
-    margin-top: 4rem;
+    margin-top: 4.5rem;
   }
 
-  .post-index-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1.5rem;
+  .post-index-heading {
+    align-items: start;
     padding-bottom: 1.1rem;
     border-bottom: 1px solid rgba(25, 28, 36, 0.12);
   }
 
-  .post-index h2 {
-    font-size: clamp(1.7rem, 3vw, 2.6rem);
-    font-weight: 800;
-    line-height: 1.05;
+  .topic-filter {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.45rem;
+    max-width: 34rem;
+  }
+
+  .topic-filter-button {
+    appearance: none;
+    border: 1px solid rgba(25, 28, 36, 0.14);
+    border-radius: 999px;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.72);
+    color: #34364a;
+    font: 700 0.8rem/1 var(--font-sans);
+    cursor: pointer;
+  }
+
+  .topic-filter-button:hover,
+  .topic-filter-button.is-active {
+    border-color: rgba(79, 70, 229, 0.45);
+    background: #4f46e5;
+    color: #ffffff;
   }
 
   .post-list {
@@ -208,14 +361,12 @@ const formatDate = (date: string) =>
   .post-row p {
     max-width: 54rem;
     margin: 0.55rem 0 0;
-    color: #4f5064;
     font-size: 0.98rem;
     line-height: 1.55;
   }
 
-  .post-row:hover h3,
-  .featured-post:hover h2 {
-    color: #4f46e5;
+  [hidden] {
+    display: none !important;
   }
 
   :global(.page-editorial .wf-nav) {
@@ -233,13 +384,19 @@ const formatDate = (date: string) =>
     filter: invert(1);
   }
 
-  @media (max-width: 840px) {
-    .featured-post {
-      grid-template-columns: 1fr;
+  @media (max-width: 980px) {
+    .series-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .featured-post-copy {
-      padding: 0 0.35rem 0.35rem;
+    .section-heading {
+      align-items: start;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .topic-filter {
+      justify-content: flex-start;
     }
   }
 
@@ -249,26 +406,15 @@ const formatDate = (date: string) =>
     }
 
     .blog-hero {
-      margin-bottom: 2rem;
+      margin-bottom: 2.4rem;
     }
 
     .blog-hero h1 {
       font-size: clamp(2.8rem, 16vw, 4.4rem);
     }
 
-    .featured-post {
-      padding: 0.7rem;
-      gap: 1.25rem;
-    }
-
-    .featured-post :global(.blog-cover) {
-      min-height: 16rem;
-    }
-
-    .post-index-head {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 0.4rem;
+    .series-grid {
+      grid-template-columns: 1fr;
     }
 
     .post-row {

@@ -12,6 +12,8 @@
 - Direct CTA exists.
 - Referenced images exist.
 - No obvious AI-cadence banned phrases.
+- Blog and research pages do not show vanity inventory counts such as "80 posts published".
+- Blog index gives reader paths through series, topics, dates, or arguments.
 
 ## Judgment Gates
 
@@ -20,6 +22,8 @@
 - Limitations are explicit.
 - Competitor comparisons are fair and current.
 - The ending gives a decision, not a summary.
+- Research pages include only work with a claim, model, method, trace/evidence path, or falsifiable argument.
+- Blog posts are allowed to be essays, launch notes, field reports, comparisons, or implementation notes; they should not all be forced into one technical deep-dive template.
 
 ## Common Fixes
 
@@ -29,3 +33,5 @@
 - Move Tangle-specific proof above generic background.
 - Add FAQ questions that match search intent.
 - Replace "What This Gets You" with a concrete CTA.
+- Replace raw archive totals with series cards, topic filters, or a date-sorted archive.
+- Replace markdown-only stretches with a diagram, table, screenshot, trace, terminal output, or designed cover.
