@@ -37,6 +37,14 @@ The full RFQ lifecycle in five steps:
 
 This differs from keeper networks or simple payment escrow in a critical way: keeper networks let any registered keeper fill a task, so there's no pre-committed identity. Payment escrow ensures money is held but doesn't restrict who delivers the work. The quoted-operator gate combines both properties (pre-committed identity *and* result-submission restriction) so that the person who priced the job is the only person who can collect for it.
 
+| Lifecycle point | Evidence stored | Failure it prevents |
+|---|---|---|
+| Quote creation | EIP-712 signature over `serviceId`, `jobIndex`, `price`, `timestamp`, and `expiry` | Operator later claiming they never priced the job |
+| Job submission | `_jobQuotedOperators` and `_jobQuotedPrices` keyed by `serviceId` and `callId` | Unquoted operators racing in after seeing a profitable job |
+| Result submission | `NotQuotedOperator` revert for addresses outside the quote set | Payment going to someone who never accepted the price |
+| Finalization | RFQ-specific distribution at each quoted price | Pool splitting that ignores the original operator commitment |
+| Non-delivery | Slash proposal with evidence and dispute window | A quoted operator taking the job and disappearing without recourse |
+
 ## What Is an RFQ Flow?
 
 RFQ stands for request-for-quote. The flow is: a caller asks multiple operators for prices before committing to a job, operators respond with signed quotes off-chain, and the caller submits the winning quotes (one or more) on-chain along with the job. The protocol verifies each signature, checks expiry, and locks the quoted operators into the job call.
@@ -227,6 +235,8 @@ The practical difference: x402 is well-suited for stateless pay-per-call endpoin
 
 Both can coexist: an operator might expose an x402 endpoint for fast, anonymous HTTP access to lightweight inference, and use RFQ for compute-heavy jobs where the caller wants price commitment and delivery guarantees.
 
+For stateless HTTP payment, read [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). For what happens after fees enter the protocol, read [operator economics after payment](/blog/blueprint-x402-operator-economics-distribution).
+
 ## What the Audit Trail Looks Like
 
 Every step of the RFQ lifecycle is on-chain or auditable:
@@ -242,19 +252,19 @@ A caller can verify, after the fact, exactly which operators committed to a job,
 
 ## FAQ
 
-**Can a caller submit quotes from operators who are not registered in the service?**
+### Can a caller submit quotes from operators who are not registered in the service?
 No. Per-quote validation checks `operatorIsActive(serviceId, operator)` before processing the signature. An unregistered or inactive operator's quote causes the entire `submitJobFromQuote` call to revert.
 
-**What if a quote has a generous expiry but was generated 90 minutes ago?**
+### What if a quote has a generous expiry but was generated 90 minutes ago?
 It fails the freshness check. `MAX_QUOTE_AGE = 1 hour` means the protocol enforces that `block.timestamp <= quote.details.timestamp + maxQuoteAge`. A quote with a 24-hour `expiry` but a `timestamp` from 90 minutes ago is rejected as too old, regardless of the `expiry` field.
 
-**Who can propose a slash for non-delivery, and on what grounds?**
+### Who can propose a slash for non-delivery, and on what grounds?
 The service owner, the blueprint owner, and any address returned by `querySlashingOrigin()` can propose a slash. The contract does not restrict the grounds , any IPFS evidence reference is accepted. The 3.5-day dispute window is the operator's recourse against malicious or mistaken proposals.
 
-**Does slashing affect all of an operator's stake across Tangle?**
+### Does slashing affect all of an operator's stake across Tangle?
 No. Slashing is blueprint-scoped via `slashForBlueprint`. Only delegators who opted into this specific blueprint are exposed. An operator's stake in unrelated services is not affected.
 
-**What happens if a quoted operator submits a result after another quoted operator already completed the job?**
+### What happens if a quoted operator submits a result after another quoted operator already completed the job?
 The job completion check fires first in `_validateResultSubmissionState`. Once `job.completed = true`, subsequent result submissions from any operator, quoted or not, revert. The quoted-operator gate only applies to non-completed jobs.
 
 ---
