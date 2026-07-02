@@ -26,6 +26,15 @@ When a client pays an x402 Blueprint job, the USDC moves to the operator's `pay_
 
 The payment lands as a cross-chain deposit. Before operators can claim anything, the Tangle protocol has to decide who gets what. An operator running a high-stakes Blueprint with a large staking pool behind it gets a different cut than one running the same Blueprint with minimal backing. The distribution isn't arbitrary — it's driven by exposure, USD-weighted delegation scores, and blueprint selection mode. This post opens that system.
 
+| Step | Contract or module | Decision being made | Why it matters |
+|---|---|---|---|
+| x402 settlement | Operator gateway and settlement chain | Did the client pay the quoted amount before the job ran? | Prevents the operator from burning compute on unpaid calls |
+| Fee intake | `ServiceFeeDistributor` | Is this native ETH or an ERC-20, and did the Tangle contract call it? | Keeps payment accounting tied to the protocol entry point |
+| Timing | `StreamingPaymentManager` | Should the payment distribute now or drip over the service TTL? | Prevents late delegators from claiming revenue earned before they joined |
+| Pool split | All-mode and Fixed-mode score totals | How much goes to broad operator backing vs blueprint-specific backing? | Rewards the kind of delegated risk that supported the service |
+| Claim math | Accumulator-per-score accounting | What can each delegator claim without looping through every account? | Makes fee distribution scalable as the delegator set grows |
+| Fallback | Treasury route | Where does the fee go if no score exists? | Avoids stranded funds and makes misconfigured operators visible |
+
 ## Where payments enter the distribution layer
 
 After x402 settlement, the Tangle contract calls `distributeServiceFee` on `ServiceFeeDistributor`. This is the on-chain entry point for all service-fee revenue.
@@ -200,6 +209,8 @@ Every job that came from an x402 payment carries its quote digest, payment netwo
 
 Source: [`blueprint/crates/x402/src/producer.rs`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/producer.rs)
 
+For the ingress side of this path, read [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). For quote-bound operator commitments, read [RFQ job quotes on Tangle](/blog/rfq-job-quotes-tangle-operator-accountability).
+
 ## What's wired vs what's planned
 
 Two items in the distribution system are architecturally present but not fully live:
@@ -219,6 +230,24 @@ The slashing mechanism in `ServiceFeeDistributor` is operational. What feeds tho
 The fee distribution design encodes a specific opinion about what operators should optimize for: committed, long-duration, diversified backing. Operators with high USD-weighted exposure earn more per fee unit. Operators with mixed asset backing benefit from oracle normalization. Operators who attract All-mode delegators (stake that covers the full service roster) earn from a broader pool than operators whose delegators make narrow Fixed-mode bets.
 
 The streaming payment design punishes late entry. Delegation after a service starts doesn't capture retroactive fees — drips happen at the score ratios that were in place at drip time. This is intended: an operator who can attract capital before a service launches is more valuable to the protocol than one who can attract it after the fact.
+
+## FAQ
+
+### Does x402 decide how operators and delegators split revenue?
+
+No. x402 proves and settles the client payment. The Tangle protocol distributes the service fee afterward through `ServiceFeeDistributor`, streaming logic, USD-weighted scores, and blueprint selection mode. Treat x402 as payment intake, not the full economics engine.
+
+### Why does Tangle weight rewards by USD exposure instead of token count?
+
+Raw token counts are not comparable across assets. USD-weighted exposure lets ETH, stablecoin, TNT, and other accepted assets compete through a common value measure, then adjusts reward share by how much of that capital is actually committed to the service.
+
+### Can a delegator bond after a job starts and capture the old fee?
+
+Not for time-bounded services. Streaming payments drip against the score ratios in effect at drip time. A delegator who joins later starts earning on future drips, not on revenue already earned by the previous backing set.
+
+### When should an operator care about All mode versus Fixed mode?
+
+All mode is better when delegators trust the operator's whole service roster. Fixed mode is better when delegators want exposure to a specific blueprint. Operators should explain which pool backs which service because that choice affects fee share, risk, and slashing exposure.
 
 ---
 

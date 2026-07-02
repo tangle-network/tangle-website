@@ -170,6 +170,13 @@ No new cryptography. No new smart contracts. Just cutting out the middleman from
 
 Ripping out the facilitator in one shot would be reckless. The right approach removes trust assumptions incrementally. Each phase is independently deployable and backward-compatible, and each one closes a specific class of attack.
 
+| Phase | Facilitator still does | Gateway verifies directly | Trust assumption removed |
+|---|---|---|---|
+| 1. Receipt verification | Settles payment and returns success | Transaction receipt exists and succeeded on-chain | Facilitator cannot fabricate settlement |
+| 2. Local verification | Submits the settlement transaction | Signature, balance, authorization window, and receipt | Facilitator cannot censor by lying about validity |
+| 3. Self-settlement | Nothing in the hot path | Gateway submits and confirms `transferWithAuthorization` | Operator availability no longer depends on a third-party HTTP service |
+| 4. Blueprint facilitation | Becomes a staked service, not a singleton | Tangle result reporting and slashing evidence | Incorrect facilitation becomes economically punishable |
+
 ### Phase 1: A compromised facilitator can no longer fabricate settlements
 
 Keep the facilitator in the loop, but stop trusting it blindly. After the gateway receives a `SettleResponse::Success`, check the chain:
@@ -260,21 +267,23 @@ The migration path is incremental: verify the facilitator's claims, then verify 
 
 The protocol's original insight was right: HTTP 402 should mean "pay and retry." The next step is making sure "pay" doesn't require asking permission from a single server in Virginia.
 
+For the current gateway integration surface, read [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). For production rollout risks around payment configuration, use the [x402 deployment checklist](/blog/x402-blueprint-production-deployment-checklist).
+
 ## FAQ
 
-**Can operators run a local facilitator today without any protocol changes?**
+### Can operators run a local facilitator today without any protocol changes?
 Yes. The `facilitator_url` config field accepts any URL, so an operator can deploy their own facilitator service that implements the same three endpoints (`verify`, `settle`, `supported`). The [x402 reference implementation](https://github.com/coinbase/x402) provides a starting point. The phased approach described here goes further by eliminating the facilitator abstraction entirely, but self-hosting is possible right now.
 
-**What happens to in-flight payments during a migration from centralized to local facilitation?**
+### What happens to in-flight payments during a migration from centralized to local facilitation?
 Each phase is backward-compatible. In Phase 1 (receipt verification), the facilitator still handles settlement; the gateway just adds a check afterward. An operator can switch modes between jobs with no coordination required. Payments in progress complete through whichever facilitator mode was active when the job started.
 
-**How does self-settlement affect payment finality guarantees for the client?**
+### How does self-settlement affect payment finality guarantees for the client?
 It improves them. Today, the client trusts the facilitator to settle honestly, with no proof. With operator self-settlement, the operator has direct economic incentive to settle correctly (they don't get paid otherwise), and the on-chain receipt is publicly verifiable by both parties. The client can independently confirm their payment landed by checking the transaction hash.
 
-**Why not skip straight to Phase 4 (on-chain enforcement)?**
+### Why not skip straight to Phase 4 (on-chain enforcement)?
 Phase 4 requires smart contract development, slashing parameter tuning, and governance decisions about stake requirements. Phases 1-3 are pure gateway logic changes that a single operator can deploy independently. The incremental approach lets operators capture most of the security benefit immediately while the protocol-level work proceeds in parallel.
 
-**Does this break compatibility with clients built against the current x402 spec?**
+### Does this break compatibility with clients built against the current x402 spec?
 No. The client-side protocol is unchanged across all four phases. Clients still send the same payment headers, receive the same 402 responses, and sign the same EIP-3009 authorizations. The decentralization happens entirely on the server side, in how the gateway processes and settles those payments.
 
 ---

@@ -19,11 +19,21 @@ A rollout sequence is the discipline of promoting that configuration through env
 
 This article walks through three environments: dev (local, loopback), staging (remote, testnet), and production (mainnet, TEE enforced). At each stage, a small set of fields changes. Knowing which fields those are, and why they change, is the difference between a smooth launch and a very expensive config mistake.
 
+If you need the gateway wiring first, start with [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). If you are enabling confidential execution, pair this checklist with [x402 and TEE production gating](/blog/blueprint-tee-x402-production-gating).
+
 ---
 
 ## Production deployment checklist
 
 Before flipping to mainnet, verify each of these. The validator catches some of them at load time; the rest fail silently at runtime or settlement.
+
+| Readiness area | Caught at config load | Silent failure if wrong | Promotion proof |
+|---|---|---|---|
+| Payment destination | Address parses as EVM-shaped | Funds settle to the wrong wallet | Staging receipt pays the intended operator address |
+| Network and token | CAIP-2 and address strings parse | Facilitator or token contract rejects settlement | Sepolia payment succeeds, then mainnet addresses are changed in one review |
+| Pricing | TOML value parses | ETH/USDC drift makes jobs underpriced or overpriced | Deployment log records the rate source and review date |
+| Job policy | Missing required fields reject | New job inherits the wrong default mode | Every job index has an explicit policy row |
+| TEE gate | Some invalid combinations reject | `preferred` or local-only attestation allows downgrade | Provisioned attestation hash exists before `on_chain_verification = true` |
 
 1. **`pay_to`** is your production operator wallet on Base mainnet, not the dev placeholder `0x0000000000000000000000000000000000000001`. The validator accepts `0x1` without error; payments sent there are unrecoverable.
 2. **`network`** is `eip155:8453` (Base mainnet), not `eip155:84532` (Base Sepolia). One digit difference. The validator checks format, not whether your `pay_to` address is on that chain.
@@ -259,19 +269,19 @@ After promoting to production, run these checks before declaring the deployment 
 
 ## FAQ
 
-**Does the validator catch a wrong `pay_to` address?**
+### Does the validator catch a wrong `pay_to` address?
 No. The validator confirms `pay_to` is a parseable EVM address, nothing more. It does not verify ownership, network match, or that the address isn't the dev placeholder `0x1`. Replace `pay_to` before staging, not before production, so you have a full test cycle to verify it.
 
-**What happens if my enclave reboots in production with `on_chain_verification = true`?**
+### What happens if my enclave reboots in production with `on_chain_verification = true`?
 Re-provision is required. The on-chain attestation hash is captured once at provision time (the current `AttestationFreshnessPolicy` is `provision_time_only`). When the enclave reboots, the stored hash becomes stale, and key exchange fails until you submit a new attestation hash on-chain. Periodic re-attestation is planned but not yet implemented; add enclave restarts to your incident runbook as requiring a re-provision cycle.
 
-**Can I use `restricted_paid` without deploying a Tangle contract?**
+### Can I use `restricted_paid` without deploying a Tangle contract?
 No. The validator rejects `restricted_paid` without both `tangle_rpc_url` and `tangle_contract` at load time. The service will not start. Deploy the contract before enabling this mode.
 
-**Why are job prices in wei instead of USDC amounts?**
+### Why are job prices in wei instead of USDC amounts?
 Wei prices are token-agnostic. An operator sets a price once in native units; the gateway converts to whatever stablecoin the client presents at settlement time, using `rate_per_native_unit` and `markup_bps`. Adding a second accepted token (DAI, for example) requires no changes to `job_pricing.toml`, only a new `[[accepted_tokens]]` entry in `x402.toml`.
 
-**What does `markup_bps = 200` mean in practice?**
+### What does `markup_bps = 200` mean in practice?
 200 basis points is a 2% markup on top of the converted stablecoin price. For a job priced at 0.001 ETH at 3200 USDC/ETH: 3.20 USDC base + 2% = 3.264 USDC. The markup is applied in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179) before the quote is returned to the client. It covers settlement risk and operator margin; it is not a fee paid to the facilitator.
 
 ---

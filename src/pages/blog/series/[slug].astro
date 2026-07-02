@@ -1,0 +1,161 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro'
+import { getCollection } from 'astro:content'
+
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+
+export async function getStaticPaths() {
+  const posts = await getCollection('blog', ({ data }) => !data.draft)
+  const seriesMap = new Map<string, typeof posts>()
+
+  for (const post of posts) {
+    const series = post.data.series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
+    if (series === 'Standalone') continue
+    if (!seriesMap.has(series)) seriesMap.set(series, [])
+    seriesMap.get(series)?.push(post)
+  }
+
+  return [...seriesMap.entries()].map(([series, entries]) => {
+    const ordered = [...entries].sort((a, b) => {
+      const orderA = a.data.seriesOrder ?? 999
+      const orderB = b.data.seriesOrder ?? 999
+      if (orderA !== orderB) return orderA - orderB
+      return new Date(a.data.date).getTime() - new Date(b.data.date).getTime()
+    })
+
+    return {
+      params: {
+        slug: series
+          .toLowerCase()
+          .replace(/&/g, 'and')
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, ''),
+      },
+      props: { series, posts: ordered },
+    }
+  })
+}
+
+const { series, posts } = Astro.props
+---
+
+<BaseLayout title={`${series} | Blog`} description={`${series} articles from Tangle.`} bodyClass="page-editorial">
+  <section class="blog-page series-page" aria-labelledby="series-title">
+    <div class="blog-shell">
+      <header class="series-header">
+        <h1 id="series-title">{series}</h1>
+      </header>
+
+      <div class="series-list">
+        {posts.map((post) => (
+          <a href={`/blog/${post.data.slug}`} class="series-row">
+            <time datetime={post.data.date}>{formatDate(post.data.date)}</time>
+            <div>
+              <h2>{post.data.title}</h2>
+              <p>{post.data.summary}</p>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .blog-page {
+    min-height: 100vh;
+    padding: 8rem 6% 6rem;
+    background: var(--editorial-paper);
+    color: var(--editorial-ink);
+  }
+
+  .blog-shell {
+    width: min(78rem, 100%);
+    margin: 0 auto;
+  }
+
+  .series-header {
+    max-width: 64rem;
+    margin-bottom: 1.8rem;
+    padding-bottom: 1.1rem;
+    border-bottom: 1px solid var(--editorial-rule);
+  }
+
+  .series-header h1,
+  .series-row h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    letter-spacing: 0;
+    color: var(--editorial-ink);
+    text-wrap: balance;
+  }
+
+  .series-header h1 {
+    font-size: clamp(2.15rem, 4vw, 3.65rem);
+    font-weight: 800;
+    line-height: 1.03;
+  }
+
+  .series-list {
+    border-bottom: 1px solid var(--editorial-rule);
+  }
+
+  .series-row {
+    display: grid;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+    gap: 2rem;
+    padding: 1.15rem 0;
+    border-top: 1px solid var(--editorial-rule);
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .series-row time {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    color: #64677a;
+  }
+
+  .series-row h2 {
+    font-size: clamp(1.08rem, 1.8vw, 1.42rem);
+    font-weight: 760;
+    line-height: 1.18;
+  }
+
+  .series-row p {
+    max-width: 54rem;
+    margin: 0.45rem 0 0;
+    color: var(--editorial-muted);
+    font-size: 0.96rem;
+    line-height: 1.5;
+  }
+
+  .series-row:hover h2 {
+    color: #4f46e5;
+  }
+
+  @media (max-width: 640px) {
+    .blog-page {
+      padding: 6.25rem 1rem 4rem;
+    }
+
+    .series-header {
+      margin-bottom: 1.2rem;
+    }
+
+    .series-row {
+      grid-template-columns: 1fr;
+      gap: 0.45rem;
+      padding: 1rem 0;
+    }
+  }
+</style>
