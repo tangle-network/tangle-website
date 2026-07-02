@@ -1,0 +1,215 @@
+---
+// Internal lab. Unlinked, noindex. The Tangle knot as a real WebGL object:
+// a (2,3) torus knot rendered as fiber-optic material — dispersion gradient
+// mapped along the tube's parametric length, fresnel rim light, bloom, film
+// grain, slow rotation with pointer parallax. This is the brand object the
+// SVG placeholders were standing in for.
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Tangle knot lab</title>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="knot"></canvas>
+      <div class="grain" aria-hidden="true"></div>
+      <div class="caption">
+        <h1>The knot, made physical</h1>
+        <p class="mono">three.js · fresnel dispersion shader · bloom · drag to orbit</p>
+      </div>
+    </div>
+
+    <script>
+      import * as THREE from 'three';
+      import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+      import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+      import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const canvas = document.getElementById('knot');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color('#080814');
+
+      const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+      camera.position.set(0, 0, 9.2);
+
+      // Dispersion palette along the knot's parametric length (u):
+      // cyan (the run) -> indigo (the wire) -> violet -> magenta (the fix).
+      const stops = [
+        new THREE.Color('#C7C9F5'),
+        new THREE.Color('#818CF8'),
+        new THREE.Color('#6366F1'),
+        new THREE.Color('#4F46E5'),
+      ];
+
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uC0: { value: stops[0] },
+          uC1: { value: stops[1] },
+          uC2: { value: stops[2] },
+          uC3: { value: stops[3] },
+        },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vView;
+          void main() {
+            vUv = uv;
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vView = normalize(-mv.xyz);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform float uTime;
+          uniform vec3 uC0;
+          uniform vec3 uC1;
+          uniform vec3 uC2;
+          uniform vec3 uC3;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vView;
+
+          vec3 ramp(float t) {
+            t = fract(t);
+            if (t < 0.3333) return mix(uC0, uC1, smoothstep(0.0, 1.0, t / 0.3333));
+            if (t < 0.6666) return mix(uC1, uC2, smoothstep(0.0, 1.0, (t - 0.3333) / 0.3333));
+            return mix(uC2, uC3, smoothstep(0.0, 1.0, (t - 0.6666) / 0.3334));
+          }
+
+          void main() {
+            // color travels along the fiber over time: light in motion
+            vec3 base = ramp(vUv.x + uTime * 0.03);
+
+            // fresnel rim: the fiber's edge glows hotter than its core
+            float fresnel = pow(1.0 - max(dot(vNormal, vView), 0.0), 2.2);
+
+            // pulses of brighter light run along the tube
+            float pulse = smoothstep(0.965, 1.0, sin((vUv.x - uTime * 0.06) * 40.0) * 0.5 + 0.5);
+
+            vec3 color = base * (0.22 + 0.62 * fresnel) + base * pulse * 0.85;
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
+      });
+
+      const geometry = new THREE.TorusKnotGeometry(1.7, 0.13, 520, 48, 2, 3);
+      const knot = new THREE.Mesh(geometry, material);
+      scene.add(knot);
+
+      // faint inner halo mesh: same knot, slightly fatter, additive, back side
+      const haloMat = new THREE.ShaderMaterial({
+        uniforms: material.uniforms,
+        vertexShader: material.vertexShader,
+        fragmentShader: /* glsl */ `
+          uniform float uTime;
+          uniform vec3 uC1;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vView;
+          void main() {
+            float fresnel = pow(1.0 - max(dot(vNormal, vView), 0.0), 3.0);
+            gl_FragColor = vec4(uC1 * fresnel * 0.28, 1.0);
+          }
+        `,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+        depthWrite: false,
+      });
+      const halo = new THREE.Mesh(new THREE.TorusKnotGeometry(1.7, 0.24, 260, 32, 2, 3), haloMat);
+      scene.add(halo);
+
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.62, 0.42, 0.28);
+      composer.addPass(bloom);
+
+      const fit = () => {
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        renderer.setSize(w, h, false);
+        composer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      };
+      new ResizeObserver(fit).observe(canvas);
+      fit();
+
+      // pointer orbit: gentle parallax, drag for full orbit
+      let targetRX = 0.35, targetRY = 0, dragging = false, px = 0, py = 0;
+      addEventListener('pointermove', (e) => {
+        if (dragging) {
+          targetRY += (e.clientX - px) * 0.005;
+          targetRX += (e.clientY - py) * 0.005;
+          px = e.clientX; py = e.clientY;
+        } else {
+          targetRY = (e.clientX / innerWidth - 0.5) * 0.5;
+          targetRX = 0.35 + (e.clientY / innerHeight - 0.5) * 0.3;
+        }
+      });
+      canvas.addEventListener('pointerdown', (e) => { dragging = true; px = e.clientX; py = e.clientY; });
+      addEventListener('pointerup', () => { dragging = false; });
+
+      const clock = new THREE.Clock();
+      const frame = () => {
+        const t = clock.getElapsedTime();
+        material.uniforms.uTime.value = t;
+        if (!reduced) knot.rotation.z = t * 0.05;
+        halo.rotation.copy(knot.rotation);
+        knot.rotation.x += (targetRX - knot.rotation.x) * 0.04;
+        knot.rotation.y += (targetRY - knot.rotation.y) * 0.04;
+        composer.render();
+        requestAnimationFrame(frame);
+      };
+      frame();
+    </script>
+  </body>
+</html>
+
+<style>
+  html, body { margin: 0; height: 100%; background: #080814; }
+
+  #stage { position: relative; height: 100vh; overflow: hidden; }
+
+  #knot { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+  #knot:active { cursor: grabbing; }
+
+  .grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+  }
+
+  .caption {
+    position: absolute;
+    left: 3rem;
+    bottom: 2.6rem;
+    color: #f5f5fb;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .caption h1 {
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .caption .mono {
+    margin: 0.5rem 0 0;
+    color: #9b9bbf;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+</style>

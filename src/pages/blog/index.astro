@@ -10,6 +10,13 @@ const sortedPosts = posts.sort(
 )
 
 const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
+const slugifySeries = (series: string) =>
+  series
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
 const formatDate = (date: string) =>
   new Date(date).toLocaleDateString('en-US', {
     year: 'numeric',
@@ -39,6 +46,7 @@ for (const post of sortedPosts) {
 }
 
 const seriesGroups = [...seriesMap.entries()]
+  .filter(([name]) => name !== 'Standalone')
   .map(([name, entries]) => {
     const ordered = [...entries].sort((a, b) => {
       const orderA = a.data.seriesOrder ?? 999
@@ -54,6 +62,7 @@ const seriesGroups = [...seriesMap.entries()]
 
     return {
       name,
+      slug: slugifySeries(name),
       representative,
       latest,
       topics: [...new Set(entries.flatMap((post) => post.data.tags))],
@@ -69,28 +78,32 @@ const seriesGroups = [...seriesMap.entries()]
 <BaseLayout
   title="Blog"
   description="Implementation notes, product essays, research threads, and field reports from the Tangle stack."
+  bodyClass="page-editorial"
 >
-  <script is:inline>
-    document.body.classList.add('page-editorial')
-  </script>
-
   <section class="blog-page" aria-labelledby="blog-title">
     <div class="blog-shell">
       <header class="blog-hero">
         <h1 id="blog-title">Writing from Tangle.</h1>
-        <p>Implementation notes, product essays, research threads, and field reports from agent infrastructure work.</p>
       </header>
+
+      <div class="topic-filter" aria-label="Filter posts by topic">
+        <button type="button" class="topic-filter-button is-active" data-topic-filter="all">All</button>
+        {topicOptions.map((topic) => (
+          <button type="button" class="topic-filter-button" data-topic-filter={topic}>
+            {topicLabels[topic]}
+          </button>
+        ))}
+      </div>
 
       <section class="series-index" aria-labelledby="series-title">
         <div class="section-heading">
           <h2 id="series-title">Series</h2>
-          <p>Follow a topic through its strongest thread, then branch into the archive.</p>
         </div>
 
         <div class="series-grid">
           {seriesGroups.map((group) => (
             <a
-              href={`/blog/${group.latest.data.slug}`}
+              href={`/blog/series/${group.slug}`}
               class="series-card"
               data-series-card
               data-series={group.name}
@@ -118,15 +131,6 @@ const seriesGroups = [...seriesMap.entries()]
         <div class="section-heading post-index-heading">
           <div>
             <h2 id="post-index-title">Archive</h2>
-            <p>Filter by the work you are trying to understand, not by site inventory.</p>
-          </div>
-          <div class="topic-filter" aria-label="Filter posts by topic">
-            <button type="button" class="topic-filter-button is-active" data-topic-filter="all">All</button>
-            {topicOptions.map((topic) => (
-              <button type="button" class="topic-filter-button" data-topic-filter={topic}>
-                {topicLabels[topic]}
-              </button>
-            ))}
           </div>
         </div>
 
@@ -179,8 +183,8 @@ const seriesGroups = [...seriesMap.entries()]
   .blog-page {
     min-height: 100vh;
     padding: 8rem 6% 6rem;
-    background: #f7f7fb;
-    color: #191c24;
+    background: var(--editorial-paper);
+    color: var(--editorial-ink);
   }
 
   .blog-shell {
@@ -190,7 +194,7 @@ const seriesGroups = [...seriesMap.entries()]
 
   .blog-hero {
     max-width: 55rem;
-    margin-bottom: 3.5rem;
+    margin-bottom: 1.5rem;
   }
 
   .blog-hero h1,
@@ -206,26 +210,17 @@ const seriesGroups = [...seriesMap.entries()]
 
   .blog-hero h1 {
     font-size: clamp(3.2rem, 6vw, 5.5rem);
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1;
   }
 
-  .blog-hero p,
-  .section-heading p,
   .series-card p,
   .post-row p {
     color: #4a4c5f;
   }
 
-  .blog-hero p {
-    max-width: 44rem;
-    margin: 1.25rem 0 0;
-    font-size: clamp(1.08rem, 2vw, 1.28rem);
-    line-height: 1.58;
-  }
-
   .series-index {
-    margin-top: 3rem;
+    margin-top: 2.5rem;
   }
 
   .section-heading {
@@ -238,15 +233,8 @@ const seriesGroups = [...seriesMap.entries()]
 
   .section-heading h2 {
     font-size: clamp(1.7rem, 3vw, 2.55rem);
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1.05;
-  }
-
-  .section-heading p {
-    max-width: 34rem;
-    margin: 0.45rem 0 0;
-    font-size: 1rem;
-    line-height: 1.55;
   }
 
   .series-grid {
@@ -277,7 +265,7 @@ const seriesGroups = [...seriesMap.entries()]
 
   .series-card h3 {
     font-size: 1.1rem;
-    font-weight: 760;
+    font-weight: 600;
     line-height: 1.18;
   }
 
@@ -314,17 +302,25 @@ const seriesGroups = [...seriesMap.entries()]
 
   .topic-filter {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.45rem;
-    max-width: 34rem;
+    flex-wrap: nowrap;
+    gap: 0.4rem;
+    width: 100%;
+    overflow-x: auto;
+    padding: 0.75rem 0;
+    background: var(--editorial-paper);
+    scrollbar-width: none;
+  }
+
+  .topic-filter::-webkit-scrollbar {
+    display: none;
   }
 
   .topic-filter-button {
+    flex: 0 0 auto;
     appearance: none;
     border: 1px solid rgba(25, 28, 36, 0.14);
     border-radius: 999px;
-    padding: 0.5rem 0.75rem;
+    padding: 0.48rem 0.72rem;
     background: rgba(255, 255, 255, 0.72);
     color: #34364a;
     font: 700 0.8rem/1 var(--font-sans);
@@ -354,7 +350,7 @@ const seriesGroups = [...seriesMap.entries()]
 
   .post-row h3 {
     font-size: clamp(1.15rem, 2vw, 1.55rem);
-    font-weight: 760;
+    font-weight: 600;
     line-height: 1.18;
   }
 
@@ -369,21 +365,6 @@ const seriesGroups = [...seriesMap.entries()]
     display: none !important;
   }
 
-  :global(.page-editorial .wf-nav) {
-    background: rgba(247, 247, 251, 0.86);
-    border-bottom: 1px solid rgba(25, 28, 36, 0.1);
-    backdrop-filter: blur(18px);
-  }
-
-  :global(.page-editorial .wf-nav-brand-type),
-  :global(.page-editorial .wf-nav-menu-link) {
-    color: #191c24 !important;
-  }
-
-  :global(.page-editorial .wf-mobile-icon) {
-    filter: invert(1);
-  }
-
   @media (max-width: 980px) {
     .series-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -394,10 +375,6 @@ const seriesGroups = [...seriesMap.entries()]
       flex-direction: column;
       gap: 1rem;
     }
-
-    .topic-filter {
-      justify-content: flex-start;
-    }
   }
 
   @media (max-width: 640px) {
@@ -406,7 +383,7 @@ const seriesGroups = [...seriesMap.entries()]
     }
 
     .blog-hero {
-      margin-bottom: 2.4rem;
+      margin-bottom: 1.15rem;
     }
 
     .blog-hero h1 {

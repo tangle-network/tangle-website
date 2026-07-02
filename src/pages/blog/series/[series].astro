@@ -1,0 +1,209 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro'
+import BlogCover from '../../../components/BlogCover.astro'
+import { getCollection } from 'astro:content'
+
+const formatDate = (date: string) =>
+  new Date(date).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+
+export async function getStaticPaths() {
+  const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
+  const slugifySeries = (series: string) =>
+    series
+      .toLowerCase()
+      .replace(/&/g, 'and')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  const sortSeriesPosts = (posts: Awaited<ReturnType<typeof getCollection<'blog'>>>) =>
+    [...posts].sort((a, b) => {
+      const orderA = a.data.seriesOrder ?? 999
+      const orderB = b.data.seriesOrder ?? 999
+      if (orderA !== orderB) return orderA - orderB
+      return new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
+    })
+
+  const posts = await getCollection('blog', ({ data }) => !data.draft)
+  const seriesMap = new Map<string, typeof posts>()
+
+  for (const post of posts) {
+    const series = normalizeSeries(post.data.series)
+    if (series === 'Standalone') continue
+    if (!seriesMap.has(series)) seriesMap.set(series, [])
+    seriesMap.get(series)?.push(post)
+  }
+
+  return [...seriesMap.entries()].map(([seriesName, entries]) => ({
+    params: { series: slugifySeries(seriesName) },
+    props: { seriesName, posts: sortSeriesPosts(entries) },
+  }))
+}
+
+const { seriesName, posts } = Astro.props
+---
+
+<BaseLayout
+  title={`${seriesName} | Blog`}
+  description={`Tangle blog posts in the ${seriesName} series.`}
+  bodyClass="page-editorial"
+>
+  <section class="series-page" aria-labelledby="series-title">
+    <div class="series-shell">
+      <a href="/blog" class="back-link"><span aria-hidden="true">&larr;</span> Blog</a>
+
+      <header class="series-hero">
+        <h1 id="series-title">{seriesName}</h1>
+      </header>
+
+      <div class="series-posts">
+        {posts.map((post) => (
+          <a href={`/blog/${post.data.slug}`} class="series-post">
+            <div class="series-post-cover">
+              <BlogCover
+                title={post.data.title}
+                summary={post.data.summary}
+                series={post.data.series}
+                seriesOrder={post.data.seriesOrder}
+                tags={post.data.tags}
+                coverImage={post.data.coverImage}
+                imageAlt={post.data.imageAlt || post.data.title}
+              />
+            </div>
+            <div class="series-post-copy">
+              <time datetime={post.data.date}>{formatDate(post.data.date)}</time>
+              <h2>{post.data.title}</h2>
+              <p>{post.data.summary}</p>
+            </div>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .series-page {
+    min-height: 100vh;
+    padding: 8rem 6% 6rem;
+    background: var(--editorial-paper);
+    color: var(--editorial-ink);
+  }
+
+  .series-shell {
+    width: min(74rem, 100%);
+    margin: 0 auto;
+  }
+
+  .back-link {
+    display: inline-flex;
+    gap: 0.35rem;
+    align-items: center;
+    margin-bottom: 1.35rem;
+    color: #4f46e5;
+    font: 700 0.95rem/1 var(--font-sans);
+    letter-spacing: 0;
+    text-decoration: none;
+  }
+
+  .back-link:hover {
+    color: #3730a3;
+  }
+
+  .series-hero {
+    margin-bottom: 2.5rem;
+  }
+
+  .series-hero h1,
+  .series-post h2 {
+    margin: 0;
+    color: #191c24;
+    font-family: var(--font-display);
+    letter-spacing: 0;
+    text-wrap: balance;
+  }
+
+  .series-hero h1 {
+    max-width: 11ch;
+    font-size: clamp(3rem, 6vw, 5.25rem);
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .series-posts {
+    border-top: 1px solid rgba(25, 28, 36, 0.12);
+  }
+
+  .series-post {
+    display: grid;
+    grid-template-columns: minmax(12rem, 19rem) minmax(0, 1fr);
+    gap: clamp(1.25rem, 3vw, 2rem);
+    align-items: center;
+    padding: 1.35rem 0;
+    border-bottom: 1px solid rgba(25, 28, 36, 0.12);
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .series-post:hover h2 {
+    color: #4f46e5;
+  }
+
+  .series-post-cover {
+    overflow: hidden;
+    border: 1px solid rgba(25, 28, 36, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.76);
+  }
+
+  .series-post-cover :global(.blog-cover) {
+    border: 0;
+    border-radius: 0;
+    aspect-ratio: 16 / 9;
+  }
+
+  .series-post-copy {
+    min-width: 0;
+  }
+
+  .series-post time {
+    display: block;
+    margin-bottom: 0.55rem;
+    color: #5e6174;
+    font: 700 0.78rem/1 var(--font-mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .series-post h2 {
+    max-width: 20ch;
+    font-size: clamp(1.45rem, 3vw, 2.45rem);
+    font-weight: 600;
+    line-height: 1.04;
+  }
+
+  .series-post p {
+    max-width: 48rem;
+    margin: 0.75rem 0 0;
+    color: #4a4d60;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  @media (max-width: 720px) {
+    .series-page {
+      padding: 6.25rem 5% 4.5rem;
+    }
+
+    .series-post {
+      grid-template-columns: 1fr;
+      gap: 0.95rem;
+    }
+
+    .series-post-cover {
+      max-width: 28rem;
+    }
+  }
+</style>
