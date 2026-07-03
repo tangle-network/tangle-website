@@ -1,25 +1,28 @@
 ---
-// Contest prototype: "The Run, Woven". A run enters as a chaotic tangle of
-// light fibers and resolves, left to right, into clean parallel lanes. Three
-// fibers are wasted work (red); they are routed out as the run improves.
-// Standalone, noindex. Move pointer left/right to scrub the resolution.
+// Contest prototype v2: "The Run, Woven" at higher fidelity.
+// A production run enters as a chaotic tangle of live fibers; light pulses
+// (model calls) flow through them. Scroll down and the intelligence layer
+// resolves the tangle into clean parallel lanes, routing the wasted reruns
+// (red, stalled pulses) out. Scroll-driven, so there is no snap-back.
+// Standalone, noindex.
 ---
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
-    <title>Woven — Tangle lab</title>
+    <title>Woven v2 — Tangle lab</title>
   </head>
   <body>
-    <div id="stage">
-      <canvas id="c"></canvas>
-      <div class="grain" aria-hidden="true"></div>
-      <div class="cap">
-        <h1>The run, woven</h1>
-        <p class="mono">three.js · a tangled run resolves into clean lanes · move to scrub</p>
-      </div>
+    <div id="scroller"><div id="spacer"></div></div>
+    <canvas id="c"></canvas>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="vig" aria-hidden="true"></div>
+    <div class="cap">
+      <h1>The run, woven</h1>
+      <p class="mono">three.js · agent runs tangle, then intelligence resolves them · scroll</p>
     </div>
+    <div class="hint mono" id="hint">scroll ↓</div>
 
     <script>
       import * as THREE from 'three';
@@ -31,125 +34,150 @@
       const canvas = document.getElementById('c');
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
       renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping; // filmic: highlights roll off, never clip to white
+      renderer.toneMappingExposure = 0.92;
+
       const scene = new THREE.Scene();
       scene.background = new THREE.Color('#080814');
-      const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+      scene.fog = new THREE.FogExp2('#080814', 0.055); // depth
+      const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
       camera.position.set(0, 0, 13);
 
-      // ---- fibers -------------------------------------------------------------
-      const N = 15;             // fibers
-      const WASTE = new Set([3, 8, 11]); // the wasted reruns (red, routed out)
-      const K = 12;             // control points per fiber
-      const spanX = 9;          // left..right extent
-      const rnd = (seed) => { // deterministic pseudo-random so the tangle is stable
-        let s = Math.sin(seed * 999.13) * 43758.5453;
-        return s - Math.floor(s);
-      };
+      // ---- fibers: agent runs ------------------------------------------------
+      const N = 16;
+      const WASTE = new Set([3, 9, 13]); // wasted reruns, routed out on resolve
+      const K = 15;                       // control points per fiber
+      const spanX = 9.6;
+      const rnd = (s) => { const v = Math.sin(s * 999.13) * 43758.5453; return v - Math.floor(v); };
 
-      // resolved target: evenly stacked horizontal lanes exiting right
-      // tangled source: resolved + smooth chaotic offset (a woven knot)
       const fibers = [];
       for (let i = 0; i < N; i++) {
-        const laneY = (i / (N - 1) - 0.5) * 5.4;
+        const laneY = (i / (N - 1) - 0.5) * 5.6;
         const resolved = [], tangled = [];
+        const waste = WASTE.has(i);
         for (let k = 0; k < K; k++) {
           const x = -spanX / 2 + (spanX * k) / (K - 1);
           resolved.push(new THREE.Vector3(x, laneY, 0));
-          // tangle amplitude peaks in the middle, so ends stay anchored
-          const env = Math.sin((k / (K - 1)) * Math.PI);
-          const amp = 3.4 * env;
-          const ox = (rnd(i * 7.1 + k * 3.3) - 0.5) * amp;
-          const oy = (rnd(i * 2.7 + k * 5.9) - 0.5) * amp + Math.sin(k * 1.3 + i) * env;
-          const oz = (rnd(i * 4.4 + k * 1.7) - 0.5) * amp * 1.4;
-          const wasteBoost = WASTE.has(i) ? 1.5 : 1;
-          tangled.push(new THREE.Vector3(x + ox * wasteBoost, laneY + oy * wasteBoost, oz * wasteBoost));
+          const env = Math.sin((k / (K - 1)) * Math.PI);      // anchored ends
+          const amp = 3.15 * env * (waste ? 1.25 : 1);
+          // layered offsets so the tangle reads as woven, not random noise
+          const ox = (rnd(i * 7.1 + k * 3.3) - 0.5) * amp + Math.sin(k * 0.9 + i * 1.7) * env * 1.1;
+          const oy = (rnd(i * 2.7 + k * 5.9) - 0.5) * amp + Math.cos(k * 1.3 + i) * env * 1.2;
+          const oz = (rnd(i * 4.4 + k * 1.7) - 0.5) * amp * 1.5;
+          tangled.push(new THREE.Vector3(x + ox, laneY + oy, oz));
         }
-        fibers.push({ i, resolved, tangled, waste: WASTE.has(i) });
+        fibers.push({ i, resolved, tangled, waste, seed: rnd(i * 3.7) });
       }
 
-      const indigo = { c0: new THREE.Color('#C7C9F5'), c1: new THREE.Color('#818CF8'), c2: new THREE.Color('#4F46E5') };
-      const red = new THREE.Color('#FB7185');
+      const C = { c0: new THREE.Color('#DDE0FF'), c1: new THREE.Color('#818CF8'), c2: new THREE.Color('#4F46E5') };
+      const RED = new THREE.Color('#E11D48');
 
-      function makeMat(waste) {
+      function makeMat(waste, seed) {
         return new THREE.ShaderMaterial({
-          transparent: true,
+          transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
           uniforms: {
-            uTime: { value: 0 }, uFade: { value: 1 },
-            uC0: { value: indigo.c0 }, uC1: { value: indigo.c1 }, uC2: { value: indigo.c2 },
-            uWaste: { value: waste ? 1 : 0 }, uRed: { value: red },
+            uTime: { value: 0 }, uFade: { value: 1 }, uResolve: { value: 0 },
+            uC0: { value: C.c0 }, uC1: { value: C.c1 }, uC2: { value: C.c2 },
+            uWaste: { value: waste ? 1 : 0 }, uRed: { value: RED }, uSeed: { value: seed },
           },
           vertexShader: `varying vec2 vUv; varying vec3 vN; varying vec3 vV;
             void main(){ vUv=uv; vN=normalize(normalMatrix*normal);
               vec4 mv=modelViewMatrix*vec4(position,1.); vV=normalize(-mv.xyz);
               gl_Position=projectionMatrix*mv; }`,
-          fragmentShader: `uniform float uTime,uFade,uWaste; uniform vec3 uC0,uC1,uC2,uRed;
+          fragmentShader: `precision highp float;
+            uniform float uTime,uFade,uWaste,uResolve,uSeed; uniform vec3 uC0,uC1,uC2,uRed;
             varying vec2 vUv; varying vec3 vN; varying vec3 vV;
+            float packet(float x,float c,float w){ return exp(-pow((x-c)/w,2.0)); }
             void main(){
+              // indigo luminance ramp along the fiber (hue constant)
               vec3 ind = vUv.x<0.5 ? mix(uC0,uC1,vUv.x*2.) : mix(uC1,uC2,(vUv.x-0.5)*2.);
-              vec3 base = mix(ind, uRed, uWaste);
-              float fres = pow(1.-max(dot(vN,vV),0.),2.2);
-              float pulse = smoothstep(0.95,1.,sin((vUv.x - uTime*0.08)*30.)*0.5+0.5);
-              vec3 col = base*(0.25+0.7*fres) + base*pulse*0.8;
-              gl_FragColor = vec4(col, uFade);
+              vec3 base = mix(ind, uRed*0.72, uWaste);
+              float fres = pow(1.-max(dot(vN,vV),0.),2.4);
+              // traveling light pulses = model calls flowing through the run.
+              // waste fibers: pulses stall (near-zero speed) and pile up.
+              float spd = mix(0.16, 0.015, uWaste);
+              float t0 = fract(uTime*spd + uSeed);
+              float t1 = fract(uTime*spd*0.8 + uSeed + 0.4);
+              float t2 = fract(uTime*spd*1.2 + uSeed + 0.77);
+              float w = mix(0.045, 0.02, uResolve); // pulses sharpen as it resolves
+              float pulses = packet(vUv.x,t0,w)+packet(vUv.x,t1,w)+packet(vUv.x,t2,w);
+              float core = 0.16 + 0.48*fres;
+              vec3 col = base*core + base*pulses*(1.0+0.85*uResolve);
+              // gentle emissive floor so fibers read even edge-on
+              col += base*0.026;
+              float a = uFade * (0.28 + 0.4*fres + 0.5*pulses) * (1.0 - uWaste*0.45);
+              gl_FragColor = vec4(col, a);
             }`,
         });
       }
 
+      function tubeFor(pts, r) {
+        return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 110, r, 7, false);
+      }
       const meshes = fibers.map((f) => {
-        const mat = makeMat(f.waste);
-        const geo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(f.resolved.slice()), 90, f.waste ? 0.045 : 0.06, 8, false);
-        const m = new THREE.Mesh(geo, mat);
-        m.userData = { f, mat };
+        const mat = makeMat(f.waste, f.seed);
+        const m = new THREE.Mesh(tubeFor(f.resolved.slice(), f.waste ? 0.03 : 0.042), mat);
+        m.userData = { f, mat, r: f.waste ? 0.03 : 0.042 };
         scene.add(m);
         return m;
       });
 
       const composer = new EffectComposer(renderer);
       composer.addPass(new RenderPass(scene, camera));
-      composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.2));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.48, 0.6, 0.0);
+      composer.addPass(bloom);
 
       const fit = () => {
-        const w = canvas.clientWidth, h = canvas.clientHeight;
+        const w = innerWidth, h = innerHeight;
         renderer.setSize(w, h, false); composer.setSize(w, h);
         camera.aspect = w / h; camera.updateProjectionMatrix();
       };
-      new ResizeObserver(fit).observe(canvas); fit();
+      addEventListener('resize', fit); fit();
 
-      // resolve: 0 = tangled, 1 = clean lanes. Auto once, then pointer scrubs.
-      let resolve = 0, target = reduced ? 1 : 0, scrubbing = false;
-      if (reduced) resolve = 1;
-      addEventListener('pointermove', (e) => { scrubbing = true; target = e.clientX / innerWidth; });
-      addEventListener('pointerleave', () => { scrubbing = false; });
+      // resolve driven by vertical scroll (0 = tangled at top, 1 = resolved at
+      // bottom). No auto-timer, so there is no snap-back on interaction.
+      const scroller = document.getElementById('scroller');
+      const hint = document.getElementById('hint');
+      let target = reduced ? 1 : 0, resolve = reduced ? 1 : 0;
+      const readScroll = () => {
+        const max = scroller.scrollHeight - innerHeight;
+        target = max > 0 ? Math.min(1, Math.max(0, scroller.scrollTop / max)) : 1;
+        if (target > 0.02 && hint) hint.style.opacity = '0';
+      };
+      scroller.addEventListener('scroll', readScroll, { passive: true });
+
       const smooth = (t) => t * t * (3 - 2 * t);
       const tmp = new THREE.Vector3();
-
-      let autoT = 0;
       const clock = new THREE.Clock();
+
       function frame() {
         requestAnimationFrame(frame);
-        const dt = Math.min(0.05, clock.getDelta());
         const time = clock.elapsedTime;
-        if (!reduced && !scrubbing) { autoT = Math.min(1, autoT + dt / 3.2); target = autoT; }
-        resolve += (target - resolve) * 0.06;
-
+        resolve += (target - resolve) * 0.08;
         for (const m of meshes) {
-          const { f, mat } = m.userData;
+          const { f, mat, r } = m.userData;
           const pts = [];
           for (let k = 0; k < K; k++) {
-            // progressive: left points resolve first, so order sweeps rightward
-            const phase = (k / (K - 1)) * 0.55;
-            const tl = smooth(Math.min(1, Math.max(0, (resolve - phase) / 0.45)));
+            const phase = (k / (K - 1)) * 0.5;                 // left resolves first
+            const tl = smooth(Math.min(1, Math.max(0, (resolve - phase) / 0.5)));
             tmp.copy(f.tangled[k]).lerp(f.resolved[k], tl);
+            // living micro-motion in the tangle, stilled as it resolves
+            const j = (1 - tl) * 0.16;
+            tmp.x += Math.sin(time * 1.3 + k + f.i) * j;
+            tmp.y += Math.cos(time * 1.1 + k * 1.4 + f.i) * j;
             pts.push(tmp.clone());
           }
           m.geometry.dispose();
-          m.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 90, f.waste ? 0.045 : 0.06, 8, false);
+          m.geometry = tubeFor(pts, r);
           mat.uniforms.uTime.value = time;
-          // waste fibers fade out as the run resolves
-          mat.uniforms.uFade.value = f.waste ? (1 - smooth(resolve)) : 1;
+          mat.uniforms.uResolve.value = resolve;
+          mat.uniforms.uFade.value = f.waste ? Math.pow(1 - smooth(resolve), 1.5) : 1;
         }
-        scene.rotation.y = Math.sin(time * 0.15) * 0.12;
-        scene.rotation.x = Math.cos(time * 0.11) * 0.06;
+        // subtle dolly + drift for depth
+        camera.position.z = 13 - smooth(resolve) * 1.6;
+        camera.position.y = Math.sin(time * 0.12) * 0.25;
+        scene.rotation.y = (1 - resolve) * Math.sin(time * 0.14) * 0.14;
+        scene.rotation.x = (1 - resolve) * Math.cos(time * 0.1) * 0.06;
         composer.render();
       }
       frame();
@@ -158,14 +186,21 @@
 </html>
 
 <style>
-  html, body { margin: 0; height: 100%; background: #080814; }
-  #stage { position: relative; height: 100vh; overflow: hidden; }
-  #c { width: 100%; height: 100%; display: block; touch-action: none; }
+  html, body { margin: 0; height: 100%; background: #080814; overflow: hidden; }
+  #c { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+  /* tall invisible scroll surface drives the resolution */
+  #scroller { position: fixed; inset: 0; overflow-y: scroll; z-index: 3; -webkit-overflow-scrolling: touch; }
+  #spacer { height: 320vh; }
+  #scroller::-webkit-scrollbar { width: 0; height: 0; }
   .grain {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.5; mix-blend-mode: overlay;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+    position: fixed; inset: 0; pointer-events: none; opacity: 0.4; mix-blend-mode: overlay; z-index: 2;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
   }
-  .cap { position: absolute; left: 3rem; bottom: 2.6rem; color: #f5f5fb; font-family: 'Inter', system-ui, sans-serif; }
+  .vig { position: fixed; inset: 0; pointer-events: none; z-index: 2;
+    background: radial-gradient(120% 90% at 50% 45%, transparent 45%, rgba(4,4,12,0.55) 100%); }
+  .cap { position: fixed; left: 3rem; bottom: 2.6rem; z-index: 4; color: #f5f5fb; font-family: 'Inter', system-ui, sans-serif; pointer-events: none; }
   .cap h1 { margin: 0; font-size: 2rem; font-weight: 600; letter-spacing: -0.03em; }
-  .cap .mono { margin: 0.5rem 0 0; color: #9b9bbf; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.85rem; }
+  .cap .mono { margin: 0.5rem 0 0; color: #9b9bbf; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.82rem; }
+  .hint { position: fixed; left: 50%; bottom: 2rem; transform: translateX(-50%); z-index: 4; color: #a5aafc; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.8rem; transition: opacity 0.4s ease; }
+  @media (prefers-reduced-motion: reduce) { .hint { display: none; } }
 </style>
