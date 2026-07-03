@@ -6,18 +6,25 @@
     <title>Laminar - Tangle lab</title>
   </head>
   <body>
+    <div id="scroller"><div id="scroll-space"></div></div>
     <canvas id="field"></canvas>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="vig" aria-hidden="true"></div>
     <div class="caption">
       <h1>Laminar</h1>
-      <p>vanilla canvas / curl-noise particles / pointer-x scrub</p>
+      <p>canvas particles · curl-noise resolves into laminar streamlines · vertical scroll</p>
     </div>
+    <div class="hint" id="hint">scroll down</div>
 
     <script>
       const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       const canvas = document.getElementById('field');
-      const ctx = canvas.getContext('2d', { alpha: false });
-      const count = 2000;
-      const lanes = 21;
+      const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      const scroller = document.getElementById('scroller');
+      const hint = document.getElementById('hint');
+
+      const count = 2048;
+      const lanes = 23;
       const x = new Float32Array(count);
       const y = new Float32Array(count);
       const px = new Float32Array(count);
@@ -25,32 +32,32 @@
       const lane = new Uint8Array(count);
       const speed = new Float32Array(count);
       const seed = new Float32Array(count);
-      const failed = new Uint8Array(count);
+      const waste = new Uint8Array(count);
+      const tone = new Uint8Array(count);
       const palette = ['#C7C9F5', '#818CF8', '#6366F1', '#4F46E5'];
-      const red = '#FB7185';
-      let w = 1;
-      let h = 1;
+      const red = '#E11D48';
+
+      let width = 1;
+      let height = 1;
       let dpr = 1;
       let bg;
-      let grain;
-      let started = performance.now();
-      let last = started;
-      let target = reduced ? 1 : 0;
-      let progress = target;
-      let manualUntil = 0;
-      let raf = 0;
+      let resolveTarget = reduced ? 1 : 0;
+      let resolve = reduced ? 1 : 0;
+      let last = performance.now();
 
-      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
       const mix = (a, b, t) => a + (b - a) * t;
-      const ease = (t) => t * t * (3 - 2 * t);
-      const rand = (n) => {
+      const smooth = (t) => t * t * (3 - 2 * t);
+
+      function rand(n) {
         const s = Math.sin(n * 127.113 + 91.7) * 43758.5453123;
         return s - Math.floor(s);
-      };
-      const bandY = (n) => {
-        const pad = Math.min(h * 0.28, Math.max(54, h * 0.15));
-        return pad + (n / (lanes - 1)) * Math.max(1, h - pad * 2);
-      };
+      }
+
+      function laneY(index) {
+        const pad = clamp(height * 0.16, 72, 160);
+        return pad + (index / (lanes - 1)) * Math.max(1, height - pad * 2);
+      }
 
       function hash(ix, iy, z) {
         let n = Math.imul(ix, 374761393) ^ Math.imul(iy, 668265263) ^ Math.imul(Math.floor(z * 4096), 2246822519);
@@ -63,8 +70,8 @@
         const iy = Math.floor(ny);
         const fx = nx - ix;
         const fy = ny - iy;
-        const ux = ease(fx);
-        const uy = ease(fy);
+        const ux = smooth(fx);
+        const uy = smooth(fy);
         const a = hash(ix, iy, z);
         const b = hash(ix + 1, iy, z);
         const c = hash(ix, iy + 1, z);
@@ -73,82 +80,71 @@
       }
 
       function fbm(nx, ny, z) {
-        let v = 0;
-        let amp = 0.55;
-        let f = 1;
+        let value = 0;
+        let amp = 0.56;
+        let freq = 1;
         for (let i = 0; i < 4; i++) {
-          v += valueNoise(nx * f, ny * f, z + i * 19.19) * amp;
-          f *= 2.03;
+          value += valueNoise(nx * freq, ny * freq, z + i * 17.17) * amp;
+          freq *= 2.08;
           amp *= 0.5;
         }
-        return v;
+        return value;
       }
 
       function curlAt(nx, ny, t, out) {
-        const s = 0.00235;
-        const ex = 0.018;
-        const xx = nx * s;
-        const yy = ny * s;
-        const z = t * 0.055;
-        const n1 = fbm(xx, yy + ex, z);
-        const n2 = fbm(xx, yy - ex, z);
-        const n3 = fbm(xx + ex, yy, z);
-        const n4 = fbm(xx - ex, yy, z);
-        out[0] = (n1 - n2) / (ex * 2);
-        out[1] = (n4 - n3) / (ex * 2);
+        const scale = 0.00225;
+        const e = 0.019;
+        const sx = nx * scale;
+        const sy = ny * scale;
+        const z = t * 0.044;
+        const n1 = fbm(sx, sy + e, z);
+        const n2 = fbm(sx, sy - e, z);
+        const n3 = fbm(sx + e, sy, z);
+        const n4 = fbm(sx - e, sy, z);
+        out[0] = (n1 - n2) / (e * 2);
+        out[1] = (n4 - n3) / (e * 2);
       }
 
-      function resetParticle(i, clear) {
-        const r1 = rand(seed[i] + 1.1);
-        const r2 = rand(seed[i] + 2.2);
-        const r3 = rand(seed[i] + 3.3);
-        const by = bandY(lane[i]);
-        if (clear) {
-          x[i] = r1 * w;
-          y[i] = by + (r2 - 0.5) * 2.5;
-          px[i] = x[i] - (5 + speed[i] * 8);
-          py[i] = y[i];
+      function resetParticle(index, ordered) {
+        const s = seed[index];
+        const r1 = rand(s + 1.1);
+        const r2 = rand(s + 2.2);
+        const r3 = rand(s + 3.3);
+        const r4 = rand(s + 4.4);
+        const ly = laneY(lane[index]);
+
+        if (ordered) {
+          x[index] = r1 * width;
+          y[index] = ly + (r2 - 0.5) * mix(1.4, 4.4, r3);
+          px[index] = x[index] - (16 + speed[index] * 11);
+          py[index] = y[index] + (r4 - 0.5) * 0.8;
           return;
         }
-        const a = r1 * Math.PI * 2;
-        const rr = Math.pow(r2, 0.42) * Math.min(w, h) * 0.34;
-        x[i] = w * (0.5 + (r3 - 0.5) * 0.18) + Math.cos(a) * rr;
-        y[i] = h * 0.5 + Math.sin(a * 1.7) * rr * 0.62 + (r3 - 0.5) * h * 0.16;
-        px[i] = x[i] + (rand(seed[i] + 4.4) - 0.5) * 12;
-        py[i] = y[i] + (rand(seed[i] + 5.5) - 0.5) * 12;
+
+        const angle = r1 * Math.PI * 2;
+        const radius = Math.pow(r2, 0.35) * Math.min(width, height) * 0.43;
+        const fold = Math.sin(angle * 2.0 + r3 * 5.0) * height * 0.09;
+        x[index] = width * (0.5 + (r4 - 0.5) * 0.2) + Math.cos(angle) * radius;
+        y[index] = height * 0.5 + Math.sin(angle * 1.35) * radius * 0.7 + fold;
+        px[index] = x[index] + (rand(s + 5.5) - 0.5) * 18;
+        py[index] = y[index] + (rand(s + 6.6) - 0.5) * 18;
       }
 
-      function seedParticles(clear) {
+      function seedParticles(ordered) {
         for (let i = 0; i < count; i++) {
-          seed[i] = i * 17.171 + 3.31;
+          seed[i] = i * 19.919 + 3.31;
           lane[i] = i % lanes;
-          speed[i] = 0.55 + rand(seed[i] + 7.7) * 1.35;
-          failed[i] = rand(seed[i] + 8.8) > 0.956 ? 1 : 0;
-          resetParticle(i, clear);
+          speed[i] = 0.72 + rand(seed[i] + 7.7) * 1.55;
+          waste[i] = rand(seed[i] + 8.8) > 0.957 ? 1 : 0;
+          tone[i] = Math.floor(rand(seed[i] + 9.9) * palette.length);
+          resetParticle(i, ordered);
         }
-      }
-
-      function makeGrain() {
-        const tile = document.createElement('canvas');
-        tile.width = 180;
-        tile.height = 180;
-        const g = tile.getContext('2d');
-        const img = g.createImageData(tile.width, tile.height);
-        for (let i = 0; i < img.data.length; i += 4) {
-          const n = Math.random();
-          img.data[i] = 199;
-          img.data[i + 1] = 201;
-          img.data[i + 2] = 245;
-          img.data[i + 3] = n > 0.5 ? n * 18 : 0;
-        }
-        g.putImageData(img, 0, 0);
-        grain = ctx.createPattern(tile, 'repeat');
       }
 
       function makeBackground() {
-        bg = ctx.createRadialGradient(w * 0.52, h * 0.45, 0, w * 0.52, h * 0.45, Math.max(w, h) * 0.76);
+        bg = ctx.createRadialGradient(width * 0.5, height * 0.42, 0, width * 0.5, height * 0.48, Math.max(width, height) * 0.82);
         bg.addColorStop(0, '#11122D');
-        bg.addColorStop(0.48, '#0B0B1F');
+        bg.addColorStop(0.62, '#080814');
         bg.addColorStop(1, '#080814');
       }
 
@@ -157,77 +153,96 @@
         ctx.globalCompositeOperation = 'source-over';
         ctx.globalAlpha = alpha;
         ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(0, 0, width, height);
         ctx.restore();
       }
 
-      function paintGrain(alpha) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'screen';
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = grain;
-        ctx.fillRect(0, 0, w, h);
-        ctx.restore();
-      }
+      function paintLaneCarriers(lam, time) {
+        if (lam <= 0.025) return;
 
-      function paintBands(lam) {
-        if (lam <= 0.08) return;
+        const presence = smooth(clamp((lam - 0.025) / 0.975, 0, 1));
+        const shimmer = 0.78 + Math.sin(time * 0.55) * 0.08;
+
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
         for (let i = 0; i < lanes; i++) {
-          const yy = bandY(i);
+          const yy = laneY(i);
+          const offset = Math.sin(i * 1.91 + time * 0.18) * (1 - lam) * 18;
+
           ctx.beginPath();
-          ctx.moveTo(-20, yy);
-          ctx.lineTo(w + 20, yy);
-          ctx.lineCap = 'round';
-          ctx.strokeStyle = '#6366F1';
-          ctx.globalAlpha = 0.012 * lam;
-          ctx.lineWidth = 16;
+          ctx.moveTo(-80, yy + offset);
+          for (let x0 = -80; x0 <= width + 100; x0 += 92) {
+            const wave = Math.sin(x0 * 0.006 + i * 0.7 + time * 0.25) * (1 - lam) * 26;
+            ctx.lineTo(x0, yy + offset + wave);
+          }
+          ctx.strokeStyle = '#4F46E5';
+          ctx.globalAlpha = 0.022 * presence;
+          ctx.lineWidth = 26;
           ctx.stroke();
-          ctx.strokeStyle = '#C7C9F5';
-          ctx.globalAlpha = 0.026 * lam;
-          ctx.lineWidth = 1.1;
+
+          ctx.strokeStyle = '#6366F1';
+          ctx.globalAlpha = 0.048 * presence * shimmer;
+          ctx.lineWidth = 7.5;
+          ctx.stroke();
+
+          ctx.strokeStyle = i % 3 === 0 ? '#C7C9F5' : '#818CF8';
+          ctx.globalAlpha = 0.075 * Math.pow(presence, 1.2);
+          ctx.lineWidth = 1.45;
           ctx.stroke();
         }
+
         ctx.restore();
       }
 
-      const cv = [0, 0];
-      function moveParticles(lam, t, dt) {
+      const curl = [0, 0];
+
+      function moveParticles(lam, time, dt) {
         const chaos = 1 - lam;
-        const cx = w * 0.5;
-        const cy = h * 0.5;
-        const scale = clamp(dt * 60, 0.35, 1.8);
+        const centerX = width * 0.5;
+        const centerY = height * 0.5;
+        const scale = clamp(dt * 60, 0.35, 1.75);
+        const lanePull = 0.012 + lam * lam * 0.11;
+        const noisePower = 24 * chaos + 0.65;
+        const driftPower = 10.5 * chaos;
+
         for (let i = 0; i < count; i++) {
           const ox = x[i];
           const oy = y[i];
           px[i] = ox;
           py[i] = oy;
-          curlAt(ox, oy, t + seed[i] * 0.001, cv);
 
-          const dx = ox - cx;
-          const dy = oy - cy;
+          if (chaos > 0.025) {
+            curlAt(ox, oy, time + seed[i] * 0.0007, curl);
+          } else {
+            curl[0] = 0;
+            curl[1] = 0;
+          }
+
+          const dx = ox - centerX;
+          const dy = oy - centerY;
           const dist = Math.sqrt(dx * dx + dy * dy) + 0.001;
-          const spin = clamp(1 - dist / (Math.min(w, h) * 0.58), 0, 1) * chaos;
-          const toward = chaos * 0.0028;
-          const spinX = (-dy / dist) * spin * 8.5 - dx * toward;
-          const spinY = (dx / dist) * spin * 8.5 - dy * toward;
-          const targetY = bandY(lane[i]);
-          const rail = (targetY - oy) * (0.010 + lam * lam * 0.060);
-          const forward = (0.16 + speed[i] * 0.18) * chaos + (2.8 + speed[i] * 2.2) * lam;
-          const wash = Math.sin(ox * 0.01 + lane[i] * 0.63 + t * 0.7) * chaos * 0.55;
-          const vx = (cv[0] * (20 * chaos + 1.8) + spinX + forward) * scale;
-          const vy = (cv[1] * (20 * chaos + 1.8) + spinY + rail + wash) * scale;
+          const orbit = clamp(1 - dist / (Math.min(width, height) * 0.62), 0, 1) * chaos;
+          const inward = chaos * 0.0031;
+          const spinX = (-dy / dist) * orbit * driftPower - dx * inward;
+          const spinY = (dx / dist) * orbit * driftPower - dy * inward;
+          const targetY = laneY(lane[i]);
+          const rail = (targetY - oy) * lanePull;
+          const forward = (0.12 + speed[i] * 0.2) * chaos + (4.7 + speed[i] * 2.75) * lam;
+          const shear = Math.sin(ox * 0.008 + lane[i] * 0.76 + time * 0.8) * chaos * 0.72;
+          const laneTremor = Math.sin(time * 1.1 + seed[i]) * lam * 0.018;
 
-          x[i] = ox + vx;
-          y[i] = oy + vy;
+          x[i] = ox + (curl[0] * noisePower + spinX + forward) * scale;
+          y[i] = oy + (curl[1] * noisePower + spinY + rail + shear + laneTremor) * scale;
 
-          if (x[i] > w + 28 || x[i] < -38 || y[i] < -42 || y[i] > h + 42) {
+          if (x[i] > width + 60 || x[i] < -80 || y[i] < -70 || y[i] > height + 70) {
             seed[i] += 101.13;
-            if (lam > 0.68) {
-              x[i] = -24 - rand(seed[i]) * w * 0.12;
-              y[i] = targetY + (rand(seed[i] + 1) - 0.5) * 2.2;
-              px[i] = x[i] - 10;
+            if (lam > 0.62) {
+              x[i] = -46 - rand(seed[i]) * width * 0.15;
+              y[i] = targetY + (rand(seed[i] + 1.0) - 0.5) * mix(9, 1.8, lam);
+              px[i] = x[i] - 22;
               py[i] = y[i];
             } else {
               resetParticle(i, false);
@@ -236,99 +251,136 @@
         }
       }
 
-      function drawParticles(lam) {
-        const chaos = 1 - lam;
+      function drawWaste(lam) {
+        const fade = Math.pow(clamp((0.64 - lam) / 0.64, 0, 1), 2.2);
+        if (fade <= 0.002) return;
+
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         ctx.lineCap = 'round';
+        ctx.strokeStyle = red;
+        ctx.globalAlpha = 0.12 * fade;
+        ctx.lineWidth = 0.95 + (1 - lam) * 1.0;
+
         for (let i = 0; i < count; i++) {
-          if (failed[i]) {
-            const a = Math.pow(clamp((0.62 - lam) / 0.62, 0, 1), 2) * 0.16;
-            if (a <= 0.002) continue;
-            ctx.strokeStyle = red;
-            ctx.globalAlpha = a;
-            ctx.lineWidth = 0.75 + chaos * 0.95;
-          } else {
-            const p = palette[(i + lane[i]) % palette.length];
-            ctx.strokeStyle = p;
-            ctx.globalAlpha = 0.030 + lam * 0.052 + chaos * 0.018;
-            ctx.lineWidth = 0.46 + lam * 0.45 + rand(seed[i] + 9) * 0.32;
-          }
+          if (!waste[i]) continue;
           ctx.beginPath();
           ctx.moveTo(px[i], py[i]);
           ctx.lineTo(x[i], y[i]);
           ctx.stroke();
         }
+
         ctx.restore();
       }
 
-      function primeTangle() {
-        paintBackground(1);
-        for (let i = 0; i < 46; i++) {
-          moveParticles(0, i * 0.024, 0.018);
-          drawParticles(0);
-        }
-        paintGrain(0.12);
-      }
+      function drawParticles(lam) {
+        const chaos = 1 - lam;
+        const coreAlpha = 0.026 + chaos * 0.018 + lam * 0.092;
+        const glowAlpha = 0.013 + lam * 0.038;
 
-      function paintStaticEnd() {
-        paintBackground(1);
-        paintBands(1);
-        for (let i = 0; i < 74; i++) {
-          moveParticles(1, i * 0.024, 0.018);
-          drawParticles(1);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.shadowColor = '#4F46E5';
+        ctx.shadowBlur = 4 + lam * 8;
+
+        for (let i = 0; i < count; i++) {
+          if (waste[i]) continue;
+          const streak = lam > 0.72 ? 1 + lam * 1.8 : 1;
+          const sx = x[i];
+          const sy = y[i];
+          const tx = px[i] - (sx - px[i]) * (streak - 1);
+          const ty = py[i] - (sy - py[i]) * (streak - 1);
+
+          ctx.strokeStyle = palette[(tone[i] + lane[i]) % palette.length];
+          ctx.globalAlpha = glowAlpha;
+          ctx.lineWidth = 2.4 + lam * 1.7;
+          ctx.beginPath();
+          ctx.moveTo(tx, ty);
+          ctx.lineTo(sx, sy);
+          ctx.stroke();
+
+          ctx.globalAlpha = coreAlpha;
+          ctx.lineWidth = 0.58 + lam * 0.82 + rand(seed[i] + 11.1) * 0.2;
+          ctx.beginPath();
+          ctx.moveTo(tx, ty);
+          ctx.lineTo(sx, sy);
+          ctx.stroke();
         }
-        paintGrain(0.16);
+
+        ctx.restore();
+        drawWaste(lam);
       }
 
       function resize() {
         dpr = Math.min(2, window.devicePixelRatio || 1);
-        w = Math.max(1, window.innerWidth);
-        h = Math.max(1, window.innerHeight);
-        canvas.width = Math.floor(w * dpr);
-        canvas.height = Math.floor(h * dpr);
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${h}px`;
+        width = Math.max(1, window.innerWidth);
+        height = Math.max(1, window.innerHeight);
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         makeBackground();
-        makeGrain();
-        seedParticles(reduced);
-        if (reduced) paintStaticEnd();
-        else primeTangle();
+        seedParticles(reduced || resolve > 0.68);
+
+        if (reduced) {
+          paintStaticEnd();
+        } else {
+          paintBackground(1);
+          for (let i = 0; i < 36; i++) {
+            moveParticles(0, i * 0.022, 0.018);
+            drawParticles(0);
+          }
+        }
       }
 
-      function scrub(v) {
-        target = clamp(v, 0, 1);
-        manualUntil = performance.now() + 3200;
+      function readScroll() {
+        if (reduced) {
+          resolveTarget = 1;
+          return;
+        }
+        const max = scroller.scrollHeight - window.innerHeight;
+        resolveTarget = max > 0 ? clamp(scroller.scrollTop / max, 0, 1) : 1;
+        if (resolveTarget > 0.02 && hint) hint.style.opacity = '0';
       }
 
-      window.addEventListener('pointermove', (e) => scrub(e.clientX / Math.max(1, w)), { passive: true });
-      window.addEventListener('pointerdown', (e) => scrub(e.clientX / Math.max(1, w)), { passive: true });
-      window.addEventListener('wheel', (e) => scrub(target + e.deltaY * 0.00065), { passive: true });
-      window.addEventListener('resize', resize);
+      function paintStaticEnd() {
+        resolve = 1;
+        resolveTarget = 1;
+        seedParticles(true);
+        paintBackground(1);
+        for (let i = 0; i < 94; i++) {
+          if (i % 8 === 0) paintBackground(0.052);
+          const time = i * 0.035;
+          paintLaneCarriers(1, time);
+          moveParticles(1, time, 0.018);
+          drawParticles(1);
+        }
+        paintLaneCarriers(1, 3.6);
+      }
 
       function frame(now) {
         const dt = Math.min(0.04, Math.max(0.001, (now - last) / 1000));
         last = now;
-        if (now > manualUntil) {
-          target = clamp((now - started) / 7600, 0, 1);
-        }
-        progress += (target - progress) * (1 - Math.pow(0.0008, dt));
-        const lam = ease(progress);
-        paintBackground(0.035 + lam * 0.128);
-        paintBands(lam);
-        moveParticles(lam, now * 0.001, dt);
+        resolve += (resolveTarget - resolve) * (1 - Math.pow(0.0009, dt));
+        const lam = smooth(resolve);
+        const time = now * 0.001;
+
+        paintBackground(mix(0.035, 0.074, lam));
+        paintLaneCarriers(lam, time);
+        moveParticles(lam, time, dt);
         drawParticles(lam);
-        paintGrain(0.055);
-        raf = requestAnimationFrame(frame);
+
+        window.requestAnimationFrame(frame);
       }
 
+      window.addEventListener('resize', resize);
+      scroller.addEventListener('scroll', readScroll, { passive: true });
+
       resize();
-      if (!reduced) {
-        raf = requestAnimationFrame(frame);
-      } else if (raf) {
-        cancelAnimationFrame(raf);
-      }
+      readScroll();
+      if (!reduced) window.requestAnimationFrame(frame);
     </script>
   </body>
 </html>
@@ -337,7 +389,7 @@
   html,
   body {
     margin: 0;
-    min-height: 100%;
+    height: 100%;
     overflow: hidden;
     background: #080814;
   }
@@ -348,24 +400,62 @@
     display: block;
     width: 100vw;
     height: 100vh;
-    touch-action: none;
-    cursor: ew-resize;
     background: #080814;
+  }
+
+  #scroller {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    overflow-y: scroll;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  #scroller::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  #scroll-space {
+    height: 340vh;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    opacity: 0.42;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.86' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.46'/%3E%3C/svg%3E");
+  }
+
+  .vig {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background:
+      radial-gradient(105% 82% at 50% 43%, transparent 44%, rgba(8, 8, 20, 0.48) 100%),
+      linear-gradient(180deg, rgba(8, 8, 20, 0.24), transparent 26%, transparent 72%, rgba(8, 8, 20, 0.32));
   }
 
   .caption {
     position: fixed;
-    left: max(1rem, min(4vw, 3rem));
-    bottom: max(1rem, min(4vw, 2.6rem));
+    left: max(1.1rem, min(4vw, 3rem));
+    bottom: max(1.1rem, min(4vw, 2.6rem));
+    z-index: 4;
+    max-width: min(34rem, calc(100vw - 2.2rem));
     color: #C7C9F5;
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    text-shadow: 0 0 24px rgba(99, 102, 241, 0.38);
+    text-shadow: 0 0 24px rgba(99, 102, 241, 0.34);
     pointer-events: none;
   }
 
   .caption h1 {
     margin: 0;
-    font-size: 2rem;
+    font-size: clamp(1.45rem, 2.5vw, 2rem);
     line-height: 1;
     font-weight: 600;
     letter-spacing: 0;
@@ -373,21 +463,32 @@
 
   .caption p {
     margin: 0.58rem 0 0;
-    max-width: min(28rem, calc(100vw - 2rem));
     color: #818CF8;
-    font-size: 0.78rem;
+    font-size: clamp(0.66rem, 1vw, 0.79rem);
     line-height: 1.45;
     font-weight: 500;
     letter-spacing: 0;
   }
 
-  @media (max-width: 640px) {
-    .caption h1 {
-      font-size: 1.45rem;
-    }
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(1.1rem, min(4vw, 2.1rem));
+    z-index: 4;
+    transform: translateX(-50%);
+    color: #818CF8;
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.74rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-shadow: 0 0 18px rgba(99, 102, 241, 0.35);
+    pointer-events: none;
+    transition: opacity 0.45s ease;
+  }
 
-    .caption p {
-      font-size: 0.68rem;
+  @media (prefers-reduced-motion: reduce) {
+    .hint {
+      display: none;
     }
   }
 </style>

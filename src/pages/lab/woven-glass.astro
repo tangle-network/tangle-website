@@ -1,0 +1,594 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Woven Glass - Tangle lab</title>
+  </head>
+  <body>
+    <div id="scroller"><div id="spacer"></div></div>
+    <canvas id="c"></canvas>
+    <div class="grain" aria-hidden="true"></div>
+    <div class="vig" aria-hidden="true"></div>
+    <div class="cap">
+      <h1>The run, glass-woven</h1>
+      <p class="mono">three.js / physical glass fibers / PMREM indigo environment / scroll resolve</p>
+    </div>
+    <div class="hint mono" id="hint">scroll</div>
+
+    <script>
+      import * as THREE from 'three';
+      import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+      import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+      import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+      const C = {
+        bg: '#080814',
+        bg2: '#11122D',
+        hi: '#C7C9F5',
+        mid: '#818CF8',
+        core: '#6366F1',
+        deep: '#4F46E5',
+        red: '#E11D48',
+      };
+
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const canvas = document.getElementById('c');
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+        powerPreference: 'high-performance',
+      });
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.9;
+      renderer.setClearColor(C.bg, 1);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(C.bg);
+      scene.fog = new THREE.FogExp2(C.bg, 0.048);
+
+      const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+      camera.position.set(0, 0.18, 13.6);
+
+      const envScene = new THREE.Scene();
+      const envSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(10, 48, 24),
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          uniforms: {
+            uLow: { value: new THREE.Color(C.bg) },
+            uTop: { value: new THREE.Color(C.bg2) },
+            uCore: { value: new THREE.Color(C.deep) },
+            uHi: { value: new THREE.Color(C.hi) },
+          },
+          vertexShader: `
+            varying vec3 vDir;
+            void main() {
+              vDir = normalize(position);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            precision highp float;
+            uniform vec3 uLow;
+            uniform vec3 uTop;
+            uniform vec3 uCore;
+            uniform vec3 uHi;
+            varying vec3 vDir;
+            void main() {
+              float y = vDir.y * 0.5 + 0.5;
+              float side = smoothstep(0.2, 0.92, 1.0 - abs(vDir.x));
+              float crown = smoothstep(0.15, 1.0, vDir.y);
+              vec3 col = mix(uLow, uTop, y);
+              col += uCore * side * 0.18;
+              col += uHi * crown * 0.055;
+              gl_FragColor = vec4(col, 1.0);
+            }
+          `,
+        })
+      );
+      envScene.add(envSphere);
+      const envKey = new THREE.PointLight(C.hi, 14, 24);
+      envKey.position.set(-4.2, 3.2, 5.5);
+      envScene.add(envKey);
+      const envRim = new THREE.PointLight(C.mid, 10, 28);
+      envRim.position.set(4.8, -1.2, -3.4);
+      envScene.add(envRim);
+
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const envTarget = pmrem.fromScene(envScene, 0.035);
+      scene.environment = envTarget.texture;
+      pmrem.dispose();
+
+      const backdrop = new THREE.Mesh(
+        new THREE.SphereGeometry(42, 64, 32),
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          depthWrite: false,
+          depthTest: false,
+          uniforms: {
+            uLow: { value: new THREE.Color(C.bg) },
+            uHigh: { value: new THREE.Color(C.bg2) },
+            uGlow: { value: new THREE.Color(C.deep) },
+            uMist: { value: new THREE.Color(C.mid) },
+          },
+          vertexShader: `
+            varying vec3 vDir;
+            void main() {
+              vDir = normalize(position);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            precision highp float;
+            uniform vec3 uLow;
+            uniform vec3 uHigh;
+            uniform vec3 uGlow;
+            uniform vec3 uMist;
+            varying vec3 vDir;
+            void main() {
+              float y = vDir.y * 0.5 + 0.5;
+              float center = 1.0 - min(1.0, length(vDir.xy * vec2(0.78, 1.22)));
+              float vertical = smoothstep(0.08, 0.82, y);
+              vec3 col = mix(uLow, uHigh, vertical);
+              col += uGlow * pow(max(center, 0.0), 2.6) * 0.2;
+              col += uMist * smoothstep(0.72, 1.0, y) * 0.045;
+              gl_FragColor = vec4(col, 1.0);
+            }
+          `,
+        })
+      );
+      backdrop.renderOrder = -10;
+      scene.add(backdrop);
+
+      scene.add(new THREE.HemisphereLight(C.hi, C.bg, 0.62));
+      const key = new THREE.PointLight(C.hi, 2.7, 24);
+      key.position.set(-4.6, 4.2, 6.2);
+      scene.add(key);
+      const rim = new THREE.PointLight(C.mid, 3.6, 20);
+      rim.position.set(5.0, -1.8, 4.4);
+      scene.add(rim);
+      const low = new THREE.PointLight(C.deep, 1.85, 26);
+      low.position.set(0, -4.8, 2.1);
+      scene.add(low);
+
+      const strandGroup = new THREE.Group();
+      scene.add(strandGroup);
+
+      const dustCount = 140;
+      const dustPositions = new Float32Array(dustCount * 3);
+      for (let i = 0; i < dustCount; i++) {
+        const r = rand(i * 2.17 + 0.4);
+        dustPositions[i * 3] = (rand(i * 8.31 + 1.2) - 0.5) * 15.5;
+        dustPositions[i * 3 + 1] = (rand(i * 4.97 + 2.1) - 0.5) * 8.4;
+        dustPositions[i * 3 + 2] = -7.8 + r * 6.2;
+      }
+      const dustGeo = new THREE.BufferGeometry();
+      dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPositions, 3));
+      const dust = new THREE.Points(
+        dustGeo,
+        new THREE.PointsMaterial({
+          color: C.mid,
+          size: 0.018,
+          transparent: true,
+          opacity: 0.2,
+          depthWrite: false,
+          sizeAttenuation: true,
+        })
+      );
+      dust.renderOrder = -2;
+      scene.add(dust);
+
+      const N = 16;
+      const GOOD_N = 13;
+      const WASTE = new Set([3, 9, 13]);
+      const K = 17;
+      const spanX = 9.8;
+      const fibers = [];
+      let goodIndex = 0;
+
+      for (let i = 0; i < N; i++) {
+        const waste = WASTE.has(i);
+        const startLaneY = (i / (N - 1) - 0.5) * 5.9;
+        const cleanLaneY = waste ? startLaneY : (goodIndex++ / (GOOD_N - 1) - 0.5) * 5.6;
+        const seed = rand(i * 3.73 + 0.11);
+        const resolved = [];
+        const tangled = [];
+        const exitSign = i === 3 ? -1 : 1;
+
+        for (let k = 0; k < K; k++) {
+          const u = k / (K - 1);
+          const x = -spanX / 2 + spanX * u;
+          const laneZ = ((i % 4) - 1.5) * 0.08;
+
+          if (waste) {
+            const e = smoothstep(0.36, 1, u);
+            resolved.push(new THREE.Vector3(
+              x + e * 1.34,
+              startLaneY + exitSign * e * 2.9 + Math.sin(e * Math.PI) * exitSign * 0.32,
+              laneZ + e * 1.42
+            ));
+          } else {
+            resolved.push(new THREE.Vector3(x, cleanLaneY, laneZ));
+          }
+
+          const env = Math.sin(u * Math.PI);
+          const amp = env * (waste ? 3.85 : 3.15);
+          const braid = Math.sin(u * Math.PI * 5.2 + i * 0.74) * env;
+          const cross = Math.cos(u * Math.PI * 4.4 + i * 1.1) * env;
+          tangled.push(new THREE.Vector3(
+            x + (rand(i * 8.1 + k * 2.9) - 0.5) * amp + braid * 0.88,
+            startLaneY + (rand(i * 3.2 + k * 6.7) - 0.5) * amp + cross * 1.18,
+            (rand(i * 5.4 + k * 1.77) - 0.5) * amp * 1.55 + braid * 1.05
+          ));
+        }
+
+        fibers.push({ i, waste, resolved, tangled, seed });
+      }
+
+      const glassBundles = fibers.map((fiber) => {
+        const radius = fiber.waste ? 0.038 : 0.052;
+        const coreRadius = fiber.waste ? 0.012 : 0.016;
+        const pts = currentPoints(fiber, 0, reduced ? 1 : 0);
+        const glass = new THREE.Mesh(tubeFor(pts, radius, 148, 14), makeGlassMaterial(fiber));
+        const core = new THREE.Mesh(tubeFor(pts, coreRadius, 148, 8), makeCoreMaterial(fiber));
+        glass.renderOrder = fiber.waste ? 4 : 3;
+        core.renderOrder = fiber.waste ? 2 : 1;
+        strandGroup.add(core);
+        strandGroup.add(glass);
+        return { fiber, glass, core, radius, coreRadius };
+      });
+
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.38, 0.56, 0.18);
+      composer.addPass(bloom);
+
+      const scroller = document.getElementById('scroller');
+      const hint = document.getElementById('hint');
+      let target = reduced ? 1 : 0;
+      let resolve = target;
+      let lastRenderTime = 0;
+
+      function rand(seed) {
+        const v = Math.sin(seed * 999.13) * 43758.5453;
+        return v - Math.floor(v);
+      }
+
+      function clamp01(v) {
+        return Math.min(1, Math.max(0, v));
+      }
+
+      function smooth(v) {
+        return v * v * (3 - 2 * v);
+      }
+
+      function smoothstep(edge0, edge1, x) {
+        const t = clamp01((x - edge0) / (edge1 - edge0));
+        return t * t * (3 - 2 * t);
+      }
+
+      function tubeFor(points, radius, segments, radialSegments) {
+        const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.42);
+        return new THREE.TubeGeometry(curve, segments, radius, radialSegments, false);
+      }
+
+      function makeGlassMaterial(fiber) {
+        const wasteFade = fiber.waste ? 0.34 : 0.58;
+        return new THREE.MeshPhysicalMaterial({
+          color: fiber.waste ? C.red : C.mid,
+          roughness: fiber.waste ? 0.16 : 0.075,
+          metalness: 0,
+          transmission: fiber.waste ? 0.72 : 1.0,
+          thickness: fiber.waste ? 0.34 : 0.72,
+          ior: 1.42,
+          transparent: true,
+          opacity: wasteFade,
+          depthWrite: false,
+          clearcoat: 1,
+          clearcoatRoughness: 0.045,
+          attenuationColor: fiber.waste ? C.red : C.deep,
+          attenuationDistance: fiber.waste ? 0.95 : 1.35,
+          envMapIntensity: fiber.waste ? 0.42 : 1.45,
+          emissive: fiber.waste ? C.red : C.deep,
+          emissiveIntensity: fiber.waste ? 0.012 : 0.035,
+        });
+      }
+
+      function makeCoreMaterial(fiber) {
+        return new THREE.ShaderMaterial({
+          transparent: true,
+          depthWrite: false,
+          blending: fiber.waste ? THREE.NormalBlending : THREE.AdditiveBlending,
+          uniforms: {
+            uTime: { value: 0 },
+            uResolve: { value: reduced ? 1 : 0 },
+            uFade: { value: fiber.waste && reduced ? 0 : 1 },
+            uSeed: { value: fiber.seed },
+            uWaste: { value: fiber.waste ? 1 : 0 },
+            uHi: { value: new THREE.Color(C.hi) },
+            uMid: { value: new THREE.Color(C.mid) },
+            uCore: { value: new THREE.Color(C.core) },
+            uDeep: { value: new THREE.Color(C.deep) },
+            uRed: { value: new THREE.Color(C.red) },
+          },
+          vertexShader: `
+            varying vec2 vUv;
+            varying vec3 vN;
+            varying vec3 vV;
+            void main() {
+              vUv = uv;
+              vN = normalize(normalMatrix * normal);
+              vec4 mv = modelViewMatrix * vec4(position, 1.0);
+              vV = normalize(-mv.xyz);
+              gl_Position = projectionMatrix * mv;
+            }
+          `,
+          fragmentShader: `
+            precision highp float;
+            uniform float uTime;
+            uniform float uResolve;
+            uniform float uFade;
+            uniform float uSeed;
+            uniform float uWaste;
+            uniform vec3 uHi;
+            uniform vec3 uMid;
+            uniform vec3 uCore;
+            uniform vec3 uDeep;
+            uniform vec3 uRed;
+            varying vec2 vUv;
+            varying vec3 vN;
+            varying vec3 vV;
+
+            float packet(float x, float c, float w) {
+              return exp(-pow((x - c) / w, 2.0));
+            }
+
+            void main() {
+              vec3 indigoA = mix(uDeep, uCore, smoothstep(0.0, 0.55, vUv.x));
+              vec3 indigoB = mix(uMid, uHi, smoothstep(0.42, 1.0, vUv.x));
+              vec3 indigo = mix(indigoA, indigoB, 0.42);
+              float speed = mix(0.115, 0.014, uWaste);
+              float w = mix(0.05, 0.026, uResolve);
+              float t0 = fract(uTime * speed + uSeed);
+              float t1 = fract(uTime * speed * 0.78 + uSeed + 0.37);
+              float t2 = fract(uTime * speed * 1.18 + uSeed + 0.71);
+              float pulses = packet(vUv.x, t0, w) + packet(vUv.x, t1, w) + packet(vUv.x, t2, w);
+              float edgeFade = smoothstep(0.015, 0.11, vUv.x) * (1.0 - smoothstep(0.88, 0.995, vUv.x));
+              float fresnel = pow(1.0 - max(dot(vN, vV), 0.0), 2.6);
+              float normalCore = 0.035 + pulses * (0.54 + uResolve * 0.18) + fresnel * 0.045;
+              float wasteCore = 0.018 + pulses * 0.16 + fresnel * 0.018;
+              vec3 col = mix(indigo * normalCore, uRed * wasteCore, uWaste);
+              float alpha = mix(0.09 + pulses * 0.36 + fresnel * 0.08, 0.08 + pulses * 0.18, uWaste);
+              gl_FragColor = vec4(col, alpha * edgeFade * uFade);
+            }
+          `,
+        });
+      }
+
+      function currentPoints(fiber, time, amount) {
+        const pts = [];
+        const movement = reduced ? 0 : 1;
+        for (let k = 0; k < K; k++) {
+          const u = k / (K - 1);
+          const phase = u * 0.54;
+          const local = smooth(clamp01((amount - phase) / 0.5));
+          const p = fiber.tangled[k].clone().lerp(fiber.resolved[k], local);
+          const live = (1 - local) * movement;
+          p.x += Math.sin(time * 1.04 + k * 0.92 + fiber.i * 0.37) * live * 0.1;
+          p.y += Math.cos(time * 0.92 + k * 1.21 + fiber.i * 0.51) * live * 0.12;
+          p.z += Math.sin(time * 0.86 + k * 0.78 + fiber.seed * 9.0) * live * 0.16;
+          pts.push(p);
+        }
+        return pts;
+      }
+
+      function updateScene(time) {
+        const eased = smooth(resolve);
+        for (const bundle of glassBundles) {
+          const { fiber, glass, core, radius, coreRadius } = bundle;
+          const pts = currentPoints(fiber, time, resolve);
+          glass.geometry.dispose();
+          core.geometry.dispose();
+          glass.geometry = tubeFor(pts, radius, 148, 14);
+          core.geometry = tubeFor(pts, coreRadius, 148, 8);
+
+          const wasteFade = fiber.waste ? Math.pow(1 - eased, 1.65) : 1;
+          glass.material.opacity = fiber.waste ? 0.32 * wasteFade : 0.52 + eased * 0.06;
+          glass.material.envMapIntensity = fiber.waste ? 0.38 * wasteFade : 1.34 + eased * 0.18;
+          glass.material.emissiveIntensity = fiber.waste ? 0.01 * wasteFade : 0.028 + eased * 0.012;
+          core.material.uniforms.uTime.value = time;
+          core.material.uniforms.uResolve.value = resolve;
+          core.material.uniforms.uFade.value = fiber.waste ? wasteFade : 1;
+        }
+
+        strandGroup.rotation.y = (1 - eased) * Math.sin(time * 0.13) * 0.16 + eased * 0.026;
+        strandGroup.rotation.x = (1 - eased) * Math.cos(time * 0.11) * 0.055;
+        camera.position.z = 13.6 - eased * 1.65;
+        camera.position.y = 0.18 + (1 - eased) * Math.sin(time * 0.1) * 0.18;
+        dust.rotation.y = time * 0.006;
+      }
+
+      function fit() {
+        const dpr = Math.min(2, devicePixelRatio || 1);
+        const w = innerWidth;
+        const h = innerHeight;
+        renderer.setPixelRatio(dpr);
+        renderer.setSize(w, h, false);
+        composer.setPixelRatio(dpr);
+        composer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        if (reduced) {
+          updateScene(lastRenderTime);
+          composer.render();
+        }
+      }
+
+      function readScroll() {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        target = max > 0 ? clamp01(scroller.scrollTop / max) : 1;
+        if (target > 0.02 && hint) hint.style.opacity = '0';
+      }
+
+      addEventListener('resize', fit);
+      if (!reduced) scroller.addEventListener('scroll', readScroll, { passive: true });
+
+      const clock = new THREE.Clock();
+      fit();
+      readScroll();
+
+      function frame() {
+        requestAnimationFrame(frame);
+        const time = clock.elapsedTime;
+        lastRenderTime = time;
+        resolve += (target - resolve) * 0.08;
+        updateScene(time);
+        composer.render();
+      }
+
+      if (reduced) {
+        resolve = 1;
+        target = 1;
+        updateScene(0);
+        composer.render();
+      } else {
+        frame();
+      }
+    </script>
+  </body>
+</html>
+
+<style>
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #080814;
+  }
+
+  #c {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+  }
+
+  #scroller {
+    position: fixed;
+    inset: 0;
+    overflow-y: scroll;
+    z-index: 3;
+    scrollbar-width: none;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #spacer {
+    height: 340vh;
+  }
+
+  #scroller::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .grain {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0.34;
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.066 0 0 0 0 0.071 0 0 0 0 0.176 0.16 0 0 0 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .vig {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 2;
+    background:
+      radial-gradient(110% 86% at 50% 44%, transparent 42%, rgba(8, 8, 20, 0.72) 100%),
+      linear-gradient(180deg, rgba(17, 18, 45, 0.08), rgba(8, 8, 20, 0.36));
+  }
+
+  .cap {
+    position: fixed;
+    left: 3rem;
+    bottom: 2.6rem;
+    z-index: 4;
+    max-width: min(34rem, calc(100vw - 6rem));
+    color: #C7C9F5;
+    font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    pointer-events: none;
+    text-shadow: 0 1.2rem 3rem rgba(8, 8, 20, 0.82);
+  }
+
+  .cap h1 {
+    margin: 0;
+    font-size: 2rem;
+    line-height: 1.05;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  .mono {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0;
+  }
+
+  .cap .mono {
+    margin: 0.55rem 0 0;
+    color: #818CF8;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    font-weight: 400;
+  }
+
+  .hint {
+    position: fixed;
+    left: 50%;
+    bottom: 2.2rem;
+    transform: translateX(-50%);
+    z-index: 4;
+    color: #818CF8;
+    font-size: 0.78rem;
+    font-weight: 400;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+    text-shadow: 0 1rem 2.4rem rgba(8, 8, 20, 0.82);
+  }
+
+  @media (max-width: 700px) {
+    .cap {
+      left: 1.3rem;
+      right: 1.3rem;
+      bottom: 1.45rem;
+      max-width: none;
+    }
+
+    .cap h1 {
+      font-size: 1.45rem;
+    }
+
+    .cap .mono {
+      font-size: 0.7rem;
+    }
+
+    .hint {
+      bottom: 1.3rem;
+      font-size: 0.7rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hint {
+      display: none;
+    }
+  }
+</style>
