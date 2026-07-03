@@ -1,0 +1,476 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Unknotting - Tangle lab</title>
+  </head>
+  <body>
+    <canvas id="unknot"></canvas>
+    <div id="caption">Unknotting / three.js trefoil morph / unknotting number 1 / pointer or scroll scrubs</div>
+
+    <script>
+      import * as THREE from 'three';
+      import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+      import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+      import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+      const style = document.createElement('style');
+      style.textContent = `
+        html,
+        body {
+          margin: 0;
+          width: 100%;
+          height: 100%;
+          overflow: hidden;
+          background:
+            radial-gradient(circle at 50% 42%, rgba(17, 18, 45, 1) 0%, rgba(8, 8, 20, 1) 72%),
+            linear-gradient(180deg, #11122D 0%, #080814 100%);
+        }
+
+        body::after {
+          content: "";
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          opacity: 0.28;
+          mix-blend-mode: screen;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.86' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .506 0 0 0 0 .549 0 0 0 0 .973 0 0 0 .42 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+        }
+
+        #unknot {
+          position: fixed;
+          inset: 0;
+          width: 100vw;
+          height: 100vh;
+          display: block;
+          touch-action: none;
+          cursor: ew-resize;
+        }
+
+        #caption {
+          position: fixed;
+          left: clamp(18px, 3.4vw, 48px);
+          bottom: clamp(18px, 4.2vw, 48px);
+          max-width: min(760px, calc(100vw - 36px));
+          color: #C7C9F5;
+          font: 500 clamp(11px, 1.15vw, 13px) / 1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+          letter-spacing: 0;
+          text-shadow: 0 0 18px rgba(129, 140, 248, 0.36);
+          opacity: 0.86;
+          user-select: none;
+        }
+
+        @media (max-width: 560px) {
+          #caption {
+            right: 18px;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const canvas = document.getElementById('unknot');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+      renderer.setClearColor(0x080814, 0);
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.16;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 80);
+      camera.position.set(0, 0, 10.4);
+
+      const indigo0 = new THREE.Color('#C7C9F5');
+      const indigo1 = new THREE.Color('#818CF8');
+      const indigo2 = new THREE.Color('#6366F1');
+      const indigo3 = new THREE.Color('#4F46E5');
+      const waste = new THREE.Color('#FB7185');
+
+      const lengthSegments = 380;
+      const radialSegments = 22;
+      const radius = 0.102;
+      const curveCount = lengthSegments + 1;
+      const ringCount = radialSegments + 1;
+      const vertexCount = curveCount * ringCount;
+      const indexCount = lengthSegments * radialSegments * 6;
+
+      function ease(t) {
+        return t * t * t * (t * (t * 6 - 15) + 10);
+      }
+
+      function trefoilPoint(u) {
+        const a = u * Math.PI * 2;
+        const x = Math.sin(a) + 2 * Math.sin(2 * a);
+        const y = Math.cos(a) - 2 * Math.cos(2 * a);
+        const z = -Math.sin(3 * a);
+        return new THREE.Vector3(x * 0.86, y * 0.86, z * 0.86);
+      }
+
+      function loopPoint(u) {
+        const a = u * Math.PI * 2;
+        return new THREE.Vector3(Math.cos(a) * 2.28, Math.sin(a) * 2.28, Math.sin(a) * 0.08);
+      }
+
+      function linePoint(u) {
+        const x = (u - 0.5) * 8.9;
+        return new THREE.Vector3(x, 0, 0);
+      }
+
+      function frameFor(points, i, prevNormal) {
+        const p0 = points[Math.max(0, i - 1)];
+        const p1 = points[Math.min(points.length - 1, i + 1)];
+        const tangent = p1.clone().sub(p0).normalize();
+        let normal;
+        if (!prevNormal) {
+          const up = Math.abs(tangent.dot(new THREE.Vector3(0, 1, 0))) > 0.92 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+          normal = up.sub(tangent.clone().multiplyScalar(up.dot(tangent))).normalize();
+        } else {
+          normal = prevNormal.sub(tangent.clone().multiplyScalar(prevNormal.dot(tangent))).normalize();
+          if (normal.lengthSq() < 0.0001) normal.set(0, 1, 0);
+        }
+        const binormal = tangent.clone().cross(normal).normalize();
+        return { tangent, normal, binormal };
+      }
+
+      function makePath(fn) {
+        const points = [];
+        for (let i = 0; i < curveCount; i++) points.push(fn(i / lengthSegments));
+        return points;
+      }
+
+      function fillTube(points, positions, normals) {
+        let prevNormal = null;
+        for (let i = 0; i < curveCount; i++) {
+          const frame = frameFor(points, i, prevNormal);
+          prevNormal = frame.normal.clone();
+          for (let j = 0; j < ringCount; j++) {
+            const a = (j / radialSegments) * Math.PI * 2;
+            const radial = frame.normal.clone().multiplyScalar(Math.cos(a)).add(frame.binormal.clone().multiplyScalar(Math.sin(a))).normalize();
+            const idx = (i * ringCount + j) * 3;
+            positions[idx] = points[i].x + radial.x * radius;
+            positions[idx + 1] = points[i].y + radial.y * radius;
+            positions[idx + 2] = points[i].z + radial.z * radius;
+            normals[idx] = radial.x;
+            normals[idx + 1] = radial.y;
+            normals[idx + 2] = radial.z;
+          }
+        }
+      }
+
+      const trefoil = makePath(trefoilPoint);
+      const loop = makePath(loopPoint);
+      const line = makePath(linePoint);
+
+      const posTrefoil = new Float32Array(vertexCount * 3);
+      const posLoop = new Float32Array(vertexCount * 3);
+      const posLine = new Float32Array(vertexCount * 3);
+      const normalTrefoil = new Float32Array(vertexCount * 3);
+      const normalLoop = new Float32Array(vertexCount * 3);
+      const normalLine = new Float32Array(vertexCount * 3);
+      const uvs = new Float32Array(vertexCount * 2);
+      const flags = new Float32Array(vertexCount);
+      const indices = new Uint32Array(indexCount);
+
+      fillTube(trefoil, posTrefoil, normalTrefoil);
+      fillTube(loop, posLoop, normalLoop);
+      fillTube(line, posLine, normalLine);
+
+      for (let i = 0; i < curveCount; i++) {
+        const u = i / lengthSegments;
+        const failure = Math.max(
+          Math.exp(-Math.pow((u - 0.165) / 0.021, 2)),
+          Math.exp(-Math.pow((u - 0.472) / 0.018, 2)),
+          Math.exp(-Math.pow((u - 0.735) / 0.024, 2))
+        );
+        for (let j = 0; j < ringCount; j++) {
+          const v = j / radialSegments;
+          const n = i * ringCount + j;
+          uvs[n * 2] = u;
+          uvs[n * 2 + 1] = v;
+          flags[n] = failure;
+        }
+      }
+
+      let idx = 0;
+      for (let i = 0; i < lengthSegments; i++) {
+        for (let j = 0; j < radialSegments; j++) {
+          const a = i * ringCount + j;
+          const b = (i + 1) * ringCount + j;
+          const c = (i + 1) * ringCount + j + 1;
+          const d = i * ringCount + j + 1;
+          indices[idx++] = a;
+          indices[idx++] = b;
+          indices[idx++] = d;
+          indices[idx++] = b;
+          indices[idx++] = c;
+          indices[idx++] = d;
+        }
+      }
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(posTrefoil, 3));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(normalTrefoil, 3));
+      geometry.setAttribute('aLoop', new THREE.BufferAttribute(posLoop, 3));
+      geometry.setAttribute('aLine', new THREE.BufferAttribute(posLine, 3));
+      geometry.setAttribute('aLoopNormal', new THREE.BufferAttribute(normalLoop, 3));
+      geometry.setAttribute('aLineNormal', new THREE.BufferAttribute(normalLine, 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      geometry.setAttribute('aFailure', new THREE.BufferAttribute(flags, 1));
+      geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+      geometry.computeBoundingSphere();
+
+      const material = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: true,
+        uniforms: {
+          uResolve: { value: reduced ? 1 : 0 },
+          uTime: { value: 0 },
+          uPulse: { value: 0 },
+          uC0: { value: indigo0 },
+          uC1: { value: indigo1 },
+          uC2: { value: indigo2 },
+          uC3: { value: indigo3 },
+          uWaste: { value: waste },
+        },
+        vertexShader: `
+          uniform float uResolve;
+          uniform float uTime;
+          attribute vec3 aLoop;
+          attribute vec3 aLine;
+          attribute vec3 aLoopNormal;
+          attribute vec3 aLineNormal;
+          attribute float aFailure;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vView;
+          varying float vFailure;
+          varying float vStage;
+
+          float smoother(float t) {
+            return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+          }
+
+          void main() {
+            float first = smoother(clamp(uResolve / 0.58, 0.0, 1.0));
+            float second = smoother(clamp((uResolve - 0.42) / 0.58, 0.0, 1.0));
+            vec3 p0 = mix(position, aLoop, first);
+            vec3 p1 = mix(aLoop, aLine, second);
+            vec3 p = mix(p0, p1, second);
+
+            vec3 n0 = normalize(mix(normal, aLoopNormal, first));
+            vec3 n1 = normalize(mix(aLoopNormal, aLineNormal, second));
+            vec3 n = normalize(mix(n0, n1, second));
+
+            float loosen = 1.0 - second;
+            float tremor = sin((uv.x * 34.0) + uTime * 1.2) * cos((uv.y * 6.283) - uTime * 0.7);
+            p += n * tremor * 0.018 * loosen * (1.0 - uResolve);
+
+            vUv = uv;
+            vFailure = aFailure;
+            vStage = uResolve;
+            vNormal = normalize(normalMatrix * n);
+            vec4 mv = modelViewMatrix * vec4(p, 1.0);
+            vView = normalize(-mv.xyz);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          uniform float uTime;
+          uniform float uPulse;
+          uniform vec3 uC0;
+          uniform vec3 uC1;
+          uniform vec3 uC2;
+          uniform vec3 uC3;
+          uniform vec3 uWaste;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          varying vec3 vView;
+          varying float vFailure;
+          varying float vStage;
+
+          vec3 ramp(float t) {
+            t = fract(t);
+            if (t < 0.34) return mix(uC0, uC1, smoothstep(0.0, 1.0, t / 0.34));
+            if (t < 0.68) return mix(uC1, uC2, smoothstep(0.0, 1.0, (t - 0.34) / 0.34));
+            return mix(uC2, uC3, smoothstep(0.0, 1.0, (t - 0.68) / 0.32));
+          }
+
+          void main() {
+            vec3 base = ramp(vUv.x * 0.86 + 0.09 + uTime * 0.018);
+            float fresnel = pow(1.0 - max(dot(normalize(vNormal), normalize(vView)), 0.0), 2.05);
+            float center = 1.0 - abs(vUv.y - 0.5) * 2.0;
+            float pulseA = smoothstep(0.952, 1.0, sin((vUv.x - uTime * 0.07) * 46.0) * 0.5 + 0.5);
+            float pulseB = smoothstep(0.982, 1.0, sin((vUv.x + uTime * 0.034) * 93.0) * 0.5 + 0.5);
+            float failureWindow = 1.0 - smoothstep(0.06, 0.92, vStage);
+            float failureGlow = smoothstep(0.28, 0.94, vFailure) * failureWindow;
+            vec3 color = base * (0.22 + fresnel * 1.25 + center * 0.18);
+            color += base * pulseA * 0.95;
+            color += uC0 * pulseB * 0.28;
+            color = mix(color, uWaste * (1.3 + fresnel * 1.4), failureGlow);
+            color += base * smoothstep(0.82, 1.0, vStage) * 0.18;
+            float alpha = 0.94 + fresnel * 0.06;
+            gl_FragColor = vec4(color, alpha);
+          }
+        `,
+      });
+
+      const strand = new THREE.Mesh(geometry, material);
+      scene.add(strand);
+
+      const haloMaterial = material.clone();
+      haloMaterial.depthWrite = false;
+      haloMaterial.blending = THREE.AdditiveBlending;
+      haloMaterial.side = THREE.BackSide;
+      haloMaterial.uniforms = material.uniforms;
+      const halo = new THREE.Mesh(geometry, haloMaterial);
+      halo.scale.setScalar(1.035);
+      scene.add(halo);
+
+      const beadGeometry = new THREE.IcosahedronGeometry(0.055, 1);
+      const beadMaterial = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        uniforms: {
+          uResolve: material.uniforms.uResolve,
+          uTime: material.uniforms.uTime,
+          uC0: material.uniforms.uC0,
+          uC1: material.uniforms.uC1,
+          uWaste: material.uniforms.uWaste,
+        },
+        vertexShader: `
+          varying vec3 vWorld;
+          void main() {
+            vec4 world = modelMatrix * vec4(position, 1.0);
+            vWorld = world.xyz;
+            gl_Position = projectionMatrix * viewMatrix * world;
+          }
+        `,
+        fragmentShader: `
+          uniform float uResolve;
+          uniform float uTime;
+          uniform vec3 uC0;
+          uniform vec3 uC1;
+          uniform vec3 uWaste;
+          varying vec3 vWorld;
+          void main() {
+            float pulse = 0.65 + 0.35 * sin(uTime * 3.1 + vWorld.x * 1.7);
+            vec3 color = mix(uWaste, uC1, smoothstep(0.08, 0.34, uResolve));
+            float fade = 1.0 - smoothstep(0.55, 0.84, uResolve);
+            gl_FragColor = vec4(color * (0.7 + pulse * 0.8), fade * 0.72);
+          }
+        `,
+      });
+
+      const beadUs = [0.165, 0.472, 0.735];
+      const beads = beadUs.map((u) => {
+        const bead = new THREE.Mesh(beadGeometry, beadMaterial);
+        bead.userData.u = u;
+        scene.add(bead);
+        return bead;
+      });
+
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.92, 0.48, 0.18);
+      composer.addPass(bloom);
+
+      let width = 1;
+      let height = 1;
+      function fit() {
+        width = Math.max(1, canvas.clientWidth);
+        height = Math.max(1, canvas.clientHeight);
+        renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+        renderer.setSize(width, height, false);
+        composer.setSize(width, height);
+        bloom.setSize(width, height);
+        camera.aspect = width / height;
+        camera.position.z = width < 700 ? 13.4 : 10.4;
+        camera.updateProjectionMatrix();
+      }
+      new ResizeObserver(fit).observe(canvas);
+      fit();
+
+      let target = reduced ? 1 : 0;
+      let resolve = reduced ? 1 : 0;
+      let auto = reduced ? 1 : 0;
+      let scrubbing = false;
+      let lastScrub = 0;
+      const clock = new THREE.Clock();
+      const tmpA = new THREE.Vector3();
+      const tmpB = new THREE.Vector3();
+      const tmpC = new THREE.Vector3();
+
+      function pointAt(u, t) {
+        const a = trefoilPoint(u);
+        const b = loopPoint(u);
+        const c = linePoint(u);
+        const first = ease(Math.min(1, Math.max(0, t / 0.58)));
+        const second = ease(Math.min(1, Math.max(0, (t - 0.42) / 0.58)));
+        tmpA.copy(a).lerp(b, first);
+        tmpB.copy(b).lerp(c, second);
+        return tmpC.copy(tmpA).lerp(tmpB, second);
+      }
+
+      function setFromClientX(x) {
+        scrubbing = true;
+        lastScrub = performance.now();
+        target = Math.min(1, Math.max(0, x / Math.max(1, window.innerWidth)));
+      }
+
+      window.addEventListener('pointermove', (event) => setFromClientX(event.clientX), { passive: true });
+      window.addEventListener('pointerdown', (event) => setFromClientX(event.clientX), { passive: true });
+      window.addEventListener('wheel', (event) => {
+        scrubbing = true;
+        lastScrub = performance.now();
+        target = Math.min(1, Math.max(0, target + event.deltaY * 0.0012));
+      }, { passive: true });
+
+      function draw() {
+        const elapsed = clock.getElapsedTime();
+        const dt = Math.min(0.05, clock.getDelta());
+        if (!reduced && !scrubbing) {
+          auto = Math.min(1, auto + dt / 5.2);
+          target = ease(auto);
+        }
+        if (!reduced && scrubbing && performance.now() - lastScrub > 2600 && auto < 1) scrubbing = false;
+        resolve += (target - resolve) * (reduced ? 1 : 0.085);
+        material.uniforms.uResolve.value = resolve;
+        material.uniforms.uTime.value = elapsed;
+
+        for (const bead of beads) {
+          const p = pointAt(bead.userData.u, resolve);
+          bead.position.copy(p);
+          const s = 1.0 + Math.sin(elapsed * 3.2 + bead.userData.u * 12.0) * 0.16;
+          bead.scale.setScalar(s);
+        }
+
+        const lineWeight = smoothstep(0.72, 1.0, resolve);
+        const knotWeight = 1 - lineWeight;
+        strand.rotation.x = 0.34 * knotWeight + Math.sin(elapsed * 0.13) * 0.035 * knotWeight;
+        strand.rotation.y = Math.sin(elapsed * 0.17) * 0.22 * knotWeight;
+        strand.rotation.z = 0.16 * knotWeight;
+        halo.rotation.copy(strand.rotation);
+        halo.scale.setScalar(1.03 + (1 - resolve) * 0.035);
+        composer.render();
+      }
+
+      function smoothstep(edge0, edge1, x) {
+        const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
+      }
+
+      if (reduced) {
+        draw();
+      } else {
+        function frame() {
+          draw();
+          requestAnimationFrame(frame);
+        }
+        frame();
+      }
+    </script>
+  </body>
+</html>

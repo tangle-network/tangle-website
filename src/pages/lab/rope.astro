@@ -1,0 +1,529 @@
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Tension - Tangle lab</title>
+  </head>
+  <body>
+    <main id="stage">
+      <canvas id="rope"></canvas>
+      <div class="caption">
+        <strong>Tension</strong>
+        <span>canvas 2D Verlet rope · drag to re-tangle</span>
+      </div>
+    </main>
+
+    <script>
+      const canvas = document.getElementById('rope');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const count = 214;
+      const palette = {
+        bg0: '#080814',
+        bg1: '#11122D',
+        glow0: '79,70,229',
+        glow1: '99,102,241',
+        glow2: '129,140,248',
+        core: '199,201,245',
+        error: '251,113,133',
+      };
+
+      let width = 0;
+      let height = 0;
+      let dpr = 1;
+      let rest = 1;
+      let settle = reduced ? 1 : 0;
+      let lastTime = 0;
+      let points = [];
+      let grabbing = false;
+      let grabIndex = 0;
+      let pointer = { x: 0, y: 0, px: 0, py: 0 };
+      let grain = null;
+
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const ease = (v) => v * v * (3 - 2 * v);
+      const rgba = (rgb, a) => `rgba(${rgb},${a})`;
+      const rand = (seed) => {
+        const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453123;
+        return x - Math.floor(x);
+      };
+
+      function targetAt(i) {
+        const u = i / (count - 1);
+        const left = width * 0.075;
+        const right = width * 0.925;
+        return {
+          x: left + (right - left) * u,
+          y: height * 0.51,
+          z: 0,
+        };
+      }
+
+      function makeGrain() {
+        const size = 128;
+        const c = document.createElement('canvas');
+        c.width = size;
+        c.height = size;
+        const g = c.getContext('2d');
+        const img = g.createImageData(size, size);
+        for (let i = 0; i < img.data.length; i += 4) {
+          const n = 72 + rand(i + 19) * 72;
+          img.data[i] = n;
+          img.data[i + 1] = n;
+          img.data[i + 2] = n + 10;
+          img.data[i + 3] = 38;
+        }
+        g.putImageData(img, 0, 0);
+        grain = ctx.createPattern(c, 'repeat');
+      }
+
+      function makeTangle() {
+        const left = width * 0.075;
+        const right = width * 0.925;
+        rest = (right - left) / (count - 1);
+
+        const cx = width * 0.5;
+        const cy = height * 0.51;
+        const radius = Math.max(80, Math.min(width, height) * 0.27);
+        let x = cx - radius * 0.18;
+        let y = cy + radius * 0.1;
+        let angle = -0.7;
+        const made = [];
+
+        for (let i = 0; i < count; i++) {
+          const drift = Math.atan2(cy - y, cx - x);
+          const reach = clamp(Math.hypot(x - cx, y - cy) / radius, 0, 1);
+          const bend = Math.sin(i * 0.29) * 0.92 + Math.sin(i * 0.071 + 1.8) * 0.58;
+          const noise = (rand(i * 9.13) - 0.5) * 1.1;
+          const turn = Math.atan2(Math.sin(drift - angle), Math.cos(drift - angle));
+          const z = Math.sin(i * 0.21) * 0.9 + (rand(i * 4.9) - 0.5) * 1.4;
+
+          made.push({
+            x,
+            y,
+            z,
+            px: x - Math.cos(angle) * rest * 0.15,
+            py: y - Math.sin(angle) * rest * 0.15,
+            pz: z,
+          });
+
+          angle += bend + noise + turn * reach * reach * 0.42;
+          x += Math.cos(angle) * rest;
+          y += Math.sin(angle) * rest;
+        }
+
+        const ox = cx - made.reduce((sum, p) => sum + p.x, 0) / made.length;
+        const oy = cy - made.reduce((sum, p) => sum + p.y, 0) / made.length;
+        for (const p of made) {
+          p.x += ox;
+          p.y += oy;
+          p.px += ox;
+          p.py += oy;
+        }
+        points = made;
+      }
+
+      function makeResolved() {
+        const made = [];
+        const left = width * 0.075;
+        const right = width * 0.925;
+        rest = (right - left) / (count - 1);
+        for (let i = 0; i < count; i++) {
+          const t = targetAt(i);
+          made.push({ x: t.x, y: t.y, z: 0, px: t.x, py: t.y, pz: 0 });
+        }
+        points = made;
+      }
+
+      function resize() {
+        const rect = canvas.getBoundingClientRect();
+        const oldWidth = width || rect.width || innerWidth;
+        const oldHeight = height || rect.height || innerHeight;
+        width = rect.width || innerWidth;
+        height = rect.height || innerHeight;
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = Math.max(1, Math.floor(width * dpr));
+        canvas.height = Math.max(1, Math.floor(height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        makeGrain();
+
+        if (!points.length) {
+          if (reduced) makeResolved();
+          else makeTangle();
+          draw(0);
+          return;
+        }
+
+        const sx = width / oldWidth;
+        const sy = height / oldHeight;
+        for (const p of points) {
+          p.x *= sx;
+          p.px *= sx;
+          p.y *= sy;
+          p.py *= sy;
+        }
+        const left = width * 0.075;
+        const right = width * 0.925;
+        rest = (right - left) / (count - 1);
+        if (reduced) makeResolved();
+        draw(0);
+      }
+
+      function constrain() {
+        for (let pass = 0; pass < 7; pass++) {
+          for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dz = b.z - a.z;
+            const len = Math.max(0.0001, Math.hypot(dx, dy, dz * 14));
+            const diff = (len - rest) / len;
+            const gripA = i === 0 ? 0.18 + settle * 0.48 : 0.5;
+            const gripB = i === points.length - 2 ? 0.18 + settle * 0.48 : 0.5;
+            a.x += dx * diff * gripA;
+            a.y += dy * diff * gripA;
+            a.z += dz * diff * gripA * 0.25;
+            b.x -= dx * diff * gripB;
+            b.y -= dy * diff * gripB;
+            b.z -= dz * diff * gripB * 0.25;
+          }
+        }
+      }
+
+      function disturb(x, y, dx, dy) {
+        const speed = Math.hypot(dx, dy);
+        if (!speed) return;
+        settle = Math.max(0.03, settle - clamp(speed / 320, 0.02, 0.18));
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          const indexFalloff = Math.max(0, 1 - Math.abs(i - grabIndex) / 44);
+          const spaceFalloff = Math.max(0, 1 - Math.hypot(p.x - x, p.y - y) / 220);
+          const f = Math.max(indexFalloff, spaceFalloff * 0.7);
+          if (f <= 0) continue;
+          const curl = Math.sin(i * 0.37 + speed * 0.03) * f * f;
+          p.x += dx * f + -dy * curl * 0.16;
+          p.y += dy * f + dx * curl * 0.16;
+          p.px += dx * f * 0.32;
+          p.py += dy * f * 0.32;
+          p.z += curl * 0.24;
+        }
+      }
+
+      function simulate(dt) {
+        if (!grabbing) settle = Math.min(1, settle + dt * (settle < 0.92 ? 0.24 : 0.1));
+        const pull = ease(settle);
+        const turbulence = (1 - pull) * 0.018;
+
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          const vx = (p.x - p.px) * 0.92;
+          const vy = (p.y - p.py) * 0.92;
+          const vz = (p.z - p.pz) * 0.86;
+          p.px = p.x;
+          p.py = p.y;
+          p.pz = p.z;
+          p.x += vx;
+          p.y += vy;
+          p.z += vz;
+
+          const t = targetAt(i);
+          const end = i === 0 || i === points.length - 1;
+          const k = end ? 0.048 + pull * 0.25 : 0.003 + pull * 0.058;
+          const ripple = Math.sin(i * 0.19 + performance.now() * 0.0018) * turbulence * width;
+          p.x += (t.x - p.x) * k + ripple * 0.16;
+          p.y += (t.y - p.y) * k + Math.cos(i * 0.23 + performance.now() * 0.0015) * turbulence * height * 0.1;
+          p.z += (t.z - p.z) * (0.012 + pull * 0.075);
+        }
+
+        if (grabbing) {
+          const p = points[grabIndex];
+          p.x += (pointer.x - p.x) * 0.72;
+          p.y += (pointer.y - p.y) * 0.72;
+          p.px = p.x;
+          p.py = p.y;
+        }
+
+        constrain();
+      }
+
+      function ropePath() {
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length - 2; i++) {
+          const p = points[i];
+          const n = points[i + 1];
+          ctx.quadraticCurveTo(p.x, p.y, (p.x + n.x) * 0.5, (p.y + n.y) * 0.5);
+        }
+        const a = points[points.length - 2];
+        const b = points[points.length - 1];
+        ctx.quadraticCurveTo(a.x, a.y, b.x, b.y);
+      }
+
+      function drawBloom(alpha) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ropePath();
+        ctx.shadowBlur = 34;
+        ctx.shadowColor = rgba(palette.glow1, alpha * 0.45);
+        ctx.strokeStyle = rgba(palette.glow0, alpha * 0.16);
+        ctx.lineWidth = 34;
+        ctx.stroke();
+
+        ropePath();
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = rgba(palette.glow2, alpha * 0.42);
+        ctx.strokeStyle = rgba(palette.glow1, alpha * 0.26);
+        ctx.lineWidth = 17;
+        ctx.stroke();
+
+        ropePath();
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = rgba(palette.core, alpha * 0.32);
+        ctx.strokeStyle = rgba(palette.glow2, alpha * 0.55);
+        ctx.lineWidth = 8;
+        ctx.stroke();
+      }
+
+      function drawDepth() {
+        const segs = [];
+        for (let i = 0; i < points.length - 1; i++) {
+          segs.push({ i, z: (points[i].z + points[i + 1].z) * 0.5 });
+        }
+        segs.sort((a, b) => a.z - b.z);
+
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        for (const s of segs) {
+          const a = points[s.i];
+          const b = points[s.i + 1];
+          const depth = clamp((s.z + 1.8) / 3.6, 0, 1);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.shadowBlur = 8 + depth * 8;
+          ctx.shadowColor = rgba(palette.glow2, 0.32 + depth * 0.18);
+          ctx.strokeStyle = rgba(palette.core, 0.52 + depth * 0.32);
+          ctx.lineWidth = 2.4 + depth * 1.2;
+          ctx.stroke();
+        }
+      }
+
+      function drawStress() {
+        const fade = Math.pow(1 - settle, 1.7);
+        if (fade < 0.018) return;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        for (let i = 8; i < points.length - 8; i += 17) {
+          const a = points[i - 3];
+          const b = points[i];
+          const c = points[i + 3];
+          const ab = Math.atan2(b.y - a.y, b.x - a.x);
+          const bc = Math.atan2(c.y - b.y, c.x - b.x);
+          const bend = Math.abs(Math.atan2(Math.sin(bc - ab), Math.cos(bc - ab)));
+          const alpha = clamp((bend - 0.45) / 1.8, 0, 1) * fade * 0.42;
+          if (alpha <= 0.015) continue;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.quadraticCurveTo(b.x, b.y, c.x, c.y);
+          ctx.shadowBlur = 16;
+          ctx.shadowColor = rgba(palette.error, alpha);
+          ctx.strokeStyle = rgba(palette.error, alpha);
+          ctx.lineWidth = 5.2;
+          ctx.stroke();
+        }
+      }
+
+      function drawPulse(time) {
+        const pull = ease(settle);
+        const u = (time * 0.18) % 1;
+        const span = 0.055;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.lineCap = 'round';
+        ctx.shadowBlur = 18;
+        ctx.shadowColor = rgba(palette.core, 0.62);
+        ctx.strokeStyle = rgba(palette.core, 0.38 + pull * 0.32);
+        ctx.lineWidth = 4.6;
+
+        for (let i = 0; i < points.length - 1; i++) {
+          const t = i / (points.length - 1);
+          const d = Math.abs(t - u);
+          if (d > span) continue;
+          const a = points[i];
+          const b = points[i + 1];
+          const alpha = Math.pow(1 - d / span, 2) * 0.5;
+          ctx.globalAlpha = alpha;
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function draw(time) {
+        const bg = ctx.createLinearGradient(0, 0, width, height);
+        bg.addColorStop(0, palette.bg0);
+        bg.addColorStop(0.52, palette.bg1);
+        bg.addColorStop(1, palette.bg1);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, width, height);
+
+        const settled = ease(settle);
+        const lineGlow = ctx.createLinearGradient(width * 0.07, 0, width * 0.93, 0);
+        lineGlow.addColorStop(0, rgba(palette.glow0, settled * 0.08));
+        lineGlow.addColorStop(0.5, rgba(palette.glow2, settled * 0.16));
+        lineGlow.addColorStop(1, rgba(palette.glow0, settled * 0.08));
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = lineGlow;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(width * 0.075, height * 0.51);
+        ctx.lineTo(width * 0.925, height * 0.51);
+        ctx.stroke();
+
+        drawStress();
+        drawBloom(0.82 + settled * 0.18);
+        drawDepth();
+        if (!reduced) drawPulse(time);
+
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.globalAlpha = 0.23;
+        ctx.fillStyle = grain;
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
+
+      function nearestPoint(x, y) {
+        let best = 0;
+        let bestDistance = Infinity;
+        for (let i = 0; i < points.length; i++) {
+          const p = points[i];
+          const d = Math.hypot(p.x - x, p.y - y);
+          if (d < bestDistance) {
+            best = i;
+            bestDistance = d;
+          }
+        }
+        return best;
+      }
+
+      function eventPoint(event) {
+        const rect = canvas.getBoundingClientRect();
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      }
+
+      function onPointerDown(event) {
+        if (reduced) return;
+        const p = eventPoint(event);
+        pointer = { x: p.x, y: p.y, px: p.x, py: p.y };
+        grabIndex = nearestPoint(p.x, p.y);
+        grabbing = true;
+        canvas.setPointerCapture(event.pointerId);
+      }
+
+      function onPointerMove(event) {
+        if (!grabbing || reduced) return;
+        const p = eventPoint(event);
+        pointer.px = pointer.x;
+        pointer.py = pointer.y;
+        pointer.x = p.x;
+        pointer.y = p.y;
+        disturb(pointer.x, pointer.y, pointer.x - pointer.px, pointer.y - pointer.py);
+      }
+
+      function onPointerUp(event) {
+        if (!grabbing) return;
+        grabbing = false;
+        if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      }
+
+      function frame(time) {
+        if (!lastTime) lastTime = time;
+        const dt = Math.min(0.033, (time - lastTime) / 1000);
+        lastTime = time;
+        simulate(dt);
+        draw(time * 0.001);
+        requestAnimationFrame(frame);
+      }
+
+      canvas.addEventListener('pointerdown', onPointerDown);
+      canvas.addEventListener('pointermove', onPointerMove);
+      canvas.addEventListener('pointerup', onPointerUp);
+      canvas.addEventListener('pointercancel', onPointerUp);
+      window.addEventListener('resize', resize);
+      resize();
+
+      if (!reduced) requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>
+
+<style>
+  html,
+  body {
+    margin: 0;
+    min-height: 100%;
+    background: #080814;
+  }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 45%, rgba(17, 18, 45, 0.92), rgba(8, 8, 20, 0.98) 62%),
+      #080814;
+  }
+
+  #rope {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  #rope:active {
+    cursor: grabbing;
+  }
+
+  .caption {
+    position: fixed;
+    left: clamp(1rem, 3vw, 2rem);
+    bottom: clamp(1rem, 3vw, 2rem);
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    max-width: calc(100vw - 2rem);
+    color: #c7c9f5;
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(0.68rem, 1.1vw, 0.78rem);
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1.35;
+    pointer-events: none;
+    text-shadow: 0 0 18px rgba(99, 102, 241, 0.38);
+  }
+
+  .caption strong {
+    color: #c7c9f5;
+    font-weight: 600;
+  }
+
+  .caption span {
+    color: #818cf8;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #rope {
+      cursor: default;
+    }
+  }
+</style>
