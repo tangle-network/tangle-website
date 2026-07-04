@@ -1,0 +1,205 @@
+---
+// AgentProfile configurator (Fauna spec-explorer, reverse-engineered).
+// Configure an agent: harness, model, tools, sandbox. The portrait on the
+// left recomposes from the config, and "deploy" resolves the tangle into an
+// ordered agent. Configuration is the untangling act. noindex, standalone.
+const harnesses = [
+  { id: 'claude', name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
+  { id: 'codex', name: 'Codex', logo: '/images/harness/codex.png' },
+  { id: 'opencode', name: 'OpenCode', logo: '/images/harness/opencode.svg' },
+  { id: 'hermes', name: 'Hermes', logo: '/images/harness/hermes.png' },
+  { id: 'openclaw', name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
+  { id: 'nanoclaw', name: 'NanoClaw', logo: '/images/harness/nanoclaw.png' },
+  { id: 'kimi', name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
+  { id: 'pi', name: 'Pi', logo: '/images/harness/pi.svg' },
+];
+const models = ['claude-sonnet-5', 'claude-fable-5', 'claude-haiku-4-5', 'gpt-5.5', 'gemini-3-pro', 'kimi-k2', 'llama-4-405b', 'qwen-3-max'];
+const tools = ['shell', 'files', 'browser', 'python', 'git', 'web-search', 'sql', 'http'];
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>AgentProfile — Tangle lab</title>
+    <script is:inline define:vars={{ harnesses, models, tools }}>
+      window.__CFG = { harnesses, models, tools };
+    </script>
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <div><h1>Configure an agent.</h1><p>Pick a harness, a model, its tools. Deploy resolves it into one profile.</p></div>
+        <button id="download" class="ghost mono">Download profile.json</button>
+      </header>
+
+      <div class="grid">
+        <!-- LEFT: the portrait, recomposed from config -->
+        <section class="portrait">
+          <canvas id="viz"></canvas>
+          <div class="badge">
+            <img id="p-logo" src={harnesses[0].logo} alt="" width="34" height="34" />
+            <div><strong id="p-harness">Claude Code</strong><span id="p-model" class="mono">claude-sonnet-5</span></div>
+            <span id="p-state" class="state mono">draft</span>
+          </div>
+          <dl class="read mono">
+            <div><dt>tools</dt><dd id="r-tools">3</dd></div>
+            <div><dt>sandbox</dt><dd id="r-sandbox">on</dd></div>
+            <div><dt>traces</dt><dd id="r-traces">0</dd></div>
+            <div><dt>win-rate Δ</dt><dd id="r-win">—</dd></div>
+          </dl>
+        </section>
+
+        <!-- RIGHT: tabbed spec-explorer -->
+        <section class="panel">
+          <nav class="tabs mono">
+            <button class="on" data-tab="harness">Harness</button>
+            <button data-tab="model">Model</button>
+            <button data-tab="tools">Tools</button>
+            <button data-tab="sandbox">Sandbox</button>
+          </nav>
+          <div class="tabbody">
+            <div class="tab on" data-body="harness"><div class="opts" id="opts-harness"></div></div>
+            <div class="tab" data-body="model"><div class="opts" id="opts-model"></div></div>
+            <div class="tab" data-body="tools"><div class="opts" id="opts-tools"></div><p class="hint mono">multi-select. each tool adds a strand.</p></div>
+            <div class="tab" data-body="sandbox">
+              <div class="opts" id="opts-sandbox"></div>
+              <p class="hint mono">an isolated computer for the agent: shell, files, browser.</p>
+            </div>
+          </div>
+          <button id="deploy" class="deploy">Deploy agent</button>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const C = window.__CFG;
+      const state = { harness: C.harnesses[0], model: C.models[0], tools: ['shell', 'files', 'browser'], sandbox: true, deployed: false };
+
+      // ---- portrait canvas: fibers = tools, resolves on deploy ---------------
+      const canvas = document.getElementById('viz');
+      const ctx = canvas.getContext('2d');
+      let W = 0, H = 0, dpr = Math.min(2, devicePixelRatio);
+      const fit = () => { const r = canvas.getBoundingClientRect(); W = r.width; H = r.height;
+        canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+      new ResizeObserver(fit).observe(canvas); fit();
+
+      const rnd = (s) => { const v = Math.sin(s * 999.13) * 43758.5453; return v - Math.floor(v); };
+      let resolve = 0; // 0 tangled, 1 deployed
+      function draw(t) {
+        requestAnimationFrame(draw);
+        const target = state.deployed ? 1 : 0;
+        resolve += (target - resolve) * 0.06;
+        ctx.clearRect(0, 0, W, H);
+        const n = 3 + state.tools.length + (state.sandbox ? 2 : 0); // strands = config density
+        const cx = W / 2, cy = H / 2, midX = W * 0.5, spanX = W * 0.72;
+        for (let i = 0; i < n; i++) {
+          const laneY = cy + (i / (n - 1) - 0.5) * H * 0.5;
+          ctx.beginPath();
+          for (let k = 0; k <= 40; k++) {
+            const u = k / 40;
+            const x = cx - spanX / 2 + spanX * u;
+            const env = Math.sin(u * Math.PI);
+            const tangY = cy + Math.sin(u * 9 + i * 1.7 + t * 0.0006) * H * 0.28 * env
+              + (rnd(i * 7 + k) - 0.5) * 26 * env;
+            const y = tangY + (laneY - tangY) * (resolve * resolve * (3 - 2 * resolve));
+            k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          const lum = 150 + Math.round(rnd(i) * 80);
+          ctx.strokeStyle = `rgba(${lum - 40},${lum - 20},${255 - (255 - lum)},${0.5 + 0.4 * resolve})`;
+          ctx.lineWidth = 1.6 + resolve * 0.8; ctx.shadowColor = 'rgba(129,140,248,0.7)'; ctx.shadowBlur = 8; ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      }
+      requestAnimationFrame(draw);
+
+      // ---- render config -> DOM ---------------------------------------------
+      const $ = (id) => document.getElementById(id);
+      function render() {
+        $('p-logo').src = state.harness.logo;
+        $('p-harness').textContent = state.harness.name;
+        $('p-model').textContent = state.model;
+        $('r-tools').textContent = String(state.tools.length);
+        $('r-sandbox').textContent = state.sandbox ? 'on' : 'off';
+        $('p-state').textContent = state.deployed ? 'deployed' : 'draft';
+        $('p-state').classList.toggle('live', state.deployed);
+        $('r-traces').textContent = state.deployed ? '128' : '0';
+        $('r-win').textContent = state.deployed ? '+11.4%' : '—';
+      }
+
+      function chip(label, on, onClick, logo) {
+        const b = document.createElement('button'); b.className = 'chip mono' + (on ? ' on' : '');
+        if (logo) { const im = document.createElement('img'); im.src = logo; im.width = 18; im.height = 18; b.appendChild(im); }
+        b.appendChild(document.createTextNode(label)); b.onclick = onClick; return b;
+      }
+      function build() {
+        const oh = $('opts-harness'); oh.innerHTML = '';
+        C.harnesses.forEach((h) => oh.appendChild(chip(h.name, state.harness.id === h.id, () => { state.harness = h; state.deployed = false; render(); build(); }, h.logo)));
+        const om = $('opts-model'); om.innerHTML = '';
+        C.models.forEach((m) => om.appendChild(chip(m, state.model === m, () => { state.model = m; state.deployed = false; render(); build(); })));
+        const ot = $('opts-tools'); ot.innerHTML = '';
+        C.tools.forEach((tl) => ot.appendChild(chip(tl, state.tools.includes(tl), () => {
+          state.tools = state.tools.includes(tl) ? state.tools.filter((x) => x !== tl) : [...state.tools, tl];
+          state.deployed = false; render(); build();
+        })));
+        const os = $('opts-sandbox'); os.innerHTML = '';
+        ['on', 'off'].forEach((v) => os.appendChild(chip(v, state.sandbox === (v === 'on'), () => { state.sandbox = v === 'on'; state.deployed = false; render(); build(); })));
+      }
+
+      document.querySelectorAll('.tabs button').forEach((b) => b.onclick = () => {
+        document.querySelectorAll('.tabs button').forEach((x) => x.classList.remove('on'));
+        document.querySelectorAll('.tab').forEach((x) => x.classList.remove('on'));
+        b.classList.add('on'); document.querySelector(`[data-body="${b.dataset.tab}"]`).classList.add('on');
+      });
+      $('deploy').onclick = () => { state.deployed = true; render(); $('deploy').textContent = 'Agent deployed'; };
+      $('download').onclick = () => {
+        const p = { harness: state.harness.id, model: state.model, tools: state.tools, sandbox: state.sandbox };
+        const a = document.createElement('a'); a.href = 'data:application/json,' + encodeURIComponent(JSON.stringify(p, null, 2));
+        a.download = 'agent-profile.json'; a.click();
+      };
+      build(); render();
+    </script>
+  </body>
+</html>
+
+<style>
+  :root { --paper: #10102a; --card: #16163a; --line: rgba(129,140,248,0.18); --ink: #ededf4; --mut: #9b9bbf; --ind: #818cf8; --ind2: #6366f1; }
+  html, body { margin: 0; background: #0b0b1c; color: var(--ink); font-family: 'Inter', system-ui, sans-serif; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: 'tnum'; }
+  main { max-width: 74rem; margin: 0 auto; padding: 3rem 2rem 5rem; }
+  .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 2rem; margin-bottom: 2rem; }
+  .top h1 { margin: 0; font-size: 2.4rem; font-weight: 600; letter-spacing: -0.03em; }
+  .top p { margin: 0.5rem 0 0; color: var(--mut); font-size: 1.05rem; }
+  .ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); padding: 0.6rem 1rem; border-radius: 9px; font-size: 0.82rem; cursor: pointer; }
+  .ghost:hover { border-color: var(--ind); }
+  .grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 1.4rem; }
+  .portrait { position: relative; background: linear-gradient(160deg, #17173e, #0d0d24); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; min-height: 30rem; display: flex; flex-direction: column; }
+  #viz { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .badge { position: relative; display: flex; align-items: center; gap: 0.8rem; padding: 1.2rem 1.4rem; }
+  .badge img { border-radius: 8px; }
+  .badge strong { display: block; font-size: 1.1rem; font-weight: 600; }
+  .badge span.mono { color: var(--mut); font-size: 0.82rem; }
+  .state { margin-left: auto; padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(155,155,191,0.15); color: var(--mut); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .state.live { background: rgba(16,185,129,0.16); color: #6ee7b7; }
+  .read { position: relative; margin: auto 0 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border-top: 1px solid var(--line); }
+  .read div { padding: 1rem 1.2rem; }
+  .read div + div { border-left: 1px solid var(--line); }
+  .read dt { color: var(--mut); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; margin: 0; }
+  .read dd { margin: 0.35rem 0 0; font-size: 1.5rem; font-weight: 600; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 1.4rem; display: flex; flex-direction: column; }
+  .tabs { display: flex; gap: 0.3rem; border-bottom: 1px solid var(--line); padding-bottom: 0.9rem; }
+  .tabs button { flex: 1; background: transparent; border: none; color: var(--mut); font-family: inherit; font-size: 0.82rem; padding: 0.5rem; border-radius: 8px; cursor: pointer; }
+  .tabs button.on { background: rgba(129,140,248,0.14); color: #fff; }
+  .tabbody { padding: 1.3rem 0; flex: 1; }
+  .tab { display: none; }
+  .tab.on { display: block; }
+  .opts { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .chip { display: inline-flex; align-items: center; gap: 0.4rem; background: rgba(129,140,248,0.06); border: 1px solid var(--line); color: #c7c9f5; font-family: inherit; font-size: 0.82rem; padding: 0.45rem 0.75rem; border-radius: 9px; cursor: pointer; transition: all 0.12s; }
+  .chip:hover { border-color: rgba(129,140,248,0.5); }
+  .chip.on { background: var(--ind2); border-color: #6d63ff; color: #fff; }
+  .chip img { border-radius: 4px; }
+  .hint { color: var(--mut); font-size: 0.8rem; margin: 1rem 0 0; }
+  .deploy { margin-top: auto; background: #4f46e5; border: 1px solid #6d63ff; color: #fff; font-family: inherit; font-size: 0.98rem; font-weight: 600; padding: 0.85rem; border-radius: 11px; cursor: pointer; }
+  .deploy:hover { background: #4338ca; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+</style>
