@@ -38,6 +38,17 @@ const roster = art.map(([img, tier], i) => {
     win: (4 + rand(i * 4.4) * 18).toFixed(1),
   };
 });
+// featured agent EVOLVES: each upgrade re-renders the robot itself (FLUX
+// Kontext image edits), so the picture changes as it levels up, not a label.
+const featuredEvo = {
+  id: 'AGENT-0001', harness: 'Claude Code', harnessLogo: '/images/harness/claude-code.svg',
+  model: 'claude-sonnet-5', tools: ['shell', 'files', 'browser', 'git'],
+  stages: [
+    { img: 'matte-v2-01', tier: 'Common', level: 1, win: '6.2', note: 'A fresh agent. Deploy it to a sandbox and it starts leaving traces.' },
+    { img: 'evolve/matte-v2-01-s1', tier: 'Rare', level: 5, win: '13.8', up: 'armored core', note: 'The analyst scoped its test reruns. It came back with an armored core.' },
+    { img: 'evolve/matte-v2-01-s2', tier: 'Epic', level: 10, win: '21.4', up: 'winged, haloed', note: 'Parallel tools and a prompt cache. Fully evolved, it barely wastes a span.' },
+  ],
+};
 // featured = an Epic
 const featured = roster.find((a) => a.tier === 'Epic');
 // wall sorted by rarity desc for a satisfying drop
@@ -58,28 +69,31 @@ const wall = [...roster].sort((a, b) => tierRank[b.tier] - tierRank[a.tier]);
       </header>
 
       <section class="feature">
-        <div class={`hero-card tier-${featured.tier.toLowerCase()}`}>
+        <div class="hero-card tier-common" id="f-card" data-stages={JSON.stringify(featuredEvo.stages)}>
           <div class="aura" id="f-aura"></div>
-          <img src={`/images/agents/${featured.img}.png`} alt="Featured agent" />
-          <div class="equip" id="f-equip"></div>
-          <span class="tier mono">{featured.tier}</span>
-          <span class="lvl mono">LV <b id="f-lvl">{featured.level}</b></span>
+          <div class="stages">
+            {featuredEvo.stages.map((s, i) => (
+              <img class={`stage${i === 0 ? ' on' : ''}`} src={`/images/agents/${s.img}.png`} data-i={i} alt={`Agent stage ${i}`} />
+            ))}
+          </div>
+          <span class="tier mono" id="f-tier">{featuredEvo.stages[0].tier}</span>
+          <span class="lvl mono">LV <b id="f-lvl">{featuredEvo.stages[0].level}</b></span>
         </div>
         <div class="feature-body">
-          <span class="fid mono">{featured.id}</span>
+          <span class="fid mono">{featuredEvo.id}</span>
           <div class="traits">
-            <span class="chip mono">{featured.harness}</span>
-            <span class="chip mono">{featured.model}</span>
-            {featured.tools.map((t) => <span class="chip mono dim">{t}</span>)}
+            <span class="chip mono"><img class="hlogo" src={featuredEvo.harnessLogo} alt="" />{featuredEvo.harness}</span>
+            <span class="chip mono">{featuredEvo.model}</span>
+            {featuredEvo.tools.map((t) => <span class="chip mono dim">{t}</span>)}
           </div>
           <dl class="stat mono">
             <div><dt>status</dt><dd id="f-status">idle</dd></div>
             <div><dt>traces</dt><dd id="f-traces">0</dd></div>
-            <div><dt>win-rate</dt><dd id="f-win">{featured.win}%</dd></div>
-            <div><dt>upgrades</dt><dd id="f-ups">0</dd></div>
+            <div><dt>win-rate</dt><dd id="f-win">{featuredEvo.stages[0].win}%</dd></div>
+            <div><dt>stage</dt><dd id="f-stage">1 / 3</dd></div>
           </dl>
           <button id="run" class="run">Deploy and run</button>
-          <p class="note mono" id="f-note">Deploy sends it to a sandbox. Every run is traced; the analyst ships it an upgrade that attaches to the agent.</p>
+          <p class="note mono" id="f-note">Deploy sends it to a sandbox. Every run is traced; the analyst ships an improvement, and the agent evolves.</p>
         </div>
       </section>
 
@@ -107,40 +121,48 @@ const wall = [...roster].sort((a, b) => tierRank[b.tier] - tierRank[a.tier]);
     <script>
       const $ = (id) => document.getElementById(id);
       const runBtn = $('run'), status = $('f-status'), traces = $('f-traces'), win = $('f-win'),
-        lvl = $('f-lvl'), ups = $('f-ups'), note = $('f-note'), equip = $('f-equip'), aura = $('f-aura');
-      const upgrades = ['retry', 'parallel', 'cache', 'eval', 'plan', 'skills'];
-      let running = false, t = 0, base = parseFloat(win.textContent), earned = 0;
+        lvl = $('f-lvl'), tier = $('f-tier'), stageEl = $('f-stage'), note = $('f-note'),
+        aura = $('f-aura'), card = $('f-card');
+      const stages = JSON.parse(card.dataset.stages);
+      const imgs = [...card.querySelectorAll('.stage')];
+      let running = false, t = 0, at = 0;
 
-      function attachModule(label) {
-        const m = document.createElement('div');
-        m.className = 'mod mono'; m.textContent = label;
-        equip.appendChild(m);
-        requestAnimationFrame(() => m.classList.add('in'));
+      function evolveTo(i) {
+        imgs.forEach((im) => im.classList.toggle('on', +im.dataset.i === i));
+        const s = stages[i];
+        card.className = `hero-card tier-${s.tier.toLowerCase()}`;
+        tier.textContent = s.tier;
+        lvl.textContent = String(s.level);
+        stageEl.textContent = `${i + 1} / ${stages.length}`;
+        win.textContent = s.win + '%'; win.classList.add('up'); setTimeout(() => win.classList.remove('up'), 1200);
+        aura.style.setProperty('--glow', i / (stages.length - 1));
       }
 
       runBtn.addEventListener('click', () => {
         if (running) return;
+        if (at >= stages.length - 1) { // reset to replay
+          at = 0; t = 0; traces.textContent = '0'; evolveTo(0);
+          runBtn.textContent = 'Deploy and run'; status.textContent = 'idle'; status.className = '';
+          note.textContent = stages[0].note; return;
+        }
         running = true; runBtn.disabled = true; runBtn.textContent = 'Running...';
         status.textContent = 'running'; status.className = 'run-on';
         note.textContent = 'Working in a sandbox. Spans are streaming into its trace...';
-        const iv = setInterval(() => { t += Math.floor(6 + Math.random() * 22); traces.textContent = String(t); }, 110);
+        const iv = setInterval(() => { t += Math.floor(6 + Math.random() * 22); traces.textContent = String(t); }, 100);
         setTimeout(() => {
           clearInterval(iv);
           status.textContent = 'analyzed';
-          note.textContent = 'The analyst found waste and proved a fix on held-out runs.';
-          const up = upgrades[earned % upgrades.length]; earned++;
-          attachModule(up);
-          ups.textContent = String(earned);
-          aura.style.setProperty('--glow', Math.min(1, earned / 5));
-          lvl.textContent = String(parseInt(lvl.textContent) + 1);
-          base += 3.1 + Math.random() * 4; win.textContent = base.toFixed(1) + '%';
-          win.classList.add('up'); setTimeout(() => win.classList.remove('up'), 1200);
-          status.textContent = 'improved'; status.className = 'run-done';
+          note.textContent = 'The analyst found waste and proved a fix on held-out runs. Applying...';
           setTimeout(() => {
-            note.textContent = `Upgrade +${up} attached. The agent is stronger. Run it again.`;
-            runBtn.disabled = false; runBtn.textContent = 'Run again'; running = false; status.textContent = 'ready';
-          }, 900);
-        }, 2500);
+            at++; evolveTo(at);
+            const s = stages[at];
+            status.textContent = 'evolved'; status.className = 'run-done';
+            note.textContent = `Evolved: ${s.up}. ${s.note}`;
+            runBtn.disabled = false;
+            runBtn.textContent = at >= stages.length - 1 ? 'Replay from start' : 'Run again';
+            running = false;
+          }, 700);
+        }, 2200);
       });
     </script>
   </body>
@@ -163,13 +185,13 @@ const wall = [...roster].sort((a, b) => tierRank[b.tier] - tierRank[a.tier]);
   .aura { position: absolute; inset: -30%; z-index: 0; --glow: 0; opacity: calc(0.25 + var(--glow) * 0.75);
     background: radial-gradient(circle at 50% 45%, rgba(129,140,248,0.55), transparent 55%); transition: opacity 0.6s; }
   /* orbiting upgrade modules */
-  .equip { position: absolute; left: 0.8rem; right: 0.8rem; bottom: 0.8rem; z-index: 3; display: flex; flex-wrap: wrap; gap: 0.4rem; }
-  /* .mod is created in JS, so it must be :global (Astro scopes styles otherwise) */
-  :global(.equip .mod) { transform: translateY(8px) scale(0.85); padding: 0.32rem 0.6rem; border-radius: 8px;
-    background: rgba(16,185,129,0.95); color: #04231a; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.7rem; font-weight: 700; white-space: nowrap;
-    box-shadow: 0 4px 16px rgba(16,185,129,0.55); opacity: 0; transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.2,0.8,0.2,1); }
-  :global(.equip .mod.in) { opacity: 1; transform: none; }
-  :global(.equip .mod)::before { content: '+'; }
+  /* evolution stage crossfade: same character, upgraded picture.
+     selector is .hero-card .stage to outrank the generic .hero-card img rule. */
+  .stages { position: absolute; inset: 0; z-index: 1; }
+  .hero-card .stage { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+    opacity: 0; transition: opacity 0.8s ease; }
+  .hero-card .stage.on { opacity: 1; }
+  .hlogo { width: 15px; height: 15px; object-fit: contain; margin-right: 0.4rem; vertical-align: -2px; }
 
   .tier { position: absolute; top: 0.8rem; left: 0.8rem; z-index: 3; padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(11,11,28,0.72); backdrop-filter: blur(6px); font-size: 0.66rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ind); border: 1px solid var(--line); }
   .lvl { position: absolute; top: 0.8rem; right: 0.8rem; z-index: 3; padding: 0.25rem 0.6rem; border-radius: 999px; background: rgba(79,70,229,0.85); font-size: 0.7rem; color: #fff; }
