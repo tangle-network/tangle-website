@@ -39,9 +39,7 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
   return (
     <div className="vbb">
       <div className="vbb-controls">
-        <span className="vbb-axis-label">{metricLabel} · higher is better</span>
         <div className="vbb-sort mono">
-          sort:
           {(['score', 'n', 'costUsd'] as const).map((k) => (
             <button key={k} className={sort === k ? 'on' : ''} onClick={() => setSort(k)}>
               {k === 'costUsd' ? 'cost' : k}
