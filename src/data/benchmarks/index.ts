@@ -1,62 +1,38 @@
 import type { DomainBoard } from './schema';
 
-// Domain leaderboards. Rows come from real eval runs, exported by
-// scripts/run-domain-bench.mjs into benchmark-results/<domain>.json and
-// imported here. Until a domain is swept across a profile matrix it stays
-// 'partial' (seeded with the real single scores we have) or 'awaiting-run'.
-// Never hand-write a competitor/model row that wasn't measured.
+// Domain leaderboards, vals.ai structure: an index of benchmarks grouped by
+// category, each clicking into a detail page with a ranked bar chart of every
+// agent profile. Rows come from real eval runs (scripts/run-domain-bench.mjs);
+// domains not yet swept render 'awaiting run', never fabricated rows.
 
-// Tax: real score exists from agent-eval round 1 (blueprint-agent / sonnet-5,
-// blended 0.828 over n=74). One real row today; the profile sweep fills the
-// rest of the board.
 export const tax: DomainBoard = {
   id: 'tax',
-  domain: 'Tax',
+  domain: 'TaxEval',
+  category: 'Finance',
   blurb: 'Complex individual and business returns, multi-form reasoning, citation to code sections.',
+  benchSource: 'Proprietary',
   target: 0.8,
-  source: 'agent-eval/.evolve/scorecard.json (round 1) + tax-agent tests/eval/canonical.ts',
+  metricLabel: 'Blended score',
+  source: 'tax-agent tests/eval/.runs/canonical-2026-05-20 (scores.json, per-variant)',
   status: 'partial',
-  lastRun: '2026-05-21',
-  taskCount: 74,
+  lastRun: '2026-05-20',
+  taskCount: 37,
   rows: [
-    { model: 'claude-sonnet-5', harness: 'blueprint-agent', score: 0.828, n: 74, date: '2026-05-21', highlight: true },
+    // Real per-variant means from the canonical run: same model, two prompt
+    // profiles across 37 personas. This is AgentProfile variation (prompt).
+    { model: 'gpt-5.4', harness: 'tax-agent', promptVersion: 'source-grounded-v1', score: 0.831, n: 37, passRate: 0.568, date: '2026-05-20', highlight: true },
+    { model: 'gpt-5.4', harness: 'tax-agent', promptVersion: 'baseline-generic', score: 0.824, n: 37, passRate: 0.568, date: '2026-05-20' },
   ],
 };
 
-// Legal: sessions captured (n=36) but the scoring harness was in repair, so
-// there is no trustworthy blended score to publish. Awaiting a clean run.
-export const legal: DomainBoard = {
-  id: 'legal',
-  domain: 'Legal',
-  blurb: 'Contract review, case management workflows, jurisdiction-aware drafting.',
-  target: 0.8,
-  source: 'legal-agent tests/eval/canonical.ts',
-  status: 'awaiting-run',
-  taskCount: 36,
-  rows: [],
-};
-
-// CompanyBench (VerticalBench): the coding/app-build system across verticals.
-// Real per-generation data exists (gen43: 27 sessions, 7 verticals) but as
-// layer pass-rates, not a per-profile blended score board yet. Awaiting the
-// profile-matrix export.
-export const companybench: DomainBoard = {
-  id: 'companybench',
-  domain: 'CompanyBench',
-  blurb: 'Agent-built vertical apps scored install → typecheck → build → serve → semantic across verticals.',
-  target: 0.8,
-  source: 'blueprint-agent/.evolve/verticalbench',
-  status: 'awaiting-run',
-  taskCount: 27,
-  rows: [],
-};
-
-// Creative: real score from agent-eval round 1 (0.866, n=24). A live domain.
 export const creative: DomainBoard = {
   id: 'creative',
-  domain: 'Creative',
+  domain: 'CreativeEval',
+  category: 'Creative',
   blurb: 'Brand, copy, and design generation scored against held-out briefs.',
+  benchSource: 'Proprietary',
   target: 0.8,
+  metricLabel: 'Blended score',
   source: 'agent-eval/.evolve/scorecard.json (round 1)',
   status: 'partial',
   lastRun: '2026-05-21',
@@ -66,4 +42,46 @@ export const creative: DomainBoard = {
   ],
 };
 
+export const legal: DomainBoard = {
+  id: 'legal',
+  domain: 'LegalEval',
+  category: 'Legal',
+  blurb: 'Contract review, case management workflows, jurisdiction-aware drafting.',
+  benchSource: 'Proprietary',
+  target: 0.8,
+  metricLabel: 'Blended score',
+  source: 'legal-agent tests/eval/canonical.ts',
+  status: 'awaiting-run',
+  taskCount: 36,
+  rows: [],
+};
+
+export const companybench: DomainBoard = {
+  id: 'companybench',
+  domain: 'CompanyBench',
+  category: 'Coding',
+  blurb: 'Agent-built vertical apps scored install → typecheck → build → serve → semantic across verticals.',
+  benchSource: 'Proprietary',
+  target: 0.8,
+  metricLabel: 'Honest all-pass',
+  source: 'blueprint-agent/.evolve/verticalbench',
+  status: 'awaiting-run',
+  taskCount: 27,
+  rows: [],
+};
+
 export const boards: DomainBoard[] = [tax, creative, legal, companybench];
+
+// grouped by category for the index page
+export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {
+  const map = new Map<string, DomainBoard[]>();
+  for (const b of boards) {
+    if (!map.has(b.category)) map.set(b.category, []);
+    map.get(b.category)!.push(b);
+  }
+  return [...map.entries()].map(([category, boards]) => ({ category, boards }));
+}
+
+export function boardById(id: string): DomainBoard | undefined {
+  return boards.find((b) => b.id === id);
+}

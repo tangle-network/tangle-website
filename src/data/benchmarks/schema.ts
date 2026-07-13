@@ -22,16 +22,21 @@ export interface ProfileRow {
   highlight?: boolean;
 }
 
+export type BenchSource = 'Proprietary' | 'Academic' | 'Industry Partner';
+
 export interface DomainBoard {
-  id: string; // "tax", "legal", "companybench"
-  domain: string; // "Tax"
+  id: string; // slug: "tax", "legal", "companybench"
+  domain: string; // display name "Tax"
+  category: string; // "Finance", "Legal", "Coding", "Creative"
   blurb: string; // one line: what the tasks are
+  benchSource: BenchSource; // provenance class, vals.ai-style
   target: number; // pass bar (e.g. 0.8)
   source: string; // repo/scorecard the rows come from
   rows: ProfileRow[]; // ranked leaderboard; [] => awaiting run
   status: 'live' | 'partial' | 'awaiting-run';
   lastRun?: string; // ISO
   taskCount?: number; // how many held-out tasks in the suite
+  metricLabel?: string; // "Blended score", "Pass rate"
 }
 
 export const INDIGO_RAMP = ['#4F46E5', '#6366F1', '#818CF8', '#A5AAFC', '#C7C9F5'];
