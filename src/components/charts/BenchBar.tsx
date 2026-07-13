@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import type { ProfileRow } from '../../data/benchmarks/schema';
 
-// Hoverable horizontal bar chart ranking every agent profile on one benchmark
-// (vals.ai detail-page style, reskinned indigo). Each bar = one AgentProfile;
-// hover reveals the full breakdown (harness, prompt, n, cost, date).
+// One horizontal bar chart, all agent profiles on a shared axis (vals.ai
+// detail-page style, reskinned indigo). Each bar = one AgentProfile; hover
+// reveals the full breakdown. Not per-row boxes: a single continuous plot.
 
 export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
   { rows: ProfileRow[]; target?: number; metricLabel?: string }) {
@@ -20,7 +20,8 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
   }
 
   const sorted = [...rows].sort((a, b) => ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number));
-  const max = Math.max(...rows.map((r) => r.score), target) * 1.02;
+  const max = Math.ceil(Math.max(...rows.map((r) => r.score), target) * 10) / 10; // round axis up to 0.1
+  const ticks = Array.from({ length: Math.round(max / 0.2) + 1 }, (_, i) => i * 0.2);
 
   return (
     <div className="bb">
@@ -36,31 +37,42 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
         </div>
       </div>
 
-      <div className="bb-chart">
+      {/* single plot: gutter of labels + one shared-axis chart area */}
+      <div className="bb-plot">
+        {/* gridlines + target rule span the whole chart */}
+        <div className="bb-grid" aria-hidden="true">
+          {ticks.map((t) => (
+            <div className="bb-gridline" style={{ left: `${(t / max) * 100}%` }} key={t}>
+              <span className="bb-gridval mono">{Math.round(t * 100)}</span>
+            </div>
+          ))}
+          <div className="bb-targetrule" style={{ left: `${(target / max) * 100}%` }}>
+            <span className="bb-targetlbl mono">target {Math.round(target * 100)}</span>
+          </div>
+        </div>
+
         {sorted.map((r, i) => {
           const wpct = (r.score / max) * 100;
           const pass = r.score >= target;
           return (
-            <div className={`bb-row${r.highlight ? ' hl' : ''}${hover === i ? ' hover' : ''}`} key={r.model + i}
+            <div className={`bb-bar${r.highlight ? ' hl' : ''}${hover === i ? ' hover' : ''}`} key={r.model + i}
               onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-              <div className="bb-rank mono">{i + 1}</div>
-              <div className="bb-name">
+              <div className="bb-y">
+                <span className="bb-rank mono">{i + 1}</span>
                 <span className="bb-model">{r.model}</span>
-                {r.harness && <span className="bb-tag mono">{r.harness}</span>}
-                {r.promptVersion && <span className="bb-tag mono dim">{r.promptVersion}</span>}
+                {r.promptVersion && <span className="bb-tag mono">{r.promptVersion}</span>}
               </div>
-              <div className="bb-lane">
-                <div className="bb-fill" style={{ width: `${wpct}%`, background: i === 0 ? '#C7C9F5' : pass ? '#6366F1' : '#FB7185' }} />
-                <div className="bb-target" style={{ left: `${(target / max) * 100}%` }} />
-                <span className="bb-val mono" style={{ left: `calc(${wpct}% + 0.5rem)` }}>{(r.score * 100).toFixed(1)}</span>
+              <div className="bb-track">
+                <div className="bb-fill" style={{ width: `${wpct}%`, background: i === 0 ? '#C7C9F5' : pass ? '#6366F1' : '#FB7185' }}>
+                  <span className="bb-val mono">{(r.score * 100).toFixed(1)}</span>
+                </div>
               </div>
               {hover === i && (
                 <div className="bb-tip mono">
-                  <div className="bb-tip-h">{r.model}</div>
+                  <div className="bb-tip-h">{r.model}{r.promptVersion ? ` · ${r.promptVersion}` : ''}</div>
                   <div className="bb-tip-grid">
                     {r.harness && <><span>harness</span><b>{r.harness}</b></>}
-                    {r.promptVersion && <><span>prompt</span><b>{r.promptVersion}</b></>}
-                    <span>score</span><b>{(r.score * 100).toFixed(1)}</b>
+                    <span>{metricLabel.toLowerCase()}</span><b>{(r.score * 100).toFixed(1)}</b>
                     <span>tasks</span><b>{r.n}</b>
                     {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
                     {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
@@ -72,7 +84,6 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
           );
         })}
       </div>
-      <div className="bb-legend mono">Vertical rule marks the {(target * 100).toFixed(0)} pass target. Hover any bar for the full profile.</div>
     </div>
   );
 }
