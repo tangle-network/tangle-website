@@ -63,9 +63,8 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
                 {r.promptVersion && <span className="bb-tag mono">{r.promptVersion}</span>}
               </div>
               <div className="bb-track">
-                <div className="bb-fill" style={{ width: `${wpct}%`, background: i === 0 ? '#C7C9F5' : pass ? '#6366F1' : '#FB7185' }}>
-                  <span className="bb-val mono">{(r.score * 100).toFixed(1)}</span>
-                </div>
+                <div className="bb-fill" style={{ width: `${wpct}%`, background: i === 0 ? '#C7C9F5' : pass ? '#6366F1' : '#FB7185' }} />
+                <span className="bb-val mono" style={{ left: `${wpct}%` }}>{(r.score * 100).toFixed(1)}</span>
               </div>
               {hover === i && (
                 <div className="bb-tip mono">
