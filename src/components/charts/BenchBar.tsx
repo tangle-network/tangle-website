@@ -1,9 +1,20 @@
 import { useState } from 'react';
 import type { ProfileRow } from '../../data/benchmarks/schema';
 
-// One horizontal bar chart, all agent profiles on a shared axis (vals.ai
-// detail-page style, reskinned indigo). Each bar = one AgentProfile; hover
-// reveals the full breakdown. Not per-row boxes: a single continuous plot.
+// Vertical column chart ranking agent profiles on one benchmark
+// (artificial-analysis "Highlights" style, reskinned indigo). Each column =
+// one AgentProfile: value on top, bar height = score, harness logo + model
+// name below. Hover reveals the full breakdown.
+
+const HARNESS_LOGO: Record<string, string> = {
+  'claude-code': '/images/harness/claude-code.svg', 'tax-agent': '/images/harness/claude-code.svg',
+  'blueprint-agent': '/images/harness/claude-code.svg', codex: '/images/harness/codex.png',
+  opencode: '/images/harness/opencode.svg', hermes: '/images/harness/hermes.png',
+  openclaw: '/images/harness/openclaw.png', nanoclaw: '/images/harness/nanoclaw.png',
+  kimi: '/images/harness/kimi-code.png', pi: '/images/harness/pi.svg',
+};
+// indigo ramp by rank: top bar brightest, descending into deeper indigo
+const RANK_COLORS = ['#C7C9F5', '#A5AAFC', '#818CF8', '#6366F1', '#4F46E5'];
 
 export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
   { rows: ProfileRow[]; target?: number; metricLabel?: string }) {
@@ -20,14 +31,16 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
   }
 
   const sorted = [...rows].sort((a, b) => ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number));
-  const max = Math.ceil(Math.max(...rows.map((r) => r.score), target) * 10) / 10; // round axis up to 0.1
-  const ticks = Array.from({ length: Math.round(max / 0.2) + 1 }, (_, i) => i * 0.2);
+  const max = Math.ceil(Math.max(...rows.map((r) => r.score), target) * 10) / 10;
+  const colorFor = (r: ProfileRow, i: number) =>
+    r.score < target ? '#FB7185' : RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
+  const logoFor = (r: ProfileRow) => (r.harness && HARNESS_LOGO[r.harness]) || null;
 
   return (
-    <div className="bb">
-      <div className="bb-controls">
-        <span className="bb-axis-label">{metricLabel} · higher is better</span>
-        <div className="bb-sort mono">
+    <div className="vbb">
+      <div className="vbb-controls">
+        <span className="vbb-axis-label">{metricLabel} · higher is better</span>
+        <div className="vbb-sort mono">
           sort:
           {(['score', 'n', 'costUsd'] as const).map((k) => (
             <button key={k} className={sort === k ? 'on' : ''} onClick={() => setSort(k)}>
@@ -37,51 +50,42 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
         </div>
       </div>
 
-      {/* single plot: gutter of labels + one shared-axis chart area */}
-      <div className="bb-plot">
-        {/* gridlines + target rule span the whole chart */}
-        <div className="bb-grid" aria-hidden="true">
-          {ticks.map((t) => (
-            <div className="bb-gridline" style={{ left: `${(t / max) * 100}%` }} key={t}>
-              <span className="bb-gridval mono">{Math.round(t * 100)}</span>
-            </div>
-          ))}
-          <div className="bb-targetrule" style={{ left: `${(target / max) * 100}%` }}>
-            <span className="bb-targetlbl mono">target {Math.round(target * 100)}</span>
-          </div>
-        </div>
-
-        {sorted.map((r, i) => {
-          const wpct = (r.score / max) * 100;
-          const pass = r.score >= target;
-          return (
-            <div className={`bb-bar${r.highlight ? ' hl' : ''}${hover === i ? ' hover' : ''}`} key={r.model + i}
-              onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-              <div className="bb-y">
-                <span className="bb-rank mono">{i + 1}</span>
-                <span className="bb-model">{r.model}</span>
-                {r.promptVersion && <span className="bb-tag mono">{r.promptVersion}</span>}
-              </div>
-              <div className="bb-track">
-                <div className="bb-fill" style={{ width: `${wpct}%`, background: i === 0 ? '#C7C9F5' : pass ? '#6366F1' : '#FB7185' }} />
-                <span className="bb-val mono" style={{ left: `${wpct}%` }}>{(r.score * 100).toFixed(1)}</span>
-              </div>
-              {hover === i && (
-                <div className="bb-tip mono">
-                  <div className="bb-tip-h">{r.model}{r.promptVersion ? ` · ${r.promptVersion}` : ''}</div>
-                  <div className="bb-tip-grid">
-                    {r.harness && <><span>harness</span><b>{r.harness}</b></>}
-                    <span>{metricLabel.toLowerCase()}</span><b>{(r.score * 100).toFixed(1)}</b>
-                    <span>tasks</span><b>{r.n}</b>
-                    {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
-                    {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
-                    <span>run date</span><b>{r.date}</b>
+      <div className="vbb-plot" style={{ ['--target' as string]: `${(target / max) * 100}%` }}>
+        <div className="vbb-targetline"><span className="mono">target {Math.round(target * 100)}</span></div>
+        <div className="vbb-cols">
+          {sorted.map((r, i) => {
+            const hpct = (r.score / max) * 100;
+            const logo = logoFor(r);
+            return (
+              <div className={`vbb-col${hover === i ? ' hover' : ''}`} key={r.model + (r.promptVersion ?? '') + i}
+                onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
+                <div className="vbb-bar-wrap">
+                  <div className="vbb-bar" style={{ height: `${hpct}%`, background: colorFor(r, i) }}>
+                    <span className="vbb-val mono">{(r.score * 100).toFixed(1)}</span>
                   </div>
+                  {hover === i && (
+                    <div className="vbb-tip mono">
+                      <div className="vbb-tip-h">{r.model}{r.promptVersion ? ` · ${r.promptVersion}` : ''}</div>
+                      <div className="vbb-tip-grid">
+                        {r.harness && <><span>harness</span><b>{r.harness}</b></>}
+                        <span>{metricLabel.toLowerCase()}</span><b>{(r.score * 100).toFixed(1)}</b>
+                        <span>tasks</span><b>{r.n}</b>
+                        {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
+                        {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
+                        <span>run date</span><b>{r.date}</b>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+                <div className="vbb-foot">
+                  {logo && <img className="vbb-logo" src={logo} alt="" />}
+                  <span className="vbb-name">{r.model}</span>
+                  {r.promptVersion && <span className="vbb-pv mono">{r.promptVersion}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
