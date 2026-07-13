@@ -18,10 +18,11 @@ export const tax: DomainBoard = {
   lastRun: '2026-05-20',
   taskCount: 37,
   rows: [
-    // Real per-variant means from the canonical run: same model, two prompt
-    // profiles across 37 personas. This is AgentProfile variation (prompt).
-    { model: 'gpt-5.4', harness: 'tax-agent', promptVersion: 'source-grounded-v1', score: 0.831, n: 37, passRate: 0.568, date: '2026-05-20', highlight: true },
-    { model: 'gpt-5.4', harness: 'tax-agent', promptVersion: 'baseline-generic', score: 0.824, n: 37, passRate: 0.568, date: '2026-05-20' },
+    // Real per-variant means from the canonical run (manifest.config): the
+    // harness/runtime is tcloud, model openai/gpt-5.4, two prompt profiles across
+    // 37 personas. This is AgentProfile variation (same model, prompt varies).
+    { model: 'gpt-5.4', harness: 'tcloud', promptVersion: 'source-grounded-v1', score: 0.831, n: 37, passRate: 0.568, date: '2026-05-20', highlight: true },
+    { model: 'gpt-5.4', harness: 'tcloud', promptVersion: 'baseline-generic', score: 0.824, n: 37, passRate: 0.568, date: '2026-05-20' },
   ],
 };
 

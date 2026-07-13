@@ -6,12 +6,14 @@ import type { ProfileRow } from '../../data/benchmarks/schema';
 // one AgentProfile: value on top, bar height = score, harness logo + model
 // name below. Hover reveals the full breakdown.
 
+// harness = the coding harness / runtime from the AgentProfile that ran the
+// eval (codex, claude, opencode, tcloud, ...), not the domain.
 const HARNESS_LOGO: Record<string, string> = {
-  'claude-code': '/images/harness/claude-code.svg', 'tax-agent': '/images/harness/claude-code.svg',
-  'blueprint-agent': '/images/harness/claude-code.svg', codex: '/images/harness/codex.png',
-  opencode: '/images/harness/opencode.svg', hermes: '/images/harness/hermes.png',
-  openclaw: '/images/harness/openclaw.png', nanoclaw: '/images/harness/nanoclaw.png',
-  kimi: '/images/harness/kimi-code.png', pi: '/images/harness/pi.svg',
+  'claude-code': '/images/harness/claude-code.svg', claude: '/images/harness/claude-code.svg',
+  codex: '/images/harness/codex.png', opencode: '/images/harness/opencode.svg',
+  hermes: '/images/harness/hermes.png', openclaw: '/images/harness/openclaw.png',
+  nanoclaw: '/images/harness/nanoclaw.png', kimi: '/images/harness/kimi-code.png',
+  pi: '/images/harness/pi.svg',
 };
 // indigo ramp by rank: top bar brightest, descending into deeper indigo
 const RANK_COLORS = ['#C7C9F5', '#A5AAFC', '#818CF8', '#6366F1', '#4F46E5'];
@@ -66,11 +68,8 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
                       <div className="vbb-tip-h">{r.model}{r.promptVersion ? ` · ${r.promptVersion}` : ''}</div>
                       <div className="vbb-tip-grid">
                         {r.harness && <><span>harness</span><b>{r.harness}</b></>}
-                        <span>{metricLabel.toLowerCase()}</span><b>{(r.score * 100).toFixed(1)}</b>
-                        <span>tasks</span><b>{r.n}</b>
                         {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
                         {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
-                        <span>run date</span><b>{r.date}</b>
                       </div>
                     </div>
                   )}
