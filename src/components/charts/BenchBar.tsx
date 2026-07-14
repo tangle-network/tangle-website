@@ -34,8 +34,9 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
 
   const sorted = [...rows].sort((a, b) => ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number));
   const max = Math.ceil(Math.max(...rows.map((r) => r.score), target) * 10) / 10;
-  const colorFor = (r: ProfileRow, i: number) =>
-    r.score < target ? '#FB7185' : RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
+  // comparative leaderboard: colour by rank (top brightest), not pass/fail —
+  // the target is a reference line, not a red threshold.
+  const colorFor = (_r: ProfileRow, i: number) => RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
   const logoFor = (r: ProfileRow) => (r.harness && HARNESS_LOGO[r.harness]) || null;
 
   return (
