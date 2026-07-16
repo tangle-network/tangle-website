@@ -120,7 +120,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
         </div>
       </div>
       {anyCI && (
-        <p className="vbb-note mono">Whiskers = 95% CI of the mean (t, df = n−1). Overlapping intervals are not statistically distinguishable at this n.</p>
+        <p className="vbb-note mono">Whiskers = 95% CI of each arm's mean (t, df = n−1). For same-case (paired) comparisons the paired test decides, not whether these bars' intervals overlap.</p>
       )}
     </div>
   );
