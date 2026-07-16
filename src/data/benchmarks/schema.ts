@@ -26,8 +26,10 @@ export interface ProfileRow {
   loop?: string; // runLoop strategy: "single-shot" | "audit-steer" | "supervised" | "harness-native"
   harness?: string; // execution environment / backend: "router" | "opencode" | "claude-code" | "codex" | "sandbox"
   promptVersion?: string; // deprecated; superseded by loop/agentProfile. kept so older rows still parse
-  score: number; // 0..1 blended domain score
+  score: number; // 0..1 blended domain score (mean across the n tasks)
   n: number; // graded tasks
+  ciLow?: number; // 0..1 lower bound of the 95% CI of the mean (t, df=n-1), when per-task scores are available
+  ciHigh?: number; // 0..1 upper bound of the 95% CI
   passRate?: number; // 0..1 honest-all-pass
   costUsd?: number; // $ per success, if measured
   date: string; // ISO run date
