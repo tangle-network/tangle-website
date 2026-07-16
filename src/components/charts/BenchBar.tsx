@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import type { ProfileRow } from '../../data/benchmarks/schema';
 
-// Vertical column chart ranking agent profiles on one benchmark
-// (artificial-analysis "Highlights" style, reskinned indigo). Each column =
-// one AgentProfile: value on top, bar height = score, harness logo + model
-// name below. Hover reveals the full breakdown.
+// Vertical column chart ranking agents on one benchmark (artificial-analysis
+// "Highlights" style, reskinned indigo). Each column = one agent
+// (AgentProfile × runLoop × ExecutionEnvironment): value on top, bar height =
+// score, backend logo + model name below. Hover reveals the full breakdown:
+// agent profile, changed axes, loop strategy, backend.
 
-// harness = the coding harness / runtime from the AgentProfile that ran the
-// eval (codex, claude, opencode, tcloud, ...), not the domain.
+// The logo keys on `harness` = the execution ENVIRONMENT the run used
+// (claude-code, opencode, codex, ...). A direct-API ('router') or in-sandbox
+// run has no harness logo — that is correct, not a gap.
 const HARNESS_LOGO: Record<string, string> = {
   'claude-code': '/images/harness/claude-code.svg', claude: '/images/harness/claude-code.svg',
   codex: '/images/harness/codex.png', opencode: '/images/harness/opencode.svg',
@@ -66,9 +68,12 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
                   </div>
                   {hover === i && (
                     <div className="vbb-tip mono">
-                      <div className="vbb-tip-h">{r.model}{r.promptVersion ? ` · ${r.promptVersion}` : ''}</div>
+                      <div className="vbb-tip-h">{r.model}</div>
                       <div className="vbb-tip-grid">
-                        {r.harness && <><span>harness</span><b>{r.harness}</b></>}
+                        <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
+                        {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
+                        {r.loop && <><span>loop</span><b>{r.loop}</b></>}
+                        {r.harness && <><span>backend</span><b>{r.harness}</b></>}
                         {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
                         {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
                       </div>
@@ -78,7 +83,7 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
                 <div className="vbb-foot">
                   {logo && <img className="vbb-logo" src={logo} alt="" />}
                   <span className="vbb-name">{r.model}</span>
-                  {r.promptVersion && <span className="vbb-pv mono">{r.promptVersion}</span>}
+                  {(r.loop ?? r.promptVersion) && <span className="vbb-pv mono">{r.loop ?? r.promptVersion}</span>}
                 </div>
               </div>
             );

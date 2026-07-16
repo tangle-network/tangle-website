@@ -1,18 +1,31 @@
 // Domain benchmark leaderboards. Each DOMAIN (Tax, Legal, CompanyBench, ...) is
-// a leaderboard ranking many AgentProfile combinations (model × harness ×
-// prompt) on that domain's held-out tasks. This is the vals.ai shape: pick a
-// domain, see which agent configurations win.
+// a leaderboard ranking agents on that domain's held-out tasks, where an agent
+// is Agent = AgentProfile × runLoop × ExecutionEnvironment. This is the vals.ai
+// shape: pick a domain, see which agent configurations win.
 //
 // HARD RULE: every row is a real measured run with provenance (n, date, source).
 // A domain with runs pending renders "awaiting run", never a fabricated row.
 // Rows are produced by the eval runner (scripts/run-domain-bench.mjs) which
 // sweeps AgentProfiles through agent-eval's runEvalCampaign and exports here.
 
+// A benchmarked agent is Agent = AgentProfile × runLoop × ExecutionEnvironment.
+// Those are three DISTINCT things — never collapse them into one invented label:
+//  - agentProfile: the AgentProfile identity (@tangle-network/agent-interface):
+//    name(@version) + which of its axes (prompt|model|tools|mcp|resources|…) a
+//    variant changed. A bare model call has NO profile → 'raw'.
+//  - loop: the runLoop strategy that drove the model (single-shot, audit-steer,
+//    supervised, harness-native).
+//  - harness: the execution ENVIRONMENT the loop ran in — 'router' (direct API),
+//    'opencode', 'claude-code', 'codex', 'sandbox'. This is the only thing the
+//    logo keys on.
 export interface ProfileRow {
   rank?: number; // filled at render, by score desc
-  model: string; // dated snapshot, e.g. "claude-sonnet-5@2026-05-01"
-  harness?: string; // "blueprint-agent", "opencode", ...
-  promptVersion?: string;
+  model: string; // model id, e.g. "gpt-5.1", "claude-opus-4-8"
+  agentProfile?: string; // AgentProfile identity, e.g. "taxAgentProfile@baseline"; 'raw' when a bare model call with no profile
+  profileAxes?: string[]; // AgentProfileDiffAxis[] changed vs baseline (prompt|model|tools|mcp|…), when this row is a profile variant
+  loop?: string; // runLoop strategy: "single-shot" | "audit-steer" | "supervised" | "harness-native"
+  harness?: string; // execution environment / backend: "router" | "opencode" | "claude-code" | "codex" | "sandbox"
+  promptVersion?: string; // deprecated; superseded by loop/agentProfile. kept so older rows still parse
   score: number; // 0..1 blended domain score
   n: number; // graded tasks
   passRate?: number; // 0..1 honest-all-pass
