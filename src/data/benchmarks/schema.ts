@@ -45,7 +45,6 @@ export interface DomainBoard {
   category: string; // "Finance", "Legal", "Coding", "Creative"
   blurb: string; // one line: what the tasks are
   benchSource: BenchSource; // provenance class, vals.ai-style
-  target: number; // pass bar (e.g. 0.8)
   source: string; // repo/scorecard the rows come from
   rows: ProfileRow[]; // ranked leaderboard; [] => awaiting run
   status: 'live' | 'partial' | 'awaiting-run';

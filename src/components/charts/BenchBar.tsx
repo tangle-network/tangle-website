@@ -23,8 +23,8 @@ const RANK_COLORS = ['#C7C9F5', '#A5AAFC', '#818CF8', '#6366F1', '#4F46E5'];
 // Absolute accuracy axis: 0-100%, fixed gridline stops. No truncation.
 const TICKS = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
-export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
-  { rows: ProfileRow[]; target?: number; metricLabel?: string }) {
+export default function BenchBar({ rows, metricLabel = 'Score' }:
+  { rows: ProfileRow[]; metricLabel?: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const [sort, setSort] = useState<'score' | 'n' | 'costUsd'>('score');
 
@@ -67,9 +67,6 @@ export default function BenchBar({ rows, target = 0.8, metricLabel = 'Score' }:
               <span className="vbb-tick mono">{Math.round(t * 100)}</span>
             </div>
           ))}
-          <div className="vbb-target" style={{ bottom: `${target * 100}%` }}>
-            <span className="mono">target {Math.round(target * 100)}</span>
-          </div>
           <div className="vbb-cols">
             {sorted.map((r, i) => {
               const logo = logoFor(r);
