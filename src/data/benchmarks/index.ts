@@ -2,15 +2,35 @@ import type { DomainBoard, ProfileRow } from './schema';
 import taxResults from './results/tax.json';
 import taxHarnessResults from './results/tax-harness.json';
 import taxSteeredResults from './results/tax-steered.json';
+import taxAllResults from './results/tax-all.json';
 
 // Domain leaderboards, vals.ai structure: an index of benchmarks grouped by
 // category, each clicking into a detail page with a ranked bar chart of every
 // agent profile. Rows come from real eval runs (scripts/run-domain-bench.mjs);
 // domains not yet swept render 'awaiting run', never fabricated rows.
 
+// Agent-configuration leaderboard on the 31 held-out TY2024 cases all four
+// configs completed. Two honest caveats baked into the blurb: each config runs a
+// different base model (so this is not a controlled harness ablation), and at
+// frontier level everything sits 90-95% with overlapping CIs. The big
+// tools-beat-raw gap only shows against weaker base models (the raw-models board).
+export const taxAll: DomainBoard = {
+  id: 'tax-all',
+  domain: 'TaxCalcBench',
+  category: 'Finance',
+  blurb: 'Agent configurations on the same 31 held-out TY2024 returns: coding harnesses (codex, claude-code) vs a frontier model raw vs raw+steering. All land 90-95% with overlapping confidence intervals — at frontier level they are statistically indistinguishable. Each runs a different base model, so this ranks configurations, not a controlled harness test. Tools win big only against weaker models (see the raw-models board).',
+  benchSource: 'Proprietary',
+  metricLabel: 'By-line accuracy',
+  source: taxAllResults.source,
+  status: 'partial',
+  lastRun: taxAllResults.generated,
+  taskCount: 31,
+  rows: taxAllResults.rows as ProfileRow[],
+};
+
 export const tax: DomainBoard = {
   id: 'tax',
-  domain: 'TaxCalcBench',
+  domain: 'TaxCalcBench · raw models',
   category: 'Finance',
   blurb: 'TaxCalcBench TY2024 returns, single-shot (one model call per case, no tools or steering). The floor score; the agentic loop scores higher.',
   benchSource: 'Proprietary',
@@ -106,7 +126,7 @@ export const companybench: DomainBoard = {
   rows: [],
 };
 
-export const boards: DomainBoard[] = [tax, taxHarness, taxSteered, creative, legal, companybench];
+export const boards: DomainBoard[] = [taxAll, tax, taxHarness, taxSteered, creative, legal, companybench];
 
 // grouped by category for the index page
 export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {

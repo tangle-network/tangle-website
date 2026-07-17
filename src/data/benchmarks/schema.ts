@@ -24,6 +24,7 @@ export interface ProfileRow {
   agentProfile?: string; // AgentProfile identity, e.g. "taxAgentProfile@baseline"; 'raw' when a bare model call with no profile
   profileAxes?: string[]; // AgentProfileDiffAxis[] changed vs baseline (prompt|model|tools|mcp|…), when this row is a profile variant
   loop?: string; // runLoop strategy: "single-shot" | "audit-steer" | "supervised" | "harness-native"
+  method?: 'raw' | 'steered' | 'harness' | 'harness-steered' | 'optimized'; // coarse family, for grouping/colour on a unified chart
   harness?: string; // execution environment / backend: "router" | "opencode" | "claude-code" | "codex" | "sandbox"
   promptVersion?: string; // deprecated; superseded by loop/agentProfile. kept so older rows still parse
   score: number; // 0..1 blended domain score (mean across the n tasks)

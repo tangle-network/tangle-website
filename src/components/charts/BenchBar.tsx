@@ -20,6 +20,16 @@ const HARNESS_LOGO: Record<string, string> = {
 };
 // indigo ramp by rank: top bar brightest, descending into deeper indigo
 const RANK_COLORS = ['#C7C9F5', '#A5AAFC', '#818CF8', '#6366F1', '#4F46E5'];
+// When rows carry a `method`, colour by family so the comparison reads at a
+// glance: harness (tools) strongest, then steered, then raw.
+const METHOD_COLOR: Record<string, string> = {
+  harness: '#4F46E5', 'harness-steered': '#4338CA', optimized: '#047857',
+  steered: '#818CF8', raw: '#C0C2E8',
+};
+const METHOD_LABEL: Record<string, string> = {
+  raw: 'raw model', steered: 'raw + steer', harness: 'harness (tools)',
+  'harness-steered': 'harness + steer', optimized: 'optimized profile',
+};
 // Absolute accuracy axis: 0-100%, fixed gridline stops. No truncation.
 const TICKS = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
@@ -38,15 +48,24 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
   }
 
   const sorted = [...rows].sort((a, b) => ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number));
-  // comparative leaderboard: colour by rank (top brightest), not pass/fail —
-  // the target is a reference line, not a red threshold.
-  const colorFor = (_r: ProfileRow, i: number) => RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
+  const byMethod = rows.some((r) => r.method);
+  // colour by method family when present (unified comparison), else by rank.
+  const colorFor = (r: ProfileRow, i: number) =>
+    (byMethod && r.method && METHOD_COLOR[r.method]) || RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
   const logoFor = (r: ProfileRow) => (r.harness && HARNESS_LOGO[r.harness]) || null;
   const anyCI = rows.some((r) => r.ciLow != null && r.ciHigh != null);
+  const methodsPresent = [...new Set(sorted.map((r) => r.method).filter(Boolean))] as string[];
 
   return (
     <div className="vbb">
       <div className="vbb-controls">
+        {methodsPresent.length > 1 && (
+          <div className="vbb-legend mono">
+            {methodsPresent.map((m) => (
+              <span key={m} className="vbb-leg"><i style={{ background: METHOD_COLOR[m] }} />{METHOD_LABEL[m] ?? m}</span>
+            ))}
+          </div>
+        )}
         <div className="vbb-sort mono">
           {(['score', 'n', 'costUsd'] as const).map((k) => (
             <button key={k} className={sort === k ? 'on' : ''} onClick={() => setSort(k)}>
@@ -86,6 +105,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                     <div className="vbb-tip mono">
                       <div className="vbb-tip-h">{r.model}</div>
                       <div className="vbb-tip-grid">
+                        {r.method && <><span>method</span><b>{METHOD_LABEL[r.method] ?? r.method}</b></>}
                         <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
                         {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
                         {r.loop && <><span>loop</span><b>{r.loop}</b></>}
