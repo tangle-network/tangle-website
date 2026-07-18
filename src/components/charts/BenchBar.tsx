@@ -108,7 +108,8 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
               return (
                 <div className={`vbb-col${hover === i ? ' hover' : ''}`} key={r.model + (r.loop ?? '') + i}
                   onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-                  <div className="vbb-bar" style={{ height: `${r.score * 100}%`, background: colorFor(r, i) }}>
+                  <div className={`vbb-bar vbb-bar-${r.method ?? 'raw'}`} style={{ height: `${r.score * 100}%`, background: colorFor(r, i) }}>
+                    {/* value inside the bar, artificial-analysis style */}
                     <span className="vbb-val mono">{(r.score * 100).toFixed(1)}</span>
                   </div>
                   {hasCI && (
@@ -120,15 +121,10 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                     <div className="vbb-tip mono">
                       <div className="vbb-tip-h">{r.model}</div>
                       <div className="vbb-tip-grid">
-                        {r.method && <><span>method</span><b>{METHOD_LABEL[r.method] ?? r.method}</b></>}
+                        <span>harness</span><b>{r.harness && r.harness !== 'router' ? r.harness : 'none (direct model call)'}</b>
                         <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
                         {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
-                        {r.loop && <><span>loop</span><b>{r.loop}</b></>}
-                        {r.harness && <><span>backend</span><b>{r.harness}</b></>}
-                        <span>score</span><b>{(r.score * 100).toFixed(1)}%</b>
-                        {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)}–{(r.ciHigh! * 100).toFixed(1)}</b></>}
-                        <span>n</span><b>{r.n}</b>
-                        {r.passRate != null && <><span>pass rate</span><b>{(r.passRate * 100).toFixed(0)}%</b></>}
+                        {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)}–{(r.ciHigh! * 100).toFixed(1)} · n={r.n}</b></>}
                         {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
                       </div>
                     </div>
@@ -156,11 +152,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                   )}
                 </span>
                 <span className="vbb-name">{r.model}</span>
-                <span className={`vbb-tag vbb-tag-${r.method ?? 'raw'}`}>
-                  {r.method === 'harness' ? 'harness' : r.method === 'steered' ? 'steer'
-                    : r.method === 'harness-steered' ? 'harness+steer' : 'raw'}
-                </span>
-                <span className="vbb-n mono">n={r.n}</span>
+                <span className="vbb-sub mono">{isHarness ? r.harness : 'direct'} · n={r.n}</span>
               </div>
             );
           })}
