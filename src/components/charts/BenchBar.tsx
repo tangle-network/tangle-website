@@ -8,9 +8,11 @@ import type { ProfileRow } from '../../data/benchmarks/schema';
 // so overlapping intervals read as "not distinguishable at this n". Hover reveals
 // agent profile, changed axes, loop strategy, backend.
 
-// The logo keys on `harness` = the execution ENVIRONMENT the run used
-// (claude-code, opencode, codex, ...). A direct-API ('router') or in-sandbox
-// run has no harness logo — that is correct, not a gap.
+// Two distinct logos per bar:
+//  - the MODEL's provider brand (who made the base model), always shown.
+//  - the HARNESS/backend (the coding CLI that ran it with tools), shown only for
+//    harness configs — so "a model in a harness" reads differently from "a raw
+//    model call". 'router' (a direct API call) is a raw model, no harness mark.
 const HARNESS_LOGO: Record<string, string> = {
   'claude-code': '/images/harness/claude-code.svg', claude: '/images/harness/claude-code.svg',
   codex: '/images/harness/codex.png', opencode: '/images/harness/opencode.svg',
@@ -18,6 +20,14 @@ const HARNESS_LOGO: Record<string, string> = {
   nanoclaw: '/images/harness/nanoclaw.png', kimi: '/images/harness/kimi-code.png',
   pi: '/images/harness/pi.svg',
 };
+// base-model → provider brand mark, matched by model-id shape.
+const MODEL_PROVIDER: { re: RegExp; logo: string; name: string }[] = [
+  { re: /(^|\/)(gpt|o[0-9]|codex|oss)/i, logo: '/images/models/openai.svg', name: 'OpenAI' },
+  { re: /(claude|sonnet|opus|haiku|fable)/i, logo: '/images/models/anthropic.svg', name: 'Anthropic' },
+  { re: /gemini/i, logo: '/images/models/google.svg', name: 'Google' },
+  { re: /glm/i, logo: '/images/models/zhipu.svg', name: 'Zhipu' },
+];
+const providerFor = (model: string) => MODEL_PROVIDER.find((p) => p.re.test(model)) ?? null;
 // indigo ramp by rank: top bar brightest, descending into deeper indigo
 const RANK_COLORS = ['#C7C9F5', '#A5AAFC', '#818CF8', '#6366F1', '#4F46E5'];
 // When rows carry a `method`, colour by family so the comparison reads at a
@@ -131,13 +141,25 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
         {/* labels below the band, aligned to each column */}
         <div className="vbb-feet">
           {sorted.map((r, i) => {
-            const logo = logoFor(r);
+            const provider = providerFor(r.model);
+            const harnessLogo = logoFor(r);
+            const isHarness = r.method === 'harness' || r.method === 'harness-steered';
             return (
               <div className={`vbb-foot${hover === i ? ' hover' : ''}`} key={r.model + (r.loop ?? '') + i}
                 onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
-                {logo && <img className="vbb-logo" src={logo} alt="" />}
+                {/* model provider mark, always; harness backend mark layered for
+                    harness configs so "model in a harness" ≠ "raw model call". */}
+                <span className="vbb-marks">
+                  {provider && <img className="vbb-model-logo" src={provider.logo} alt={provider.name} title={provider.name} />}
+                  {isHarness && harnessLogo && (
+                    <img className="vbb-harness-logo" src={harnessLogo} alt={r.harness} title={`harness: ${r.harness}`} />
+                  )}
+                </span>
                 <span className="vbb-name">{r.model}</span>
-                {(r.loop ?? r.promptVersion) && <span className="vbb-pv mono">{r.loop ?? r.promptVersion}</span>}
+                <span className={`vbb-tag vbb-tag-${r.method ?? 'raw'}`}>
+                  {r.method === 'harness' ? 'harness' : r.method === 'steered' ? 'steer'
+                    : r.method === 'harness-steered' ? 'harness+steer' : 'raw'}
+                </span>
                 <span className="vbb-n mono">n={r.n}</span>
               </div>
             );
