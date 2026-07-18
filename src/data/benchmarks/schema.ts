@@ -46,6 +46,11 @@ export interface DomainBoard {
   category: string; // "Finance", "Legal", "Coding", "Creative"
   blurb: string; // one line: what the tasks are
   benchSource: BenchSource; // provenance class, vals.ai-style
+  by?: string; // who built the benchmark, e.g. "Column Tax"
+  sourceUrl?: string; // link to the benchmark's own repo/site
+  paperUrl?: string; // link to the paper, if any
+  scoredBy?: string; // one plain line on how a run is scored
+  tests?: string[]; // the real things the benchmark exercises (for chips)
   source: string; // repo/scorecard the rows come from
   rows: ProfileRow[]; // ranked leaderboard; [] => awaiting run
   status: 'live' | 'partial' | 'awaiting-run';
