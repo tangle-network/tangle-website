@@ -27,7 +27,7 @@ export const tax: DomainBoard = {
   source: taxResults.source,
   status: 'partial',
   lastRun: taxResults.generated,
-  taskCount: 8,
+  taskCount: 31,
   rows: taxResults.rows as ProfileRow[],
 };
 
