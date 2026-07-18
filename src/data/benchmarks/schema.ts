@@ -20,7 +20,7 @@
 //    logo keys on.
 export interface ProfileRow {
   rank?: number; // filled at render, by score desc
-  model: string; // model id, e.g. "gpt-5.1", "claude-opus-4-8"
+  model: string; // model id, e.g. "gpt-5.6", "claude-sonnet-5"
   agentProfile?: string; // AgentProfile identity, e.g. "taxAgentProfile@baseline"; 'raw' when a bare model call with no profile
   profileAxes?: string[]; // AgentProfileDiffAxis[] changed vs baseline (prompt|model|tools|mcp|…), when this row is a profile variant
   loop?: string; // runLoop strategy: "single-shot" | "audit-steer" | "supervised" | "harness-native"

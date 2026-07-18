@@ -47,7 +47,12 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
     );
   }
 
-  const sorted = [...rows].sort((a, b) => ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number));
+  const sorted = [...rows].sort((a, b) => {
+    // cost is a minimize-metric: lowest $/success ranks first (missing cost sorts
+    // last, not as "free"). score and n are maximize-metrics: highest ranks first.
+    if (sort === 'costUsd') return (a.costUsd ?? Infinity) - (b.costUsd ?? Infinity);
+    return ((b[sort] ?? 0) as number) - ((a[sort] ?? 0) as number);
+  });
   const byMethod = rows.some((r) => r.method);
   // colour by method family when present (unified comparison), else by rank.
   const colorFor = (r: ProfileRow, i: number) =>

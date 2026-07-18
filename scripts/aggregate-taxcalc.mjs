@@ -21,7 +21,7 @@ for (const f of files) {
     if (!line.trim()) continue;
     let r; try { r = JSON.parse(line); } catch { continue; }
     if (!r.agentProfile || !r.outcome) continue;
-    const byLine = r.outcome?.raw?.by_line ?? r.outcome?.searchScore;
+    const byLine = r.outcome?.raw?.by_line; // by-line ONLY — never fall back to searchScore (different metric+scale)
     if (typeof byLine !== 'number') continue;
     const model = (r.model || '').replace(/@.*$/, '');           // drop snapshot suffix
     const profile = r.agentProfile?.dimensions?.version || 'baseline';

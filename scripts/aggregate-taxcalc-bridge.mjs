@@ -12,7 +12,7 @@ const cells = new Map();
 for (const f of files) {
   for (const line of readFileSync(join(runsDir, f), 'utf8').split('\n')) {
     if (!line.trim()) continue; let r; try { r = JSON.parse(line); } catch { continue; }
-    const byLine = r.outcome?.raw?.by_line ?? r.outcome?.searchScore;
+    const byLine = r.outcome?.raw?.by_line; // by-line ONLY — never fall back to searchScore (different metric+scale)
     if (typeof byLine !== 'number') continue;
     const full = (r.model || '').replace(/@.*$/, '');   // e.g. claude-code/sonnet
     const [harness, ...rest] = full.split('/');

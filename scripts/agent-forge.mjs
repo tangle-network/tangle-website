@@ -25,7 +25,7 @@ const PUB = join(ROOT, 'public');
 
 // inline assets as data URIs so the render is self-contained (file:// and
 // localhost both fail or add a server dependency; base64 is reproducible).
-const MIME = { '.png': 'image/png', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
+const MIME = { '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 const dataURICache = new Map();
 function dataURI(relPath) {
   if (dataURICache.has(relPath)) return dataURICache.get(relPath);
@@ -63,9 +63,13 @@ const TIERS = ['Common', 'Uncommon', 'Rare', 'Epic'];
 // base bodies grouped by tier (from the fal-generated pool). Auto-discovers any
 // bases/ renders; falls back to the flat pool so the script runs today.
 function discoverBases() {
-  const flat = readdirSync(join(PUB, 'images/agents')).filter((f) => f.endsWith('.png'));
+  // The base-body pool is .webp (fal renders); accept any raster image. Sort so
+  // a fixed --seed selects the same roster on every machine (readdir order is
+  // filesystem-dependent, which would otherwise break the reproducibility claim).
+  const isBody = (f) => /\.(webp|png|jpe?g)$/i.test(f);
+  const flat = readdirSync(join(PUB, 'images/agents')).filter(isBody).sort();
   const basesDir = join(PUB, 'images/agents/bases');
-  const bases = existsSync(basesDir) ? readdirSync(basesDir).filter((f) => f.endsWith('.png')) : [];
+  const bases = existsSync(basesDir) ? readdirSync(basesDir).filter(isBody).sort() : [];
   const pick = (re, dir, arr) => arr.filter((f) => re.test(f)).map((f) => `images/agents/${dir}${f}`);
   const byTier = {
     Epic: [...pick(/^body-rare/, 'bases/', bases), ...pick(/^(epic|woven)/, '', flat)],
