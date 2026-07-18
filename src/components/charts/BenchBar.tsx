@@ -152,15 +152,22 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                   )}
                 </span>
                 <span className="vbb-name">{r.model}</span>
-                <span className="vbb-sub mono">{isHarness ? r.harness : 'direct'} · n={r.n}</span>
+                <span className="vbb-sub mono">{isHarness ? r.harness : 'direct'}</span>
               </div>
             );
           })}
         </div>
       </div>
-      {anyCI && (
-        <p className="vbb-note mono">Whiskers = 95% CI of each arm's mean (t, df = n−1). For same-case (paired) comparisons the paired test decides, not whether these bars' intervals overlap.</p>
-      )}
+      {anyCI && (() => {
+        const ns = [...new Set(rows.map((r) => r.n))];
+        const uniform = ns.length === 1 ? ns[0] : null;
+        return (
+          <p className="vbb-note mono">
+            {uniform != null && <><b>All configurations scored on the same {uniform} held-out cases (n={uniform}).</b> </>}
+            Whiskers = 95% CI of the mean (t, df = n−1); wide at this n. For same-case (paired) comparisons the paired test decides, not whether these bars' intervals overlap.
+          </p>
+        );
+      })()}
     </div>
   );
 }

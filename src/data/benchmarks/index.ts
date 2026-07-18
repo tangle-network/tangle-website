@@ -16,13 +16,13 @@ export const tax: DomainBoard = {
   id: 'tax',
   domain: 'TaxCalcBench',
   category: 'Finance',
-  blurb: 'Every agent configuration on Column Tax’s TY2024 returns, on one chart: raw model calls, raw+steering, and real coding harnesses (codex, claude-code, opencode) that run their own agentic loop with tools. Ranked by by-line accuracy, coloured by method, each bar with its own n and 95% CI. The spread is driven mostly by base-model strength; since harnesses each run a different model this ranks configurations, not a controlled harness test.',
+  blurb: 'Every agent configuration on the SAME 8 held-out TY2024 returns (uniform n, directly comparable): raw model calls, raw+steering, and real coding harnesses (codex, claude-code) that run their own agentic loop with tools. Ranked by by-line accuracy, coloured by method. The spread is driven mostly by base-model strength; since harnesses each run a different model this ranks configurations, not a controlled harness test.',
   benchSource: 'Proprietary',
   metricLabel: 'By-line accuracy',
   source: taxResults.source,
   status: 'partial',
   lastRun: taxResults.generated,
-  taskCount: 51,
+  taskCount: 8,
   rows: taxResults.rows as ProfileRow[],
 };
 
