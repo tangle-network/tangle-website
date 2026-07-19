@@ -74,11 +74,19 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
   return (
     <div className="vbb">
       <div className="vbb-controls">
-        {methodsPresent.length > 1 && (
+        {(methodsPresent.length > 1 || anyCI) && (
           <div className="vbb-legend mono">
-            {methodsPresent.map((m) => (
+            {methodsPresent.length > 1 && methodsPresent.map((m) => (
               <span key={m} className="vbb-leg"><i style={{ background: METHOD_COLOR[m] }} />{METHOD_LABEL[m] ?? m}</span>
             ))}
+            {anyCI && (
+              <span className="vbb-leg">
+                <svg className="vbb-leg-ci" width="11" height="12" viewBox="0 0 11 12" aria-hidden="true">
+                  <path d="M1.5 1h8M1.5 11h8M5.5 1v10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" fill="none" />
+                </svg>
+                95% CI
+              </span>
+            )}
           </div>
         )}
         <div className="vbb-sort mono">
@@ -158,15 +166,11 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
           })}
         </div>
       </div>
-      {anyCI && (() => {
+      {(() => {
         const ns = [...new Set(rows.map((r) => r.n))];
         const uniform = ns.length === 1 ? ns[0] : null;
-        return (
-          <p className="vbb-note mono">
-            {uniform != null && <><b>All configurations scored on the same {uniform} held-out cases (n={uniform}).</b> </>}
-            Whiskers = 95% CI of the mean (t, df = n−1); wide at this n. For same-case (paired) comparisons the paired test decides, not whether these bars' intervals overlap.
-          </p>
-        );
+        if (uniform == null) return null;
+        return <p className="vbb-note mono">Same {uniform} held-out cases for every bar.</p>;
       })()}
     </div>
   );
