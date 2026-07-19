@@ -25,55 +25,17 @@ export const tax: DomainBoard = {
   tests: ['Multiple W-2s', '1099 interest, dividends & unemployment', 'Schedule C business profit / loss', 'Capital gains & wash sales', 'Dependents, Child Tax Credit & EITC', 'QBI & excess Social Security tax', 'Marketplace 1095-A, education & retirement'],
   metricLabel: 'By-line accuracy',
   source: taxResults.source,
-  status: 'partial',
+  status: 'live',
   lastRun: taxResults.generated,
-  taskCount: 49,
+  taskCount: 51,
   rows: taxResults.rows as ProfileRow[],
 };
 
-export const creative: DomainBoard = {
-  id: 'creative',
-  domain: 'CreativeEval',
-  category: 'Creative',
-  blurb: 'Brand, copy, and design generation scored against held-out briefs.',
-  benchSource: 'Proprietary',
-  metricLabel: 'Blended score',
-  source: 'agent-eval/.evolve/scorecard.json (round 1)',
-  status: 'partial',
-  lastRun: '2026-05-21',
-  taskCount: 24,
-  rows: [
-    { model: 'claude-sonnet-5', harness: 'blueprint-agent', score: 0.866, n: 24, date: '2026-05-21', highlight: true },
-  ],
-};
-
-export const legal: DomainBoard = {
-  id: 'legal',
-  domain: 'LegalEval',
-  category: 'Legal',
-  blurb: 'Contract review, case management workflows, jurisdiction-aware drafting.',
-  benchSource: 'Proprietary',
-  metricLabel: 'Blended score',
-  source: 'legal-agent tests/eval/canonical.ts',
-  status: 'awaiting-run',
-  taskCount: 36,
-  rows: [],
-};
-
-export const companybench: DomainBoard = {
-  id: 'companybench',
-  domain: 'CompanyBench',
-  category: 'Coding',
-  blurb: 'Agent-built vertical apps scored install → typecheck → build → serve → semantic across verticals.',
-  benchSource: 'Proprietary',
-  metricLabel: 'Honest all-pass',
-  source: 'blueprint-agent/.evolve/verticalbench',
-  status: 'awaiting-run',
-  taskCount: 27,
-  rows: [],
-};
-
-export const boards: DomainBoard[] = [tax, creative, legal, companybench];
+// Only benchmarks with real, complete runs ship. Domains that were still
+// awaiting a first run (legal, vertical-app builds) or only had a partial
+// sweep are not carried as placeholders — they return here when their held-out
+// set is fully scored, produced by the eval runner, never hand-entered.
+export const boards: DomainBoard[] = [tax];
 
 // grouped by category for the index page
 export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {
