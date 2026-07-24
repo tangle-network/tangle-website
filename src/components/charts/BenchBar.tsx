@@ -3,7 +3,7 @@ import type { ProfileRow } from '../../data/benchmarks/schema';
 
 // Vertical column chart ranking agents on one benchmark. Each column = one agent
 // (AgentProfile × runLoop × ExecutionEnvironment): bar height = mean score on a
-// TRUE 0-100% axis (never truncated — a truncated axis exaggerates small gaps).
+// TRUE 0-100% axis (never truncated, since a truncated axis exaggerates small gaps).
 // A 95% confidence-interval whisker is drawn when per-task scores were available,
 // so overlapping intervals read as "not distinguishable at this n". Hover reveals
 // agent profile, changed axes, loop strategy, backend.
@@ -11,7 +11,7 @@ import type { ProfileRow } from '../../data/benchmarks/schema';
 // Two distinct logos per bar:
 //  - the MODEL's provider brand (who made the base model), always shown.
 //  - the HARNESS/backend (the coding CLI that ran it with tools), shown only for
-//    harness configs — so "a model in a harness" reads differently from "a raw
+//    harness configs, so "a model in a harness" reads differently from "a raw
 //    model call". 'router' (a direct API call) is a raw model, no harness mark.
 const HARNESS_LOGO: Record<string, string> = {
   'claude-code': '/images/harness/claude-code.svg', claude: '/images/harness/claude-code.svg',
@@ -132,7 +132,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                         <span>harness</span><b>{r.harness && r.harness !== 'router' ? r.harness : 'none (direct model call)'}</b>
                         <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
                         {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
-                        {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)}–{(r.ciHigh! * 100).toFixed(1)} · n={r.n}</b></>}
+                        {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)} to {(r.ciHigh! * 100).toFixed(1)} · n={r.n}</b></>}
                         {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
                       </div>
                     </div>
