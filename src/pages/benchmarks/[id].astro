@@ -35,28 +35,53 @@ if (!b) return Astro.redirect('/benchmarks');
         <BenchBar client:visible rows={b.rows} metricLabel={b.metricLabel ?? 'Score'} />
       </div>
 
-      {b.taskDetails && b.taskDetails.length > 0 && (
+      {b.perTask && b.perTask.length > 0 && (
         <div class="bd-tasks">
           <div class="bd-tasks-head">
-            <h2>The tasks</h2>
+            <h2>Per-task breakdown</h2>
+            <span class="bd-tasks-count mono">{b.perTask.length} tasks · suite kept private</span>
           </div>
-          <ol class="bd-tasklist">
-            {b.taskDetails.map((t, i) => (
-              <li class="bd-task">
-                <span class="bd-task-num mono">{String(i + 1).padStart(2, '0')}</span>
-                <div class="bd-task-body">
-                  <div class="bd-task-top">
-                    <h3>{t.title}</h3>
-                    {t.difficulty && <span class={`bd-diff bd-diff-${t.difficulty}`}>{t.difficulty}</span>}
-                  </div>
-                  <p class="bd-task-builds">{t.builds}</p>
-                  {t.change && <p class="bd-task-change"><b>The change:</b> {t.change}</p>}
-                  {t.trap && <p class="bd-task-trap"><b>The trap:</b> {t.trap}</p>}
-                  {t.sourceUrl && <a class="bd-task-src" href={t.sourceUrl} target="_blank" rel="noopener">Stripe changelog</a>}
-                </div>
-              </li>
-            ))}
-          </ol>
+          {b.profiles && (
+          <div class="bd-matrix-scroll">
+            <table class="bd-matrix">
+              <thead>
+                <tr>
+                  <th class="bd-mx-corner">Task</th>
+                  {b.profiles.map((col) => (
+                    <th class="bd-mx-prof"><span>{col.model}</span><em>{col.harness}</em></th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {b.perTask.map((t) => (
+                  <tr>
+                    <th class="bd-mx-task">
+                      <span class="bd-mx-num mono">{t.label}</span>
+                      {t.difficulty && <span class={`bd-diff bd-diff-${t.difficulty}`}>{t.difficulty}</span>}
+                    </th>
+                    {b.profiles!.map((col) => {
+                      const p = t.byProfile[col.profileId];
+                      if (!p) return <td class="bd-mx-cell bd-mx-empty"></td>;
+                      const pct = Math.round(p.passRate * 100);
+                      const cost = p.meanCostUsd != null ? `$${p.meanCostUsd < 0.01 ? p.meanCostUsd.toFixed(3) : p.meanCostUsd.toFixed(2)}` : '';
+                      return (
+                        <td
+                          class="bd-mx-cell"
+                          style={`--f:${p.passRate}`}
+                          title={`${col.harness}/${col.model} · ${pct}% pass · ${cost} · ${p.meanTokensIn ?? 0}/${p.meanTokensOut ?? 0} tok · ${Math.round((p.meanWallMs ?? 0) / 1000)}s`}
+                        >
+                          <span class="bd-mx-pct">{pct}</span>
+                          {cost && <span class="bd-mx-cost">{cost}</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          )}
+          <p class="bd-tasks-note">Cell shows pass rate; hover for cost, tokens, and latency. Task contents are proprietary and not shown.</p>
         </div>
       )}
     </div>
@@ -85,25 +110,27 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-tasks-head h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.02em; color: var(--ink); font-size: 1.7rem; }
   .bd-tasks-count { color: var(--ink-muted); font-size: 0.78rem; }
   .bd-tasks-note { margin: 0.7rem 0 0; color: var(--ink-secondary); font-size: 0.95rem; line-height: 1.6; max-width: 52rem; }
-  .bd-tasklist { list-style: none; margin: 2rem 0 0; padding: 0; display: grid; gap: 0.9rem; }
-  .bd-task { display: flex; gap: 1.1rem; background: #fff; border: 1px solid var(--hairline-light); border-radius: 13px; padding: 1.25rem 1.4rem; transition: box-shadow 0.15s, border-color 0.15s; }
-  .bd-task:hover { border-color: rgba(79,70,229,0.28); box-shadow: 0 8px 26px rgba(25,28,60,0.06); }
-  .bd-task-num { flex: none; color: var(--ink-muted); font-size: 0.85rem; font-weight: 600; padding-top: 0.15rem; }
-  .bd-task-body { flex: 1; min-width: 0; }
-  .bd-task-top { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
-  .bd-task-top h3 { margin: 0; font-size: 1.05rem; font-weight: 650; color: var(--ink); letter-spacing: -0.01em; }
-  .bd-diff { font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 0.15rem 0.5rem; border-radius: 999px; }
+  .bd-diff { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.1rem 0.4rem; border-radius: 999px; }
   .bd-diff-medium { color: #3730A3; background: rgba(99,102,241,0.12); }
   .bd-diff-hard { color: #9A3412; background: rgba(234,88,12,0.13); }
   .bd-diff-extreme { color: #831843; background: rgba(219,39,119,0.13); }
-  .bd-task-builds { margin: 0.55rem 0 0; color: var(--ink-secondary); font-size: 0.95rem; line-height: 1.55; }
-  .bd-task-change, .bd-task-trap { margin: 0.5rem 0 0; color: var(--ink-muted); font-size: 0.86rem; line-height: 1.5; }
-  .bd-task-change b, .bd-task-trap b { color: var(--ink-secondary); font-weight: 650; }
-  .bd-task-src { display: inline-block; margin-top: 0.65rem; color: #4F46E5; font-size: 0.82rem; font-weight: 600; text-decoration: none; }
-  .bd-task-src:hover { color: #4338CA; text-decoration: underline; }
+  /* per-task heatmap: tasks by profiles, cell = pass rate. task identity never shown. */
+  .bd-matrix-scroll { margin-top: 1.8rem; overflow-x: auto; border: 1px solid var(--hairline-light); border-radius: 14px; background: #fff; }
+  .bd-matrix { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  .bd-matrix th, .bd-matrix td { padding: 0; text-align: center; }
+  .bd-mx-corner { text-align: left; padding: 0.9rem 1rem; color: var(--ink-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; position: sticky; left: 0; background: #fff; z-index: 2; }
+  .bd-mx-prof { padding: 0.75rem 0.7rem; border-bottom: 1px solid var(--hairline-light); min-width: 5.2rem; }
+  .bd-mx-prof span { display: block; color: var(--ink); font-weight: 700; font-size: 0.82rem; letter-spacing: -0.01em; }
+  .bd-mx-prof em { display: block; color: var(--ink-muted); font-style: normal; font-size: 0.68rem; margin-top: 0.1rem; }
+  .bd-mx-task { text-align: left; padding: 0.5rem 1rem; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; border-top: 1px solid var(--hairline-light); }
+  .bd-mx-num { color: var(--ink); font-weight: 700; margin-right: 0.5rem; }
+  .bd-mx-cell { border-top: 1px solid var(--hairline-light); border-left: 1px solid var(--hairline-light); padding: 0.5rem 0.4rem; background: color-mix(in srgb, #4F46E5 calc(var(--f) * 100%), #F3F4F8); }
+  .bd-mx-pct { display: block; font-weight: 700; font-size: 0.92rem; color: color-mix(in srgb, #fff calc(var(--f) * 100%), var(--ink)); }
+  .bd-mx-cost { display: block; font-size: 0.64rem; margin-top: 0.05rem; color: color-mix(in srgb, rgba(255,255,255,0.9) calc(var(--f) * 100%), var(--ink-muted)); }
   @media (max-width: 680px) {
-    .bd-task { padding: 1rem 1.1rem; gap: 0.8rem; }
     .bd-tasks-head h2 { font-size: 1.4rem; }
+    .bd-mx-cell { padding: 0.4rem 0.3rem; }
+    .bd-mx-pct { font-size: 0.82rem; }
   }
 
   .bd-body { background: var(--paper-0); padding: 3rem 0 6rem; min-height: 50vh; }
