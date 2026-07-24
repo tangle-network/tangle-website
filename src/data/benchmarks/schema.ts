@@ -9,13 +9,13 @@
 // sweeps AgentProfiles through agent-eval's runEvalCampaign and exports here.
 
 // A benchmarked agent is Agent = AgentProfile × runLoop × ExecutionEnvironment.
-// Those are three DISTINCT things — never collapse them into one invented label:
+// Those are three DISTINCT things, never collapse them into one invented label:
 //  - agentProfile: the AgentProfile identity (@tangle-network/agent-interface):
 //    name(@version) + which of its axes (prompt|model|tools|mcp|resources|…) a
 //    variant changed. A bare model call has NO profile → 'raw'.
 //  - loop: the runLoop strategy that drove the model (single-shot, audit-steer,
 //    supervised, harness-native).
-//  - harness: the execution ENVIRONMENT the loop ran in — 'router' (direct API),
+//  - harness: the execution ENVIRONMENT the loop ran in, 'router' (direct API),
 //    'opencode', 'claude-code', 'codex', 'sandbox'. This is the only thing the
 //    logo keys on.
 export interface ProfileRow {
@@ -40,6 +40,15 @@ export interface ProfileRow {
 
 export type BenchSource = 'Proprietary' | 'Academic' | 'Industry Partner';
 
+export interface TaskDetail {
+  title: string; // human name of the task
+  difficulty?: 'medium' | 'hard' | 'extreme';
+  builds: string; // what the agent is asked to build, one plain line
+  change?: string; // the real platform change the task is built on
+  trap?: string; // what a from-memory solution gets wrong
+  sourceUrl?: string; // link to the change's documentation
+}
+
 export interface DomainBoard {
   id: string; // slug: "tax", "legal", "companybench"
   domain: string; // display name "Tax"
@@ -50,7 +59,7 @@ export interface DomainBoard {
   sourceUrl?: string; // link to the benchmark's own repo/site
   paperUrl?: string; // link to the paper, if any
   scoredBy?: string; // one plain line on how a run is scored
-  tests?: string[]; // the real things the benchmark exercises (for chips)
+  taskDetails?: TaskDetail[]; // the real tasks, listed below the chart
   source: string; // repo/scorecard the rows come from
   rows: ProfileRow[]; // ranked leaderboard; [] => awaiting run
   status: 'live' | 'partial' | 'awaiting-run';
