@@ -1,5 +1,6 @@
 import type { DomainBoard, ProfileRow } from './schema';
 import taxResults from './results/tax.json';
+import stripeResults from './results/stripe.json';
 
 // Domain leaderboards, vals.ai structure: an index of benchmarks grouped by
 // category, each clicking into a detail page with a ranked bar chart of every
@@ -35,7 +36,28 @@ export const tax: DomainBoard = {
 // awaiting a first run (legal, vertical-app builds) or only had a partial
 // sweep are not carried as placeholders — they return here when their held-out
 // set is fully scored, produced by the eval runner, never hand-entered.
-export const boards: DomainBoard[] = [tax];
+
+export const stripe: DomainBoard = {
+  id: 'stripe',
+  domain: 'Stripe API Integration',
+  category: 'Coding',
+  blurb:
+    'Can an AI coding agent integrate real, CURRENT Stripe APIs? Twelve tasks built from Stripe\u2019s 2025\u20132026 platform changes \u2014 renamed enums, new endpoints and parameters, and removed legacy surfaces \u2014 where the pattern a model memorized now fails. Each task is graded by a hidden local mock that runs the agent\u2019s code against the real current contract. Agents have full tool access including live docs; the score is the share of tasks whose code actually works.',
+  benchSource: 'Proprietary',
+  by: 'Tangle \u00b7 VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden stdlib mock server implementing Stripe\u2019s current API contract (endpoints, required params, error shapes) including the trap a from-memory solution falls into. Pass = the agent\u2019s exported function executes correctly against the mock \u2014 never a model judging its own work. Every task is 3-way calibrated before admission (empty fails, a current-contract reference passes, the stale-memory solution fails on the intended trap).',
+  tests: ['Checkout ui_mode enum rename', 'PaymentIntent confirm-with-surcharge', 'Test clock \u2014 attach existing customer', 'Invoice decimal quantities', 'Subscription pause + resume endpoint', 'Prebilled billing schedules', 'Fulfillment address from completion webhook', 'In-place Checkout cart update', 'Lifetime (forever) amount-off coupon', 'Next-renewal date after current_period removal', 'Detach + reassign invoice payment', 'Metered usage \u2192 billing meter events migration'],
+  metricLabel: 'Pass rate',
+  source: stripeResults.source,
+  status: 'live',
+  lastRun: stripeResults.generated,
+  taskCount: 12,
+  rows: stripeResults.rows as ProfileRow[],
+};
+
+export const boards: DomainBoard[] = [tax, stripe];
 
 // grouped by category for the index page
 export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {
