@@ -40,13 +40,27 @@ export interface ProfileRow {
 
 export type BenchSource = 'Proprietary' | 'Academic' | 'Industry Partner';
 
-export interface TaskDetail {
-  title: string; // human name of the task
+// Per-task breakdown, published WITHOUT the task's identity. The task suite is
+// proprietary, so the public site shows how every profile did on each task
+// (opaque label + difficulty) but never what the task is.
+export interface PerTaskProfile {
+  passRate: number; // 0..1
+  n: number;
+  meanCostUsd?: number;
+  meanTokensIn?: number;
+  meanTokensOut?: number;
+  meanWallMs?: number;
+}
+// Stable column identity for the per-task heatmap (order = board rank).
+export interface BoardProfile {
+  profileId: string;
+  harness: string;
+  model: string;
+}
+export interface PerTaskBreakdown {
+  label: string; // opaque task label, e.g. "01" — NEVER the task name
   difficulty?: 'medium' | 'hard' | 'extreme';
-  builds: string; // what the agent is asked to build, one plain line
-  change?: string; // the real platform change the task is built on
-  trap?: string; // what a from-memory solution gets wrong
-  sourceUrl?: string; // link to the change's documentation
+  byProfile: Record<string, PerTaskProfile>; // keyed by profileId; missing = no cell
 }
 
 export interface DomainBoard {
@@ -59,7 +73,8 @@ export interface DomainBoard {
   sourceUrl?: string; // link to the benchmark's own repo/site
   paperUrl?: string; // link to the paper, if any
   scoredBy?: string; // one plain line on how a run is scored
-  taskDetails?: TaskDetail[]; // the real tasks, listed below the chart
+  profiles?: BoardProfile[]; // stable column order for the per-task heatmap
+  perTask?: PerTaskBreakdown[]; // opaque per-task breakdown (no task identity)
   source: string; // repo/scorecard the rows come from
   rows: ProfileRow[]; // ranked leaderboard; [] => awaiting run
   status: 'live' | 'partial' | 'awaiting-run';
