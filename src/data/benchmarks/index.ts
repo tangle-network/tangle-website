@@ -1,6 +1,10 @@
 import type { DomainBoard, ProfileRow, PerTaskBreakdown, BoardProfile } from './schema';
 import taxResults from './results/tax.json';
 import stripeResults from './results/stripe.json';
+import calcomResults from './results/calcom.json';
+import plausibleResults from './results/plausible.json';
+import svixResults from './results/svix.json';
+import directusResults from './results/directus.json';
 
 // Domain leaderboards, vals.ai structure: an index of benchmarks grouped by
 // category, each clicking into a detail page with a ranked bar chart of every
@@ -58,7 +62,95 @@ export const stripe: DomainBoard = {
   rows: stripeResults.rows as ProfileRow[],
 };
 
-export const boards: DomainBoard[] = [tax, stripe];
+export const calcom: DomainBoard = {
+  id: 'calcom',
+  domain: 'Cal.com Bookings v2',
+  company: 'Cal.com',
+  category: 'Coding',
+  blurb:
+    'Two coding tasks that implement a client for the Cal.com Bookings API v2, whose required versioned-header dates are post-cutoff, so a client written from memory falls back to the legacy v1 contract and fails.',
+  benchSource: 'Proprietary',
+  by: 'Tangle VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden mock server implementing Cal.com current v2 Bookings contract (Bearer auth, cal-api-version headers, response envelope, cursor pagination). Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+  profiles: calcomResults.profiles as BoardProfile[],
+  perTask: calcomResults.perTask as PerTaskBreakdown[],
+  metricLabel: 'Pass rate',
+  source: calcomResults.source,
+  status: 'live',
+  lastRun: calcomResults.generated,
+  taskCount: 2,
+  rows: calcomResults.rows as ProfileRow[],
+};
+
+export const plausible: DomainBoard = {
+  id: 'plausible',
+  domain: 'Plausible Analytics v2 Query',
+  company: 'Plausible',
+  category: 'Coding',
+  blurb:
+    'Two coding tasks that query the Plausible Stats API v2, a single POST endpoint with a strict JSON query grammar that replaced the v1 GET endpoints most training data documents.',
+  benchSource: 'Proprietary',
+  by: 'Tangle VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden mock server implementing Plausible current v2 query contract (required body keys, prefixed dimensions, filter trees, date ranges) with production error shapes; v1-style requests fail. Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+  profiles: plausibleResults.profiles as BoardProfile[],
+  perTask: plausibleResults.perTask as PerTaskBreakdown[],
+  metricLabel: 'Pass rate',
+  source: plausibleResults.source,
+  status: 'live',
+  lastRun: plausibleResults.generated,
+  taskCount: 2,
+  rows: plausibleResults.rows as ProfileRow[],
+};
+
+export const svix: DomainBoard = {
+  id: 'svix',
+  domain: 'Standard Webhooks (Svix) Signatures',
+  company: 'Svix',
+  category: 'Coding',
+  blurb:
+    'Two coding tasks that implement a verifier for the Standard Webhooks signature scheme used by Svix, which differs from the far more common Stripe scheme in signed content, secret decoding, and signature format.',
+  benchSource: 'Proprietary',
+  by: 'Tangle VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden test suite that signs fresh deliveries with its own random key each run and requires the verifier to accept authentic deliveries and reject tampered payloads, wrong keys, stale timestamps, and rotated multi-signature headers. Pass means the agent code executes correctly, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-scheme reference passes, and the Stripe-scheme solution fails on the intended trap.',
+  profiles: svixResults.profiles as BoardProfile[],
+  perTask: svixResults.perTask as PerTaskBreakdown[],
+  metricLabel: 'Pass rate',
+  source: svixResults.source,
+  status: 'live',
+  lastRun: svixResults.generated,
+  taskCount: 2,
+  rows: svixResults.rows as ProfileRow[],
+};
+
+export const directus: DomainBoard = {
+  id: 'directus',
+  domain: 'Directus Filtered Reads',
+  company: 'Directus',
+  category: 'Coding',
+  blurb:
+    'Two coding tasks that read role-scoped content through the Directus Items API, whose underscore-operator filters, nested relational conditions, and deep parameter semantics differ from the querystring patterns models default to.',
+  benchSource: 'Proprietary',
+  by: 'Tangle VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden mock server implementing Directus current Items API contract (filter grammar, deep parameters, field expansion, role-scoped permissions) with the real error envelopes. Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+  profiles: directusResults.profiles as BoardProfile[],
+  perTask: directusResults.perTask as PerTaskBreakdown[],
+  metricLabel: 'Pass rate',
+  source: directusResults.source,
+  status: 'live',
+  lastRun: directusResults.generated,
+  taskCount: 2,
+  rows: directusResults.rows as ProfileRow[],
+};
+
+export const boards: DomainBoard[] = [tax, stripe, calcom, plausible, svix, directus];
 
 // grouped by category for the index page
 export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {
