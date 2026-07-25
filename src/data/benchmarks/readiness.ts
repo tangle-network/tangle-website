@@ -72,13 +72,12 @@ export function readinessRows(): ReadinessRow[] {
 // Companies queued for a first measured run, in planned order. Names only:
 // a company with no completed sweep gets no number anywhere on the page.
 export const pendingCompanies: { company: string; api: string }[] = [
-  { company: 'Cal.com', api: 'Scheduling API' },
-  { company: 'Ghost', api: 'Admin and Content APIs' },
-  { company: 'Plausible', api: 'Stats API' },
+  { company: 'Shopify', api: 'Admin API' },
   { company: 'Typesense', api: 'Search API' },
+  { company: 'PostHog', api: 'Feature Flags API' },
+  { company: 'Ghost', api: 'Admin and Content APIs' },
   { company: 'Lago', api: 'Billing API' },
   { company: 'Chatwoot', api: 'Platform API' },
-  { company: 'Directus', api: 'Items API' },
   { company: 'Listmonk', api: 'Campaigns API' },
 ];
 
