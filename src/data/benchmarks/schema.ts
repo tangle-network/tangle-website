@@ -66,6 +66,11 @@ export interface PerTaskBreakdown {
 export interface DomainBoard {
   id: string; // slug: "tax", "legal", "companybench"
   domain: string; // display name "Tax"
+  // Company whose public API the task suite exercises, e.g. "Stripe". Present
+  // only on API-integration suites; it opts the board into the Agent Readiness
+  // Index (companies ranked by roster pass rate), so academic imports whose
+  // tasks are not API integrations (TaxCalcBench) must leave it unset.
+  company?: string;
   category: string; // "Finance", "Legal", "Coding", "Creative"
   blurb: string; // one line: what the tasks are
   benchSource: BenchSource; // provenance class, vals.ai-style
