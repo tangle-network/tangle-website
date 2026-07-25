@@ -1,0 +1,237 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { readinessRows, pendingCompanies, methodologyPostUrl } from '../data/benchmarks/readiness';
+
+// Companies ranked by how ready their public API is for AI coding agents.
+// Every row is derived at build time from the published board data in
+// src/data/benchmarks/results; a company with no completed sweep renders as
+// pending, never with a number.
+const measured = readinessRows();
+const pts = (v: number) => v.toFixed(1);
+// Total passed runs across a board's roster, recomputed from the same rows the
+// score derives from so the prose can never drift from the table.
+const passedRuns = (r: (typeof measured)[number]) =>
+  Math.round(r.board.rows.reduce((s, x) => s + (x.passRate ?? x.score) * x.n, 0));
+---
+<BaseLayout
+  title="Agent Readiness Index"
+  description="Companies ranked by how ready their public API is for AI coding agents: real integration tasks against the current API contract, graded by execution, with the coverage attached to every number."
+  bodyClass="page-editorial"
+>
+  <section class="ar-hero">
+    <div class="shell">
+      <h1>Agent Readiness Index</h1>
+      <p class="ar-lede">
+        AI coding agents are becoming the first users of your API.
+        This index ranks companies by how often a roster of coding agents completes real integration tasks against their current API, graded by executing the agent's code, never by a model's opinion of it.
+      </p>
+      <div class="ar-hero-facts mono">
+        <span><strong>{measured.length}</strong> compan{measured.length === 1 ? 'y' : 'ies'} measured</span>
+        <span><strong>{pendingCompanies.length}</strong> pending</span>
+        <span>a pending company gets no score</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="ar-method" id="methodology">
+    <div class="shell">
+      <h2>How a company gets scored</h2>
+      <p class="ar-formula">
+        Agent-Readiness Score = 100 &times; the mean pass rate of the agent roster on that company's task suite.
+        We also publish the best single agent and the spread between the strongest and weakest agent.
+        Every number carries its coverage: tasks, agents, and graded runs.
+      </p>
+      <div class="ar-method-grid">
+        <div class="ar-m">
+          <h3>Post-cutoff tasks</h3>
+          <p>Every task is built from API changes the company shipped after the models' training cutoff. An agent cannot pass by remembering old docs; it has to work with the API as it is today.</p>
+        </div>
+        <div class="ar-m">
+          <h3>Hidden execution graders</h3>
+          <p>A task passes only when the agent's code runs correctly against a private mock of the company's current API contract: endpoints, required params, error shapes. No model judges its own work.</p>
+        </div>
+        <div class="ar-m">
+          <h3>Memorization traps</h3>
+          <p>Each task embeds the wrong answer a model trained on older docs would give, and the grader fails that answer on purpose. Stale knowledge scores zero, not almost right.</p>
+        </div>
+        <div class="ar-m">
+          <h3>Calibration</h3>
+          <p>A task is admitted only after three checks: an empty solution fails, a reference solution against the current contract passes, and the stale-memory solution trips the trap.</p>
+        </div>
+      </div>
+      <p class="ar-method-links">
+        {methodologyPostUrl && <a href={methodologyPostUrl}>Read the full methodology &rarr;</a>}
+        <a href="/benchmarks/stripe">See the worked example: the Stripe board with per-task results for every agent &rarr;</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="ar-body">
+    <div class="shell">
+      <h2>The index</h2>
+      <div class="ar-table-scroll">
+        <table class="ar-table">
+          <thead>
+            <tr>
+              <th class="ar-th-rank">#</th>
+              <th class="ar-th-co">Company</th>
+              <th>Agent-Readiness Score</th>
+              <th>Best agent</th>
+              <th>Spread</th>
+              <th>Coverage</th>
+              <th>Last run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {measured.map((r, i) => (
+              <tr class="ar-row-live">
+                <td class="ar-rank mono">{i + 1}</td>
+                <td class="ar-co">
+                  <a href={`/benchmarks/${r.boardId}`}>{r.company}</a>
+                  <em>{r.board.domain}</em>
+                </td>
+                <td class="ar-score">
+                  <strong class="mono">{pts(r.scorePts)}</strong>
+                  <em class="mono">{passedRuns(r)} passed of {r.runs} graded runs</em>
+                </td>
+                <td class="ar-best">
+                  <strong class="mono">{pts(r.best.scorePts)}</strong>
+                  <em>{r.best.model}{r.best.harness ? ` in ${r.best.harness}` : ''} &middot; n = {r.best.n}</em>
+                </td>
+                <td class="ar-spread">
+                  <strong class="mono">{pts(r.spreadPts)} pts</strong>
+                  <em>worst: {pts(r.worst.scorePts)} ({r.worst.model}{r.worst.harness ? ` in ${r.worst.harness}` : ''})</em>
+                </td>
+                <td class="ar-cov mono">{r.tasks ?? '?'} tasks &times; {r.agents} agents</td>
+                <td class="ar-date mono">{r.lastRun ?? ''}</td>
+              </tr>
+            ))}
+            {pendingCompanies.map((p) => (
+              <tr class="ar-row-pending">
+                <td class="ar-rank mono"></td>
+                <td class="ar-co">
+                  <span>{p.company}</span>
+                  <em>{p.api}</em>
+                </td>
+                <td class="ar-pending mono" colspan="5">awaiting first run</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="ar-note">
+        Scores derive from the published board data on this site; nothing on this page is entered by hand.
+        Pending companies are queued for a first measured sweep and carry no number until it completes.
+      </p>
+
+      {measured.map((r) => (
+        <div class="ar-detail">
+          <h2>Inside the {r.company} row</h2>
+          <p>
+            {r.company} scores <strong class="mono">{pts(r.scorePts)}</strong>: {r.agents} agents each attempted the {r.tasks}-task suite, and the roster passed {passedRuns(r)} of {r.runs} graded runs.
+            The {pts(r.spreadPts)}-point spread between {pts(r.best.scorePts)} ({r.best.model} in {r.best.harness}) and {pts(r.worst.scorePts)} ({r.worst.model} in {r.worst.harness}) is the finding: readiness depends on which agent shows up, and the spread tells you how much.
+          </p>
+          <div class="ar-roster-scroll">
+            <table class="ar-roster">
+              <thead>
+                <tr><th>Agent</th><th>Harness</th><th>Pass rate</th><th>Passed / graded</th><th>Run date</th></tr>
+              </thead>
+              <tbody>
+                {[...r.board.rows].sort((a, b) => (b.passRate ?? b.score) - (a.passRate ?? a.score)).map((row) => (
+                  <tr>
+                    <td class="ar-r-model">{row.model}</td>
+                    <td class="ar-r-harness">{row.harness ?? 'direct'}</td>
+                    <td class="ar-r-score mono">{pts((row.passRate ?? row.score) * 100)}</td>
+                    <td class="mono">{Math.round((row.passRate ?? row.score) * row.n)} / {row.n}</td>
+                    <td class="mono">{row.date}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <a class="ar-board-link" href={`/benchmarks/${r.boardId}`}>Full {r.company} board with the per-task heatmap &rarr;</a>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="ar-cta">
+    <div class="shell">
+      <h2>Is your API on the list?</h2>
+      <p>
+        If you want your API measured, or a suite run against a release before it ships, write to us.
+        We author the post-cutoff tasks, calibrate every one, run the full roster, and publish the row with its coverage attached.
+      </p>
+      <div class="ar-cta-row">
+        <a class="ar-btn" href="mailto:hello@tangle.tools?subject=Agent%20Readiness%20Index">hello@tangle.tools</a>
+        <a class="ar-btn ghost" href="/benchmarks">Browse the benchmarks</a>
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .shell { width: min(72rem, 92vw); margin: 0 auto; }
+  .mono { font-family: var(--font-mono); font-feature-settings: 'tnum'; }
+
+  .ar-hero { background: var(--paper-1); padding: 5rem 0 3rem; border-bottom: 1px solid var(--hairline-light); }
+  .ar-hero h1 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.035em; color: var(--ink); font-size: clamp(2.2rem, 4vw, 3.4rem); }
+  .ar-lede { margin: 1.1rem 0 0; color: var(--ink-secondary); font-size: clamp(1.1rem, 1.4vw, 1.28rem); line-height: 1.6; max-width: 50rem; }
+  .ar-hero-facts { display: flex; gap: 1.4rem; flex-wrap: wrap; margin-top: 1.6rem; color: var(--ink-muted); font-size: 0.82rem; }
+  .ar-hero-facts strong { color: #4F46E5; }
+
+  .ar-method { background: var(--paper-0); padding: 3.5rem 0 1rem; scroll-margin-top: 2rem; }
+  .ar-method h2, .ar-body h2, .ar-cta h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.02em; color: var(--ink); font-size: 1.7rem; }
+  .ar-formula { margin: 1rem 0 0; color: var(--ink-secondary); font-size: 1.02rem; line-height: 1.65; max-width: 52rem; }
+  .ar-method-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1.1rem; margin-top: 1.8rem; }
+  .ar-m { background: #fff; border: 1px solid var(--hairline-light); border-radius: 14px; padding: 1.2rem 1.3rem; box-shadow: 0 8px 26px rgba(25,28,60,0.05); }
+  .ar-m h3 { margin: 0; font-family: var(--font-display); font-weight: 600; color: var(--ink); font-size: 1.05rem; letter-spacing: -0.01em; }
+  .ar-m p { margin: 0.55rem 0 0; color: var(--ink-secondary); font-size: 0.92rem; line-height: 1.55; }
+  .ar-method-links { display: flex; flex-direction: column; gap: 0.4rem; margin: 1.6rem 0 0; }
+  .ar-method-links a { color: #4F46E5; font-size: 0.95rem; font-weight: 600; text-decoration: none; }
+  .ar-method-links a:hover { color: #4338CA; }
+
+  .ar-body { background: var(--paper-0); padding: 3rem 0 2rem; }
+  .ar-table-scroll { margin-top: 1.6rem; overflow-x: auto; border: 1px solid var(--hairline-light); border-radius: 14px; background: #fff; box-shadow: 0 12px 40px rgba(25,28,60,0.06); }
+  .ar-table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 54rem; }
+  .ar-table thead th { text-align: left; padding: 0.85rem 1rem; color: var(--ink-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--hairline-light); white-space: nowrap; }
+  .ar-table tbody td { padding: 0.9rem 1rem; border-top: 1px solid var(--hairline-light); vertical-align: top; }
+  .ar-table tbody tr:first-child td { border-top: none; }
+  .ar-rank { color: var(--ink-muted); font-size: 0.85rem; }
+  .ar-co a { color: var(--ink); font-weight: 700; font-size: 1.02rem; text-decoration: none; }
+  .ar-co a:hover { color: #4F46E5; }
+  .ar-co span { color: var(--ink); font-weight: 600; font-size: 1rem; }
+  .ar-co em { display: block; font-style: normal; color: var(--ink-muted); font-size: 0.76rem; margin-top: 0.15rem; }
+  .ar-score strong { color: #4F46E5; font-size: 1.35rem; font-weight: 800; letter-spacing: -0.01em; }
+  .ar-score em, .ar-best em, .ar-spread em { display: block; font-style: normal; color: var(--ink-muted); font-size: 0.72rem; margin-top: 0.2rem; }
+  .ar-best strong, .ar-spread strong { color: var(--ink); font-size: 0.98rem; font-weight: 700; }
+  .ar-cov, .ar-date { color: var(--ink-secondary); font-size: 0.82rem; white-space: nowrap; }
+  .ar-row-pending .ar-co span { color: var(--ink-secondary); font-weight: 500; }
+  .ar-pending { color: var(--ink-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .ar-note { margin: 0.9rem 0 0; color: var(--ink-muted); font-size: 0.82rem; line-height: 1.55; max-width: 52rem; }
+
+  .ar-detail { margin-top: 3.2rem; }
+  .ar-detail p { margin: 0.9rem 0 0; color: var(--ink-secondary); font-size: 1rem; line-height: 1.65; max-width: 52rem; }
+  .ar-detail p strong { color: #4F46E5; }
+  .ar-roster-scroll { margin-top: 1.4rem; overflow-x: auto; border: 1px solid var(--hairline-light); border-radius: 14px; background: #fff; }
+  .ar-roster { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 34rem; }
+  .ar-roster thead th { text-align: left; padding: 0.75rem 1rem; color: var(--ink-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--hairline-light); }
+  .ar-roster tbody td { padding: 0.65rem 1rem; border-top: 1px solid var(--hairline-light); color: var(--ink-secondary); }
+  .ar-roster tbody tr:first-child td { border-top: none; }
+  .ar-r-model { color: var(--ink); font-weight: 600; }
+  .ar-r-score { color: #4F46E5; font-weight: 700; }
+  .ar-board-link { display: inline-block; margin-top: 1.1rem; color: #4F46E5; font-size: 0.95rem; font-weight: 600; text-decoration: none; }
+  .ar-board-link:hover { color: #4338CA; }
+
+  .ar-cta { background: var(--paper-1); border-top: 1px solid var(--hairline-light); padding: 3.5rem 0 4.5rem; margin-top: 3rem; }
+  .ar-cta p { margin: 1rem 0 0; color: var(--ink-secondary); font-size: 1.05rem; line-height: 1.65; max-width: 48rem; }
+  .ar-cta-row { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-top: 1.5rem; }
+  .ar-btn { display: inline-flex; align-items: center; font-size: 0.95rem; font-weight: 600; text-decoration: none; padding: 0.55rem 1.05rem; border-radius: 9px; background: #4F46E5; color: #fff; transition: background 0.15s; }
+  .ar-btn:hover { background: #4338CA; }
+  .ar-btn.ghost { background: transparent; color: #4F46E5; border: 1px solid rgba(79,70,229,0.35); }
+  .ar-btn.ghost:hover { background: rgba(79,70,229,0.06); }
+
+  @media (max-width: 680px) {
+    .ar-method h2, .ar-body h2, .ar-cta h2 { font-size: 1.4rem; }
+  }
+</style>

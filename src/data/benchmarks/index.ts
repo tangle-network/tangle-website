@@ -39,6 +39,7 @@ export const tax: DomainBoard = {
 export const stripe: DomainBoard = {
   id: 'stripe',
   domain: 'Stripe API Integration',
+  company: 'Stripe',
   category: 'Coding',
   blurb:
     'Twelve coding tasks built from real Stripe API changes in 2025 and 2026, each graded by running the agent code against Stripe current contract.',
