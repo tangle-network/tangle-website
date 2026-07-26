@@ -74,7 +74,6 @@ export function readinessRows(): ReadinessRow[] {
 export const pendingCompanies: { company: string; api: string }[] = [
   { company: 'Shopify', api: 'Admin API' },
   { company: 'Typesense', api: 'Search API' },
-  { company: 'PostHog', api: 'Feature Flags API' },
   { company: 'Ghost', api: 'Admin and Content APIs' },
   { company: 'Lago', api: 'Billing API' },
   { company: 'Chatwoot', api: 'Platform API' },

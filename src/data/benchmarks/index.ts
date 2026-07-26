@@ -2,6 +2,7 @@ import type { DomainBoard, ProfileRow, PerTaskBreakdown, BoardProfile } from './
 import taxResults from './results/tax.json';
 import stripeResults from './results/stripe.json';
 import calcomResults from './results/calcom.json';
+import posthogResults from './results/posthog.json';
 import plausibleResults from './results/plausible.json';
 import svixResults from './results/svix.json';
 import directusResults from './results/directus.json';
@@ -84,6 +85,28 @@ export const calcom: DomainBoard = {
   rows: calcomResults.rows as ProfileRow[],
 };
 
+export const posthog: DomainBoard = {
+  id: 'posthog',
+  domain: 'PostHog Feature Flags v2',
+  company: 'PostHog',
+  category: 'Coding',
+  blurb:
+    'Two coding tasks that implement a client for PostHog flags evaluation API v2, where the memorized /decide endpoint 404s and the v2 response envelope no longer carries the fields a from-memory client reads.',
+  benchSource: 'Proprietary',
+  by: 'Tangle VerticalBench',
+  sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  scoredBy:
+    'Each task is graded by a hidden mock server implementing PostHog current flags v2 contract. Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+  profiles: posthogResults.profiles as BoardProfile[],
+  perTask: posthogResults.perTask as PerTaskBreakdown[],
+  metricLabel: 'Pass rate',
+  source: posthogResults.source,
+  status: 'live',
+  lastRun: posthogResults.generated,
+  taskCount: 2,
+  rows: posthogResults.rows as ProfileRow[],
+};
+
 export const plausible: DomainBoard = {
   id: 'plausible',
   domain: 'Plausible Analytics v2 Query',
@@ -150,7 +173,7 @@ export const directus: DomainBoard = {
   rows: directusResults.rows as ProfileRow[],
 };
 
-export const boards: DomainBoard[] = [tax, stripe, calcom, plausible, svix, directus];
+export const boards: DomainBoard[] = [tax, stripe, calcom, posthog, plausible, svix, directus];
 
 // grouped by category for the index page
 export function boardsByCategory(): { category: string; boards: DomainBoard[] }[] {
