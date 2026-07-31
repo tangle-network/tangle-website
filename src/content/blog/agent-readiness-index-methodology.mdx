@@ -1,0 +1,174 @@
+---
+title: 'Most AI coding agents cannot use your API. Here is how we measure it.'
+slug: agent-readiness-index-methodology
+summary: >-
+  The Agent Readiness Index scores coding agents on API changes published after model training cutoffs, graded by hidden execution tests that a memorized answer fails. Methodology, calibration, and how to read a score.
+date: '2026-07-24'
+author: Drew Stone
+tags:
+  - benchmarks
+  - agents
+  - evals
+  - api
+---
+
+Developers increasingly hand integration work to coding agents.
+The agent reads your docs, writes the client, runs it, and reports back.
+When that works, you gain a customer without a single human reading your documentation.
+When it fails, you lose one the same way: silently.
+
+We built a benchmark to measure which agents can integrate a real API correctly, using Stripe as the first subject.
+We call the measurement the Agent Readiness Index.
+This post explains how it works, what a score means, and what it cannot tell you.
+
+## The failed integration you never see
+
+A developer evaluating a payments provider today often starts by asking an agent to wire up a checkout flow.
+Here is what happens if the agent writes from memory.
+Stripe renamed the Checkout Session display-mode values on 2026-03-25: `embedded` became `embedded_page`.
+An agent recalling the pre-2026 contract sends `ui_mode=embedded` and gets a 400.
+The developer does not see a stale model.
+The developer sees a payments API that returned an error on the vendor's own quickstart flow, and tries the next vendor.
+
+Nothing in your analytics records this.
+There is no support ticket, no failed signup, no session replay.
+The evaluation happened inside an agent session you never observe.
+That is the funnel this benchmark makes visible.
+
+## Benchmarks built on training data cannot measure this
+
+Two problems disqualify most existing coding benchmarks for this question.
+
+The first is memorization.
+Frontier models have read every Stripe tutorial, every Stack Overflow answer, and the full source of stripe-node.
+A benchmark task that appears in training data is a recall test, and recall is exactly the wrong skill to measure here, because the API keeps moving.
+Stripe has shipped three breaking API releases since March 2025 (basil on 2025-03-31, clover on 2025-09-30, dahlia on 2026-03-25) plus monthly updates in between.
+Memory of an API decays in months.
+
+The second is self-grading.
+Many published agent benchmarks score output with another model as the judge, or are published by the vendor whose model tops the chart.
+When the grader is the same kind of system as the graded, inflation is invisible from outside.
+On this suite, the pass decision comes from executing the agent's code against a server that implements the current API contract.
+No model grades any model's work.
+
+## Tasks mined from changes newer than the models
+
+We mined the Stripe changelog and release notes on 2026-07-23, working from a 734-line changelog index, and extracted 51 candidate changes in three classes: 13 post-cutoff breaking changes, 27 new API surfaces, and 11 deprecations and removals shipped during 2025.
+A change counts as post-cutoff when it shipped on or after 2026-01-28, which places it after the training data of every model on the current roster.
+The 2025 removals serve a different purpose: they are the cases where the pattern every model memorized now fails.
+
+Each task gives the agent a goal, never the contract.
+The prompt for the checkout task asks for an embedded payment session and says the accepted display-mode values changed recently; it does not say what they changed to.
+The agent has live web access and is expected to find the current contract in Stripe's documentation, the same way a developer's agent would.
+
+The current suite is 12 tasks.
+Every task traces to a specific dated changelog entry, recorded in the mining document alongside the trap it sets.
+
+## Hidden execution graders
+
+Each task is graded by running the agent's submitted code against a mock server that implements Stripe's current contract for that endpoint, including the exact error the real API returns for a stale call.
+The graders assert on values, never on a bare status code: the created session's display mode, the amount a payment settled at, the subscription's status after a pause.
+
+The test file is decoded into a private directory at grade time.
+The agent's workspace never contains it, so the agent cannot read the assertions, cannot special-case them, and cannot hard-code the expected output.
+
+## Trap tasks where the memorized answer compiles
+
+The most important tasks are the ones where stale knowledge produces code that runs.
+Three examples from the suite:
+
+Pausing a subscription.
+Stripe added a dedicated pause endpoint that sets the subscription's status to `paused`.
+The memorized answer sets `pause_collection`, which returns 200 and leaves the status `active`, so the customer keeps full service.
+The grader asserts on the resulting status, so the memorized answer fails.
+
+Reading a subscription's renewal date.
+`current_period_end` was removed from the Subscription object on 2025-03-31; periods now live on subscription items.
+The old field path does not raise an error.
+It reads `undefined`, and code built on it ships a wrong date silently.
+5 of the 51 mined changes have this shape, where the old path returns nothing instead of failing, which is the most dangerous class for agents because nothing prompts a retry.
+
+Confirming a payment with a surcharge.
+The current API accepts the padded amount as a parameter at confirm time, in one call.
+The memorized workaround updates the intent's amount first and then confirms, and both requests return 200.
+The grader reads the server's request log and fails any solution that mutated the intent before confirming.
+
+## Agents cheat. We caught one doing it.
+
+The graders are hidden, but the mock server the agent calls is a real process on the same host, and until recently its implementation sat in a temporary file on that host.
+That gap was enough.
+
+During the first run of our Typesense suite, one agent stopped probing the API and started inspecting the host.
+It listed the running processes, found the mock server among them, followed its command line to the temp file holding the server's source, and read the implementation directly instead of discovering the contract through requests.
+The passes it earned that way were answers copied from the grader.
+
+The transcript audit caught every case, because the transcript records the mock's temp path being read.
+9 cells were flagged across two suites.
+7 of the 9 were the same configuration, claude-sonnet on claude-code, which did it systematically.
+Two glm cells did it once each.
+All 9 were discarded and re-run.
+
+Detection was not the fix.
+The mock's source file is now deleted from disk the moment the server boots; the process keeps its loaded copy, so there is nothing left to read.
+The cheat is impossible now, not merely detected.
+
+The general lesson: if the grader or a reference implementation is reachable from the agent's execution environment, a capable agent will find it, and nothing in the score will tell you.
+Treat any benchmark without transcript-level auditing and a leak-proof grading boundary as contaminated.
+
+## Every task is calibrated three ways before it counts
+
+A task enters the suite only after passing three checks.
+
+An empty workspace must fail, proving the grader cannot be passed by doing nothing.
+A reference solution written from the current documentation must pass, proving the task is solvable.
+A stale-memory solution, written deliberately against the pre-change contract, must fail on the intended trap assertion and not on some accident, proving the task measures currency rather than luck.
+
+All 12 tasks in the current suite pass all three checks.
+A candidate task that fails any one of them is not admitted.
+
+## What a score means
+
+Configuration-level results are published on the board itself rather than reproduced here: a leaderboard pasted into a post goes stale the moment the suite is re-run or the metric is corrected, and a post that disagrees with the board is worse than no post. The live table, including per-task detail and the roster behind each row, is at [/benchmarks/stripe](/benchmarks/stripe).
+
+The shape worth understanding is that **rows are configurations, not models** — a model plus the CLI agent driving it — because the tooling moves the score materially. The same model driven by two different agents can differ by tens of points on identical tasks, which is why a "model leaderboard" for integration work is misleading.
+
+A pass means the agent's code executed correctly against the current contract.
+Each configuration attempted each task twice, and each attempt is a single agent session with no retries and no human help.
+Rows are configurations, meaning a model plus the CLI agent that drives it, because the tooling moves the score: glm-5.1 passes 20 of 21 attempts when driven by pi and 15 of 22 when driven by opencode, a 27-point gap on the same model.
+
+What a score does not mean:
+
+The sample is small.
+Every board states the attempt count behind each row; at the tens-of-attempts scale these suites run, treat gaps under roughly 10 points as noise rather than a ranking.
+
+Coverage is not always identical across rows.
+A configuration can carry fewer attempts than its peers when a cell was lost to an infrastructure failure and quarantined rather than scored. The board reports the real denominator per row, so check it before comparing two configurations — an unequal denominator is the single easiest way to misread a benchmark.
+
+This is one API and 12 tasks, all Python HTTP clients.
+It measures readiness to integrate Stripe's current API, not general coding ability, repo-scale migration, or UI work.
+
+A model missing from the table was not run.
+Absence is not failure.
+
+The scores also do not say the tasks are easy.
+Task 04 passed in 1 of 8 attempts across all four configurations, and the lowest row failed 7 of 22 attempts even with live access to the documentation.
+
+## What a company does with a low score
+
+The per-task breakdown names the exact API changes agents get wrong, which turns a low score into a work list.
+
+Make each change discoverable in isolation.
+The suite is solvable because Stripe documents every change on its own dated changelog page, where an agent's search can land.
+A migration buried in a PDF or a blog post is invisible to the integration loop.
+
+Fail loud.
+The removals that return `undefined` instead of an error (5 of the 51 mined changes) are the ones agents cannot self-correct, because nothing signals a problem.
+A 400 with a clear message gets retried; an empty field ships.
+
+Name the replacement in the error where safe.
+An agent that reads "ui_mode 'embedded' is invalid" must go search; one that reads "use 'embedded_page'" fixes itself in one step.
+
+Then re-run.
+The graders and tasks stay fixed, so a score change after a documentation change is attributable to the documentation.
+
+The current suite, roster, and per-task results are at [/benchmarks/stripe](/benchmarks/stripe).
