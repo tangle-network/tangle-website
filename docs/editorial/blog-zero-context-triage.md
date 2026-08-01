@@ -3,16 +3,13 @@
 This is a deterministic triage of 85 posts using the [blog quality rubric](https://github.com/tangle-network/dotfiles/blob/main/docs/rubrics/blog-quality.md).
 It is not a semantic approval; every hard reject requires a human rewrite review.
 
-- Hard rejects: 29
-- Repository-debris findings: 25
-- Missing reader problem: 2
-- Missing reader decision: 3
+- Hard rejects: 26
+- Repository-debris findings: 24
+- Missing reader problem: 0
+- Missing reader decision: 2
 
 ## Priority order
 
-- 25/40 — Blueprint SDK — [Blueprint SDK Deployment Guide](/blog/blueprint-sdk-deployment-guide) — repository-debris, no-reader-problem-in-opening
-- 25/40 — Tangle Re-Introduction — [Trusted Execution on Tangle: How TEE Works in the Blueprint SDK](/blog/trusted-execution-on-tangle) — no-reader-decision
-- 27/40 — x402 Production Runway — [How Blueprint SDK Turns x402 Payments into Runnable Jobs](/blog/blueprint-sdk-x402-payments-runnable-jobs) — no-reader-problem-in-opening, native-jargon-before-definition
 - 29/40 — x402 Production Runway — [On-Chain RFQ for Compute: How Job Quotes, Verification, and Slashing Work](/blog/on-chain-rfq-job-quotes-verification-slashing) — manual review
 - 29/40 — the-self-improving-stack — [Topology Is The Missing Action Space](/blog/self-improving-stack-agent-runtime-topology) — manual review
 - 30/40 — Tangle Re-Introduction — [Building AI Services on Tangle](/blog/building-ai-services-on-tangle) — manual review
@@ -39,6 +36,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 32/40 — x402 Production Runway — [Operator Health Monitoring on Tangle](/blog/operator-health-monitoring-tangle-heartbeats-quote-lifetimes) — manual review
 - 32/40 — the-self-improving-stack — [Prompt Optimization Is Not The Whole Game](/blog/self-improving-stack-prompt-optimization) — manual review
 - 32/40 — Agent Intent Infrastructure — [Tangle Sandbox vs Daytona and Modal](/blog/tangle-sandbox-vs-daytona-modal) — repository-debris
+- 32/40 — Tangle Re-Introduction — [Trusted Execution on Tangle: What Hardware Isolation Can Prove](/blog/trusted-execution-on-tangle) — manual review
 - 32/40 — the-self-improving-stack — [When The Harness Has To Evolve](/blog/self-improving-stack-harness-evolution) — repository-debris
 - 32/40 — the-self-improving-stack — [When The Model Itself Is Mutable](/blog/self-improving-stack-post-training) — repository-debris
 - 32/40 — Tangle Re-Introduction — [Why AI Infrastructure Needs Decentralization](/blog/why-ai-infrastructure-needs-decentralization) — repository-debris
@@ -74,6 +72,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — Building an AI Tax Agent — [Automated Tax Filing With Review Control](/blog/automated-tax-filing-review-before-submit) — manual review
 - 34/40 — the-self-improving-stack — [Beat Random At Equal Compute First](/blog/self-improving-stack-test-time-compute) — manual review
 - 34/40 — Standalone — [Better Answers Without Bigger Models: We Shipped RSA](/blog/rsa-recursive-self-aggregation) — manual review
+- 34/40 — Blueprint SDK — [Blueprint Deployment: From a Local Service to an Operator-Run Job](/blog/blueprint-sdk-deployment-guide) — manual review
 - 34/40 — Browser Agent — [Browser Automation AI Needs An Evidence Loop](/blog/browser-automation-ai-evidence-loop) — manual review
 - 34/40 — Agent Intent Infrastructure — [Browser Automation for AI Agents](/blog/browser-automation-for-ai-agents) — repository-debris
 - 34/40 — Building an AI Tax Agent — [CFC Tax Filing Software For Form 5471](/blog/cfc-tax-filing-software-form-5471) — manual review
@@ -82,6 +81,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — Building an AI Tax Agent — [Controlled Foreign Corporation Taxes And Form 5471](/blog/controlled-foreign-corporation-taxes-form-5471) — manual review
 - 34/40 — Browser Agent — [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent) — repository-debris
 - 34/40 — Standalone — [Distributed Training with 10,000x Communication Reduction](/blog/distributed-training-demo) — repository-debris
+- 34/40 — x402 Production Runway — [How a Paid HTTP Request Becomes a Tangle Job](/blog/blueprint-sdk-x402-payments-runnable-jobs) — manual review
 - 34/40 — Building an AI Tax Agent — [K-1 Tax Filing For Multiple Entities](/blog/k-1-tax-filing-multiple-entities) — manual review
 - 34/40 — Agent Runtime Infrastructure — [LLM Sandbox Environment For Agent Runs](/blog/llm-sandbox-environment-agent-runtime) — repository-debris
 - 34/40 — the-self-improving-stack — [Memory Is Not Automatically Learning](/blog/self-improving-stack-memory-flywheels) — repository-debris
@@ -351,27 +351,27 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 761 words, 13 headings, 1 code blocks, 3 external links, 5 internal links
 - Opening: Blueprint protocol is the on-chain and operator-facing side of Tangle. It should not be confused with Blueprint Agent, the developer onboarding product at ai.tangle.tools. A protocol Blueprint is a reusable service definition. Operators register for it, run the service, accept jobs, and receive payment according to the network rules.
 
-### Blueprint SDK Deployment Guide
+### Blueprint Deployment: From a Local Service to an Operator-Run Job
 
 - File: src/content/blog/blueprint-sdk-deployment-guide.mdx
 - Series: Blueprint SDK
-- Triage score: 25/40
-- Hard rejects: repository-debris, no-reader-problem-in-opening
-- Native terms in opening: TEE, blueprint, operator, x402
-- Repository debris: detected
-- Shape: 926 words, 13 headings, 4 code blocks, 5 external links, 7 internal links
-- Opening: Blueprint SDK deployment turns a local Rust service into a Tangle Blueprint that operators can register for and run. The production path is not "write Rust, deploy once, hope operators figure it out." A deployable Blueprint needs a service definition, reproducible artifact, tested runner, operator settings, testnet evidence, monitoring, and rollback plan. Use testnet as a promotion gate before mainnet, especially for paid services, private data, TEE execution, or slashing exposure.
+- Triage score: 34/40
+- Hard rejects: none detected
+- Native terms in opening: none detected
+- Repository debris: none detected
+- Shape: 1339 words, 14 headings, 0 code blocks, 7 external links, 5 internal links
+- Opening: Getting a service to run on your laptop is not the same as making it possible for someone else to operate. That difference becomes important when several independent operators may run the same service for users.
 
-### How Blueprint SDK Turns x402 Payments into Runnable Jobs
+### How a Paid HTTP Request Becomes a Tangle Job
 
 - File: src/content/blog/blueprint-sdk-x402-payments-runnable-jobs.mdx
 - Series: x402 Production Runway
-- Triage score: 27/40
-- Hard rejects: no-reader-problem-in-opening, native-jargon-before-definition
-- Native terms in opening: blueprint, x402
+- Triage score: 34/40
+- Hard rejects: none detected
+- Native terms in opening: none detected
 - Repository debris: none detected
-- Shape: 2143 words, 19 headings, 10 code blocks, 8 external links, 3 internal links
-- Opening: HTTP status code 402 has been "reserved for future use" since 1999. For twenty-seven years it sat in the spec, a placeholder for a payments web that never materialized. In 2025, Coinbase and Cloudflare's x402 protocol gave it real work: a client hits an endpoint, receives a 402 response with pricing information, signs a stablecoin payment, and resends the request with proof of settlement attached as an HTTP header. No API keys, no billing dashboard, no monthly invoices. Just cryptographic proof that money moved before compute burned.
+- Shape: 1508 words, 15 headings, 0 code blocks, 3 external links, 2 internal links
+- Opening: Most paid APIs make the customer create an account, receive an API key, keep a balance, and reconcile invoices later. That model works, but it asks the service owner to run a billing product alongside the service itself.
 
 ### x402 and TEE Together: What Must Pass Before Promotion
 
@@ -978,16 +978,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 2011 words, 20 headings, 28 code blocks, 12 external links, 17 internal links
 - Opening: Short answer: A self-improving agent system is not a model that reflects harder. It is a closed loop around mutable state, trace evidence, evaluation gates, memory, runtime topology, harness code, and governance. The first question is not whether the system improves itself. The first question is which layer changed and what proof allowed that change to persist.
 
-### Trusted Execution on Tangle: How TEE Works in the Blueprint SDK
+### Trusted Execution on Tangle: What Hardware Isolation Can Prove
 
 - File: src/content/blog/trusted-execution-on-tangle.mdx
 - Series: Tangle Re-Introduction
-- Triage score: 25/40
-- Hard rejects: no-reader-decision
-- Native terms in opening: TEE, blueprint, operator
+- Triage score: 32/40
+- Hard rejects: none detected
+- Native terms in opening: none detected
 - Repository debris: none detected
-- Shape: 1204 words, 12 headings, 4 code blocks, 5 external links, 8 internal links
-- Opening: Day 6 of the Tangle Re-Introduction Series
+- Shape: 1393 words, 14 headings, 0 code blocks, 8 external links, 1 internal links
+- Opening: Suppose you send private data or model weights to a service run by someone else. You may be able to verify the result after the job finishes, but that does not answer a different question: could the person running the machine read or change the work while it was running?
 
 ### Web3 Developer Tools Need An Agent Workbench
 

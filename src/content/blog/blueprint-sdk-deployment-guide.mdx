@@ -1,8 +1,8 @@
 ---
-title: 'Blueprint SDK Deployment Guide'
+title: 'Blueprint Deployment: From a Local Service to an Operator-Run Job'
 slug: blueprint-sdk-deployment-guide
 summary: >-
-  A practical Blueprint SDK deployment path from local Rust service to Tangle testnet, operator runtime, production checks, and rollback evidence.
+  A reader-first path for turning a local Rust service into a Tangle Blueprint that operators can discover, run, monitor, and roll back safely.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -13,148 +13,166 @@ series: Blueprint SDK
 seriesOrder: 1
 coverImage: /images/covers/blueprint-deployment-architecture-remote-providers.png
 heroImage: /images/covers/blueprint-deployment-architecture-remote-providers.png
-imageAlt: 'Blueprint deployment architecture showing service definition, operator runtime, testnet, production checks, and rollback path'
+imageAlt: 'A service moving from local development through testnet evidence to an operator-run deployment'
 ---
 
-Blueprint SDK deployment turns a local Rust service into a Tangle Blueprint that operators can register for and run. The production path is not "write Rust, deploy once, hope operators figure it out." A deployable Blueprint needs a service definition, reproducible artifact, tested runner, operator settings, testnet evidence, monitoring, and rollback plan. Use testnet as a promotion gate before mainnet, especially for paid services, private data, TEE execution, or slashing exposure.
+Getting a service to run on your laptop is not the same as making it possible for someone else to operate.
+That difference becomes important when several independent operators may run the same service for users.
 
-This guide is the deployment checklist. For payment-specific gates, read [x402 Blueprint Production Deployment Checklist](/blog/x402-blueprint-production-deployment-checklist). For deployment architecture, read [Remote Providers, Direct Runtimes, and Payment-Native Ingress](/blog/blueprint-deployment-architecture-remote-providers).
+On Tangle, a **Blueprint** is a public service definition that tells operators what jobs exist, what they need to run, and how a consumer can call them.
+An **operator** is the person or team that supplies the machine and keeps that service running.
+A **service instance** is one deployed copy of the Blueprint that receives real work.
 
-## What The Blueprint SDK Deploys
+This post explains the path from a local Rust service to an operator-run service.
+The answer is not “publish the binary and hope.”
+You need a clear definition, a reproducible artifact, a runner that survives real settings, testnet evidence, monitoring, and a way back when a release is wrong.
 
-A Blueprint is a reusable service definition. Developers define jobs, metadata, sources, and runtime behavior. Operators run the Blueprint. Consumers create service instances and send work.
+For payment-specific deployment, read the [payment production checklist](/blog/x402-blueprint-production-deployment-checklist).
+For the network choices behind a deployment, read [Remote Providers, Direct Runtimes, and Payment-Native Ingress](/blog/blueprint-deployment-architecture-remote-providers).
 
-| Layer | Deployment responsibility |
+## What is being deployed?
+
+A Blueprint has several parts, and each part answers a different operator question.
+
+| Part | Question it answers |
 | --- | --- |
-| Blueprint definition | metadata, jobs, artifact sources, manager settings |
-| Rust service | job handlers, validation, runtime logic |
-| artifact | reproducible binary, source, or image with integrity metadata |
-| operator runtime | keys, RPC URLs, ports, env vars, health checks |
-| Tangle registration | publishes the Blueprint for operator discovery |
-| service instance | receives actual job calls and user work |
+| Service definition | What jobs exist, and what metadata describes them? |
+| Service code | What does each job do, and how does it reject bad input? |
+| Artifact | Which binary, image, or source package should the operator run? |
+| Operator settings | Which keys, network endpoints, ports, and environment values are required? |
+| Network registration | Where can an operator discover this service? |
+| Service instance | Which deployed copy receives a particular job? |
 
-The SDK source is [tangle-network/blueprint](https://github.com/tangle-network/blueprint). Deployment should also fit the broader [Tangle verification model](/blog/how-tangle-verifies-work) and [Blueprint architecture](/blog/how-blueprints-work). At the substrate level, keep the normal Rust deployment basics in view: [Cargo's build and test commands](https://doc.rust-lang.org/cargo/commands/index.html), reproducible dependency locking through [`Cargo.lock`](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html), and container or binary distribution discipline from [Docker image references](https://docs.docker.com/reference/cli/docker/image/).
+The [Blueprint SDK source](https://github.com/tangle-network/blueprint) contains the public implementation.
+The surrounding [Blueprint explanation](/blog/how-blueprints-work) describes how service definitions, operators, and consumers fit together.
 
-## Local Loop First
+The important boundary is that the definition is deployment input, not documentation added after the fact.
+If an operator needs a setting to start the service, that setting belongs in the definition or its published run instructions.
 
-Start locally. A broken local service becomes a harder broken testnet service.
+## Prove the local service before involving a network
 
-```bash
-cargo install cargo-tangle --git https://github.com/tangle-network/blueprint --force
-cargo tangle blueprint create --name my_blueprint
-cd my_blueprint
-cargo build
-cargo test
-```
+The local loop should answer five simple questions:
 
-The local loop should prove:
+- Does a clean checkout compile?
+- Do the handlers accept valid input and reject invalid input clearly?
+- Does the service definition validate?
+- Does the runner start with the settings a new operator will receive?
+- Does one known job succeed while one bad request fails safely?
 
-| Check | Pass condition |
+The SDK includes a command-line tool named `cargo-tangle` for creating and deploying Blueprint projects.
+The tool is useful only after the service itself is understandable and testable.
+Rust’s [Cargo command reference](https://doc.rust-lang.org/cargo/commands/index.html) covers the language-level build and test steps.
+
+Do not use a successful local process as evidence that an operator can run the service.
+Local machines often hide missing environment values, filesystem assumptions, open ports, and credentials.
+
+## Make the artifact identifiable
+
+An operator needs to answer three questions before starting a service:
+
+1. What am I running?
+2. Where did it come from?
+3. How can I tell that the downloaded artifact is the reviewed one?
+
+The answer can be a binary, a container image, or another published artifact.
+Whichever format you choose, publish its source, version, and integrity information together.
+An integrity value is a short fingerprint that changes when the artifact changes.
+
+Keep dependency versions locked when reproducibility matters.
+Cargo’s [lockfile documentation](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html) explains why the lockfile belongs in a deployable Rust project.
+If you distribute a container, the [Docker image reference](https://docs.docker.com/reference/cli/docker/image/) explains the image identity an operator will pull.
+
+The source repository and the installable artifact are separate boundaries.
+A public source change does not become an installable release until that release is published and tested.
+
+## Use testnet as an evidence run
+
+Testnet is not a ceremony before mainnet.
+It is the first place where the complete path meets a network, an operator, and a real service instance.
+
+The testnet run should leave evidence for each of these questions:
+
+| Test | Evidence to keep |
 | --- | --- |
-| build | Rust service compiles from a clean checkout |
-| tests | handlers and service manager logic are covered |
-| definition | metadata, jobs, sources, and integrity fields validate |
-| local run | runner starts with local settings |
-| smoke job | one known job succeeds and one bad input fails cleanly |
+| Discovery | An operator can find the registered Blueprint and understand its jobs |
+| Startup | At least one operator starts it with the published settings |
+| Success | A valid sample job completes from request to result |
+| Failure | Invalid input produces a useful error without a stuck service |
+| Observation | Logs identify the Blueprint, service instance, job, and failure reason |
+| Integrity | The running artifact matches the reviewed source, image, or binary |
 
-Do not treat the definition as documentation only. It is deployment input.
+This run is where missing environment values, incorrect ports, broken source links, and packaging assumptions become visible.
+Record the network, Blueprint identifier, artifact fingerprint, operator version, and sample-job result.
 
-## Definition And Artifact Discipline
+## Write the production envelope
 
-A Blueprint definition should be reviewable by both humans and tools:
+Before production, write down the limits under which the service is expected to work.
 
-```json
-{
-  "name": "my-blueprint",
-  "jobs": ["quote", "execute"],
-  "sources": ["container-or-binary-artifact"],
-  "integrity": "sha256:...",
-  "manager": {
-    "requiredEnv": ["RPC_URL", "SERVICE_KEY"]
-  }
-}
-```
-
-The exact schema depends on the SDK version and Blueprint shape, but the deployment principle is stable: operators need to know what they are running, where it came from, which settings are required, and how to verify the artifact.
-
-## Testnet Deployment
-
-Once the local loop is clean, deploy to Tangle testnet:
-
-```bash
-cargo tangle blueprint deploy tangle \
-  --network testnet \
-  --definition ./definition.json
-```
-
-Use testnet to prove the full system:
-
-| Testnet gate | Evidence |
+| Area | Decision to make |
 | --- | --- |
-| registration | Blueprint metadata is discoverable |
-| operator startup | at least one operator can start with documented settings |
-| job success | a valid sample job succeeds end to end |
-| error path | invalid input fails with a useful error |
-| observability | logs identify Blueprint ID, service instance, job ID, and failure reason |
-| artifact integrity | deployed artifact matches the reviewed source or image |
+| Artifact | Which immutable source, image, or binary is approved? |
+| Keys | Which keys belong to operators, and how are they separated from developer keys? |
+| Network | Which endpoints are primary, and what happens if one is unavailable? |
+| Price | How does a consumer learn the cost before sending work? |
+| Verification | What evidence is appropriate for this kind of job? |
+| Monitoring | Who receives health, error, and capacity alerts? |
+| Rollback | Which older artifact and settings can be restored? |
+| Incident response | What happens if payment succeeds but execution fails? |
 
-Testnet is where you catch packaging mistakes, missing env vars, bad source URLs, wrong ports, and operator setup drift.
+Paid services need a payment decision before they go live.
+The [x402 payment guide](/blog/x402-payments-for-ai-agents) explains the request-and-payment flow.
+Services that handle private data or require trusted hardware need an additional security decision.
 
-## Production Checklist
+## Promote only when the return path works
 
-Before mainnet, write the operating envelope.
+Promotion means moving from a tested network to a production network.
+The safe question is not whether the deployment succeeded once.
+It is whether the team can observe a failure and return to a known working artifact.
 
-| Area | Production requirement |
-| --- | --- |
-| artifact | immutable source, image, or binary with integrity metadata |
-| keys | operator keys separated from developer keys |
-| RPC | stable endpoints and fallback behavior |
-| pricing | clear job pricing, quote path, or x402 challenge |
-| verification | mechanism appropriate to the job type |
-| monitoring | health checks, logs, metrics, and alert ownership |
-| rollback | known downgrade or redeploy path |
-| incident path | what happens when a job fails after payment or partial execution |
+Promote only when the testnet run, operator instructions, artifact identity, monitoring, and rollback have all been exercised.
+Treat payments, private data, trusted execution, and penalties for bad work as separate risk areas rather than one large “production ready” label.
 
-For paid services, connect deployment with [x402 payments for AI agents](/blog/x402-payments-for-ai-agents) and [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). For agent services, read [How To Deploy A Paid AI Agent Service](/blog/deploy-paid-ai-agent-service).
+## Keep the release boundary visible
 
-## Promotion Rule
+The SDK source is public, but a source change and an installable package can arrive at different times.
+Check the package version and the network deployment separately.
 
-Mainnet should follow evidence, not ceremony. Promote only after successful testnet jobs, operator runbooks, artifact integrity checks, and rollback proof.
+The same distinction applies to documentation.
+This guide describes a deployment pattern.
+The [Tangle verification model](/blog/how-tangle-verifies-work) describes what the network can verify after a job.
+Neither page makes a claim about a particular operator’s uptime or a particular service’s correctness without evidence from that service.
 
-That is especially true for services with payments, private data, trusted execution environments, or slashing exposure. Those systems need separate gates because failure can cost money, leak data, or damage operator reputation.
+## The practical decision
 
-## What To Automate
+Use this path when several operators need to run the same service and consumers need to discover and call it consistently.
 
-Automate checks that prevent bad deploys:
+Keep the service private or single-operator when you cannot yet publish an artifact, operator instructions, monitoring ownership, and rollback evidence.
+Publishing a definition before those pieces exist creates a service that others can discover but cannot operate reliably.
 
-```bash
-cargo build --locked
-cargo test
-cargo tangle blueprint deploy tangle --network testnet --definition ./definition.json
-```
+The next useful action is one isolated testnet job with a recorded artifact fingerprint and a documented failure path.
 
-If your SDK release exposes a separate definition validation command, run it before testnet deployment. The automation intent is stable: build, test, validate the definition, deploy to testnet, run a smoke job, and record evidence.
+## Questions readers usually ask
 
-Record the deployed Blueprint ID, network, artifact hash, git commit, operator version, and smoke job result.
+### What does Blueprint deployment add to a normal API deployment?
 
-## FAQ
-
-### What is Blueprint SDK deployment?
-
-Blueprint SDK deployment is the process of publishing a Blueprint service definition, making its artifact available, registering it on Tangle, and proving operators can run it.
-
-### What does cargo-tangle do?
-
-`cargo-tangle` is the CLI used to create Blueprint projects, validate definitions, and deploy Blueprint definitions to Tangle networks.
-
-### Should I deploy to testnet before mainnet?
-
-Yes. Testnet proves registration, operator startup, job execution, logs, and failure behavior before production users or payments depend on the service.
+A normal API is often run by one team.
+A Blueprint is a service definition that independent operators can register for and run under Tangle’s network rules.
+That makes the operator-facing definition and evidence part of the product.
 
 ### What belongs in a Blueprint definition?
 
-It should describe metadata, jobs, artifact sources, manager settings, and integrity information for the deployed service.
+It should describe the service metadata, jobs, artifact source, required settings, and integrity information needed to run the service.
 
-### How is this different from deploying a normal API?
+### Why deploy to testnet first?
 
-A normal API is usually operated by one team. A Blueprint is a service definition that independent operators can register for and run under Tangle's protocol rules.
+Testnet exposes registration, startup, job execution, logs, and failure behavior before users or payments depend on the service.
+
+### What should I record from the first deployment?
+
+Record the network, Blueprint identifier, artifact fingerprint, operator version, successful sample-job result, and one intentional failure.
+
+## Public sources
+
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the public source for the implementation.
+The [Cargo documentation](https://doc.rust-lang.org/cargo/commands/index.html) covers Rust build and test behavior.
+The [Docker image reference](https://docs.docker.com/reference/cli/docker/image/) covers container identity.
