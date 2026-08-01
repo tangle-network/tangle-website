@@ -3,17 +3,15 @@
 This is a deterministic triage of 85 posts using the [blog quality rubric](https://github.com/tangle-network/dotfiles/blob/main/docs/rubrics/blog-quality.md).
 It is not a semantic approval; every hard reject requires a human rewrite review.
 
-- Hard rejects: 26
-- Repository-debris findings: 24
+- Hard rejects: 24
+- Repository-debris findings: 22
 - Missing reader problem: 0
 - Missing reader decision: 2
 
 ## Priority order
 
-- 30/40 — Agent Intent Infrastructure — [How To Deploy A Paid AI Agent Service](/blog/deploy-paid-ai-agent-service) — repository-debris
 - 30/40 — x402 Production Runway — [Remote Providers, Direct Runtimes, and Where Payment-Native Ingress Belongs in Deployment Architecture](/blog/blueprint-deployment-architecture-remote-providers) — manual review
 - 30/40 — the-self-improving-stack — [Self-Improvement Needs A Safety Case](/blog/self-improving-stack-governance) — no-reader-decision
-- 31/40 — Agent Intent Infrastructure — [Agent Runtime Environments](/blog/agent-runtime-environments) — repository-debris
 - 31/40 — Tangle Protocol — [AI Service Marketplace Crypto Payments](/blog/ai-service-marketplace-crypto-payments) — manual review
 - 31/40 — Agent Intent Infrastructure — [How AI Agents Discover Products](/blog/how-ai-agents-discover-products) — repository-debris
 - 31/40 — Tangle Re-Introduction — [How Blueprints Work](/blog/how-blueprints-work) — manual review
@@ -78,6 +76,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — Building an AI Tax Agent — [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns) — manual review
 - 34/40 — Building an AI Tax Agent — [Controlled Foreign Corporation Taxes And Form 5471](/blog/controlled-foreign-corporation-taxes-form-5471) — manual review
 - 34/40 — Browser Agent — [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent) — repository-debris
+- 34/40 — Agent Intent Infrastructure — [Deploying a Paid AI Agent Service: Start With One Traceable Job](/blog/deploy-paid-ai-agent-service) — manual review
 - 34/40 — Standalone — [Distributed Training with 10,000x Communication Reduction](/blog/distributed-training-demo) — repository-debris
 - 34/40 — x402 Production Runway — [How a Paid HTTP Request Becomes a Tangle Job](/blog/blueprint-sdk-x402-payments-runnable-jobs) — manual review
 - 34/40 — Building an AI Tax Agent — [K-1 Tax Filing For Multiple Entities](/blog/k-1-tax-filing-multiple-entities) — manual review
@@ -94,6 +93,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — the-self-improving-stack — [Skills Are Trainable State](/blog/self-improving-stack-skill-optimization) — manual review
 - 34/40 — Agent Intent Infrastructure — [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use) — repository-debris
 - 34/40 — x402 Production Runway — [The Signals That Keep Your Blueprint Operator Online](/blog/operator-operations-guide-metrics-quotes-health) — repository-debris
+- 34/40 — Agent Intent Infrastructure — [What an AI Agent Needs Beyond a Model](/blog/agent-runtime-environments) — manual review
 - 34/40 — the-self-improving-stack — [When an Agent Needs More Than a Prompt](/blog/self-improving-stack-agent-runtime-topology) — manual review
 
 ## Per-post evidence
@@ -131,16 +131,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 1808 words, 9 headings, 0 code blocks, 0 external links, 2 internal links
 - Opening: Developers increasingly hand integration work to coding agents. The agent reads your docs, writes the client, runs it, and reports back. When that works, you gain a customer without a single human reading your documentation. When it fails, you lose one the same way: silently.
 
-### Agent Runtime Environments
+### What an AI Agent Needs Beyond a Model
 
 - File: src/content/blog/agent-runtime-environments.mdx
 - Series: Agent Intent Infrastructure
-- Triage score: 31/40
-- Hard rejects: repository-debris
-- Native terms in opening: blueprint, trace, x402
-- Repository debris: detected
-- Shape: 638 words, 11 headings, 1 code blocks, 8 external links, 5 internal links
-- Opening: An agent runtime environment is the system around a model that lets an autonomous agent observe state, take actions, recover from failure, spend money under policy, and return evidence. The minimum runtime is not one LLM call. It is model routing, sandboxed execution, browser control, tool credentials, memory or knowledge, traces, evaluation gates, payment rails, and human review boundaries. Tangle splits that runtime into Router, Sandbox, Browser Agent, Blueprint services, x402, and verification surfaces.
+- Triage score: 34/40
+- Hard rejects: none detected
+- Native terms in opening: none detected
+- Repository debris: none detected
+- Shape: 1074 words, 12 headings, 0 code blocks, 1 external links, 4 internal links
+- Opening: A model can write a response from text. An agent must do more: inspect state, use tools, change files, wait for results, recover from failure, and show what happened.
 
 ### Removing a Second Agent Path Without Hiding the Losses
 
@@ -538,16 +538,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 749 words, 12 headings, 2 code blocks, 4 external links, 3 internal links
 - Opening: DeFi wallet testing is painful because the important state is split between the web app, the wallet extension, the chain, and the user's signature intent. A normal browser script can click through the page and still miss the wallet prompt that matters. A browser agent has to cross that boundary and keep evidence from both sides.
 
-### How To Deploy A Paid AI Agent Service
+### Deploying a Paid AI Agent Service: Start With One Traceable Job
 
 - File: src/content/blog/deploy-paid-ai-agent-service.mdx
 - Series: Agent Intent Infrastructure
-- Triage score: 30/40
-- Hard rejects: repository-debris
-- Native terms in opening: agent runtime, blueprint, operator, x402
-- Repository debris: detected
-- Shape: 601 words, 11 headings, 1 code blocks, 8 external links, 3 internal links
-- Opening: To deploy a paid AI agent service, expose a stable API, publish discovery metadata, route model and tool calls, attach auth, add x402 or another payment path, verify operator health, and record enough evidence to debug failures. In Tangle, the natural path is Blueprint Agent for the service workbench, Router for model calls, Sandbox for agent execution, and x402 for per-request payment. The launch question is not "does the endpoint respond?" It is "can a buyer pay, invoke, verify, retry, and trust the result?"
+- Triage score: 34/40
+- Hard rejects: none detected
+- Native terms in opening: none detected
+- Repository debris: none detected
+- Shape: 1114 words, 13 headings, 0 code blocks, 4 external links, 2 internal links
+- Opening: A paid AI service has two promises to keep. It must accept a payment correctly, and it must do work that the buyer can understand and review.
 
 ### Developer Onboarding Platform With Code Proof
 
