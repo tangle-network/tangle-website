@@ -1,8 +1,8 @@
 ---
-title: 'On-Chain RFQ for Compute: How Job Quotes, Verification, and Slashing Work'
+title: 'On-Chain Compute Quotes: How Tangle Makes a Promise Checkable'
 slug: on-chain-rfq-job-quotes-verification-slashing
 summary: >-
-  Tangle's Blueprint SDK turns pricing into cryptographic commitments, layers verification mechanisms per job type, and backs everything with real economic consequences. Here's how the pieces fit together.
+  A plain-language explanation of Tangle’s request-for-quote flow, result checks, and financial penalties for operators that fail to deliver.
 date: '2026-03-24'
 author: Drew Stone
 tags:
@@ -11,249 +11,191 @@ tags:
   - verification
   - slashing
   - eigenlayer
-  - decentralized-compute
   - rfq
 series: x402 Production Runway
 seriesOrder: 5
 coverImage: /images/covers/on-chain-rfq-job-quotes-verification-slashing.png
 heroImage: /images/covers/on-chain-rfq-job-quotes-verification-slashing.png
-imageAlt: 'On-Chain RFQ for Compute: How Job Quotes, Verification, and Slashing Work'
+imageAlt: 'A compute request moving from a signed quote through result checks to settlement'
 ---
 
-## A Real RFQ Protocol for Compute
+When a company buys compute from an unknown operator, the price is only half the problem.
+The buyer also needs to know what was promised, whether the work happened, and what happens when the result is wrong.
 
-Most compute marketplaces work on reputation and hope. You pick a provider, they quote you a price, you send payment, and you trust that what comes back is correct. If the provider runs your ML inference on a cheaper GPU, serves stale results from a cache, or quietly degrades quality during peak load, you probably won't know. The provider keeps your money either way.
+An **RFQ**, or request for quote, is a process where a buyer asks for a price and an operator returns a time-limited offer.
+An **operator** is the person or team providing the machine and doing the work.
+A **consumer** is the person or application paying for the job.
 
-On-chain RFQ (Request for Quote) protocols solve this by enforcing accountability at three layers. Quotes become EIP-712 cryptographic commitments: signed structs with price, expiry, and job parameters that are tamper-proof, time-bounded to 5 minutes, and single-use once submitted on-chain. Results pass through composable verification: redundant multi-operator execution with quorum agreement, on-chain correctness hooks, TEE hardware attestation, and domain-specific checks like canary prompts for AI inference. Operators stake collateral (for example, $50,000) that gets algorithmically slashed when verification fails, making cheating unprofitable whenever `P(detection) x slash_amount` exceeds the profit from cutting corners.
+Tangle adds three checks to that ordinary exchange:
 
-Tangle's Blueprint SDK implements this full pipeline. Prices aren't posted on a dashboard; they're signed and verified on-chain. Results aren't accepted on faith; they're checked through mechanisms that blueprint developers wire in declaratively. And when operators don't deliver what they promised, they lose real money from their staked collateral. The penalty is financial loss enforced by smart contracts, not a bad review or a platform ban.
+1. the price is a signed promise that can be checked later
+2. the result can be checked with a mechanism chosen for the job
+3. an operator can lose staked collateral when the agreed failure condition is proven
 
-This post breaks down how all three layers work: the RFQ protocol, verification, and slashing. The design decisions at each layer solve real problems that simpler approaches get wrong.
+Signed quotes, job-specific checks, and staked collateral address different risks.
+No one mechanism independently verifies every computation, so the promise, evidence, and consequence must stay explicit enough for a consumer to choose a risk level.
 
-![RFQ-to-Settlement Pipeline: from signed quotes through verification to slashing](/images/blog/on-chain-rfq-job-quotes-verification-slashing/rfq-pipeline-flow.png)
+This post explains the design and its limits.
+The [Blueprint explanation](/blog/how-blueprints-work) introduces the service model, and the [Tangle verification overview](/blog/how-tangle-verifies-work) describes the wider result-checking system.
 
-## The RFQ Protocol: Two Quoting Modes
+## Two different things need a price
 
-Traditional RFQ workflows follow a pattern: buyer requests a quote, seller returns a binding price, buyer accepts. On-chain RFQ protocols add cryptographic binding to this flow, making every quote independently verifiable before the buyer commits money. Tangle implements two distinct RFQ modes, and understanding why they're separate matters.
+Tangle describes two quote types because a long-running service and one job ask different pricing questions.
 
-### Service Creation Quotes: Resource-Based Pricing
+| Quote type | What it prices | Example |
+| --- | --- | --- |
+| Service quote | Keeping resources reserved for a period | A GPU service running for a defined lifetime |
+| Job quote | One unit of work on an existing service | One inference or data-processing request |
 
-When a consumer wants to spin up an entire service instance (a long-running deployment with a defined TTL), they request a quote via `GetPrice`. The operator's pricing engine computes cost from hardware benchmarks multiplied by configured resource rates.
+A service quote can use resource rates for CPU, memory, GPU time, and duration.
+A job quote can be a direct price for a particular job on an already-running service.
 
-The formula is concrete. Here's what the operator configures:
+The distinction prevents a common mistake: treating “how much does it cost to keep this capacity available?” and “how much does this computation cost?” as the same number.
 
-```toml
-# default_pricing.toml
-[default]
-resources = [
-  { kind = "CPU", count = 1, price_per_unit_rate = 0.001 },
-  { kind = "MemoryMB", count = 1024, price_per_unit_rate = 0.00005 },
-  { kind = "GPU", count = 1, price_per_unit_rate = 0.005 },
-]
-```
+## A quote is more than a dashboard number
 
-And here's what happens with real numbers: 4 CPU cores at $0.001/core/sec, running for 600 blocks at 6 seconds per block, comes out to $14.40. USD prices get scaled to on-chain units via a 10^9 factor, so $1 becomes 1,000,000,000 on-chain units. The consumer submits this on-chain via `createServiceFromQuotes(blueprintId, [signedQuotes], config, callers, ttl)`.
+The quote is signed with [EIP-712](https://eips.ethereum.org/EIPS/eip-712), a standard format for signing structured data on Ethereum-compatible networks.
+The signed data includes the service, job, price, creation time, and expiry.
 
-### Per-Job Quotes: Operator-Determined Pricing
+The signature binds the operator to those fields.
+Changing the price, job, chain, or receiving contract breaks the signature.
+The default quote lifetime in the source described by this article is 300 seconds, with a one-hour maximum age.
+After submission, the on-chain record marks the quote as consumed so the same offer cannot be used twice.
 
-The second mode is simpler but has a different purpose. When a consumer wants to execute a single job on an existing service, they request a `GetJobPrice` quote. This isn't computed from resource rates. It's a lookup table the operator maintains:
+That gives the consumer four properties to check:
 
-```toml
-# job_pricing.toml
-[1]
-0 = "1000000000000000"       # Job 0: 0.001 ETH
-7 = "250000000000000000"     # Job 7: 0.25 ETH
-```
+| Property | Why it matters |
+| --- | --- |
+| Signed fields | The operator cannot change the offer after the consumer accepts it |
+| Expiry | A consumer cannot hold an old price forever |
+| Chain and contract binding | A quote for one network cannot be replayed on another |
+| Single use | A settled quote cannot pay for two jobs |
 
-Prices are in wei because these quotes go directly on-chain in native currency. No conversion layer, no oracle dependency. The consumer submits via `submitJobFromQuote(serviceId, jobIndex, inputs, [signedQuotes])`.
+This is the difference between “the price endpoint says $X” and “the price is a signed offer with a clear lifetime.”
 
-### Why Two RFQ Modes Matter
+## Stablecoins need a second conversion
 
-The distinction isn't arbitrary. Service quotes price *infrastructure*: how much does it cost to keep these resources allocated for this duration? Job quotes price *work*: how much does this specific computation cost to execute? An operator running a GPU cluster might charge $50/hour for the service but $0.01 per inference job. These are fundamentally different pricing questions with different cost structures.
+Some operators quote in the chain’s native currency but accept a stablecoin through the [x402 payment path](/blog/blueprint-sdk-x402-payments-runnable-jobs).
+The gateway converts the quote using the native-currency exchange rate, any operator markup, and the token’s decimal precision.
 
-### Cryptographic Quote Binding
+For example, a 0.25 ETH quote at 3,200 USDC per ETH with a 0.5% markup becomes 804 USDC.
+That example is arithmetic, not a market forecast.
+The operator still needs a policy for how often the rate changes and what happens when the rate source is unavailable.
 
-Here's where on-chain RFQ diverges from traditional quoting. Both quote types use [EIP-712 typed signatures](https://eips.ethereum.org/EIPS/eip-712), the same standard used for typed data signing across Ethereum. A job quote signature covers this struct:
+Keeping the quote and its fingerprint together lets the consumer verify that the payment covered the exact amount offered.
 
-```rust
-JobQuoteDetails {
-    service_id: uint64,
-    job_index: uint8,
-    price: uint256,
-    timestamp: uint64,
-    expiry: uint64,
-}
-```
+## Results need a job-specific check
 
-The domain separator pins the signature to `name: "TangleQuote"`, `version: "1"`, the specific chain ID, and the verifying contract address. This means a quote signed for testnet can't be replayed on mainnet. A quote for one contract can't be submitted to another.
+No single result check works for every computation.
+The SDK describes several mechanisms, and each proves a different property.
 
-Default validity is 300 seconds, and there's a hard on-chain `maxQuoteAge` limit of 1 hour. After submission, each quote digest gets marked as consumed on-chain, which prevents replay.
+| Mechanism | What it can show | Main limitation |
+| --- | --- | --- |
+| Repeated execution | Several operators produced the same result | Non-deterministic work may disagree even when everyone is honest |
+| Cheap correctness check | A small check accepted or rejected an expensive result | Only works when checking is much cheaper than doing the work |
+| Hardware attestation | Approved code ran inside a protected environment | It proves code identity, not that the code is correct |
+| AI-specific checks | Model identity or behavior matches selected checks | A canary can miss a sophisticated substitution or quality problem |
+| Combined checks | Several independent signals agree | More operators and checks increase cost and complexity |
 
-This is what makes dynamic pricing safe in a trustless environment. An operator can update prices every minute without worrying that a consumer will hoard old quotes. Every quote is tamper-proof (the signature breaks if any field changes), time-bounded (expires after 5 minutes by default), and single-use (the digest gets burned on submission). Compare this to a traditional API where "pricing" means trusting whatever the server's `/pricing` endpoint returns right now.
+**Attestation** is a signed statement from protected hardware about the code that ran.
+A **canary** is a known test input used to see whether a model behaves as expected.
 
-Signing a quote in code looks like this:
+The source review did not find cheap on-chain correctness hooks on every Blueprint.
+Check the current release before depending on that mechanism for a specific job.
 
-```rust
-use blueprint_tangle_extra::job_quote::{JobQuoteSigner, JobQuoteDetails, QuoteSigningDomain};
+## Financial penalties make cheating expensive
 
-let signer = JobQuoteSigner::new(keypair, QuoteSigningDomain { chain_id, verifying_contract });
-let signed = signer.sign(&JobQuoteDetails {
-    service_id: 1,
-    job_index: 7u8,
-    price: U256::from(250_000_000_000_000_000u64), // 0.25 ETH
-    timestamp: now,
-    expiry: now + 3600,
-});
-```
+An operator can stake collateral before accepting work.
+If the agreed checking process proves a slashable failure, the protocol can reduce that collateral.
+This is called **slashing**.
 
-### Anti-Abuse on the RFQ Channel
+The deterrence condition is simple: the expected loss from being caught must exceed the profit from cutting corners.
 
-Quote requests themselves are gated by a SHA-256 proof-of-work challenge: 20 leading zero bits, roughly a million hashes. On commodity hardware that takes less than a second, but it makes flooding an operator's gRPC endpoint with junk requests expensive. The timestamp has a +/-30 second tolerance window that prevents pre-computing challenges in advance.
+For example, suppose an operator could save $5,000 by running a cheaper model.
+If the chance of detection is 80% and the stake at risk is $50,000, the expected loss is $40,000.
+That makes the shortcut a bad financial bet under those assumptions.
 
-## When Quotes Become Payments: The Token Conversion Pipeline
+This is an illustrative calculation, not a measured security guarantee.
+The real result depends on detection quality, stake size, false positives, and whether the operator behaves rationally.
 
-For operators accepting stablecoin payments (common in the x402 flow), quoted wei amounts need to convert to token amounts. This four-step pipeline uses `rust_decimal` throughout, with zero floating-point arithmetic:
+## Two speeds of penalty
 
-1. **Wei to native units:** divide by 10^18
-2. **Native to token amount:** multiply by a configured `rate_per_native_unit`
-3. **Apply markup:** multiply by `(1 + markup_bps / 10000)`
-4. **Convert to smallest token units:** multiply by `10^decimals`, floor the result
+The source describes two ways to execute a penalty:
 
-Concrete example: 0.25 ETH at a rate of 3200 USDC/ETH with 50 basis points markup gives you `0.25 x 3200 x 1.005 x 10^6 = 804,000,000 micro-USDC`.
+| Mode | What happens | Why it exists |
+| --- | --- | --- |
+| Immediate | The penalty executes in the same transaction that proves the failure | Strong deterrence when the checking rule is mature and well-audited |
+| Reviewable | The penalty waits through a veto period | Human review can stop a false positive in a newer or more complex Blueprint |
 
-One deliberate design tradeoff here: exchange rates are static operator config, not oracle-fed. No oracle dependency means no oracle manipulation risk and no extra gas cost, but operators need to manage their own rate refresh. For operators processing high volume, this is a knob they'll want to automate externally.
+A new Blueprint may need the reviewable mode while its checking rules collect evidence.
+Moving to immediate penalties should be a separate decision based on false-positive history and audit quality.
 
-## Result Verification: Composable Mechanisms per Job Type
+The penalty monitor also needs to report whether collateral is already at risk.
+That is operational information for the operator, not proof that every job result is correct.
 
-A consumer paid for a computation. How do they know the result is correct? Rather than picking one verification strategy and forcing it on every workload, an on-chain RFQ system can provide composable verification, where blueprint developers choose the mechanisms that match their job type. Tangle's Blueprint SDK implements five such mechanisms.
+## The complete flow
 
-### Redundant Execution
+The request-to-result sequence is:
 
-The simplest approach: have N operators run the same job independently, then compare results. The router configuration maps each job ID to a handler with a `TangleLayer`, and you can set different aggregation quorums per job:
+1. A consumer requests a service or job quote.
+2. The operator returns a signed offer with a price and expiry.
+3. The consumer checks the signature and submits the quote with payment.
+4. The on-chain contract rejects an expired or already-consumed offer.
+5. The operator performs the work after settlement.
+6. The job’s chosen checking mechanism evaluates the result.
+7. A proven slashable failure can reduce the operator’s stake.
 
-```rust
-pub const XSQUARE_JOB_ID: u8 = 0;              // Single operator
-pub const VERIFIED_XSQUARE_JOB_ID: u8 = 1;     // 2 operators must agree
-pub const CONSENSUS_XSQUARE_JOB_ID: u8 = 2;    // 3 operators (BFT quorum)
+Each layer handles a different failure.
+The signature prevents price changes.
+The expiry and single-use record prevent replay.
+The result check tests the work.
+The stake makes a proven failure costly.
 
-Router::new()
-    .route(XSQUARE_JOB_ID, square.layer(TangleLayer))
-    .route(VERIFIED_XSQUARE_JOB_ID, verified_square.layer(TangleLayer))
-    .route(CONSENSUS_XSQUARE_JOB_ID, consensus_square.layer(TangleLayer))
-```
+None of those layers makes a vague job specification safe.
+The consumer still needs to define what counts as a correct result before asking for a quote.
 
-This works well for deterministic computations. If all three operators run the same function on the same input and two return `49` while one returns `50`, you have a clear disagreement signal.
+## The practical decision
 
-### On-Chain Verification Hooks
+Use signed on-chain quotes when price changes, replay, and operator accountability matter enough to justify the transaction and operational complexity.
 
-For jobs where correctness is cheaply checkable (even if the computation itself is expensive), blueprint developers can register on-chain verification hooks. The design is a Rust function that receives the job input and output and returns a verdict — valid, or invalid with a slash flag. The SDK would wire the hook into the verification pipeline and route `invalid + slash` results to the slashing contracts.
+Choose the result check from the job’s properties.
+Use repeated execution for deterministic work, hardware evidence for confidentiality and code identity, and a cheap correctness check when one exists.
+Do not use a TEE report as proof of output quality.
+Do not use a stake amount as proof that a checking mechanism catches failures.
 
-This mechanism is on the Blueprint SDK roadmap. The concept works for any asymmetric problem: factoring a large number is expensive, multiplying two primes to check the result is cheap. Training a model is expensive, running inference on a known test set to check accuracy is cheap. The `slash: true` path means this isn't a "try again" signal — it's a "you lied and you're going to pay for it" signal.
+Start with one job, one quote type, one explicit success condition, and a reviewable penalty.
+Add more mechanisms only when the first one produces evidence you can inspect.
 
-This pattern works for any computation where verification is cheaper than execution. Factoring a large number is expensive; multiplying two primes to check the result is cheap. Training a model is expensive; running inference on a known test set to check accuracy is cheap.
+## Questions readers usually ask
 
-### TEE Attestation
+### Can an operator change a price after I receive a quote?
 
-For confidential workloads, hardware-level attestation (Intel SGX, AMD SEV-SNP) provides cryptographic proof signed by the chip manufacturer that specific code is running in an enclave. This proves code identity and guarantees the operator can't observe the computation.
+Not without invalidating the signature.
+The signed price remains valid until its expiry, and the consumed record prevents reuse after submission.
 
-Important caveat: TEE attestation proves *what code ran*, not *that the code is correct*. It's a complement to other verification mechanisms, not a replacement.
+### What if operators disagree?
 
-### AI Inference Verification
+The job’s result rule decides what happens.
+A quorum can accept matching results, but non-deterministic work needs a different criterion or a human review path.
 
-Model serving has a specific attack vector: model substitution. An operator advertises GPT-4-class inference but actually runs a cheaper model. Tangle's approach combines weight hash verification (proving which model file loaded), challenge prompts (canary inputs with known-good outputs), latency fingerprinting (smaller models respond faster), and token probability extraction.
+### Does staking guarantee honest work?
 
-### Verification Mechanism Comparison
+No.
+It gives the system a financial consequence when a checking mechanism proves a failure.
+It does not improve a weak checking mechanism.
 
-| Mechanism | What it proves | Failure mode | Best for |
-|---|---|---|---|
-| Redundant execution | Result consistency across operators | Non-deterministic outputs produce false disagreements | Deterministic compute (math, compilation, hashing) |
-| On-chain verify hooks | Output correctness (cheaply checkable) | Only works when verification cost is much less than execution cost | Asymmetric problems (factoring, optimization, search) |
-| TEE attestation | Code identity and confidentiality | Hardware compromise; proves code identity, not correctness | Confidential workloads, private data processing |
-| AI inference checks | Model identity and output quality | Sophisticated operators can detect and special-case canaries | ML model serving, LLM inference |
-| Redundant + verify (combined) | Consistency *and* correctness | Higher cost from running multiple operators | High-value deterministic jobs |
+### Is every checking mechanism already available?
 
-### Why Layering Matters
+No.
+The source describes some mechanisms as shipped integrations and others as future work.
+Check the Blueprint and package version before depending on a specific path.
 
-No single mechanism covers every case. Redundant execution doesn't work for non-deterministic workloads. On-chain verification doesn't work if correctness isn't cheaply checkable. TEE attestation doesn't cover result quality. AI-specific checks don't apply to general compute.
+### Why not rely on reputation?
 
-By providing these as composable building blocks, blueprint developers pick the right combination for their specific workload. A deterministic math service might use redundant execution plus an on-chain verify hook. A confidential ML inference service might combine TEE attestation with canary prompts. The mechanisms stack.
+Reputation can inform a choice, but it does not bind a signed price, prevent replay, or automatically return value when a proven failure occurs.
 
-## Economics as the Universal Backstop
+## Public sources
 
-Every verification mechanism has failure modes. Redundant execution fails for non-deterministic outputs. TEE attestation fails if the hardware is compromised. Canary prompts fail if the operator detects and special-cases them.
-
-Economics is the catch-all: make cheating unprofitable regardless of the specific detection mechanism.
-
-The equation is straightforward:
-
-![Economic Security Condition: P(detection) x slash_amount > profit_from_cheating](/images/blog/on-chain-rfq-job-quotes-verification-slashing/economic-security.png)
-
-With real numbers: suppose an operator could save $5,000 by running a cheaper model. If the detection probability is 80% and their stake is $50,000, the expected loss from cheating is `0.80 x $50,000 = $40,000`. The expected gain from going undetected is `0.20 x $5,000 = $1,000`. A rational operator won't take that bet.
-
-### How This Compares to Other Accountability Models
-
-Stake-based slashing isn't the only approach to operator accountability, and each alternative makes different tradeoffs. Reputation systems (used by most centralized cloud marketplaces) are cheap and simple, but a malicious operator can build reputation with honest behavior and exploit it later, and reputation scores aren't enforceable on-chain. Escrow models hold payment until delivery confirmation, but they require a trusted arbiter to resolve disputes and don't impose penalties beyond withholding payment, so the operator's downside is capped at the job revenue. Optimistic fraud proofs (used by Optimism and Arbitrum for rollup verification) assume results are correct unless challenged within a window, which is gas-efficient, but detection depends entirely on external watchers submitting challenges in time. Stake-based slashing is more capital-intensive for operators, but it provides the strongest deterrent: the penalty for cheating scales with the operator's total stake rather than the value of one job.
-
-The combination of technical verification and economic enforcement is more robust than either alone. The known gaps: irrational actors might cheat anyway (which is why verification mechanisms exist as the first line of defense), and subtle quality degradation (serving a slightly worse model, returning slightly stale results) might lower `P(detection)` enough to shift the equation.
-
-### When Operators Don't Deliver: Two Speeds of Slashing
-
-When an on-chain RFQ system detects that an operator failed to deliver against their quoted commitment, the response needs to be proportionate to the system's maturity. Tangle integrates with EigenLayer's slashing infrastructure, which provides two slashing execution models.
-
-### Instant slashing
-
-Immediate execution, no delay, no veto. When the slashing condition triggers, `AllocationManager.slashOperator()` cuts the operator's stake in the same transaction. Maximum deterrence. Appropriate for mature blueprints with well-understood slashing conditions where the verification logic has been thoroughly audited and false positives are unlikely.
-
-### Vetoable slashing
-
-Queued execution with a configurable veto window. A designated veto committee can cancel during the window before slashing executes. This exists because newer blueprints might have bugs in their verification logic. A false positive triggering an instant slash of $50,000 would be catastrophic. The veto window gives humans a chance to review before collateral gets destroyed.
-
-The progression from vetoable to instant slashing maps to trust accumulation. A new blueprint starts with veto protection. As the verification logic proves itself over months of operation without false positives, the blueprint can migrate to instant slashing for stronger deterrence.
-
-### Runtime Monitoring
-
-The `SlashingMonitor` component polls every 5 minutes, checking `is_operator_slashed()` and logging `CRITICAL: Operator has been slashed!` on detection. It can also query `getSlashableSharesInQueue(operator, strategy)` to show collateral currently at risk. Deregistered operators get treated as potentially slashed.
-
-### The x402 Timing Detail
-
-In the x402 payment flow, settlement happens *before* execution via `.settle_before_execution()`. The operator gets paid, then does the work. This means if the operator fails to deliver, the consumer has already paid. The slashing mechanism is what makes this safe: the operator's staked collateral is worth far more than any single job payment, so failing to deliver after collecting payment is a losing strategy.
-
-## The Full RFQ-to-Settlement Pipeline
-
-Start to finish, here's how the system flows:
-
-1. Consumer requests a quote via the RFQ protocol. The operator's pricing engine returns a signed EIP-712 commitment with a 5-minute expiry.
-2. Consumer verifies the signature independently, confirms the price, and submits the quote on-chain with payment.
-3. The on-chain contract checks the signature, confirms the quote isn't expired or replayed, and marks the digest as consumed.
-4. The operator executes the job. Settlement happened before execution; the operator already has the payment.
-5. Verification kicks in: redundant execution compares results across operators, verify hooks check correctness on-chain, TEE attestation confirms code identity, or domain-specific checks (canaries, weight hashes) validate quality.
-6. If verification fails, the verification hook returns an invalid verdict with a slash flag, triggering the slashing contract.
-7. The slashing contract (instant or vetoable) reduces the operator's staked collateral.
-
-Each layer reinforces the others. Cryptographic quotes prevent price manipulation. Settlement-before-execution prevents operators from doing free work. Verification catches incorrect results. Slashing makes incorrect results expensive. And the `P(detection) x slash_amount > profit` equation is what makes the whole system safe to use without trusting any individual operator.
-
-## FAQ
-
-### Can an operator change their prices after I've received a quote?
-
-Your quote is locked. It's a signed commitment with a fixed price and expiry. The operator can update their pricing config every second; your quote remains valid at the agreed price until it expires. Once submitted on-chain, the digest is marked as consumed, preventing reuse by anyone.
-
-### What happens if operators disagree during redundant execution?
-
-The quorum configuration determines the outcome. In a 2-of-3 setup, two matching results win and the dissenting operator's result is flagged. The disagreement signal can feed into the slashing pipeline, though the specifics of dispute resolution for edge cases are still being formalized in the protocol.
-
-### Why are exchange rates static config instead of oracle-fed?
-
-Static rates eliminate oracle manipulation risk, extra gas costs, and dependency on third-party infrastructure. The tradeoff is that operators need to refresh rates themselves. For high-volume operators, this likely means an external automation script updating the config periodically.
-
-### If the operator gets paid before doing the work, what protects the consumer?
-
-The operator's staked collateral, which dwarfs any single job payment. An operator with $50,000 staked isn't going to pocket a $0.25 job payment and skip execution, because failing verification triggers a slash worth orders of magnitude more. The stake-to-payment ratio is what makes settlement-before-execution safe.
-
-### Can I use multiple verification mechanisms on the same job?
-
-Yes, and they compose additively. A confidential ML inference blueprint might use TEE attestation (proving the right model loaded in an enclave), canary prompts (checking output quality), and redundant execution (comparing results across operators). Each mechanism covers different failure modes, reducing the overall probability that a bad result goes undetected.
-
----
-
-**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)
+The [EIP-712 standard](https://eips.ethereum.org/EIPS/eip-712) defines the signed-data format.
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) contains the public implementation.
+The [x402 payment post](/blog/blueprint-sdk-x402-payments-runnable-jobs) explains the payment-to-job path.

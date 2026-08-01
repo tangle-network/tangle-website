@@ -10,9 +10,6 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 
 ## Priority order
 
-- 29/40 — x402 Production Runway — [On-Chain RFQ for Compute: How Job Quotes, Verification, and Slashing Work](/blog/on-chain-rfq-job-quotes-verification-slashing) — manual review
-- 29/40 — the-self-improving-stack — [Topology Is The Missing Action Space](/blog/self-improving-stack-agent-runtime-topology) — manual review
-- 30/40 — Tangle Re-Introduction — [Building AI Services on Tangle](/blog/building-ai-services-on-tangle) — manual review
 - 30/40 — Agent Intent Infrastructure — [How To Deploy A Paid AI Agent Service](/blog/deploy-paid-ai-agent-service) — repository-debris
 - 30/40 — x402 Production Runway — [Remote Providers, Direct Runtimes, and Where Payment-Native Ingress Belongs in Deployment Architecture](/blog/blueprint-deployment-architecture-remote-providers) — manual review
 - 30/40 — the-self-improving-stack — [Self-Improvement Needs A Safety Case](/blog/self-improving-stack-governance) — no-reader-decision
@@ -75,6 +72,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — Blueprint SDK — [Blueprint Deployment: From a Local Service to an Operator-Run Job](/blog/blueprint-sdk-deployment-guide) — manual review
 - 34/40 — Browser Agent — [Browser Automation AI Needs An Evidence Loop](/blog/browser-automation-ai-evidence-loop) — manual review
 - 34/40 — Agent Intent Infrastructure — [Browser Automation for AI Agents](/blog/browser-automation-for-ai-agents) — repository-debris
+- 34/40 — Tangle Re-Introduction — [Building AI Services on Tangle: Inference and Code Execution](/blog/building-ai-services-on-tangle) — manual review
 - 34/40 — Building an AI Tax Agent — [CFC Tax Filing Software For Form 5471](/blog/cfc-tax-filing-software-form-5471) — manual review
 - 34/40 — The Instrument Problem — [CodeTraceBench: A Correct Score Can Still Measure the Wrong Thing](/blog/codetracebench-benchmark-measured-wrong-capability) — manual review
 - 34/40 — Building an AI Tax Agent — [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns) — manual review
@@ -88,6 +86,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — Browser Agent — [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows) — repository-debris
 - 34/40 — Standalone — [Most AI coding agents cannot use your API. Here is how we measure it.](/blog/agent-readiness-index-methodology) — manual review
 - 34/40 — Browser Agent — [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents) — manual review
+- 34/40 — x402 Production Runway — [On-Chain Compute Quotes: How Tangle Makes a Promise Checkable](/blog/on-chain-rfq-job-quotes-verification-slashing) — manual review
 - 34/40 — Agent Intent Infrastructure — [OpenAI Compatible Routers for Agents](/blog/openai-compatible-routers-for-agents) — repository-debris
 - 34/40 — the-self-improving-stack — [Personas Are Content, Coordination Is Structure](/blog/self-improving-stack-multi-agent-coordination) — manual review
 - 34/40 — Agent Runtime Infrastructure — [Removing a Second Agent Path Without Hiding the Losses](/blog/agent-runtime-generic-executor-deletion) — manual review
@@ -95,6 +94,7 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - 34/40 — the-self-improving-stack — [Skills Are Trainable State](/blog/self-improving-stack-skill-optimization) — manual review
 - 34/40 — Agent Intent Infrastructure — [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use) — repository-debris
 - 34/40 — x402 Production Runway — [The Signals That Keep Your Blueprint Operator Online](/blog/operator-operations-guide-metrics-quotes-health) — repository-debris
+- 34/40 — the-self-improving-stack — [When an Agent Needs More Than a Prompt](/blog/self-improving-stack-agent-runtime-topology) — manual review
 
 ## Per-post evidence
 
@@ -417,16 +417,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 595 words, 10 headings, 1 code blocks, 7 external links, 2 internal links
 - Opening: Browser automation for AI agents is the practice of letting an agent operate a real browser while collecting enough evidence to verify what happened. The minimum useful loop is goal, page state, action, screenshot or DOM proof, recovery, and stop condition. Tangle Browser Agent packages that loop behind the bad CLI and SDK so teams can run natural-language browser tasks with evidence instead of hoping a model clicked the right button. Start with Browser Agent when the browser is the work surface.
 
-### Building AI Services on Tangle
+### Building AI Services on Tangle: Inference and Code Execution
 
 - File: src/content/blog/building-ai-services-on-tangle.mdx
 - Series: Tangle Re-Introduction
-- Triage score: 30/40
+- Triage score: 34/40
 - Hard rejects: none detected
-- Native terms in opening: TEE, operator
+- Native terms in opening: none detected
 - Repository debris: none detected
-- Shape: 1445 words, 27 headings, 18 code blocks, 4 external links, 3 internal links
-- Opening: Day 5 of the Tangle Re-Introduction Series
+- Shape: 1607 words, 19 headings, 0 code blocks, 1 external links, 5 internal links
+- Opening: An AI service can return a plausible answer while leaving the customer unable to tell what produced it. A code-execution service can return the right output while exposing the customer’s data or the machine owner’s system.
 
 ### How to Build a Tangle Blueprint: Test and Deploy
 
@@ -670,16 +670,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 750 words, 13 headings, 3 code blocks, 3 external links, 3 internal links
 - Opening: Natural language test automation lets a product team describe a workflow without writing a selector-heavy script. That is useful only if the English sentence becomes a real browser run. A model summary is not a test. A run with screenshots, actions, observations, and a final verifier is.
 
-### On-Chain RFQ for Compute: How Job Quotes, Verification, and Slashing Work
+### On-Chain Compute Quotes: How Tangle Makes a Promise Checkable
 
 - File: src/content/blog/on-chain-rfq-job-quotes-verification-slashing.mdx
 - Series: x402 Production Runway
-- Triage score: 29/40
+- Triage score: 34/40
 - Hard rejects: none detected
-- Native terms in opening: TEE, blueprint, operator
+- Native terms in opening: none detected
 - Repository debris: none detected
-- Shape: 2702 words, 29 headings, 5 code blocks, 6 external links, 2 internal links
-- Opening: Most compute marketplaces work on reputation and hope. You pick a provider, they quote you a price, you send payment, and you trust that what comes back is correct. If the provider runs your ML inference on a cheaper GPU, serves stale results from a cache, or quietly degrades quality during peak load, you probably won't know. The provider keeps your money either way.
+- Shape: 1515 words, 15 headings, 0 code blocks, 3 external links, 4 internal links
+- Opening: When a company buys compute from an unknown operator, the price is only half the problem. The buyer also needs to know what was promised, whether the work happened, and what happens when the result is wrong.
 
 ### OpenAI Compatible Routers for Agents
 
@@ -780,16 +780,16 @@ It is not a semantic approval; every hard reject requires a human rewrite review
 - Shape: 821 words, 13 headings, 1 code blocks, 4 external links, 3 internal links
 - Opening: S corp tax software has to connect the entity return to the shareholder return. The IRS describes S corporations as entities that elect to pass corporate income, losses, deductions, and credits through to shareholders for federal tax purposes. Form 1120-S reports the income, gains, losses, deductions, credits, and related items of an S corporation. The shareholder side then needs K-1 handling, basis review, distributions, and payroll context.
 
-### Topology Is The Missing Action Space
+### When an Agent Needs More Than a Prompt
 
 - File: src/content/blog/self-improving-stack-agent-runtime-topology.mdx
 - Series: the-self-improving-stack
-- Triage score: 29/40
+- Triage score: 34/40
 - Hard rejects: none detected
-- Native terms in opening: worker
+- Native terms in opening: none detected
 - Repository debris: none detected
-- Shape: 2326 words, 17 headings, 19 code blocks, 7 external links, 2 internal links
-- Opening: Short answer: Runtime topology is the executable action space of an agent system. A prompt can request parallelism, supervision, or verification, but only the runtime can create worker branches, isolate state, enforce selectors, preserve traces, and account for budget.
+- Shape: 1428 words, 15 headings, 0 code blocks, 1 external links, 0 internal links
+- Opening: Ask an AI coding assistant to “have three specialists work in parallel, compare their patches, and stop the losing attempts.” The sentence sounds precise. The assistant may still make one model call, mention three imaginary specialists, and return the first patch it wrote.
 
 ### The Gate Is The Optimizer
 
