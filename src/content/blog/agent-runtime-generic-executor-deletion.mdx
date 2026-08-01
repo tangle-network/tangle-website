@@ -1,0 +1,168 @@
+---
+title: 'Agent Runtime Deleted a Backend-Specific Executor: 3,360 Lines Out'
+slug: agent-runtime-generic-executor-deletion
+summary: >-
+  The agent-runtime team removed a bespoke Pi executor after the generic bridge gained profile delivery, progress, and trace input. The deletion removed 3,360 lines and kept explicit losses.
+date: '2026-08-01'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - coding-agents
+  - ai-infrastructure
+  - software-architecture
+series: Agent Runtime Infrastructure
+seriesOrder: 2
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'A generic agent runtime bridge replacing a backend-specific executor'
+---
+
+The bespoke Pi executor was 3,360 lines across 16 files.
+The deletion landed only after the generic bridge could carry the profile fields the executor had been responsible for and after the missing live observation surfaces were built.
+The result removed a second backend path, widened profile delivery, and kept a written list of what the generic wire still cannot do.
+
+That sequence matters.
+Deleting a special case because it looks repetitive is cleanup theater.
+Deleting it after measuring its capabilities and building the missing ones is an architectural change a reader can inspect.
+
+This is the second public post in [Agent Runtime Infrastructure](/blog/agent-profile-materialization-contracts).
+The [worker observability post](/blog/agent-runtime-worker-observability) covers the bridge change that made the deletion possible.
+
+## The old path had real differences
+
+The first deletion proposal was rejected after a source review recorded four missing capabilities.
+The source review found four concrete differences between the bespoke executor and the generic bridge:
+
+- The bridge had no `progress()`, so a parent could not observe a running worker.
+- The bridge had no `traceSource()`, so tool calls stayed in a result artifact instead of becoming spans.
+- The bridge ran Pi with `--print --mode json` and closed stdin, so steering became process control rather than a live queue message.
+- A provider error could return HTTP 200 with an empty result and zero cost instead of throwing.
+
+The review did not say the special case should live forever.
+It named the missing capabilities that had to exist before removal.
+
+Commit `76db51d3` then added generic progress and trace input from the bridge stream.
+The [observability record](/blog/agent-runtime-worker-observability) shows how that code preserves unknown status and duration instead of manufacturing them.
+
+## The deletion
+
+Commit [`fee88987`](https://github.com/tangle-network/agent-runtime/commit/fee88987ed5d495a765f2ea04bd0657ed9b71c8b) removed:
+
+| Area | Change |
+| --- | ---: |
+| Files changed | 16 |
+| Lines added | 50 |
+| Lines deleted | 3,360 |
+| Bespoke executor | 880 lines deleted |
+| Bespoke MCP adapter | 534 lines deleted |
+| Executor tests | 685 lines deleted |
+| MCP tests | 840 lines deleted |
+| Public exports removed | 15 |
+
+The generic bridge already routes a Pi model through the same `createExecutor({ backend: 'bridge' })` path used by other workers.
+After the deletion, a Pi worker is a bridge worker with a model name, not a second runtime family.
+
+## Four profile fields stopped being second-class
+
+The commit body names the behavior that the generic path carries for Pi:
+
+| Profile field | Generic bridge action |
+| --- | --- |
+| `reasoningEffort` | lowered to Pi's `--thinking` option |
+| `tools` | lowered to `--exclude-tools` |
+| `resources` | materialized into the run directory |
+| `systemPrompt` | passed as a native `--system-prompt` file |
+
+The old path had been a narrow interpretation of a profile.
+The generic bridge holds Pi to the full profile contract instead.
+The [profile contract post](/blog/agent-profile-materialization-contracts) explains why that comparison must happen at the individual field level.
+
+## The losses stayed in the record
+
+The deletion did not preserve every Pi-specific behavior.
+The public commits name the losses instead of hiding them behind the line-count reduction.
+
+| Capability | After the deletion |
+| --- | --- |
+| mid-turn steering | a steer lands after the current `--print --mode json` run; interrupt is a process-tree kill |
+| per-worker `args` and `env` | no wire equivalent; configure those values on the bridge server |
+| per-worker binary override | no wire equivalent |
+| `WORKER_TRACE_PROPAGATION` | the `pi: true` row is removed because the bridge has no worker environment channel |
+| Pi MCP config file | the bridge owns MCP registration; agent-runtime no longer writes `--mcp-config` |
+
+The earlier absence of `progress()` and `traceSource()` was addressed in `76db51d3` before the deletion.
+The remaining differences are protocol limits, not silently dropped profile fields.
+
+The merge cleanup at commit `43b11053` is part of the story.
+A parallel branch edited the deleted file, a merge resurrected it, and the cleanup removed it again while keeping the generic observation code.
+
+## The line count is the easy part
+
+The 3,360-line diff is useful because it tells us how much duplicate surface disappeared.
+It does not prove the generic path is equivalent.
+Equivalence comes from the capability list and the named losses.
+
+That is also the runtime decision rule.
+Use one path when its profile contract, error behavior, observation fields, and control behavior match the worker's needs.
+Keep a specialized path only for capabilities that the shared wire cannot express, and give that difference a test and a name.
+
+The [AI dev container guide](/blog/ai-dev-container-production-agent-runtime) describes the wider runtime boundary around commands, sessions, and review evidence.
+This post is the narrower version for backend code: remove the second path when the first can carry the same declared profile, then publish the losses that remain.
+
+## Release boundary
+
+The deletion commit is public.
+The npm package query checked on 2026-08-01 still returned `@tangle-network/agent-runtime@0.117.0`.
+The changelog entry for 0.118.0 describes the deletion, but that release was not yet installable when this post was written.
+
+Readers should inspect the commit when they need the source-level change and check npm when they need an installable version.
+
+## Reproduce the diff
+
+The line counts and commit body are public.
+
+```bash
+git clone https://github.com/tangle-network/agent-runtime.git
+cd agent-runtime
+git show --stat --oneline fee88987ed5d495a765f2ea04bd0657ed9b71c8b
+git show --format=fuller --no-patch fee88987ed5d495a765f2ea04bd0657ed9b71c8b
+git show --stat --oneline 43b11053218a18c13dda31282b43477a90bc608a
+```
+
+The first command prints the 16-file, 3,360-line diffstat.
+The second prints the capability changes and named losses.
+The third shows the cleanup after the merge resurrected the deleted file.
+
+## FAQ
+
+### Why delete a backend-specific executor?
+
+Because the generic bridge now carries the profile fields and observation surfaces that made the special path different.
+Keeping both would make every future fix land twice.
+
+### Did the deletion remove behavior?
+
+Yes.
+Mid-turn steering degrades, per-worker argument and environment overrides have no wire equivalent, the Pi trace-propagation row is removed, and MCP setup moves to the bridge.
+
+### Did the generic path improve profile delivery?
+
+Yes for the four fields named in the commit: reasoning effort, tools, resources, and system prompt.
+They now use the bridge's native options or run-directory materialization instead of being silently ignored by the bespoke path.
+
+### Does 3,360 fewer lines prove the architecture is better?
+
+No.
+The capability comparison and the named losses provide the evidence.
+The line count only shows how much duplicate code was removed.
+
+### Is the deletion in the published package?
+
+The source commit is public, but the package query was `0.117.0` on 2026-08-01.
+Check the package version before depending on the 0.118.0 changelog entry.
+
+## Sources checked 2026-08-01
+
+The primary records are the [generic observability change](https://github.com/tangle-network/agent-runtime/commit/76db51d37bc9885f985a2ff060fcdbb6970a8dee) and the [deletion](https://github.com/tangle-network/agent-runtime/commit/fee88987ed5d495a765f2ea04bd0657ed9b71c8b).
+The merge cleanup is recorded as commit `43b11053` in the reproduction command.
+The installable package source is the [agent-runtime repository](https://github.com/tangle-network/agent-runtime).

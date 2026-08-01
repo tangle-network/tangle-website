@@ -1,0 +1,177 @@
+---
+title: 'Agent Profile Materialization: Which Fields Reach the Worker?'
+slug: agent-profile-materialization-contracts
+summary: >-
+  An AgentProfile can carry more settings than a run path can deliver. These explicit contracts show the 15, 6, and 19 profile axes each execution path accepts.
+date: '2026-08-01'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - agent-profiles
+  - coding-agents
+  - ai-infrastructure
+series: Agent Runtime Infrastructure
+seriesOrder: 1
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'An agent profile divided into identity, model, prompt, tools, and resource fields'
+---
+
+An `AgentProfile` can carry more settings than a run path can deliver.
+In the profile-aware agent-runtime source, the complete execution contract carries 15 canonical axes, the prompt-and-model path carries 6, and the isolated worktree CLI path carries 19.
+Those are different promises.
+Without an explicit contract, a dropped profile field looks like a weak model, a bad prompt, or a random run failure.
+
+This post starts the repaired [Agent Runtime Infrastructure](/blog/ai-dev-container-production-agent-runtime) series.
+The question is concrete: when a builder changes a profile, which changes can the selected worker receive?
+
+## A profile is a set of delivery claims
+
+An agent profile usually appears as one object.
+The runtime cannot treat it as one indivisible payload because its run paths consume different parts of that object.
+
+The profile-aware implementation expands compound values into leaf axes before checking a path.
+For example, `model` covers the model choice and its declared model properties, while `resources` covers files, skills, commands, and resource instructions.
+The check can then refuse one unsupported change instead of accepting a large object and silently dropping a field inside it.
+
+The canonical property list in [the public implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts) is:
+
+| Profile area | Canonical axes |
+| --- | --- |
+| identity | `identity` |
+| prompt | `prompt` |
+| model | `model` |
+| execution | `harness` |
+| permissions | `permissions` |
+| tools | `tools` |
+| MCP | `mcp` |
+| connections | `connections` |
+| child agents | `subagents` |
+| resources | `resources` |
+| lifecycle | `hooks`, `modes` |
+| privacy and records | `confidential`, `metadata`, `extensions` |
+
+That list has 15 entries.
+It is deliberately smaller than the full leaf vocabulary because the leaf map is an accounting device, not a second execution contract.
+
+## Three paths, three contracts
+
+The runtime names a contract for each concrete path.
+The number is less important than the refusal behavior it enables.
+
+| Path | Axes carried | What it is for |
+| --- | ---: | --- |
+| `full-profile-execution` | 15 | A worker that can receive every canonical profile property |
+| `prompt-model-execution` | 6 | A deliberately narrow path that carries prompt, model defaults, identity, harness, and metadata |
+| `worktree-cli-execution` | 19 | A local coding CLI in an isolated Git worktree |
+
+The prompt-and-model path carries `name`, `systemPrompt`, `instructions`, `modelDefault`, `harness`, and `metadata`.
+It does not pretend to carry tools, permissions, MCP connections, child agents, or file-backed resources.
+
+The worktree CLI path adds native tools, permissions, MCP, child agents, files, skills, commands, hooks, and modes.
+It deliberately leaves out hub connections, confidential execution, provider-specific extensions, unused model hints, and `resources.failOnError`.
+
+Those omissions are useful information.
+An unsupported change can fail before a worktree or worker is created, instead of becoming a candidate that looks valid until a user notices the missing behavior.
+
+## Compound fields need leaf checks
+
+The source maps compound profile areas to their leaves.
+
+| Compound area | Leaf examples |
+| --- | --- |
+| `identity` | `name`, `description`, `version`, `tags` |
+| `model` | `modelDefault`, `modelSmall`, `modelProvider`, `modelReasoningEffort`, `modelMetadata` |
+| `prompt` | `systemPrompt`, `instructions` |
+| `resources` | `files`, `resourceInstructions`, `skills`, `resourceTools`, `resourceAgents`, `commands`, `resourceFailOnError` |
+| `mcp` | `mcpConnections` |
+
+This is the difference between checking that a profile object exists and checking that a changed profile can be delivered.
+An empty array does not claim support.
+An explicit `false` or `0` remains a meaningful request and is checked as a requested value.
+
+## Refuse before the worker starts
+
+The runtime exposes two operations around the contract.
+`validateProfileMaterialization` returns every changed axis the chosen path would drop.
+`assertProfileMaterialization` turns that list into an operator-facing error before execution begins.
+
+The error names the contract, the dropped axes, and the supported axes.
+That makes the fix actionable: choose a path that carries the field, or remove the field from the candidate profile.
+
+```typescript
+const issues = validateProfileMaterialization({
+  contract: promptModelProfileMaterialization,
+  changedAxes: ['prompt', 'tools'],
+})
+
+// [{
+//   contract: 'prompt-model-execution',
+//   axis: 'tools',
+//   reason: 'unsupported-axis',
+//   supportedAxes: ['name', 'systemPrompt', 'instructions', 'modelDefault', 'harness', 'metadata'],
+// }]
+```
+
+The important result is not the error string.
+It is that `tools` cannot disappear between profile authoring and worker launch without leaving a record.
+
+## Release boundary
+
+The source contract is public at commit [`2cee3ae4`](https://github.com/tangle-network/agent-runtime/commit/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04).
+The package version checked on 2026-08-01 was still `@tangle-network/agent-runtime@0.117.0`.
+This post describes the source commit and does not imply that the contract is already present in every published package.
+
+That distinction is part of the runtime record.
+A source tree can contain a capability before an installable release carries it, as a profile can contain a field before a worker path carries it.
+
+The existing [LLM sandbox guide](/blog/llm-sandbox-environment-agent-runtime) covers the runtime boundary around command execution and session state.
+The [CodeTraceBench report](/blog/codetracebench-benchmark-measured-wrong-capability) applies the same evidence rule to an evaluation result.
+
+## Reproduce the contract counts
+
+The counts come from the committed TypeScript arrays, not from a summary table.
+
+```bash
+git clone https://github.com/tangle-network/agent-runtime.git
+cd agent-runtime
+git show 2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04:src/agent/profile-materialization.ts \
+  | sed -n '140,198p'
+npm view @tangle-network/agent-runtime version
+```
+
+The source link and the package query answer different questions.
+The first shows what the implementation declares.
+The second shows what an installer can receive today.
+
+## FAQ
+
+### What is agent profile materialization?
+
+It is the runtime check that compares changed profile axes with the fields a selected execution path can carry.
+
+### Why are there several profile contracts?
+
+Different workers consume different fields.
+A prompt-only path cannot honestly promise the same behavior as a full profile worker or a worktree CLI.
+
+### What happens when a profile changes an unsupported field?
+
+The runtime returns the unsupported axis and the path's supported axes before the worker starts.
+The candidate must use another path or remove the unsupported change.
+
+### Does the contract count mean every field is delivered to a model?
+
+No.
+The count describes the execution path's declared inputs.
+The worker and provider still need to implement the behavior represented by each field.
+
+### Is this in the published agent-runtime package?
+
+The linked source commit is public, but the package query was `0.117.0` on 2026-08-01.
+Check the package version before depending on a newer contract.
+
+## Sources checked 2026-08-01
+
+The primary source is the [profile materialization implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts).
+The surrounding public API reference is in [agent-runtime's generated agent API](https://github.com/tangle-network/agent-runtime/blob/main/docs/api/agent.md), and the installable package source is the [agent-runtime repository](https://github.com/tangle-network/agent-runtime).
