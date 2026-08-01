@@ -1,0 +1,162 @@
+---
+title: 'Agent Runtime Observability: A Worker You Cannot See Is a Blind Decision'
+slug: agent-runtime-worker-observability
+summary: >-
+  The agent-runtime bridge now exposes mid-run progress and trace input without inventing tool status or duration that the wire never carried.
+date: '2026-08-01'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - agent-observability
+  - traces
+  - coding-agents
+series: Agent Runtime Infrastructure
+seriesOrder: 3
+coverImage: /images/covers/agent-intent-infrastructure.svg
+heroImage: /images/covers/agent-intent-infrastructure.svg
+imageAlt: 'A live agent worker stream with progress, tool calls, and trace evidence'
+---
+
+A worker that cannot be observed while it runs leaves its parent making decisions from silence.
+The agent-runtime bridge used to expose neither live progress nor trace input for workers behind the bridge.
+The fix added both surfaces from the stream already on the wire, then kept the parts the wire does not provide as unknown.
+
+The source commit records a live bridge check on `127.0.0.1:3355` running `pi/tangle-router/gpt-5-mini`.
+`progress()` returned the current tool activity and bridge run state mid-turn.
+`traceSource().collect()` returned a real span with real arguments, without a fabricated status or duration.
+
+This is the third public post in the repaired [Agent Runtime Infrastructure](/blog/agent-profile-materialization-contracts) series.
+The [runtime sandbox guide](/blog/ai-dev-container-production-agent-runtime) covers the surrounding session boundary.
+
+## The missing signals
+
+Before the change, the bridge worker implemented neither `progress()` nor `traceSource()`.
+`observe_agent` therefore saw no activity for a running worker.
+The bridge did emit OpenAI-shaped `tool_calls`, but the runtime parsed them into a local string list and discarded them before trace analysis.
+
+That created two different blind spots:
+
+| Missing signal | Decision made without it |
+| --- | --- |
+| live progress | whether to wait, steer, stop, or respawn the worker |
+| trace source | which tools were requested and what arguments the worker supplied |
+
+The worker could still finish.
+The parent could not tell whether a quiet interval meant model work, a detached connection, a server-side cancellation, or an already-terminal run.
+
+## Mirrors first, remote state second
+
+The bridge fix uses the local stream as the primary source.
+It writes turn count, tool activity, steer activity, the queued-but-unread steer count, and the resolved wire model into local mirrors as events arrive.
+`progress()` reads those mirrors synchronously.
+
+The bridge also owns one fact the executor cannot derive locally: the run's state on the remote service.
+A progress read schedules an out-of-band `GET /v1/runs/:id` refresh, rate-limited to one request per second.
+The read does not wait for that request.
+When the remote run is terminal, the stale running line is removed rather than repeated forever.
+
+This arrangement keeps the observation call from becoming another source of hangs.
+Local facts are available immediately.
+Remote state is eventually refreshed and marked as such.
+
+## Trace every tool call, and preserve the missing fields
+
+The bridge now sends each `tool_calls` delta through the same `decodeOpenAiPart` adapter used by the sandbox parts source.
+It records every call in a delta.
+
+The wire still carries a limitation.
+It reports the model's decision to call a tool, but it does not report that tool finishing.
+The resulting trace span has arguments and an input time, with `statusCaptured: false`.
+
+| Field | What the bridge can state | What it must leave unknown |
+| --- | --- | --- |
+| tool name | the requested tool | whether the tool completed |
+| arguments | the arguments in the model delta | whether the arguments were accepted |
+| input time | when the call decision arrived | the true end time |
+| status | absent from the bridge wire | `ok`, error, or a synthetic result |
+
+The runtime deliberately omits status when it is absent.
+Defaulting it to `ok` would count an unobserved call as a success.
+Inventing an end time would create a fake 0 millisecond duration and corrupt latency data.
+
+The [OpenAI tool-call shape](https://platform.openai.com/docs/api-reference/chat/create) explains the input event.
+It does not give the bridge a completion event that was never sent.
+
+## The generic path changed the loss profile
+
+The follow-up deletion of the bespoke Pi executor made a Pi worker use the same generic bridge path as other backends.
+That removed 3,360 lines in 16 files, including 880 lines of executor code, 534 lines of MCP adapter code, and their tests.
+The [deletion post](/blog/agent-runtime-generic-executor-deletion) lists the capabilities gained and the behaviors intentionally left behind.
+
+The generic path now gives those workers shared progress and trace entry points.
+It still cannot provide the richer completion data of a protocol that reports tool start and tool end.
+That is a protocol boundary, not a missing default.
+
+The public [observability commit](https://github.com/tangle-network/agent-runtime/commit/76db51d37bc9885f985a2ff060fcdbb6970a8dee) records both the implementation and the live check.
+The [merge cleanup commit](https://github.com/tangle-network/agent-runtime/commit/43b11053218a18c13dda31282b43477a90bc608a) records why the generic path stayed and the bespoke file was removed again after a merge resurrected it.
+
+## What a parent can decide now
+
+With the new surfaces, a parent can make narrower decisions.
+
+- Wait while the local mirror shows an active turn or tool request.
+- Stop or respawn when the remote run has become terminal.
+- Include requested tool calls in the settled trace.
+- Refuse to calculate a latency or success rate from fields the wire did not send.
+
+Those decisions still require product policy.
+The runtime supplies the facts and their limits.
+
+The [profile contract post](/blog/agent-profile-materialization-contracts) applies the same rule before launch: a run path must name what it carries, and the result must name what it cannot observe.
+
+## Reproduce the source change
+
+The implementation and its tests are public.
+
+```bash
+git clone https://github.com/tangle-network/agent-runtime.git
+cd agent-runtime
+git show 76db51d37bc9885f985a2ff060fcdbb6970a8dee -- \
+  src/runtime/supervise/bridge-executor.ts \
+  src/runtime/supervise/worker-trace.ts
+```
+
+The commit body includes the live bridge command and the observed fields.
+The code preserves `statusCaptured: false` so downstream trace readers do not promote missing data into a success.
+
+For the stream transport itself, see the [Server-sent events specification](https://html.spec.whatwg.org/multipage/server-sent-events.html).
+The runtime's job is to preserve the information that arrives over that stream, not to manufacture events that did not.
+
+## FAQ
+
+### What does agent runtime observability mean here?
+
+It means a parent can read live worker activity and settled tool-call inputs while the worker runs.
+
+### Does the bridge now report successful tool execution?
+
+No.
+It reports the model's tool-call decision and arguments.
+The bridge wire does not report tool completion, so status and duration remain unknown.
+
+### Why not mark every observed call as successful?
+
+Because a requested call can fail, be cancelled, or never start.
+Marking it `ok` would turn missing evidence into a false result.
+
+### Can progress reads block a worker?
+
+The local mirror is read synchronously.
+The remote run refresh is scheduled out of band and limited to one request per second.
+
+### Does the generic bridge preserve every old executor feature?
+
+No.
+The generic path removes backend-specific arguments and environment overrides and does not claim protocol-level tool completion when the wire lacks it.
+The deletion record names those losses beside the shared capabilities.
+
+## Sources checked 2026-08-01
+
+The primary source is the [bridge observability commit](https://github.com/tangle-network/agent-runtime/commit/76db51d37bc9885f985a2ff060fcdbb6970a8dee).
+The generic cleanup is in [commit 43b11053](https://github.com/tangle-network/agent-runtime/commit/43b11053218a18c13dda31282b43477a90bc608a).
+The wire shape is documented in the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat/create), and the event transport is defined by the [WHATWG specification](https://html.spec.whatwg.org/multipage/server-sent-events.html).
