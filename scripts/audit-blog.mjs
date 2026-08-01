@@ -212,10 +212,6 @@ function auditPost(file) {
   )
   const hasTangleEarly = tangleMechanisms.some((mechanism) => firstHalf.includes(mechanism))
   const firstSectionDefinesObviousTerm = /\b(is|are)\s+(a|an|the)?\s*(protocol|platform|tool|system|method|way)\b/i.test(first150)
-  const questionTargeted =
-    /\b(vs|how|what|why|guide|checklist|deploy|deployment|production|pricing|scanner|testing|audit|sandbox|agent|x402)\b/i.test(
-      `${title} ${data.summary || ''} ${asArray(data.tags).join(' ')}`,
-    )
 
   if (bodyWordCount < 650) {
     addReason(
@@ -224,16 +220,6 @@ function auditPost(file) {
       'warning',
       'Thin post: the reader may not get enough context, proof, or tradeoffs to trust the conclusion.',
       'Add the smallest missing concrete example, source trail, or decision criteria instead of padding.',
-    )
-  }
-
-  if (questionTargeted && !hasFaq) {
-    addReason(
-      reasons,
-      'seo-aeo',
-      'warning',
-      'Search/agent-targeted post has no FAQ section, so answer extraction and JSON-LD coverage are weaker.',
-      'Add a short FAQ with question headings that match the reader query.',
     )
   }
 
@@ -482,7 +468,7 @@ for (const file of postFiles) {
 
   const hasQuestionHeadings = /^###\s+.+\?/m.test(body)
   if (/^## FAQ\b/m.test(body) && !hasQuestionHeadings) {
-    addFinding(findings, 'warning', file, 'FAQ section should use ### question headings for JSON-LD extraction')
+    addFinding(findings, 'warning', file, 'FAQ section should use actual questions as ### headings')
   }
 }
 
