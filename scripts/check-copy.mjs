@@ -18,9 +18,9 @@
  *
  * Env:
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
- *                          TANGLE_ROUTER_USER_KEY pulled from
+ *                          GOOGLE_AI_KEY / TANGLE_ROUTER_USER_KEY pulled from
  *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default: gpt-5.5 via Tangle Router
+ *   COPY_AUDIT_MODEL    — default: gpt-5.5, or gemini-2.5-flash with Google
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.0)
  *
  * Output: per-page score 1–10, flagged phrases with line context.
@@ -35,12 +35,7 @@ const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.0);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 20_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
-// Default model: gpt-5.5 — current per OpenAI's deprecations page.
-// Override with COPY_AUDIT_MODEL for stronger judges
-// (claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5-20251001).
-// `pnpm check:models` validates this default + every model name
-// cited in the codebase against the live provider deprecation lists.
-const MODEL = process.env.COPY_AUDIT_MODEL ?? 'gpt-5.5';
+let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
   console.error('✗ dist/client/ not found — run `pnpm build` first.');
@@ -51,33 +46,67 @@ if (!existsSync(ROOT)) {
 // fall back through router → direct OpenAI. The router's free tier is
 // 5 calls/day per key — fine for single-page audits, hits the wall on
 // full-site sweeps. Direct OpenAI bypasses the router entirely.
-let API_KEY = process.env.COPY_AUDIT_API_KEY ?? process.env.TANGLE_API_KEY;
-let API_BASE = process.env.COPY_AUDIT_API_BASE ?? 'https://router.tangle.tools/v1';
+let API_KEY = process.env.COPY_AUDIT_API_KEY;
+let API_BASE = process.env.COPY_AUDIT_API_BASE;
+
+if (!API_KEY && process.env.TANGLE_API_KEY) {
+  API_KEY = process.env.TANGLE_API_KEY;
+  API_BASE = 'https://router.tangle.tools/v1';
+  MODEL ??= 'gpt-5.5';
+}
+
+if (!API_KEY && process.env.GOOGLE_AI_KEY) {
+  API_KEY = process.env.GOOGLE_AI_KEY;
+  API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
+  MODEL ??= 'gemini-2.5-flash';
+}
 
 if (!API_KEY && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
-  // OpenAI direct.
   API_KEY = process.env.OPENAI_API_KEY;
   API_BASE = 'https://api.openai.com/v1';
+  MODEL ??= 'gpt-5.5';
 }
 if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
+  if (API_KEY) {
+    API_BASE = 'https://router.tangle.tools/v1';
+    MODEL ??= 'gpt-5.5';
+  }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
-  // Try OpenAI direct first (router free-tier hits the wall fast).
+  // Gemini supports the OpenAI chat-completions shape and avoids the router's
+  // low daily free-tier limit during full-site checks.
   try {
-    const k = execSync(`dotenvx get OPENAI_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
-    if (k && k.startsWith('sk-')) {
+    const k = execSync(`dotenvx get GOOGLE_AI_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+    if (k) {
       API_KEY = k;
-      API_BASE = 'https://api.openai.com/v1';
+      API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
+      MODEL ??= 'gemini-2.5-flash';
     }
   }
   catch {
     // ignore
   }
-  // Fall through to router key.
+  if (!API_KEY) {
+    try {
+      const k = execSync(`dotenvx get OPENAI_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+      if (k && k.startsWith('sk-')) {
+        API_KEY = k;
+        API_BASE = 'https://api.openai.com/v1';
+        MODEL ??= 'gpt-5.5';
+      }
+    }
+    catch {
+      // ignore
+    }
+  }
   if (!API_KEY) {
     try {
       API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+      if (API_KEY) {
+        API_BASE = 'https://router.tangle.tools/v1';
+        MODEL ??= 'gpt-5.5';
+      }
     }
     catch {
       // ignore — caught below
@@ -85,9 +114,12 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
   }
 }
 if (!API_KEY) {
-  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, TANGLE_API_KEY, OPENAI_API_KEY, or TANGLE_ROUTER_USER_KEY.');
+  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, TANGLE_API_KEY, GOOGLE_AI_KEY, OPENAI_API_KEY, or TANGLE_ROUTER_USER_KEY.');
   process.exit(2);
 }
+
+API_BASE ??= 'https://router.tangle.tools/v1';
+MODEL ??= 'gpt-5.5';
 
 const pageArg = process.argv[2];
 
@@ -210,8 +242,9 @@ async function auditPage(label, copy, attempt = 1) {
       await sleep(wait);
       return auditPage(label, copy, attempt + 1);
     }
-    const err = new Error(`router ${res.status}: ${errBody.slice(0, 200)}`);
+    const err = new Error(`provider ${res.status}: ${errBody.slice(0, 200)}`);
     err.transientAuditFailure = res.status === 429 || res.status === 502 || res.status === 503;
+    err.configurationAuditFailure = res.status === 401 || res.status === 403;
     throw err;
   }
   const json = await res.json();
@@ -222,7 +255,7 @@ async function auditPage(label, copy, attempt = 1) {
 function isTransientAuditFailure(err) {
   if (err?.transientAuditFailure) return true;
   const message = String(err?.message ?? err);
-  return /\brouter (429|502|503):/.test(message)
+  return /\bprovider (429|502|503):/.test(message)
     || message.includes('fetch failed')
     || message.includes('copy auditor timed out')
     || message.includes('This operation was aborted')
@@ -265,8 +298,13 @@ for (const file of allPages) {
       route,
       error: err.message,
       transientAuditFailure: isTransientAuditFailure(err),
+      configurationAuditFailure: Boolean(err.configurationAuditFailure),
       ok: false,
     });
+    if (err.configurationAuditFailure) {
+      console.log('stop (copy-audit credentials were rejected)');
+      break;
+    }
     if (
       results.length >= TRANSIENT_FAILURE_SHORT_CIRCUIT
       && results.every((r) => r.transientAuditFailure)
