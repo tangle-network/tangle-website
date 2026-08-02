@@ -13,6 +13,10 @@ Use this file to choose wording until that measured export is available, then re
 The starting map came from the existing company `seo-engine` configuration.
 That map reused three phrases across eight posts, so this pass gives those pages distinct directional owners to reduce self-competition; Search Console data decides whether the owners should change.
 
+The existing tool is useful for metadata, links, and query-map linting, but its numeric site score is not a ranking result.
+On this 85-post site it reports an average checklist score of 90.04/100 and eight unmapped posts under its older configuration.
+Its Google Search Console command could not run here because the required OAuth files and environment variables are absent, so this pass makes no claim about impressions, clicks, position, or search volume.
+
 ## What the current results show
 
 ### “AI agent sandbox”
