@@ -44,6 +44,25 @@ concrete builder pressure
 - Include limitations. "What this does not prove" is stronger than overclaiming.
 - End with what the reader can decide, test, or deploy next.
 
+## Measured technical article profile
+
+This long-form profile comes from 10 public Tangle technical posts: `how-blueprints-work`, `how-tangle-verifies-work`, `blueprint-sdk-deployment-guide`, `blueprint-deployment-architecture-remote-providers`, `operator-health-monitoring-tangle-heartbeats-quote-lifetimes`, `rfq-job-quotes-tangle-operator-accountability`, `x402-blueprint-production-deployment-checklist`, `building-ai-services-on-tangle`, `ai-agent-sandbox`, and `agent-runtime-environments`.
+The sample contains 22,203 words, 1,357 sentences, 166 headings, and 54 fenced code blocks.
+The average sentence is about 16 words, with short definitions next to longer explanatory paragraphs.
+
+Preserve these observed constraints when writing technical articles:
+
+- Open with a concrete request, failure, or product decision before naming the architecture.
+- Define Blueprint, operator, service instance, job, payment, and evidence where a newcomer first needs them.
+- Show one input, action, and observable output before expanding into protocol structure.
+- Keep a public source beside claims about SDK behavior, deployment, payment, or verification.
+- State the unhappy path and the boundary of words such as `private`, `anonymous`, `verified`, and `trustless`.
+- Vary paragraph length because the reasoning requires it, but do not imitate a social thread with dramatic one-line fragments.
+- End with a decision rule that says when a simpler hosted service is the better choice.
+
+The profile's reusable test is short: a new reader should be able to explain the article's decision from the opening and headings, run or adapt the smallest public example, identify one failure path, and tell observed behavior from proposal.
+Keep this section in the canonical voice file rather than creating another overlapping voice document.
+
 ## Self-Improving Stack Rewrite Rule
 
 For the 13 self-improving stack posts, do not make the first pass shorter. Change the entry vector:

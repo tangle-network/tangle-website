@@ -1,8 +1,8 @@
 ---
-title: 'Blueprint Protocol For Operator-Run Services'
+title: 'Blueprint Protocol: Define an Operator-Run AI Service'
 slug: blueprint-protocol-operator-services
 summary: >-
-  A Blueprint protocol lets developers define services that independent operators can run, price, monitor, and verify under Tangle network rules.
+  Learn how to define a Tangle Blueprint with a clear job interface, runtime contract, payment rule, evidence, and operator runbook.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,106 +16,192 @@ heroImage: /images/covers/editorial/protocol-operators-v2.webp
 imageAlt: 'An editorial still life about operators running services on a network'
 ---
 
-An operator is the person or service responsible for running a job. Blueprint protocol is the on-chain and operator-facing side of Tangle. It should not be confused with Blueprint Agent, the developer onboarding product at `ai.tangle.tools`. A protocol Blueprint is a reusable service definition. Operators register for it, run the service, accept jobs, and receive payment according to the network rules.
+A Tangle Blueprint is a public service definition.
+It tells the person or service running it what to run, and that runner is called an **operator**.
+It also tells a buyer what can be requested.
+The definition should specify the job inputs and outputs, the program and runtime requirements, the payment rule, the evidence returned, and what happens when execution fails.
 
-For deployment details, read [Blueprint SDK Deployment Guide](/blog/blueprint-sdk-deployment-guide). For product onboarding, read [AI Coding Assistant With Deployment Evidence](/blog/ai-coding-assistant-deployment-evidence).
+This is different from a product landing page.
+A landing page describes a service to a human.
+The Blueprint's job schema, runner entrypoint, and install, upgrade, and health-check instructions let independent operators run the same service.
 
-## Protocol Roles
+The article assumes you have never used Tangle.
+Tangle's public protocol records Blueprint definitions, job requests, payment states, and result evidence so independent operators can run the same service.
+An **operator** supplies the machine and keeps the service available.
+A **service instance** is one running copy of that service.
+A **job** is one request sent to the instance.
 
-| Role | Job |
+## Start with the job, not the brand name
+
+Suppose you want to offer a paid document classifier.
+The useful first sentence is “a caller submits a document and receives a list of labels, confidence values, and a reference to the model version used.”
+
+That sentence names the implementation artifacts: an input schema, a classifier entrypoint, an output schema, and a versioned runtime package.
+It defines the inputs, limits, failure codes, and payment cases the implementation must handle:
+
+- What file types are accepted?
+- What is the maximum document size?
+- What does a malformed file return?
+- How long may a job run?
+- Does the result include the input checksum and model version?
+- Is the caller charged for a rejected request?
+
+Write those answers down before choosing a network or payment rail.
+
+## The Blueprint contract
+
+The contract names the parts an operator and buyer must agree on.
+
+| Part | What to specify |
 | --- | --- |
-| developer | defines the Blueprint and artifact |
-| operator | runs the service |
-| user or app | requests work from a service instance |
-| staker | supports operator security and economics |
-| protocol | coordinates registration, payments, and accountability |
+| job interface | names, inputs, outputs, limits, and error codes |
+| runtime | source artifact, dependencies, environment variables, ports, and hardware |
+| operator work | how to install, start, upgrade, health-check, and stop the service |
+| payment | fixed price, quote, payment challenge, refund, and expiry behavior |
+| evidence | result format, request ID, service version, timing, and any quality check |
 
-The useful mental model is "service definition plus operator market," not "template page."
+The word “verification” needs care here.
+For a document classifier, the network can record which operator ran which version.
+That does not establish that the labels are correct.
+Correctness may require a test set, a second model, or human review chosen by the service owner.
 
-## Blueprint Lifecycle
+## A small public SDK runner
 
-```text
-define service
--> publish Blueprint
--> operators register
--> service instance receives jobs
--> jobs run and return evidence
--> payments and operator accountability settle
+The public [Blueprint SDK](https://github.com/tangle-network/blueprint) gives a Rust service a runner and a router.
+The router maps a job number to the function that handles it.
+The runner supplies the operator-facing process that receives jobs and returns results.
+
+This is the smallest runner shape documented in the repository:
+
+```rust
+use blueprint_sdk::Router;
+use blueprint_sdk::runner::BlueprintRunner;
+use blueprint_sdk::runner::config::BlueprintEnvironment;
+
+async fn classify() -> &'static str {
+    "labels:invoice,confidence:0.94"
+}
+
+let environment = BlueprintEnvironment::default();
+let router = Router::new().route(0, classify);
+
+BlueprintRunner::builder((), environment)
+    .router(router)
+    .run()
+    .await?;
 ```
 
-That lifecycle is why protocol Blueprints are a strong fit for AI services, agent sandboxes, inference, code audit, and payment-native APIs.
+The return value is deliberately tiny.
+The example is there to show the public boundary, not to pretend that a string is a production classifier.
+In a real service, the function would validate an input, call the classifier, return a typed result, and map failures to documented error codes.
 
-## What A Good Blueprint Defines
+Check the repository's current version and setup instructions before compiling this example.
+The public [Tangle documentation](https://docs.tangle.tools) is the source for current network and operator steps.
 
-| Definition area | Why it matters |
+## Make invalid input visible
+
+An operator needs to know whether a job failed because the service was unhealthy or because the caller sent something the Blueprint forbids.
+Those cases should not look identical to the buyer.
+
+For the classifier example, the contract could define:
+
+```text
+valid PDF under 20 MB -> classify and return labels
+unsupported MIME type -> reject before payment is captured
+oversized file -> reject with max_size
+model timeout -> return retryable_timeout and request ID
+provider error -> return upstream_failure and operator evidence
+```
+
+This is a product decision, not a protocol default.
+Write the behavior in the public service contract and test each branch locally before an operator deploys it.
+
+## Publish the artifact an operator can run
+
+The operator should not have to reconstruct the service from a blog post.
+Publish a versioned artifact, its source or source reference, required configuration, and a health check.
+If a model or prompt changes the output, include that version in the service record.
+
+The public SDK repository documents a deployment flow based on a Blueprint definition and a metadata source.
+A representative public command is:
+
+```bash
+cargo tangle blueprint deploy tangle \
+  --network testnet \
+  --definition ./definition.json
+```
+
+The command and manifest fields can change, so use the current [deployment documentation](https://github.com/tangle-network/blueprint) as the authority.
+The point of the command is that an operator receives a named definition rather than a private set of instructions.
+
+Do not put credentials, private filesystem paths, internal commit inspection, or incident notes in a public Blueprint.
+The operator needs the public artifact and the public runbook.
+
+## What an operator checks before accepting
+
+An operator should be able to answer these questions from the published materials:
+
+| Check | Reason |
 | --- | --- |
-| job interface | users need predictable inputs and outputs |
-| artifact source | operators need to know what to run |
-| runtime config | services need required env vars and endpoints |
-| pricing | users and operators need economics before execution |
-| verification | the result needs appropriate proof |
-| failure policy | users need to know what happens when a job fails |
+| What artifact is running? | prevents silent code or model drift |
+| What inputs are allowed? | avoids unsafe or unbillable work |
+| What hardware is required? | prevents jobs from landing on an unsuitable machine |
+| How is health measured? | separates a live process from a useful service |
+| How does payment work? | prevents unpaid or ambiguous jobs |
+| How are failures reported? | returns an error code, request ID, evidence, and retry guidance |
+| How is an upgrade rolled back? | limits damage from a bad release |
 
-For operator economics, read [Operator Staking For AI Blueprints](/blog/operator-staking-ai-blueprints). For compute framing, read [Decentralized Compute Protocol For Blueprints](/blog/decentralized-compute-protocol-blueprints).
+If the answer exists only in a private chat with the developer, the service is not ready for independent operation.
 
-## Builder Checklist
+## Keep the user contract shorter than the runbook
 
-Before publishing a Blueprint, a builder should be able to answer these questions without private explanation.
+A buyer should not need to learn operator key management or deployment internals to call a job.
+The user-facing page should show the job name, input schema, output schema, price or quote rule, expected latency, failure codes, and returned evidence.
 
-| Question | Good answer |
-| --- | --- |
-| what does the job do? | one input/output contract and clear error states |
-| who can run it? | operator requirements, keys, ports, and environment variables |
-| how is it priced? | fixed price, quote flow, or payment challenge |
-| how is it verified? | job-specific evidence, test, attestation, or result check |
-| how does rollback work? | previous artifact and operator downgrade path |
-| what should users monitor? | service health, request latency, failure rate, and payment status |
+The operator runbook can contain more detail.
+It may describe keys, ports, disk requirements, log retention, and the upgrade sequence.
+Both documents should refer to the same Blueprint version.
 
-This is why the [Blueprint SDK repository](https://github.com/tangle-network/blueprint) and the [Tangle docs](https://docs.tangle.tools) matter to protocol pages. A protocol Blueprint is not a marketing label; it is an artifact that operators must run.
+Before accepting a request, compare the user-facing and operator documents' Blueprint version so an interface mismatch is visible first.
 
-## Operator Acceptance
+## What the protocol does not decide for you
 
-Operators should not accept a Blueprint until the runbook is clear.
+At the protocol boundary, registration is recorded with the Blueprint, a job request advances through an explicit payment state, and the result carries evidence for that request.
+It does not choose a useful model, write a safe prompt, guarantee uptime, or determine whether a classification is correct.
 
-| Runbook item | Operator risk if missing |
-| --- | --- |
-| artifact hash or source | running unreviewed code |
-| required environment | failed startup |
-| health endpoint | invisible downtime |
-| pricing path | unpaid or mispriced jobs |
-| logging policy | impossible incident review |
-| version policy | mismatched service behavior |
+Those responsibilities belong in the service definition and the operator's runbook.
+If the service needs a second pass, a fixed test set, or a human approval, say so.
+Do not replace that requirement with a generic “verified” badge.
 
-The same logic appears in [Operator Health Monitoring For Tangle](/blog/operator-health-monitoring-tangle-heartbeats-quote-lifetimes): heartbeat and quote data only help if the service is instrumented well enough to interpret them. Protocol contracts in [tnt-core](https://github.com/tangle-network/tnt-core) give the network coordination layer; the Blueprint has to supply service-specific operating detail.
+For the economic side of this contract, read [Operator Staking For AI Blueprints](/blog/operator-staking-ai-blueprints).
+The preceding [Decentralized Compute Protocol article](/blog/decentralized-compute-protocol-blueprints) explains how shared job definitions, payment, and receipts fit together.
 
-## User-Facing Contract
+## Decision rule
 
-Users should not need to understand every protocol detail to call a Blueprint. The service page should expose the job name, accepted inputs, price or quote rule, expected latency, result format, failure policy, and evidence returned. That user-facing contract is what lets agents choose services safely. It also gives operators a clear target for support and monitoring.
+Use a Blueprint when more than one operator should be able to run the same service and the job contract can be written precisely.
+Keep the service in a normal application backend while the interface, failure behavior, or operating requirements are still changing every day.
 
-The protocol page and the user page should stay linked. When the Blueprint definition changes, the user-facing contract should change with it. Drift between those two pages is how operators end up running one service while buyers think they purchased another.
-
-## What This Does Not Prove
-
-A Blueprint protocol does not make every service high quality. It gives developers and operators a coordination layer. Service quality still depends on code, operators, pricing, monitoring, and verification.
-
-## Decision Rule
-
-Use protocol Blueprints for services that benefit from independent operators, payment-native access, and reusable job definitions. Use a normal app backend for private, single-operator services.
+Start with one input, one output, and one evidence path that a local test can execute in one sitting.
+Once that path works, add payment, operator choice, and more demanding workloads one at a time.
 
 ## FAQ
 
-### What is Blueprint protocol?
+### What is a Blueprint protocol?
 
-It is Tangle's model for defining services that operators can run under protocol rules.
+It is Tangle's model for publishing a reusable service definition that independent operators can run.
 
-### Is Blueprint Agent the same thing?
+### Is a Blueprint the same as Blueprint Agent?
 
-No. Blueprint Agent is a developer workbench. Protocol Blueprints are service definitions run by operators.
+No.
+Blueprint Agent is a developer workbench.
+A protocol Blueprint is the service definition and job contract that an operator runs.
 
-### Who runs a Blueprint?
+### What should a Blueprint include?
 
-Independent operators register for Blueprints and run the services.
+It should include the job interface, runtime requirements, artifact source, payment behavior, evidence, failure codes, and operator runbook.
 
-### What makes a Blueprint useful?
+### Does a Blueprint guarantee service quality?
 
-Clear job interface, runtime requirements, pricing, verification, and operator instructions.
+No.
+It makes the service contract and operating responsibilities explicit.
+Quality still depends on the code, operator, monitoring, and service-specific checks.
