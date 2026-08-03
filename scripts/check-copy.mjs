@@ -20,7 +20,9 @@
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
  *                          GOOGLE_AI_KEY / TANGLE_ROUTER_USER_KEY pulled from
  *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default: gpt-5.5, or gemini-2.5-flash with Google
+ *   COPY_AUDIT_MODEL    — default: deepseek/deepseek-chat via the router
+ *                          (free-tier canonical list), gemini-3-flash with
+ *                          Google, gpt-5.5 with direct OpenAI
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.0)
  *
  * Output: per-page score 1–10, flagged phrases with line context.
@@ -52,13 +54,13 @@ let API_BASE = process.env.COPY_AUDIT_API_BASE;
 if (!API_KEY && process.env.TANGLE_API_KEY) {
   API_KEY = process.env.TANGLE_API_KEY;
   API_BASE = 'https://router.tangle.tools/v1';
-  MODEL ??= 'gpt-5.5';
+  MODEL ??= 'deepseek/deepseek-chat';
 }
 
 if (!API_KEY && process.env.GOOGLE_AI_KEY) {
   API_KEY = process.env.GOOGLE_AI_KEY;
   API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-  MODEL ??= 'gemini-2.5-flash';
+  MODEL ??= 'gemini-3-flash';
 }
 
 if (!API_KEY && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
@@ -70,7 +72,7 @@ if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
   if (API_KEY) {
     API_BASE = 'https://router.tangle.tools/v1';
-    MODEL ??= 'gpt-5.5';
+    MODEL ??= 'deepseek/deepseek-chat';
   }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
@@ -81,7 +83,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
     if (k) {
       API_KEY = k;
       API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-      MODEL ??= 'gemini-2.5-flash';
+      MODEL ??= 'gemini-3-flash';
     }
   }
   catch {
@@ -105,7 +107,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
       API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
       if (API_KEY) {
         API_BASE = 'https://router.tangle.tools/v1';
-        MODEL ??= 'gpt-5.5';
+        MODEL ??= 'deepseek/deepseek-chat';
       }
     }
     catch {
@@ -119,7 +121,7 @@ if (!API_KEY) {
 }
 
 API_BASE ??= 'https://router.tangle.tools/v1';
-MODEL ??= 'gpt-5.5';
+MODEL ??= 'deepseek/deepseek-chat';
 
 const pageArg = process.argv[2];
 
