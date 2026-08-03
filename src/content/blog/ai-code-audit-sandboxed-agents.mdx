@@ -1,8 +1,8 @@
 ---
-title: 'AI Code Audit With Sandboxed Agents'
+title: 'AI Code Audit with Sandboxed Agents: From Alert to Evidence'
 slug: ai-code-audit-sandboxed-agents
 summary: >-
-  AI code audit should run in sandboxes, spawn specialist agents, validate findings with commands, and downgrade claims that lack proof.
+  AI code audit turns scanner alerts into findings by running tests with untrusted inputs, recording impact, and preserving rejected candidates.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,84 +16,177 @@ heroImage: /images/covers/editorial/code-auditor-v2.webp
 imageAlt: 'An editorial still life about reviewing code and producing evidence'
 ---
 
-AI code audit is useful only when the agent can inspect the repository, run tools, test exploit paths, and show why each finding is real. A model that reads code and writes confident prose is not an auditor. Tangle Code Auditor is the upcoming product surface at `audit.tangle.tools`; until that domain is live, public copy should describe the audit runtime without linking to a product URL.
+A scanner reports that a withdrawal function accepts an untrusted address.
+The alert is plausible, but it does not tell you whether an attacker can reach the function, whether the balance check runs first, or whether a test can reproduce the claimed loss.
 
-The product shape is simple: coordinator agent, sandboxed specialist agents, stack-specific tools, and findings that must survive validation.
+That is the useful job for an **AI code audit**.
+The agent reads the repository, runs the project’s tools in a workspace with separate files and processes, tests the suspected path, and returns the alert with evidence or a reason to reject it.
 
-## What The Audit Runtime Must Do
+This is a workflow for preparation and triage.
+It cannot test every configuration or attacker path, and it does not replace a focused security review.
 
-| Requirement | Why it matters |
+## A scanner alert is a question
+
+Static scanners look for patterns that are often risky, such as a `transfer` call whose destination comes from a function argument.
+[CodeQL](https://codeql.github.com/docs/) and [Semgrep](https://semgrep.dev/docs/) can identify a dangerous-looking call, a missing check, or data flowing into a sensitive operation.
+
+An alert becomes a security finding only after the audit answers these questions:
+
+- Which code path contains the pattern?
+- Can an attacker or ordinary user reach that path?
+- Can a small test reproduce the claimed impact?
+- What change would remove the impact without breaking the intended behavior?
+
+It should not promote every pattern into a high-severity issue.
+
+## A tiny example of a finding state
+
+The finding record needs a state that makes the audit’s decision visible.
+This TypeScript example is deliberately small and runs without a repository or a private service.
+
+```typescript
+type FindingState =
+  | 'candidate'
+  | 'reachable'
+  | 'reproduced'
+  | 'rejected'
+
+type Finding = {
+  id: string
+  title: string
+  state: FindingState
+  evidence: string[]
+  residualRisk?: string
+}
+
+function advance(finding: Finding, state: FindingState, evidence: string): Finding {
+  return {
+    ...finding,
+    state,
+    evidence: [...finding.evidence, evidence],
+  }
+}
+
+let finding: Finding = {
+  id: 'withdrawal-001',
+  title: 'Withdrawal may bypass the owner check',
+  state: 'candidate',
+  evidence: ['Semgrep matched an external address in withdrawal.ts:18'],
+}
+
+finding = advance(finding, 'reachable', 'A user-controlled request reaches withdraw()')
+finding = advance(finding, 'reproduced', 'withdrawal.test.ts shows a balance change without authorization')
+
+console.log(finding)
+```
+
+The state does not make the finding true by itself.
+It forces the report to name the evidence that moved the finding forward.
+
+## From alert to conclusion: a worked example
+
+Consider a toy contract with an owner-only withdrawal.
+The scanner sees a call that transfers tokens and raises an alert because the destination comes from a function argument.
+
+The audit agent should inspect the surrounding code before writing a severity label.
+If the function begins with an owner check, the agent should test that check rather than assume it works.
+If the check is missing, the agent should write the smallest test that calls the function as an ordinary user and records the result.
+
+The report must classify the result as reproduced, reachable but not reproduced, or rejected.
+Each classification includes the code path, inputs, output, and limits of the test.
+
+| Result | Meaning | Report treatment |
+| --- | --- | --- |
+| Reproduced | A test invokes the path with the relevant input and records the claimed impact | Include the command, inputs, output, and affected code |
+| Reachable but not reproduced | The path is available, but the test did not demonstrate impact | Keep the limitation and request a deeper review |
+| Rejected | The path is blocked or the alert describes intended behavior | Keep the negative evidence and close the candidate |
+
+“The scanner found a problem” is not a result.
+It is the question that starts the work.
+
+## Run the work with separate files, processes, and resource limits
+
+An audit agent needs to inspect files, install the project’s dependencies, run the repository’s compiler, and execute its test command.
+Those actions should happen in a workspace with separate files and processes, such as 2 CPU cores, 4 GB of memory, and 20 GB of disk, plus a delete operation rather than on the machine that stores credentials or production source.
+
+The public [Tangle Sandbox guide](/blog/ai-agent-sandbox) shows the server-side TypeScript lifecycle:
+create a workspace with explicit resources, wait for it to run, execute a command, inspect its exit code and output, and call `box.delete()` in cleanup code.
+
+The audit record should retain the useful artifacts before cleanup:
+
+- the commit or archive that was reviewed;
+- scanner output and version;
+- commands executed and their exit codes.
+- test output and reproduction inputs;
+- patches or suggested changes;
+- findings that were rejected and the evidence for rejecting them.
+
+The agent must not copy local credentials into the workspace in order to make a test pass.
+If a test needs a secret or a live account, the report should state that the live path was not tested and describe a safe substitute.
+
+## Give each specialist a narrow job
+
+Different codebases need different tools, but the coordinator should keep the roles understandable.
+
+| Area | Plain-language responsibility | Example evidence |
+| --- | --- | --- |
+| Ethereum-compatible contracts | Check authorization, balances, and state changes | A test invoking the contract as a non-owner plus a transaction trace |
+| Solana programs | Check account ownership and instruction constraints | Program test output and account inputs |
+| Move packages | Check resource rules and ability checks | Package tests and rejected transaction output |
+| Zero-knowledge circuits | Check constraints, witnesses, and proof generation | Circuit test and proof result |
+| Web applications | Check authentication, input handling, and data flow | Request/response test and affected route |
+
+These names describe specialties, not separate opinions.
+Each specialist should return the same finding shape so the coordinator can compare evidence instead of merging paragraphs.
+
+The coordinator also needs negative evidence.
+“The scanner matched this call, but only the owner can reach it after initialization” prevents the same warning from returning as a duplicate issue.
+Keep that explanation in the finding record even when it does not appear in the executive summary.
+
+## Validate severity with impact, not adjectives
+
+Severity should follow a reproducible test with concrete output and a defined scope of code paths and inputs.
+
+| Evidence | Narrow claim it supports |
 | --- | --- |
-| clone target repo | auditor sees the same code reviewers see |
-| isolate tools | untrusted build scripts run away from production systems |
-| spawn specialists | EVM, Solana, Move, zk, and app security require different tools |
-| run commands | claims need compile, test, static analysis, or proof output |
-| validate severity | high and critical findings need evidence |
-| emit report | humans need a concise issue list and reproduction steps |
+| A test changes another user’s balance | The tested path can cause that state change under those inputs |
+| A request reaches an admin route without authorization | The route has an authorization failure in the tested environment |
+| A scanner matches a dangerous API but the path is unreachable | The pattern exists; the tested attack path is not reachable |
+| A build fails before the test runs | The reproduction is incomplete, not a confirmed vulnerability |
 
-This is closer to an audit workflow than a scanner workflow. Scanners such as [CodeQL](https://codeql.github.com/docs/) and [Semgrep](https://docs.semgrep.dev/) are useful tools. The agent's job is to use tools, inspect context, and prove or discard hypotheses.
+The report should include the affected asset, prerequisites, reproduction status, and what the test did not cover.
+“Critical” is not a substitute for those fields.
 
-## Example Audit Command
+## What an AI code audit does not prove
 
-Use an isolated audit runner and preserve the report, affected files, reproduction evidence, and proposed fix. The exact command depends on the repository and scanner version.
+An AI code audit does not prove that every attacker path is absent.
+It proves only what the recorded tests, tools, inputs, and scope support.
 
-For the runtime layer behind this pattern, read [LLM Sandbox Environment For Agent Runs](/blog/llm-sandbox-environment-agent-runtime). For scanner triage, read [AI Vulnerability Scanner Vs Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit).
+It may miss a bug in a dependency, a production-only configuration, a race between services, or an attacker path that the test suite does not model.
+Human review, monitoring, incident response, and a second testing approach still matter for systems handling money, credentials, or personal data.
 
-## Finding Lifecycle
+## Decide when to run an AI code audit
 
-An audit agent should move findings through stages instead of dumping every suspicion into the report.
+Use an AI code audit when you need a review with pinned inputs, scanner versions, and command logs before a release or a deeper security engagement.
+Accept a finding only when it names the code path, reachability evidence, reproduction result, impact, and remaining limits.
+Keep rejected candidates with their negative evidence so the next audit can start from what was already checked.
 
-| Stage | Required evidence |
-| --- | --- |
-| candidate | why the pattern or code path looked risky |
-| reachable | how an attacker or user can reach the path |
-| reproducible | command, test, trace, or proof notes |
-| severity assigned | concrete impact and affected assets |
-| fix proposed | code-level mitigation or design change |
-| residual risk | what the fix does not cover |
+## Questions readers usually ask
 
-That lifecycle protects the report from two common AI failures: overclaiming and duplicate noise. A candidate finding can be useful in notes, but it should not become a high-severity issue until the audit runtime has validated reachability and impact.
+### What is an AI code audit?
 
-## Coordinator And Specialists
+It is an AI-assisted repository review that combines scanner output, code inspection, executable tests, and a report of supported findings.
 
-The coordinator should keep a small tool surface and hand stack-specific work to specialists.
+### How is it different from a vulnerability scanner?
 
-| Specialist | Useful work |
-| --- | --- |
-| EVM | Foundry tests, traces, invariants, access control paths |
-| Solana | Anchor constraints, account validation, program tests |
-| Move | resource and ability checks, package tests |
-| zk | circuit constraints, proof generation paths, witness handling |
-| app security | auth, input validation, dependency and dataflow review |
+A scanner reports patterns.
+An audit workflow investigates context, tests reachability, records reproduction evidence, and can close a false positive with an explanation.
 
-This is where sandboxes matter. Each specialist can run the toolchain it needs without polluting the coordinator or exposing local credentials. The output should come back as evidence, not as raw model opinion.
+### Does a sandbox make the audit safe?
 
-The coordinator should also track negative evidence. "Slither flagged this, but the path is unreachable because only the owner can call it after initialization" is useful audit work. Good reports include what was checked and rejected when that context prevents duplicate future findings.
+No.
+A sandbox limits where the commands run, but the audit still needs narrow permissions, clean test inputs, secret handling, and a reviewer who understands what the tests covered.
 
-That negative evidence should stay out of the executive summary but remain available in an appendix or trace. Engineers need the decision trail when the same warning returns in a later scan.
+### What should a finding contain?
 
-## What This Does Not Prove
-
-An AI code audit does not prove the system is secure. It finds and validates issues under defined scope. Human security review, formal audits, monitoring, and defense-in-depth still matter.
-
-## Decision Rule
-
-Use AI code audit when you need fast, evidence-backed review before a deeper audit or release gate. Reject findings that do not include a reproduction path or validation artifact.
-
-## FAQ
-
-### What is AI code audit?
-
-It is repository review by an AI-assisted audit system that inspects code, runs tools, validates findings, and produces a report.
-
-### How is this different from a vulnerability scanner?
-
-A scanner flags patterns. An agent audit can inspect context, run commands, test hypotheses, and downgrade unproven claims.
-
-### Is audit.tangle.tools live?
-
-It is the planned Code Auditor surface. Public copy should treat it as launching soon until the domain resolves.
-
-### What stacks should a code auditor support?
-
-At minimum, the stack it claims to audit. Tangle's auditor direction includes EVM, Solana, Move, zk, Cosmos, and general application code paths.
+At minimum, include the affected code path, state, evidence, reproduction command or test, impact, suggested fix, and residual risk.
