@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { parseFrontmatter } from './lib/blog-frontmatter.mjs'
 
 const root = process.cwd()
 const blogDir = path.join(root, 'src/content/blog')
@@ -13,6 +14,10 @@ const sharedPrimaryQueries = new Set(Object.entries(queryOwnerCounts).filter(([,
 const args = process.argv.slice(2)
 const json = args.includes('--json')
 const reportIndex = args.indexOf('--report')
+if (reportIndex >= 0 && !args[reportIndex + 1]) {
+  console.error('Usage: node scripts/audit-blog-reader.mjs [--json] [--report <path>]')
+  process.exit(2)
+}
 const reportPath = reportIndex >= 0 ? args[reportIndex + 1] : null
 
 const nativeTerms = [
@@ -61,18 +66,6 @@ function listFiles(dir) {
   })
 }
 
-function parseFrontmatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---\n/)
-  if (!match) return { data: {}, body: text }
-  const data = {}
-  for (const line of match[1].split('\n')) {
-    const pair = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/)
-    if (!pair) continue
-    data[pair[1]] = pair[2].replace(/^['"]|['"]$/g, '').trim()
-  }
-  return { data, body: text.slice(match[0].length) }
-}
-
 function plain(text) {
   return text
     .replace(/```[\s\S]*?```/g, ' ')
@@ -117,7 +110,7 @@ function firstWindow(body) {
 
 function nativeTermsInOpening(opening) {
   return nativeTerms.filter((term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const match = new RegExp(`\\b${escaped}\\b`, 'i').exec(opening)
     if (!match) return false
     const sentenceStart = Math.max(
@@ -152,11 +145,11 @@ function scorePost(file) {
   const tableRows = (body.match(/^\|.+\|$/gm) || []).length
   const externalLinks = (body.match(/https?:\/\//g) || []).length
   const internalLinks = (body.match(/\]\(\/(?!\/)/g) || []).length
-  const codeBlocks = (body.match(/```/g) || []).length / 2
+  const codeBlocks = Math.floor((body.match(/```/g) || []).length / 2)
   const debris = debrisPatterns.filter((pattern) => pattern.test(bodyWithoutLinks)).map((pattern) => pattern.source)
   const nativeOpening = nativeTermsInOpening(opening)
   const nativeCount = nativeTerms.reduce((count, term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     return count + (prose.match(new RegExp(`\\b${escaped}\\b`, 'gi')) || []).length
   }, 0)
   const definitions = (prose.match(new RegExp(definitionWords.source, 'gi')) || []).length
@@ -165,8 +158,14 @@ function scorePost(file) {
   const hasQuestion = /\?|\b(?:why|when|how|what if|should)\b/i.test(opening)
   const hasDefinition = definitions > 0
   const hasEvidence = evidenceWords.test(body) || externalLinks > 0 || internalLinks > 0 || tableRows > 0 || codeBlocks > 0
-  const hasNumbers = /\b\d+(?:\.\d+)?\s*(?:%|percent|x|×|pp|ms|seconds?|minutes?|hours?|dollars?|USD|ETH|wei)?\b/i.test(prose)
-  const hasMeasurementConditions = /(?:n\s*=|out of|per \d+|sample|attempts?|trials?|baseline|control|version|date|limit|limitation|not measured|not reported|does not prove|completed)/i.test(prose)
+  const numberMatches = [...prose.matchAll(/(?:\b\d+(?:\.\d+)?\s*(?:%|percent|x|×|pp|ms|seconds?|minutes?|hours?|days?|dollars?|USD|ETH|wei|tests?|contracts?|paths?|jobs?|requests?|rows?|records?|tokens?|agents?|words?)\b|\bn\s*=\s*\d+\b|\b\d+\s+out of\s+\d+\b)/gi)]
+  const hasNumbers = numberMatches.length > 0
+  const measurementCondition = /(?:\bn\s*=\s*\d+\b|\b\d+\s+out of\s+\d+\b|\b(?:per|over|across)\s+\d+\b|\b(?:sample|attempts?|trials?|baseline|control|version|date|limit|limitation|not measured|not reported|does not prove|completed|reported|snapshot|default|inventory|declares?|carries?|counts?|listed|describes?)\b)/i
+  const unconditionedNumbers = numberMatches.filter(({ index }) => {
+    const context = prose.slice(Math.max(0, index - 100), index + 120)
+    return !measurementCondition.test(context)
+  })
+  const hasMeasurementConditions = !hasNumbers || unconditionedNumbers.length === 0
   const ending = plain(body).slice(-1800)
   const hasDecision = decisionWords.test(ending) || /\b(?:practical decision|what .* should|recommend|where .* does not apply|expose|preserve)\b/i.test(ending)
   const titleOverlap = targetQuery ? queryOverlap(targetQuery, data.title || '') : 0
@@ -284,8 +283,8 @@ function renderReport(posts) {
   const lines = [
     '# Blog Rubric Audit — All Posts',
     '',
-    `This is a deterministic, machine-assisted first pass over all ${posts.length} posts using the [blog quality rubric](https://github.com/tangle-network/dotfiles/blob/main/docs/rubrics/blog-quality.md) and [public technical blog style guide](https://github.com/tangle-network/dotfiles/blob/main/docs/green-patterns/blog-style-guide.md).`,
-    'Search checks use the [discovery quality rubric](https://github.com/tangle-network/dotfiles/blob/main/docs/rubrics/blog-discovery-quality.md), the checked-in [primary-query map](../../scripts/blog-search-targets.json), and the [search research notes](./blog-search-research.md).',
+    `This is a deterministic, machine-assisted first pass over all ${posts.length} posts using the [blog quality rubric](https://github.com/drewstone/dotfiles/blob/main/docs/rubrics/blog-quality.md) and [public technical blog style guide](https://github.com/drewstone/dotfiles/blob/main/docs/green-patterns/blog-style-guide.md).`,
+    'Search checks use the checked-in [primary-query map](../../scripts/blog-search-targets.json) and the [search research notes](./blog-search-research.md).',
     'The query map carries 77 owners from the existing `company/tools/seo-engine` map and adds 8 directional owners for previously unmapped posts; it contains no search-volume or ranking claims.',
     'Query-language overlap is only a wording hint. Google can understand related language, so a low overlap is a revision prompt, not a keyword-stuffing target.',
     'The score is a ranking signal from the title, opening, full-text patterns, links, measurements, and structure; it is not a publish approval.',

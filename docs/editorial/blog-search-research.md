@@ -11,7 +11,7 @@ The durable source of demand is our own Google Search Console query and page dat
 Use this file to choose wording until that measured export is available, then replace directional phrases with measured query families and keep the date and region.
 
 The starting map came from the existing company `seo-engine` configuration.
-That map reused three phrases across eight posts, so this pass gives those pages distinct directional owners to reduce self-competition; Search Console data decides whether the owners should change.
+That older map left eight posts unmapped and reused three phrases among mapped posts, so this pass gives those pages distinct directional owners to reduce self-competition; Search Console data decides whether the owners should change.
 
 The existing tool is useful for metadata, links, and query-map linting, but its numeric site score is not a ranking result.
 On this 85-post site it reports an average checklist score of 90.04/100 and eight unmapped posts under its older configuration.
