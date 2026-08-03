@@ -377,7 +377,7 @@ The August 3, 2026 audit covers 85 MDX posts and 13 series.
 - The reader audit reports 0 P0 rewrites, 38 P1 revisions, and 47 P2 factual or link checks.
 - The content audit finds 44 posts under 1,000 words, 25 under 750 words, and 20 at or above 2,000 words.
 - Only 23 posts contain actual syntax code rather than notation or pseudocode, and only 8 contain shell-style blocks.
-- Only one post contains a runnable command block that the structural scan can identify.
+- No fenced block contains a package-specific install or import example for `@tangle-network/sandbox`, `@tangle-network/agent-runtime`, `@tangle-network/agent-eval`, or `@tangle-network/agent-knowledge`.
 - The self-improving series has a median of about 2,948 words but no actual syntax-code posts; it needs concrete experiments and product walkthroughs, not more theory.
 - The Agent Intent Infrastructure, Blueprint Agent, Tangle Protocol, Browser Agent, and Code Auditor series have medians between 720 and 789 words and need full teaching rewrites.
 
