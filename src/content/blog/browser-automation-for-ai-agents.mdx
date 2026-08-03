@@ -1,8 +1,8 @@
 ---
-title: 'Browser Automation for AI Agents'
+title: 'Browser Automation for AI Agents: Evidence and Safe Stops'
 slug: browser-automation-for-ai-agents
 summary: >-
-  Browser automation for AI agents needs DOM evidence, screenshots, recovery loops, and reproducible traces, not only a model clicking through a page.
+  Browser automation for AI agents needs page state, screenshots, recovery, and a clear stop condition so a reviewer can tell what happened.
 date: '2026-06-19'
 author: Drew Stone
 tags:
@@ -16,64 +16,206 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-Browser automation for AI agents is the practice of letting an agent operate a real browser while collecting enough evidence to verify what happened. The minimum useful loop is goal, page state, action, screenshot or DOM proof, recovery, and stop condition. Tangle Browser Agent packages that loop behind the `bad` CLI and SDK so teams can run natural-language browser tasks with evidence instead of hoping a model clicked the right button. Start with [Browser Agent](https://github.com/tangle-network/browser-agent-driver) when the browser is the work surface.
+Ask an AI agent to verify a checkout flow.
+It opens the store, fills a form, clicks “continue,” and reports success.
+What did it see after the click?
+Did the total change, did a validation message appear, or did the page stop loading while the model guessed?
 
-The common failure is treating browser agents like a prettier wrapper around Playwright. Playwright is the control layer. The agent loop still has to decide what to do, inspect the result, recover from dead ends, and produce artifacts a reviewer can trust.
+**Browser automation for AI agents** is the practice of letting an agent operate a real browser while preserving enough page state and evidence to answer those questions.
+The loop states a goal, observes the accessibility tree and a screenshot, performs one action, compares the new page with the expected state, closes a consent banner or retries a bounded step when needed, and stops at a named checkpoint.
 
-## Safe Discovery And Install
+This article uses a read-only checkout check so no payment is submitted.
+The same shape applies to accessibility reviews, wallet flows, account settings, and end-to-end tests.
 
-Start with the public Browser Agent manifest and documentation, then run one representative browser task. Keep screenshots, page state, actions, and the final outcome together.
+## What a browser agent can see
 
-The [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) exposes the package, CLI binary, safe help commands, and example run. It also points to related Tangle surfaces: [Sandbox](https://github.com/tangle-network/tcloud) for machine runtime and Router for model selection.
+A browser exposes more than a screenshot.
 
-## DOM Mode, Vision Mode, Hybrid Mode
+The **DOM**, or Document Object Model, is the structured tree of elements that describes headings, links, buttons, fields, and their attributes.
+An **accessibility tree** maps elements to roles and accessible names used by assistive technology.
+It excludes visual styling.
+A screenshot shows the visible layout at one viewport size and omits collapsed or off-screen content.
 
-| Mode | Strength | Risk |
+Each view answers a different question:
+
+| Observation | What it answers | What it can miss |
 | --- | --- | --- |
-| DOM | precise selectors, text, attributes | misses visual-only state |
-| Vision | sees layout, screenshots, rendered state | can misread hidden structure |
-| Hybrid | combines DOM facts with screenshots | more expensive, but better for real apps |
+| DOM or accessibility tree | Which controls and text the page exposes | Visual overlap, hidden menus, and layout problems |
+| Screenshot | What the user sees at one moment | Hidden labels and the precise element identity |
+| Network and console logs | Which requests and browser errors occurred, such as an HTTP 500 or a stack trace | Whether the business action was accepted |
+| URL and page state | Which route and form state are active | Whether the model interpreted the result correctly |
 
-Agents need both structure and evidence. DOM snapshots explain what the page exposes. Screenshots show what a user would see. Network and console logs catch failures that the DOM can hide.
+Choose evidence by the task’s final condition.
+For a read-only search, a DOM excerpt and URL may be enough.
+For a visual regression, add a screenshot.
+For a payment or wallet flow, stop on the confirmation page, save a screenshot showing the total, and leave the signing or payment action to a person.
 
-## How This Differs From Plain Playwright
+## Start with public discovery
 
-[Playwright](https://playwright.dev/docs/intro) is the browser automation substrate. Tangle Browser Agent adds a goal-driven loop, evidence capture, and CLI workflow for agent tasks. This puts it closer to agentic browser tools such as [Browser Use](https://docs.browser-use.com/) and hosted browser infrastructure such as [Browserbase](https://docs.browserbase.com/), but the developer entry point is CLI-first and evidence-oriented.
+Tangle Browser Agent publishes a [machine-readable manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) and the scoped package [`@tangle-network/browser-agent-driver`](https://github.com/tangle-network/browser-agent-driver).
+The manifest lists the `bad` command, its safe help commands, and the SDK exports.
 
-For comparison positioning, read [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use). For wallet safety, read [natural-language E2E testing for wallet apps](/blog/natural-language-e2e-testing-wallet-apps).
+```bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
+bad run --help
+bad snapshot --help
+```
 
-## Evidence Bar
+The help commands do not visit a customer site.
+Run them first to confirm which options the installed version exposes.
+An actual task needs a model provider key and should begin with a public, read-only page.
 
-A useful browser-agent run should leave enough behind that a reviewer can reject it without rerunning the task:
+## A published SDK example
 
-| Artifact | What it answers |
-| --- | --- |
-| screenshot | what did the user-visible page show? |
-| DOM excerpt | what did the page expose structurally? |
-| action log | what did the agent do and in what order? |
-| stop reason | why did the agent stop here? |
-| error context | was the failure the site, model, network, or instruction? |
+The package exports a `PlaywrightDriver` that controls a Playwright page and a `BrowserAgent` that turns a goal into browser actions.
+This example asks the agent to read a public page and return a structured result.
 
-Without that evidence, browser automation becomes anecdotal. With it, the run can feed QA, design review, accessibility review, and regression testing.
+```typescript
+import { chromium } from 'playwright'
+import {
+  BrowserAgent,
+  PlaywrightDriver,
+} from '@tangle-network/browser-agent-driver'
 
-## What This Does Not Prove
+const browser = await chromium.launch({ channel: 'chrome' })
+const page = await browser.newPage()
+const driver = new PlaywrightDriver(page)
 
-A browser run does not prove business correctness. It proves observed browser state for a task. A good run should stop before destructive actions, preserve screenshots, record DOM evidence, and make the final condition explicit.
+const agent = new BrowserAgent({
+  driver,
+  config: {
+    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    observationMode: 'hybrid',
+    plannerEnabled: true,
+  },
+})
 
-## Start
+try {
+  const result = await agent.run({
+    goal: 'Read the page title and confirm that the page is public',
+    startUrl: 'https://example.com',
+  })
 
-Install the scoped package, run `bad run --help`, then run one read-only browser task against a public page. Use that trace as the baseline before moving to authenticated or payment flows.
+  console.log({ success: result.success, reason: result.reason })
+} finally {
+  await browser.close()
+}
+```
 
-## FAQ
+The `hybrid` observation mode combines the accessibility tree with a screenshot.
+`plannerEnabled` lets the agent make a short plan before it executes browser actions.
+The goal is deliberately read-only, and the `finally` block closes the browser even when the run fails.
+
+The [public repository README](https://github.com/tangle-network/browser-agent-driver) documents the remaining options, including test cases and output directories.
+Keep the model key on the server or in the runner that owns the browser session.
+
+## The evidence loop
+
+A browser agent needs a record for every meaningful transition.
+
+| Event | Record to keep | Why it matters |
+| --- | --- | --- |
+| Goal accepted | Goal text, start URL, and allowed actions | Shows what the agent was asked to do |
+| Observation | URL, DOM or accessibility excerpt, and screenshot | Shows what the agent could see |
+| Action | Action type, target reference, and input value | Shows what the agent attempted |
+| Result | New URL, changed element, console output, or network status | Shows what changed after the action |
+| Recovery | Failed assumption and replacement strategy | Shows why the agent tried something different |
+| Stop | Stop reason and final page state | Shows why the run ended |
+
+The [AI browser testing evidence guide](/blog/ai-browser-testing-evidence-traces) applies the same record to automated tests.
+For wallet-specific flows, see [natural-language testing for wallet apps](/blog/natural-language-test-automation-browser-agents).
+
+## Recovery is part of the task
+
+Real pages differ from the plan.
+A cookie banner can cover a button, a date picker can render a different month, or a network request can return an error page.
+
+When an observation does not match the expected state, the agent should:
+
+1. Record the current screenshot, page state, and error.
+2. Decide whether a safe alternative can reach the same checkpoint.
+3. Try one bounded recovery, such as closing a consent banner or reopening a form.
+4. Re-check the page instead of assuming the action worked.
+5. Stop with the evidence if the checkpoint still cannot be reached.
+
+The agent should not click random controls until a model says the page “looks right.”
+An explicit retry limit and stop reason make a failed run useful to a reviewer.
+
+## DOM, vision, or both
+
+The right observation mode depends on the claim you need to make.
+
+| Mode | Good for | Main limit |
+| --- | --- | --- |
+| DOM | Stable text, links, labels, and attributes | It cannot show whether a control is visually covered |
+| Vision | Layout, screenshots, and visual state | Coordinates can drift and text can be misread |
+| Hybrid | Tasks that need structure plus visual confirmation | It uses more observation data and needs a clear priority when views disagree |
+
+For a checkout check, use the DOM to find the total and a screenshot to show the visible order summary.
+For a design review, screenshots carry more weight.
+For an accessibility review, the accessibility tree and keyboard actions should be first-class evidence.
+
+## Stop before the irreversible action
+
+Browser agents can fill forms and navigate to a final confirmation page.
+That does not mean they should click the final purchase, submit, or sign transaction without a separate approval.
+
+Define the last safe checkpoint in the goal:
+
+```text
+Goal: Verify that a discounted order reaches the review page.
+Allowed actions: open the public store, add the sample item, enter a test address.
+Stop condition: capture the order total and review-page screenshot.
+Forbidden action: submit payment or place the order.
+```
+
+The stop condition is a product rule, not a suggestion to the model.
+The runner should reject an action outside the allowed set and record that rejection.
+
+## Browser and Sandbox have different jobs
+
+The browser holds page state and user-visible interactions.
+The [Tangle Sandbox](/blog/ai-agent-sandbox) can hold the test files, parsers, and reports around that session.
+
+For example, a test runner can save screenshots and DOM excerpts into a workspace, run a comparison script, and delete the workspace after copying the report to durable storage.
+The browser session should still receive only the credentials and permissions required for the test.
+
+## What a browser run does not prove
+
+A browser run proves the observed page state for the tested inputs and session.
+It does not prove that every account, device, locale, or network condition behaves the same way.
+It does not prove that a business transaction was accepted unless the system records a confirmation from the service that owns the transaction.
+
+Keep the tested URL, browser version, model, observation mode, inputs, screenshots, action log, and stop reason with the result.
+Those fields let a reviewer distinguish a site failure, a model mistake, a network issue, and an incomplete test.
+
+## The practical decision
+
+Use Playwright alone when the flow is deterministic and the selectors are stable.
+Use Browser Agent when a task needs a natural-language goal, page interpretation, recovery, or evidence capture.
+Use both when deterministic assertions should anchor an agent’s flexible navigation.
+
+Start with one public, read-only task.
+Add authentication only after the evidence loop and stop condition work without secrets.
+
+## Questions readers usually ask
 
 ### What is browser automation for AI agents?
 
-It is goal-driven browser control where an agent uses DOM state, screenshots, and recovery loops to complete and verify web tasks.
+It is browser control guided by a task goal, with observations, actions, recovery, and evidence recorded for review.
 
-### Is Tangle Browser Agent a replacement for Playwright?
+### Is a browser agent the same as Playwright?
 
-No. It uses browser automation concepts around Playwright-style control, but adds an agent loop, CLI workflow, and evidence artifacts.
+No.
+Playwright controls the browser.
+A browser agent adds goal interpretation, observation choices, recovery, and a result record around that control layer.
 
 ### What should a browser agent capture?
 
-At minimum it should capture the goal, final state, screenshot evidence, DOM evidence, errors, and the stop reason.
+Capture the goal, URL, browser version, page state, screenshot, actions, errors, final condition, and stop reason.
+
+### How do I test a wallet or payment flow safely?
+
+Use a test account and an isolated environment, define the last safe checkpoint, and require a person to approve any signing or payment action.
