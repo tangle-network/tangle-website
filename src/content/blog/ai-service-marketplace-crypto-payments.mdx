@@ -1,8 +1,8 @@
 ---
-title: 'AI Service Marketplace Crypto Payments'
+title: 'AI Service Marketplace With Crypto Payments: From Discovery to Result'
 slug: ai-service-marketplace-crypto-payments
 summary: >-
-  An AI service marketplace crypto flow should price requests, route operator work, and return evidence with each result.
+  See how an AI service marketplace can discover a Blueprint, quote a job, complete a crypto payment, and return evidence instead of a vague status.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,104 +16,211 @@ heroImage: /images/covers/editorial/protocol-operators-v2.webp
 imageAlt: 'An editorial still life about operators running services on a network'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. An operator is the person or service responsible for running a job. x402 is a payment protocol for machine-to-machine requests. An AI service marketplace with crypto payments is only useful if the buyer can discover a service, understand the price, pay per request, receive the result, and inspect evidence when something fails. Crypto payments should reduce friction for machine-to-machine usage, not hide the operating model.
+An AI service marketplace becomes useful when a program can find a service, understand its job contract, pay for one request, and decide whether the returned result is usable.
+The marketplace is the request path, not a directory of logos.
 
-Tangle's protocol direction combines Blueprints, operators, and payment-native service calls. For payment mechanics, read [x402 Payments For AI Agents](/blog/x402-payments-for-ai-agents). For operator-run services, read [Blueprint Protocol For Operator-Run Services](/blog/blueprint-protocol-operator-services).
+This article follows one concrete request: an agent needs to extract fields from an invoice.
+The service is a Tangle **Blueprint**, which is a reusable definition of a job that independent **operators** can run.
+An operator is the person or service that supplies the machine and runs one service instance.
+x402 is an HTTP payment flow that lets a program respond with payment information before the caller retries a request.
 
-## Marketplace Requirements
+You can understand the flow without knowing Tangle, crypto wallets, or AI infrastructure.
 
-| Requirement | Why it matters |
+## The buyer starts with a job, not a marketplace search
+
+An agent does not want a category label such as “AI services.”
+It wants an invoice converted into a typed object with a vendor, date, currency, subtotal, and total.
+
+That distinction determines what the marketplace must publish:
+
+| Field | Example |
 | --- | --- |
-| service discovery | agents and developers need to find the right service |
-| price clarity | users need to know request cost before execution |
-| payment challenge | services need payment without a subscription account |
-| operator routing | work needs a real runtime |
-| result evidence | users need proof or a failure reason |
-| refund or retry policy | paid failures need explicit handling |
+| job name | `extract_invoice` |
+| input | PDF or image under a stated size |
+| output | JSON fields with confidence and source locations |
+| price | fixed amount or an expiring quote |
+| expected time | a range with a timeout |
+| evidence | input checksum, model version, request ID |
+| failure | unsupported file, timeout, or provider error |
 
-The marketplace should not be a list of logos. It should be a job path.
+A listing that says “invoice AI” without an input and output contract gives the agent nothing it can validate.
+The job contract is the product.
 
-## Example Service Flow
+## Discovery should be machine-readable
 
-```text
-agent discovers service
--> reads job interface and price
--> sends request
--> completes crypto payment challenge
--> operator executes job
--> result and evidence return
+A human page can explain the service, but an agent should not have to scrape marketing prose to decide whether it can call the job.
+The marketplace needs a structured record with the same information:
+
+```json
+{
+  "service": "invoice-extractor",
+  "blueprint": "invoice-extraction-v2",
+  "jobs": [
+    {
+      "name": "extract_invoice",
+      "input": "application/pdf",
+      "output": "invoice-json-v1",
+      "price": { "asset": "USDC", "amount": "0.03" },
+      "timeoutSeconds": 45,
+      "evidence": ["request_id", "input_hash", "model_version"]
+    }
+  ]
+}
 ```
 
-This applies to inference, code audit, browser testing, sandbox jobs, and other AI services with clear input/output boundaries.
+This is an illustrative catalog shape, not a claim about a current Tangle API.
+The schema must be versioned so a cached agent knows when a price, input, output, or evidence field changed.
 
-## Why Crypto Payments Fit AI Services
+## The request and payment sequence
 
-| AI service trait | Payment requirement |
+The public [x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) describes the general request-payment-retry pattern.
+The flow is:
+
+```text
+agent discovers a job
+-> agent reads input, output, price, and timeout
+-> agent sends the request
+-> service returns a payment challenge
+-> agent pays through the supported rail
+-> agent retries with payment evidence
+-> an operator runs the Blueprint job
+-> service returns result, receipt, and failure details
+```
+
+The payment challenge proves that the caller followed the payment step.
+It does not prove that the extracted invoice fields are correct.
+The service still needs a validation policy, such as checking that the total equals the subtotal plus tax when those fields are present.
+
+## A small TypeScript buyer
+
+The following toy client shows how a buyer should keep discovery, payment, and result checking separate.
+It uses ordinary `fetch` and a callback for payment rather than pretending to be an x402 SDK.
+Use the current x402 client for a real deployment.
+
+```ts
+type Job = {
+  endpoint: string
+  price: { asset: string; amount: string }
+  timeoutSeconds: number
+}
+
+type Invoice = {
+  vendor: string
+  subtotal: number
+  tax: number
+  total: number
+}
+
+async function buyInvoiceExtraction(
+  job: Job,
+  file: Blob,
+  pay: (challenge: unknown) => Promise<string>
+): Promise<Invoice> {
+  const first = await fetch(job.endpoint, {
+    method: 'POST',
+    body: file
+  })
+
+  if (first.status !== 402) {
+    throw new Error(`expected payment challenge, received ${first.status}`)
+  }
+
+  const challenge = await first.json()
+  const paymentEvidence = await pay(challenge)
+  const second = await fetch(job.endpoint, {
+    method: 'POST',
+    headers: { 'payment-evidence': paymentEvidence },
+    body: file
+  })
+
+  if (!second.ok) {
+    throw new Error(`paid job failed with ${second.status}`)
+  }
+
+  const result = (await second.json()) as Invoice
+  if (result.subtotal + result.tax !== result.total) {
+    throw new Error('service returned an inconsistent invoice total')
+  }
+
+  return result
+}
+```
+
+The header name and payment callback above are placeholders for the current client library.
+That limitation is intentional: inventing a protocol header in a blog would create a broken integration.
+The code still demonstrates the important design: a payment response is handled before retry, a paid failure is surfaced, and a cheap deterministic check runs after the model result.
+
+## Where Blueprints and operators fit
+
+The marketplace can describe a Blueprint and list service instances, but it does not execute the invoice extraction itself.
+An operator runs the public artifact and reports the job result.
+The [Blueprint SDK](https://github.com/tangle-network/blueprint) is the public place to learn how a service runner connects jobs to code.
+The [Tangle documentation](https://docs.tangle.tools) covers current operator and network workflows.
+
+For each listed service, the marketplace should expose:
+
+| Marketplace field | Buyer decision |
 | --- | --- |
-| many small requests | pay per request can beat subscription setup |
-| agent-to-agent calls | machines need programmable payment rails |
-| variable cost | pricing can follow job size or operator quote |
-| global users | wallet-based payment can avoid account-heavy setup |
-| service evidence | receipts can pair payment with result |
+| Blueprint and version | Is this the interface the agent integrated with? |
+| operator identity | Who ran this request? |
+| price or quote expiry | Can the buyer predict the cost? |
+| timeout and status | Should the agent wait or retry elsewhere? |
+| result and evidence | Can the buyer inspect what happened? |
+| refund rule | What happens after payment but before a usable result? |
 
-For dynamic job pricing, read [RFQ Job Quotes And Tangle Operator Accountability](/blog/rfq-job-quotes-tangle-operator-accountability). For private usage, read [Anonymous LLM Usage With Shielded Payments](/blog/anonymous-llm-usage-shielded-payments).
+That information also lets an agent choose among operators without pretending that the cheapest listing is always the best one.
+An operator with more complete receipts may be easier to debug than one with a lower quote.
 
-## First Services To List
+## Handle paid failures before adding more services
 
-Start with services that have a bounded request and a clear success condition.
+The first marketplace launch should support one job end to end.
+For the invoice example, test these cases:
 
-| Service | Marketplace contract |
-| --- | --- |
-| LLM inference | prompt in, completion out, usage and latency recorded |
-| browser test | URL and goal in, screenshots and verdict out |
-| code audit | repository and scope in, validated findings out |
-| sandbox job | command or task in, logs and artifact out |
-| data transform | input file in, transformed output and checksum out |
+- the file is an unsupported type and should be rejected before payment;
+- the payment challenge expires and the agent must request a new one;
+- payment succeeds but the operator times out;
+- the result arrives with an invalid total;
+- the operator runs a service version older than the catalog entry.
 
-Those services can be priced, routed, and reviewed. A marketplace should avoid vague listings such as "AI assistant" unless the buyer can see the job interface and evidence.
+Each case needs a visible result for the agent.
+“Something went wrong” is not a retry policy.
+The service should identify whether retrying the same operator is safe, whether a new operator can use the payment, and whether a refund is due.
 
-## External Payment Context
+For variable-cost jobs, [RFQ Job Quotes And Tangle Operator Accountability](/blog/rfq-job-quotes-tangle-operator-accountability) explains why an expiring operator quote is a useful contract.
+For privacy boundaries around paid inference, read [Anonymous LLM Usage With Shielded Payments](/blog/anonymous-llm-usage-shielded-payments).
 
-The relevant payment shift is request-level payment. Public x402 references such as [x402.org](https://www.x402.org/), [Coinbase Developer Platform's x402 docs](https://docs.cdp.coinbase.com/x402/welcome), and Cloudflare's [x402 article](https://blog.cloudflare.com/x402/) show the direction: an HTTP request can carry a payment challenge instead of forcing every buyer into a subscription account. Tangle applies that shape to operator-run AI services and Blueprints.
+## Why crypto payments can fit this shape
 
-The marketplace still needs normal product discipline. Each service should publish:
+Pay-per-request payment is a natural fit when an agent makes many small calls, a service has variable cost, or a buyer does not need a long-lived account.
+It is not automatically better than cards or subscriptions.
+Subscriptions may be easier for a human team with predictable usage, refunds, and procurement requirements.
 
-| Field | Required detail |
-| --- | --- |
-| price | exact amount or quote rule |
-| operator | who runs the job |
-| SLA | timeout and expected latency |
-| evidence | receipt, logs, screenshots, or proof artifact |
-| refund path | what happens when payment clears but execution fails |
+Crypto rails help when the caller is a program and the service can state a precise price or quote.
+They do not solve discovery, operator quality, support, or result correctness.
+Those are marketplace and service-contract problems.
 
-Crypto payments are the transport for value. The service contract is what makes the marketplace usable.
+## Decision rule
 
-Discovery should also be machine-readable. If agents are expected to buy services, they need structured metadata for price, input schema, output schema, timeout, and evidence type. A human-friendly page can sit on top of that, but the marketplace should not force agents to scrape prose.
-
-That metadata should be versioned. If a service changes price, timeout, schema, or evidence type, agents need to know whether their cached integration is still valid.
-
-## What This Does Not Prove
-
-Crypto payments do not make a marketplace trustworthy by themselves. Trust comes from service definitions, operator behavior, clear pricing, verification, support, and evidence.
-
-## Decision Rule
-
-Build an AI service marketplace with crypto payments when the service can be priced per request and executed by operators with visible evidence. Do not start with a directory; start with a working paid job.
+Build an AI service marketplace with crypto payments when you can define one bounded job, publish its input and output, quote it before work starts, and return evidence after it finishes.
+Do not begin with a directory of vague assistants.
+Begin with one paid request that a program can discover, pay for, validate, and retry.
 
 ## FAQ
 
 ### What is an AI service marketplace with crypto payments?
 
-It is a marketplace where users or agents can discover AI services, pay with crypto-native rails, and receive job results.
+It is a catalog and request path where people or programs discover a defined AI job, pay through crypto-native rails, and receive a result with evidence.
 
-### Why not use normal subscriptions?
+### Why use pay-per-request instead of a subscription?
 
-Subscriptions work for human accounts. Pay-per-request crypto rails can fit agent calls, one-off jobs, and services with variable cost.
+Pay-per-request can fit one-off jobs, machine-to-machine calls, and services whose cost changes with input size.
+Subscriptions can still be better for predictable human usage.
 
-### What services fit first?
+### What services should launch first?
 
-Inference, sandbox jobs, browser testing, code audit, data jobs, and other bounded request-response services.
+Choose a job with a bounded input, clear output, observable success check, and explicit failure path, such as invoice extraction, browser testing, code audit, or data transformation.
 
 ### What does Tangle add?
 
-Tangle provides the protocol direction for Blueprints, operators, staking, and payment-native AI service calls.
+Tangle provides the public Blueprint and operator model for services that independent providers can run.
+The marketplace still has to publish prices, versions, evidence, support, and failure behavior.

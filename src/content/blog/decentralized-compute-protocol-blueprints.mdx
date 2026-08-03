@@ -1,8 +1,8 @@
 ---
-title: 'Decentralized Compute Protocol For Blueprints'
+title: 'Decentralized Compute Protocol: How Tangle Blueprints Run Services'
 slug: decentralized-compute-protocol-blueprints
 summary: >-
-  A decentralized compute protocol should define who can run services, how jobs are requested, how operators are paid, and what evidence users get back.
+  Learn how a decentralized compute protocol turns a service definition into operator-run jobs with prices, results, and useful evidence.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,102 +16,175 @@ heroImage: /images/covers/editorial/protocol-operators-v2.webp
 imageAlt: 'An editorial still life about operators running services on a network'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. A decentralized compute protocol is not useful because compute is abstractly decentralized. It is useful when users can request services, operators can run them, payments can clear, and evidence can be checked. Tangle's protocol model centers this around Blueprints: reusable service definitions that operators can register for and run.
+If you want several independent teams to run the same AI service, a decentralized compute protocol has to answer four ordinary questions: what job can a customer request, who runs it, how is it paid for, and what comes back when the job succeeds or fails?
+A **Blueprint** is a reusable service definition, and an **operator** is the person or service that runs it on its own machine.
+Tangle uses Blueprints and operators to coordinate that work.
 
-For the base concept, read [How Blueprints Work](/blog/how-blueprints-work). For deployment, read [Blueprint SDK Deployment Guide](/blog/blueprint-sdk-deployment-guide).
+You do not need to know Tangle to follow this article.
+Think of Tangle as a coordination network for services that are run by independent operators rather than by one company.
+The network records the service definition and the important job events, while the operator supplies the machine and runs the program.
 
-## Protocol Job Model
+The goal is to define discovery metadata, operator requirements, and a job receipt that both sides can inspect.
 
-| Layer | Responsibility |
-| --- | --- |
-| Blueprint | defines the service and runtime expectations |
-| operator | runs the service and accepts work |
-| service instance | receives jobs from users or applications |
-| payment path | prices and settles requests |
-| verification | proves enough about execution for the job type |
-| staking | aligns operator behavior with the network |
+## Start with a job a buyer can describe
 
-The key is not replacing every cloud server. The key is making operator-run services composable enough for paid agent and AI workloads.
+Consider a code-review service.
+A buyer sends a repository URL and a set of directories, and expects a report containing findings, file locations, and a severity for each finding.
+That sounds simple until the first job times out, the operator runs an old version, or the report is returned without any record of which files were inspected.
 
-## Why Blueprints Matter
+A useful protocol definition makes those cases explicit before anyone pays for a run.
+The following is an illustrative contract, not a Tangle manifest or a promise about a particular SDK schema:
 
-Blueprints make compute repeatable. A service can be published once, then run by multiple operators under protocol rules.
-
-```text
-developer defines Blueprint
--> operators register and configure runtime
--> user creates or calls a service instance
--> job executes
--> payment and evidence are recorded
+```json
+{
+  "job": "review_repository",
+  "input": {
+    "repository": "https://github.com/example/project",
+    "paths": ["src/"]
+  },
+  "output": {
+    "findings": "array",
+    "checked_revision": "string"
+  },
+  "failure": ["invalid_input", "timeout", "operator_unavailable"],
+  "evidence": ["operator_id", "service_version", "request_id"]
+}
 ```
 
-That gives builders a path from code to operator-run service, instead of a one-off hosted API.
+The exact fields will vary by service.
+The important property is that a caller can predict the input, output, and failure behavior without reading an operator's private runbook.
 
-## Good Fit Workloads
+## Blueprint, operator, instance, and job
 
-| Workload | Why it fits |
+Keeping these pieces separate gives each one responsibility and an inspectable state.
+
+| Piece | Plain-language meaning | What the buyer can inspect |
+| --- | --- | --- |
+| Blueprint | A reusable description of a service and its jobs | The job interface, source, and operating requirements |
+| Operator | A person or service that supplies a machine and runs the Blueprint | The operator identity and service status |
+| Service instance | One running copy of the Blueprint that can accept work | Its accepted jobs, price, and current version |
+| Job | One request sent to a service instance | The request ID, result, timing, and failure reason |
+
+Payment and verification sit around those pieces.
+Payment answers whether the request was funded.
+Verification answers what evidence is appropriate for this particular job.
+A payment receipt does not prove that an AI answer is correct, and a network record does not replace a service-specific test.
+
+## What the protocol changes
+
+With a normal hosted API, one company usually controls the application, the machine, the logs, and the billing account.
+That is often the right choice.
+It gives the owner a short path to ship and a single place to support customers.
+
+An operator-run service is useful when the buyer wants another choice of provider, the workload can be packaged cleanly, or the operator needs to compete on price, location, hardware, or availability.
+The protocol supplies shared rules for finding the service and recording the job.
+The Blueprint still has to describe what good execution means.
+
+The request path looks like this:
+
+```text
+developer publishes a Blueprint
+-> operators inspect the requirements and register
+-> a service instance advertises a job and price
+-> a buyer sends one request
+-> the operator runs the job
+-> the buyer receives a result, receipt, and failure details if needed
+```
+
+This sequence lets a buyer select a service, fund a job, inspect its receipt, and recover when execution fails.
+Calling a service “distributed” without showing this path does not tell a buyer how to use it or recover from an error.
+
+## Use public tools to make the definition runnable
+
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the public starting point for building these services.
+It provides Rust types and a runner so a developer can connect a job number to a function and let an operator run the resulting service.
+
+Here is the smallest public SDK shape shown in the repository's documentation:
+
+```rust
+use blueprint_sdk::Router;
+use blueprint_sdk::runner::BlueprintRunner;
+use blueprint_sdk::runner::config::BlueprintEnvironment;
+
+async fn ping() -> &'static str {
+    "pong"
+}
+
+let environment = BlueprintEnvironment::default();
+let router = Router::new().route(0, ping);
+
+BlueprintRunner::builder((), environment)
+    .router(router)
+    .run()
+    .await?;
+```
+
+This example does not create a production inference service.
+It shows the boundary that matters: a job has an explicit number, an operator starts a runner, and the runner dispatches the request to code the developer supplied.
+The repository and its examples are the authority for the current API, so check the version and follow the linked setup instructions before copying it into a project.
+
+The protocol contracts and Rust bindings live in the public [tnt-core repository](https://github.com/tangle-network/tnt-core).
+The [Tangle documentation](https://docs.tangle.tools) covers the network and operator steps.
+Keep those sources beside the article because deployment commands and supported networks can change.
+
+## Records buyers need after a job runs
+
+The returned value is only one part of a paid job.
+If a browser test returns “failed,” the buyer needs to know whether the page was unreachable, a wallet prompt blocked the flow, or the test assertion was false.
+
+At minimum, a service should make these records available at the boundary where the buyer can use them:
+
+| Record | Why it helps |
 | --- | --- |
-| LLM inference | paid request flow and operator competition |
-| agent sandboxes | isolated runtime with job evidence |
-| code audit | sandboxed review jobs |
-| data pipelines | repeatable job execution |
-| wallet or app agents | payment-native service calls |
+| request ID | joins payment, execution, and support conversations |
+| operator ID | identifies the service provider for this run |
+| service version | reveals whether the operator is running the expected artifact |
+| start and finish time | separates queue delay from execution time |
+| result or artifact link | lets the buyer inspect the actual output |
+| failure code | tells the buyer whether to retry, refund, or change input |
 
-For payment-native infrastructure, read [x402 Payments For AI Agents](/blog/x402-payments-for-ai-agents) and [AI Service Marketplace With Crypto Payments](/blog/ai-service-marketplace-crypto-payments).
+An operator can keep private infrastructure details private while still returning this public boundary.
+The boundary contract supports a support case without exposing internal logs or asking the buyer to trust an uncheckable status message.
 
-## Design Constraints
+## Timeouts, stale artifacts, and incorrect results
 
-A decentralized compute protocol should make three things explicit before a workload goes live.
+Suppose the buyer pays for the code review and the operator disappears before starting it.
+The service needs a documented outcome: a retry with another operator, a refund, or a pending state with a deadline.
 
-| Constraint | What to define |
-| --- | --- |
-| job boundary | exact input, output, timeout, and failure states |
-| operator obligation | uptime, runtime version, logs, and supported regions or hardware |
-| payment rule | fixed price, quote flow, refund rule, or unpaid failure path |
+Suppose the operator returns a report from an older artifact.
+The receipt should identify the service version so the buyer can reject the result or compare it with the current release.
 
-Those details prevent a common failure: the service sounds decentralized, but the buyer still cannot tell what they purchased or who is accountable for a bad result. The protocol can coordinate operators, but the Blueprint has to describe the service well enough for users and operators to meet in the middle.
+Suppose the model produces a plausible but wrong finding.
+The protocol can record who ran the job and what artifact returned the result, but only the code-review service can define a meaningful quality check.
+That might be a fixed test corpus, a second review pass, or a human approval step.
 
-Tangle builders should also keep the source path visible. The [Blueprint SDK](https://github.com/tangle-network/blueprint) is where service definitions and operator tooling live. Protocol-level contracts and libraries live in [tangle-network/tnt-core](https://github.com/tangle-network/tnt-core). Payment-native services can use x402-style request payment flows; see [x402.org](https://www.x402.org/) and the [Coinbase x402 docs](https://docs.cdp.coinbase.com/x402/welcome) for the base protocol direction.
+These are different failures and should not be collapsed into one “verified” label.
 
-## Evidence Buyers Should Receive
+## When this model fits
 
-Decentralized compute should return more than a result string. A buyer should receive a result plus enough metadata to debug or dispute the job.
+Choose a decentralized compute protocol when a shared job schema, independent operator requirements, per-request payment, and inspectable results solve a buyer's problem.
+Inference, browser tests, code audits, sandbox jobs, and data transformations are reasonable first candidates because each can expose a bounded input and output.
 
-| Evidence | Buyer use |
-| --- | --- |
-| operator ID | know which service provider ran the job |
-| service version | detect old or mismatched runtime behavior |
-| request ID | connect payment, logs, and result |
-| timing | identify timeout, queue, or execution delay |
-| verification artifact | understand how the result was checked |
-| failure reason | decide whether to retry, refund, or escalate |
+Choose a conventional hosted API when one team can own the runtime, the user already trusts that team, and operator choice would add coordination without improving the product.
+Decentralization is a design decision, not a quality badge.
 
-That evidence turns decentralized compute from a slogan into an operating model. It also gives agents a way to decide whether a service is reliable enough to call again.
-
-The same evidence helps operators compete on reliability instead of only price. If two services return the same result but one has clearer timing, version, and failure data, agents can prefer the service that is easier to trust and debug.
-
-## What This Does Not Prove
-
-A decentralized compute protocol does not automatically make services cheaper, faster, or more private. Those outcomes depend on the Blueprint, operator set, payment path, runtime, and verification model.
-
-## Decision Rule
-
-Use a decentralized compute protocol when independent operators, payment settlement, and service evidence matter. Use a normal hosted API when one team can own the full runtime and trust boundary.
+For the next step, read [Blueprint Protocol For Operator-Run Services](/blog/blueprint-protocol-operator-services) to turn this job model into an operator-ready definition.
 
 ## FAQ
 
 ### What is a decentralized compute protocol?
 
-It is a network where independent operators can run services under shared rules for requests, payments, and verification.
+It is a set of shared rules that lets independent operators run a service and lets buyers request, pay for, and inspect jobs through a common interface.
 
 ### What is a Tangle Blueprint?
 
-A Blueprint is a reusable service definition that operators can register for and run.
+A Blueprint is a reusable service definition that names the jobs, runtime requirements, and evidence an operator must support.
 
-### Is this the same as a cloud provider?
+### Does decentralization guarantee a correct AI result?
 
-No. A cloud provider runs infrastructure directly. Tangle defines protocol rules for operator-run services.
+No.
+It can make the operator, artifact, and job history easier to identify, but correctness still depends on the service's code and quality checks.
 
-### What should builders deploy first?
+### What should a team deploy first?
 
-Start with a narrow service that has clear input, output, pricing, and verification requirements.
+Start with one narrow job whose input, output, price, timeout, and failure behavior can be explained on one page.
