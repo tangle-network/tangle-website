@@ -14,15 +14,16 @@
  *
  * Run: pnpm check:copy
  *   - All pages by default
- *   - Single page: pnpm check:copy services/blueprint-agent
+ *   - One or more pages: pnpm check:copy /blog/ai-agent-sandbox /blog/agent-runtime-environments
  *
  * Env:
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
  *                          GOOGLE_AI_KEY / TANGLE_ROUTER_USER_KEY pulled from
  *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default: deepseek/deepseek-chat via the router
- *                          (free-tier canonical list), gemini-2.5-flash with
- *                          Google, gpt-5.5 with direct OpenAI
+ *   COPY_AUDIT_MODEL    — default: gpt-5.6-luna via the router,
+ *                          gemini-3-flash with Google, gpt-5.5 with direct
+ *                          OpenAI
+ *   COPY_AUDIT_TIMEOUT_MS — per-page provider timeout (default 45000)
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.0)
  *
  * Output: per-page score 1–10, flagged phrases with line context.
@@ -35,7 +36,7 @@ import { execSync } from 'node:child_process';
 const ROOT = resolve(process.cwd(), 'dist/client');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.0);
-const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 20_000);
+const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
@@ -54,13 +55,13 @@ let API_BASE = process.env.COPY_AUDIT_API_BASE;
 if (!API_KEY && process.env.TANGLE_API_KEY) {
   API_KEY = process.env.TANGLE_API_KEY;
   API_BASE = 'https://router.tangle.tools/v1';
-  MODEL ??= 'deepseek/deepseek-chat';
+  MODEL ??= 'gpt-5.6-luna';
 }
 
 if (!API_KEY && process.env.GOOGLE_AI_KEY) {
   API_KEY = process.env.GOOGLE_AI_KEY;
   API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-  MODEL ??= 'gemini-2.5-flash';
+  MODEL ??= 'gemini-3-flash';
 }
 
 if (!API_KEY && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.startsWith('sk-')) {
@@ -72,7 +73,7 @@ if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
   if (API_KEY) {
     API_BASE = 'https://router.tangle.tools/v1';
-    MODEL ??= 'deepseek/deepseek-chat';
+    MODEL ??= 'gpt-5.6-luna';
   }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
@@ -83,7 +84,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
     if (k) {
       API_KEY = k;
       API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-      MODEL ??= 'gemini-2.5-flash';
+      MODEL ??= 'gemini-3-flash';
     }
   }
   catch {
@@ -107,7 +108,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
       API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
       if (API_KEY) {
         API_BASE = 'https://router.tangle.tools/v1';
-        MODEL ??= 'deepseek/deepseek-chat';
+        MODEL ??= 'gpt-5.6-luna';
       }
     }
     catch {
@@ -121,9 +122,9 @@ if (!API_KEY) {
 }
 
 API_BASE ??= 'https://router.tangle.tools/v1';
-MODEL ??= 'deepseek/deepseek-chat';
+MODEL ??= 'gpt-5.6-luna';
 
-const pageArg = process.argv[2];
+const pageArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
 // ─── Load pages ──────────────────────────────────────────────────────
 function findHtml(dir) {
@@ -138,12 +139,12 @@ function findHtml(dir) {
   return out;
 }
 
-const allPages = pageArg
-  ? [resolve(ROOT, pageArg.replace(/^\//, ''), 'index.html')].filter(existsSync)
+const allPages = pageArgs.length
+  ? pageArgs.flatMap((pageArg) => [resolve(ROOT, pageArg.replace(/^\//, ''), 'index.html')].filter(existsSync))
   : findHtml(ROOT);
 
 if (allPages.length === 0) {
-  console.error(`✗ No pages found${pageArg ? ` matching "${pageArg}"` : ''}.`);
+  console.error(`✗ No pages found${pageArgs.length ? ` matching ${pageArgs.join(', ')}` : ''}.`);
   process.exit(2);
 }
 
@@ -151,7 +152,11 @@ if (allPages.length === 0) {
 // Strip scripts, styles, attributes, SVG inner content. Keep text in
 // a way that preserves the page's narrative flow.
 function extractCopy(html) {
-  return html
+  // Audit the article itself, not the shared navigation and footer.
+  // Those shared regions can consume the input cap and make a complete
+  // article look truncated to the reviewer.
+  const article = html.match(/<article\b[^>]*\bclass="[^"]*\bblog-article\b[^"]*"[\s\S]*?<\/article>/i)?.[0] ?? html;
+  return article
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<svg[\s\S]*?<\/svg>/gi, '')
@@ -209,7 +214,7 @@ OUTPUT (JSON only):
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function auditPage(label, copy, attempt = 1) {
-  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 8000)}\n=== END ===`;
+  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 12000)}\n=== END ===`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`copy auditor timed out after ${AUDITOR_TIMEOUT_MS}ms`)), AUDITOR_TIMEOUT_MS);
 

@@ -1,8 +1,9 @@
 ---
-title: 'AI Agent Sandbox: Runtime, Policy, and Evidence'
+title: 'AI Agent Sandbox: Build a Controlled Agent Workspace'
 slug: ai-agent-sandbox
 summary: >-
-  An AI agent sandbox gives an autonomous agent a real isolated machine with files, processes, network controls, snapshots, credentials, and policy boundaries.
+  An AI agent sandbox gives a software agent isolated files, processes, network rules, and reviewable output.
+  Learn how to test the workspace with a real task.
 date: '2026-06-18'
 author: Drew Stone
 tags:
@@ -16,76 +17,231 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-An AI agent sandbox is an isolated runtime where an agent can create files, run processes, call tools, use the network under policy, preserve state, and return evidence. A code interpreter, browser automation session, or serverless job runner is too narrow for that job. Tangle Sandbox gives agents a machine-shaped workspace for real work: install dependencies, execute tests, inspect artifacts, recover from failure, and keep the dangerous parts contained. Start with [Tangle Sandbox](https://github.com/tangle-network/tcloud) when the agent needs an environment, more than an API.
+Imagine asking a coding agent to upgrade a dependency.
+The useful result is not a paragraph saying that the upgrade should work.
+It is a changed `package-lock.json` with the new version recorded, a test run, the error from the first attempt, and a clear explanation of what changed.
 
-The hard part of agent infrastructure is not letting a model produce text. It is giving that model a place to act without handing it your laptop, production credentials, or a shared build server.
+To produce that result, the agent needs to write files, install packages, run commands, inspect a failure, and try again.
+Give it your laptop and one bad command can expose a credential or damage unrelated work.
+Give it only a one-shot code box and it cannot keep the workspace it is trying to repair.
 
-## Sandbox vs Similar Tools
+An **AI agent sandbox** is the middle layer: an isolated workspace where an agent can use files, processes, tools, and network access under explicit rules.
+Tangle Sandbox creates that workspace through `client.create`, waits for `running`, runs commands with `box.exec`, and removes it with `box.delete`.
+Before calling `box.delete`, the client must copy the patch and test logs to durable storage so the temporary workspace can disappear while the review record remains available.
 
-| Surface | Good for | Missing when used as an agent sandbox |
+This guide explains what that means in practice, shows a small policy example, and then uses the public Tangle Sandbox SDK to run a real command.
+You do not need to know Tangle’s other products to follow along.
+
+## The problem is a workspace, not a prompt
+
+A chat model can generate a plausible answer without touching a filesystem.
+An agent has a longer job:
+
+1. Read the project it was given.
+2. Change one or more files.
+3. Run the project’s tools.
+4. Learn from the result and decide what to do next.
+5. Return both the result and enough evidence for someone else to check it.
+
+That loop needs a place to live.
+A useful sandbox isolates its own filesystem and process boundary, applies a network policy that allowlists required hosts and denies others by default, and exposes a delete operation that closes the workspace when the task is over.
+It also needs a snapshot so a retry can start from the same files instead of repeating setup.
+
+This is why an agent sandbox is different from a prompt with a tool attached.
+The prompt describes the job; the sandbox supplies the working environment.
+
+## The vocabulary: runtime, policy, evidence
+
+The vocabulary around agents is often used as if everyone arrived with the same dictionary.
+Here is the short version.
+
+| Term | Plain-language meaning | Why it matters |
 | --- | --- | --- |
-| Code interpreter | one-off code execution | durable files, toolchain control, credentials, browser, snapshots |
-| Browser automation | web state and UI evidence | package installs, build systems, long-running processes |
-| Serverless job runner | deterministic compute jobs | interactive recovery, traces, multi-step workspace state |
-| Agent sandbox | autonomous software work | still needs policy, auth, logging, and cleanup |
+| **Agent runtime** | The software and machine where an agent’s work executes | It determines which files, commands, tools, and limits exist |
+| **Policy** | The rules that say what the agent may do | A rule can allow tests while blocking a request to send data to an unknown host |
+| **Evidence** | The files, output, and events left behind by a run | A reviewer can check the result instead of trusting the agent’s summary |
 
-Tangle's sandbox contract is intentionally machine-readable. Agents can discover it from the product manifest, package metadata, and health endpoint before trying to run work.
+A sandbox is therefore more than a container with a model inside it.
+It is a place to make a change, observe the outcome, and decide whether the next action is allowed.
 
-Use the public Sandbox manifest and package documentation to inspect the current service contract. Check the health result and available templates as part of a real workload, not as a substitute for one.
+## A small policy example
 
-As of this post, the health endpoint returns `{"status":"ok"}` and the public template endpoint is safe to call. Treat the template list as discovery, not as a guarantee that a specific template slug exists.
+Before wiring a policy to a service, it helps to make the decision visible in ordinary TypeScript.
+The example below only evaluates a policy object and prints a decision; it does not execute a command, so it is safe to run in a browser or a local TypeScript playground.
+It is a teaching example, not a security boundary.
 
-## What An Agent Needs From Runtime
+```typescript
+type Operation = {
+  command: string
+  needsNetwork: boolean
+  writes: string[]
+}
 
-An agent workspace should expose the minimum set of controls needed for useful work:
+const allowedCommands = new Set(['pnpm test', 'pnpm lint'])
 
-| Capability | Why it matters |
+function review(operation: Operation) {
+  if (!allowedCommands.has(operation.command)) {
+    return { allowed: false, reason: 'command is not on the allowlist' }
+  }
+
+  if (operation.needsNetwork) {
+    return { allowed: false, reason: 'network access needs an explicit decision' }
+  }
+
+  const writesOutsideWorkspace = operation.writes.some(
+    (file) => !file.startsWith('workspace/'),
+  )
+
+  if (writesOutsideWorkspace) {
+    return { allowed: false, reason: 'writes must stay inside the workspace' }
+  }
+
+  return { allowed: true, reason: 'test command stays inside the workspace' }
+}
+
+console.log(
+  review({
+    command: 'pnpm test',
+    needsNetwork: false,
+    writes: ['workspace/test-report.xml'],
+  }),
+)
+```
+
+The important part is the shape of the decision.
+The agent receives a reason it can understand, while the reviewer receives a record of which rule was applied.
+In production, the process enforcing the rule must evaluate it outside the prompt; a JavaScript function shown to the agent cannot protect a machine by itself.
+
+## Try the public surface first
+
+Tangle Sandbox publishes a machine-readable [service manifest](https://sandbox.tangle.tools/.well-known/tangle-agent.json) and a scoped npm package.
+The manifest lists the SDK’s primary `Sandbox` class, the `TANGLE_API_KEY` environment variable, and the discovery calls that do not require an account key.
+
+```bash
+npm install @tangle-network/sandbox
+curl -fsS https://sandbox.tangle.tools/health
+curl -fsS https://sandbox.tangle.tools/v1/public-templates
+```
+
+The first request answers a narrow question: can the public service answer a health check?
+The second discovers templates when the public catalog has entries.
+At the time of writing, the health response is `{"status":"ok"}` and the catalog can legitimately be empty while a template publish is still pending.
+Neither response proves that an authenticated workspace can be created or that a particular command will succeed.
+
+Use the same distinction for any service: separate capability discovery from an authenticated workload test.
+Discovery tells an agent what a service says it supports; a real workload tells you what happened when you asked it to do something.
+
+## The real SDK loop
+
+Run the following example from a Node.js process or TypeScript service.
+Keep the API key on the server; a browser demo should call your own small backend rather than shipping the key to every visitor.
+
+```typescript
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
+})
+
+const box = await client.create({
+  name: 'dependency-review',
+  environment: 'universal',
+  resources: {
+    cpuCores: 2,
+    memoryMB: 4096,
+    diskGB: 20,
+  },
+})
+
+try {
+  await box.waitFor('running')
+
+  const result = await box.exec('node --version && npm --version')
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr)
+  }
+
+  console.log(result.stdout)
+} finally {
+  await box.delete()
+}
+```
+
+For this example, the smallest useful lifecycle covers creation, readiness, command execution, result inspection, and cleanup even when the command fails.
+The public [Sandbox package documentation](https://unpkg.com/@tangle-network/sandbox@0.17.3/README.md) also covers file reads and writes, snapshots, sessions, network controls, and agent prompts.
+
+For a dependency update, the command would become a sequence such as `npm install`, `npm test`, and an artifact read from the workspace.
+The agent can keep the failed test output, make a second change, and run the test again without pretending the first attempt succeeded.
+
+## Isolation, failures, network, recovery, cleanup
+
+Run these checks with a small, throwaway task before giving an agent access to an important repository.
+
+| Check | What a useful result looks like |
 | --- | --- |
-| Filesystem | agents edit, diff, build, and preserve artifacts |
-| Process execution | tests, CLIs, servers, migrations, and build tools |
-| Network policy | outbound calls should be explicit, observable, and revocable |
-| Snapshots | a good state can be reused without replaying every setup step |
-| Credential boundary | secrets should be scoped to the job, not the host |
-| Evidence | logs, files, screenshots, and traces let humans verify work |
+| Isolation | A file created in the workspace does not appear on the host running the client |
+| Failure visibility | A failing command returns a non-zero exit code plus standard output and error text |
+| Network control | An outbound request is allowed or denied according to a rule you can inspect |
+| Recovery | A second command can see the first attempt’s files and logs |
+| Cleanup | Deleting the workspace removes temporary state unless you intentionally saved a snapshot or artifact |
 
-This is why [Browser Agent](https://github.com/tangle-network/browser-agent-driver) and Sandbox fit together. Browser Agent can prove UI state; Sandbox can host the working directory, tools, and process tree around that browser run.
+The checks are deliberately boring.
+Each one produces observable evidence: files for isolation, exit codes for failures, network decisions, retained logs for recovery, or cleanup state.
 
-## Readiness Test
+## When a different tool is the right tool
 
-Before calling something an agent sandbox, run this checklist against a real task:
+An agent sandbox is not automatically the best answer for every workload.
 
-| Test | Pass condition |
-| --- | --- |
-| dependency install | agent can install and inspect packages without touching host state |
-| failed command | logs and exit code are visible to the agent and reviewer |
-| artifact capture | generated files survive long enough to inspect |
-| network policy | outbound calls are explicit, not ambient |
-| recovery | agent can retry from workspace state instead of restarting setup |
+| Tool | Choose it when | Reach for a sandbox when |
+| --- | --- | --- |
+| Code interpreter | You need one short calculation or generated chart | The task needs a project directory, several commands, or a retry |
+| Browser automation | You need to click through a site and capture UI state | The browser is one part of a larger build or research workspace |
+| Serverless job runner | The input and output are fixed and the job can run to completion once | The agent must inspect an intermediate result and choose the next command |
+| Agent sandbox | You need files, processes, packages, policy, and evidence together | You should still add the smallest permissions and lifetime that fit the task |
 
-If those checks fail, the surface may still be useful, but it is closer to a code execution endpoint than an agent workspace.
+[Browser Agent](https://github.com/tangle-network/browser-agent-driver) can provide browser state and screenshots, while Sandbox can host the files and processes around that run.
+The broader [agent runtime guide](/blog/agent-runtime-environments/) explains how a workspace fits into an agent’s execution loop.
 
-## Source Anchors
+## What this proves, and what it does not
 
-The category is broader than Tangle. [E2B](https://e2b.dev/docs) popularized fast code sandboxes for AI apps. [Daytona](https://www.daytona.io/docs) focuses on developer environments and workspaces. [Modal](https://modal.com/docs) is strong for serverless compute and GPU jobs. Tangle's claim is narrower: use Sandbox when the workload is an autonomous agent workspace that needs state, tools, evidence, and product-stack integration.
+The SDK example shows that the public client has a clear lifecycle for creating, using, and deleting a workspace.
+The policy example shows how a permission decision can be made explicit and testable before it is connected to an enforcement service.
 
-## What This Does Not Prove
+Together, they do not prove that an agent will make the right change.
+They also do not prove that a particular network rule, credential configuration, image, or workload is safe for your organization.
+Those claims require a task-specific test with the same permissions, inputs, and failure paths that production will use.
 
-A sandbox does not make an agent correct. It gives the agent a bounded place to act. You still need evals, reviews, allowlists, credentials policy, and production gates. If the task only needs one deterministic function call, a sandbox may be more runtime than you need.
+The useful promise of a sandbox is narrower and more practical:
+it gives an agent a bounded place to work, and it gives the rest of the system somewhere to collect the evidence.
 
-## Start
+## Start with one real task
 
-Call the health endpoint, install the scoped package, and run the first workload in a sandbox before giving an agent production credentials. For the larger runtime map, read [agent runtime environments](/blog/agent-runtime-environments).
+Pick a task that is valuable but disposable, such as installing a package and running its tests against a small sample project.
+Record the files changed, command exit codes, network decisions, elapsed time, and artifacts produced.
+Then repeat the task after a deliberate failure and check whether a human can understand what happened without reading the agent’s private conversation.
+
+If that experiment passes, you have learned something concrete about your workload.
+If it fails, the failure has already paid for the sandbox by showing which boundary needs work before a larger agent receives access.
 
 ## FAQ
 
 ### What is an AI agent sandbox?
 
-An AI agent sandbox is an isolated workspace where an agent can run code, edit files, use tools, and return evidence without directly controlling the host machine.
+An AI agent sandbox is an isolated workspace where an agent can edit files, run processes, use tools, and return evidence without directly controlling the host machine.
 
 ### Is a code interpreter the same as an agent sandbox?
 
-No. A code interpreter is usually a narrow execution tool. An agent sandbox is a broader runtime boundary for multi-step work.
+Usually not.
+A code interpreter is designed for a bounded execution request, while a sandbox is designed to keep a multi-step workspace alive long enough for an agent to inspect results and recover from failure.
+
+### Is an AI agent sandbox safe by default?
+
+No.
+Safety depends on the rules around files, network access, credentials, tool permissions, time limits, logging, and cleanup.
+A sandbox reduces the area a mistake can affect; it does not remove the need to design and test those rules.
 
 ### When should I use Tangle Sandbox?
 
-Use Tangle Sandbox when the agent needs files, processes, packages, credentials policy, snapshots, or evidence rather than a single API call.
+Use Tangle Sandbox when an agent needs a disposable development environment with files, processes, packages, and a reviewable result.
+Start with the public health and template calls, then run one small authenticated workload before connecting a larger agent.

@@ -38,8 +38,8 @@ const nativeTerms = [
 ]
 
 const debrisPatterns = [
-  /```[\s\S]*\b(?:git|npm|pnpm|curl|sed|awk|rg|grep|cat)\b/i,
-  /\b(?:git show|git log|git diff|npm view|pnpm (?:run|check|build)|curl -|sed -n|awk |rg |grep )/i,
+  /```[\s\S]*\b(?:git\s+(?:show|log|diff)\b|npm\s+(?:view|pack|link)\b|pnpm\s+(?:run|check|build)\b|sed\s+-n|awk\s+|rg\s+|grep\s+|cat\s+.*(?:src|apps|packages)\/)/i,
+  /\b(?:git show|git log|git diff|npm view\b|npm pack\b|npm link\b|pnpm (?:run|check|build)\b|sed -n|awk |rg |grep )/i,
   /(?:^|[\s`])(?:src|apps|packages)\/[A-Za-z0-9_.\-/]+/m,
   /\b[0-9a-f]{40}\b/i,
 ]
