@@ -13,15 +13,15 @@ tags:
   - developer-experience
 series: Tangle Re-Introduction
 seriesOrder: 4
-coverImage: /images/covers/building-on-tangle-from-idea-to-production.png
-heroImage: /images/covers/building-on-tangle-from-idea-to-production.png
-imageAlt: 'Tangle Blueprint path from a typed Rust job through local tests to deployment'
+coverImage: /images/covers/editorial/tangle-reintroduction-v2.webp
+heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
+imageAlt: 'An editorial still life about building a service on Tangle'
 ---
 
-A Tangle Blueprint is a Rust service package that defines jobs, their typed inputs and outputs, and how operators run those jobs for a network service.
+An operator is the person or service responsible for running a job. A Tangle Blueprint is a Rust service package that defines jobs, their typed inputs and outputs, and how operators run those jobs for a network service.
 The shortest reliable path is to start from a maintained example, make one job pass against local Anvil contracts, and only then create a deployment definition for testnet.
 
-This guide was checked on August 1, 2026 against Blueprint SDK commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866), including the current [`hello-tangle` example](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/examples/hello-tangle).
+This guide was checked on August 1, 2026 against Blueprint SDK commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/main), including the current [`hello-tangle` example](https://github.com/tangle-network/blueprint/tree/main/examples/hello-tangle).
 Use the linked release and source when commands change; older Blueprint tutorials may show job macros and deployment flows that no longer match the current SDK.
 
 ## Quick Answer
@@ -44,7 +44,7 @@ Use a Blueprint when independent operators, on-chain service coordination, crypt
 | Good fit | Poor fit |
 | --- | --- |
 | Threshold signing or multi-party protocols | A conventional CRUD application |
-| Paid compute run by independent operators | A sub-10ms request path |
+| Paid compute run by independent operators | A request path with a stated sub-10ms limit |
 | Services that need on-chain job and result records | A private service that must stay on one company's infrastructure |
 | Agent-callable services with explicit payment and access rules | A frontend with no operator or protocol requirement |
 
@@ -54,111 +54,11 @@ A distributed operator service adds contract state, keys, service registration, 
 ## Start From a Maintained Example
 
 The current public repository includes examples for Tangle, EigenLayer, x402 payments, API-key access, and multi-operator aggregation.
-For a first Tangle job, use [`examples/hello-tangle`](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/examples/hello-tangle).
+For a first Tangle job, use [`examples/hello-tangle`](https://github.com/tangle-network/blueprint/tree/main/examples/hello-tangle).
 
 Its local test command is:
 
-```bash
-git clone https://github.com/tangle-network/blueprint.git
-cd blueprint
-cargo test -p hello-tangle-blueprint --test anvil -- --nocapture
-```
-
-That test boots local Anvil contracts, starts the Blueprint runner, submits an ABI-encoded job, waits for the on-chain result event, decodes the output, and asserts its fields.
-It is a more useful starting point than a function-only unit test because it crosses the contract, client, router, and runner boundaries used by the service.
-
-## Define a Typed Job
-
-The current example defines Solidity-compatible request and response types, then exposes an asynchronous Rust function:
-
-```rust
-use alloy_sol_types::sol;
-use blueprint_tangle_extra::extract::{Caller, TangleArg, TangleResult};
-
-sol! {
-    struct DocumentRequest {
-        string docId;
-        string contents;
-    }
-
-    struct DocumentReceipt {
-        string docId;
-        string contents;
-        string operator;
-    }
-}
-
-pub async fn create_document(
-    Caller(caller): Caller,
-    TangleArg(request): TangleArg<DocumentRequest>,
-) -> TangleResult<DocumentReceipt> {
-    // Perform the service work, then return a typed result.
-    TangleResult(DocumentReceipt {
-        docId: request.docId,
-        contents: request.contents,
-        operator: format!("0x{}", hex::encode(caller)),
-    })
-}
-```
-
-The example's exact implementation and imports are the canonical reference.
-The important design rule is that the job contract is explicit: the caller can encode the request, the operator can decode it, and the result can be checked without parsing prose.
-
-## Route the Job
-
-The router maps a stable job identifier to the function:
-
-```rust
-use blueprint_router::Router;
-
-pub const CREATE_DOCUMENT_JOB: u8 = 0;
-
-pub fn router() -> Router {
-    Router::new().route(CREATE_DOCUMENT_JOB, create_document)
-}
-```
-
-Treat job identifiers and input/output schemas as public API.
-Changing them after deployment can break callers, operator binaries, or contract metadata even if the Rust project still compiles.
-
-## Test the Real Local Path
-
-A useful local test should prove more than “the handler returned `Ok`.”
-The maintained `hello-tangle` test covers these steps:
-
-```text
-boot local contracts
--> start the Blueprint runner
--> submit an encoded job through the client
--> wait for the job result event
--> decode the returned bytes
--> assert the receipt fields
--> stop the runner
-```
-
-Add failure cases before deployment:
-
-- malformed or oversized input;
-- an unauthorized caller;
-- a duplicate submission;
-- operator restart during work;
-- a timeout while waiting for the result;
-- a result that cannot be decoded;
-- contract or network configuration that points to the wrong deployment.
-
-For paid HTTP access, use the repository's [x402 example](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/examples/x402-blueprint) and test payment replay, settlement failure, and job failure separately.
-
-## Scaffold With cargo-tangle
-
-The repository documents two installation paths for `cargo-tangle`: the release installer and a source build.
-The source path is:
-
-```bash
-cargo install cargo-tangle --git https://github.com/tangle-network/blueprint --force
-cargo tangle blueprint create --name my_blueprint
-cd my_blueprint
-cargo build
-```
+Start from the maintained example linked above and run its current test from the repository documentation. The useful artifact is a passing job receipt and decoded result, not a copied checkout transcript.
 
 Pin the release or source commit in CI rather than installing an unspecified future revision on every run.
 Record `cargo tangle --version`, the Blueprint SDK version, and the generated project commit with deployment evidence.
@@ -190,7 +90,7 @@ The operator path also needs:
 - logs and health checks for the runner process;
 - a restart plan that does not lose durable work or payment state.
 
-The current repository documents `cargo tangle blueprint register-tangle`, `preregister`, and `run` commands in its [main README](https://github.com/tangle-network/blueprint/blob/00c3cae14ade1bbaf8374934f7c5084cff0af866/README.md#getting-started).
+The current repository documents `cargo tangle blueprint register-tangle`, `preregister`, and `run` commands in its [main README](https://github.com/tangle-network/blueprint/blob/main/README.md#getting-started).
 Copy the current flags from that source because contract addresses and CLI options are environment-specific.
 
 ## Production Proof

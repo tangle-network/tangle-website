@@ -11,6 +11,9 @@ tags:
   - blueprints
   - training
   - research
+coverImage: /images/covers/editorial/distributed-training-v2.webp
+heroImage: /images/covers/editorial/distributed-training-v2.webp
+imageAlt: 'An editorial still life about compressing distributed training updates'
 ---
 
 Distributed training over the open internet usually dies at the sync step. The model can fit on GPUs, the data can be sharded, and the operators can be paid, but the network still has to move training state between machines that do not sit inside one data center. That is the pressure behind DeMo, Decoupled Momentum Optimization: reduce the communication payload enough that permissionless operators can coordinate without pretending they are one tightly coupled cluster.
@@ -19,9 +22,9 @@ Tangle's [Training Blueprint](https://github.com/tangle-network/training-bluepri
 
 ## The Claim
 
-The 10,000x claim is about communication volume, not magic training quality. A naive distributed optimizer can require gigabytes of gradient synchronization per step for a large model. DeMo compresses the communication path by synchronizing sparse transformed momentum. The common shorthand is roughly 10GB down to roughly 100KB per synchronization, depending on model, optimizer state, sparsity, and implementation.
+The reported 10,000x claim is about communication volume, not magic training quality. A naive distributed optimizer can require gigabytes of gradient synchronization per step for a large model. DeMo compresses the communication path by synchronizing sparse transformed momentum. The common shorthand is roughly 10GB down to roughly 100KB per synchronization, depending on model, optimizer state, sparsity, and implementation.
 
-That distinction matters. If someone reads "10,000x" as "training is 10,000x cheaper" or "models are 10,000x better," they are reading the wrong claim.
+That distinction matters. If someone reads "the reported 10,000x figure" as "training is 10,000x cheaper" or "models are 10,000x better," they are reading the wrong claim.
 
 | Claim | Supported by the DeMo framing? |
 | --- | --- |
@@ -46,93 +49,13 @@ The normal failure mode is that every worker needs to synchronize too much state
 
 The shape is easier to reason about as an artifact pipeline:
 
-```text
-local shard -> local optimizer step -> momentum buffer
-momentum buffer -> transform -> sparse coefficients
-sparse coefficients -> gossip -> aggregate -> checkpoint
-checkpoint -> hash, metadata, operator evidence
-```
-
-The hard engineering problem moves from "can we move all gradients?" to "can we coordinate compressed updates, detect bad participants, and produce checkpoints callers trust?"
-
-## Where Tangle Fits
-
-Tangle does not make the optimizer converge by itself. Tangle supplies the service layer around the optimizer:
-
-| Layer | Tangle responsibility |
-| --- | --- |
-| Blueprint definition | job interface, runtime requirements, operator configuration |
-| operator coordination | join boundaries, job assignment, health, failures |
-| economics | payment, fee routing, stake, penalties |
-| evidence | checkpoint hashes, logs, attestation metadata, run records |
-| downstream use | serve the checkpoint through inference Blueprints or Router |
-
-That is the reason a Training Blueprint matters. Research code can show a method. A Blueprint has to make the method callable, priced, observable, and accountable.
-
-## Operator Requirements
-
-An operator should not join a distributed training Blueprint because the headline sounds good. They need to know whether they can run the job without harming the group.
-
-| Requirement | Why it matters |
-| --- | --- |
-| GPU memory and compute | determines model size and batch shape |
-| stable networking | synchronization delays affect everyone |
-| storage | checkpoints and dataset shards are not tiny |
-| reproducible environment | bad local dependencies become bad checkpoints |
-| identity and stake | penalties need an accountable party |
-| logs and metrics | callers need to debug stalled epochs |
-
-For broader operator mechanics, read [Blueprint Protocol for Operator-Run Services](/blog/blueprint-protocol-operator-services) and [Operator Health Monitoring for Tangle](/blog/operator-health-monitoring-tangle-heartbeats-quote-lifetimes).
-
-## Verification Boundary
-
-Training verification is not one proof. There are several things to check:
-
-| Evidence | Question answered |
-| --- | --- |
-| dataset shard receipt | did the operator receive the assigned work? |
-| sync participation | did it submit updates at the boundary? |
-| checkpoint hash | what artifact was produced? |
-| TEE attestation, when used | did expected code run inside the expected boundary? |
-| eval result | did the checkpoint improve the target metric? |
-
-The checkpoint hash is not the same as model quality. TEE attestation is not the same as convergence. An eval passing once is not the same as no overfitting. The Blueprint needs to keep those evidence types separate.
-
-## Pipeline After Training
-
-The point of training is not a checkpoint sitting in storage. A useful pipeline turns the checkpoint into a service:
-
-```text
-Training Blueprint
-  -> checkpoint artifact
-  -> evaluation gate
-  -> LLM Inference Blueprint
-  -> Tangle Router
-  -> paid requests, traces, and operator revenue
-```
-
-That is where Tangle's service graph starts to matter. A model trained through one Blueprint can be served through another, routed through [Tangle Router](https://router.tangle.tools), and used by agent products that pay per request.
-
-## What This Does Not Prove
-
-This post does not prove every permissionless training job will converge. It does not prove 10,000x lower communication always means lower total cost. It does not prove Tangle has solved dataset quality, adversarial workers, or evaluation capture for every training workload.
-
-It proves a narrower direction: if compressed synchronization makes open-network training viable, optimizer code is only one piece. The missing layer is an operator-run service with payment, evidence, health checks, and verification.
-
-## Start
-
-Read the method, then inspect the Blueprint:
-
-```bash
-git clone https://github.com/tangle-network/training-blueprint
-git clone https://github.com/tangle-network/blueprint
-```
+The maintained training repositories linked above contain the runnable examples. Before treating the result as a product, record the model, dataset, compression settings, checkpoint, and evaluation result.
 
 Before running or calling a training job, identify the model size, dataset, sync interval, compression settings, operator requirements, checkpoint format, eval gate, and payment policy.
 
 ## FAQ
 
-### What does 10,000x communication reduction mean?
+### What does the reported 10,000x communication reduction mean?
 
 It refers to reducing synchronization payloads, for example from full-gradient-scale transfers to sparse compressed momentum updates. It is a bandwidth claim, not a universal cost or quality claim.
 
