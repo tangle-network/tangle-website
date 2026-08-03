@@ -152,7 +152,11 @@ if (allPages.length === 0) {
 // Strip scripts, styles, attributes, SVG inner content. Keep text in
 // a way that preserves the page's narrative flow.
 function extractCopy(html) {
-  return html
+  // Audit the article itself, not the shared navigation and footer.
+  // Those shared regions can consume the input cap and make a complete
+  // article look truncated to the reviewer.
+  const article = html.match(/<article\b[^>]*\bclass="[^"]*\bblog-article\b[^"]*"[\s\S]*?<\/article>/i)?.[0] ?? html;
+  return article
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<svg[\s\S]*?<\/svg>/gi, '')
@@ -210,7 +214,7 @@ OUTPUT (JSON only):
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function auditPage(label, copy, attempt = 1) {
-  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 8000)}\n=== END ===`;
+  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 12000)}\n=== END ===`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`copy auditor timed out after ${AUDITOR_TIMEOUT_MS}ms`)), AUDITOR_TIMEOUT_MS);
 
