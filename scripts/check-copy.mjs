@@ -14,7 +14,7 @@
  *
  * Run: pnpm check:copy
  *   - All pages by default
- *   - Single page: pnpm check:copy services/blueprint-agent
+ *   - One or more pages: pnpm check:copy /blog/ai-agent-sandbox /blog/agent-runtime-environments
  *
  * Env:
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
@@ -123,7 +123,7 @@ if (!API_KEY) {
 API_BASE ??= 'https://router.tangle.tools/v1';
 MODEL ??= 'deepseek/deepseek-chat';
 
-const pageArg = process.argv[2];
+const pageArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
 // ─── Load pages ──────────────────────────────────────────────────────
 function findHtml(dir) {
@@ -138,12 +138,12 @@ function findHtml(dir) {
   return out;
 }
 
-const allPages = pageArg
-  ? [resolve(ROOT, pageArg.replace(/^\//, ''), 'index.html')].filter(existsSync)
+const allPages = pageArgs.length
+  ? pageArgs.flatMap((pageArg) => [resolve(ROOT, pageArg.replace(/^\//, ''), 'index.html')].filter(existsSync))
   : findHtml(ROOT);
 
 if (allPages.length === 0) {
-  console.error(`✗ No pages found${pageArg ? ` matching "${pageArg}"` : ''}.`);
+  console.error(`✗ No pages found${pageArgs.length ? ` matching ${pageArgs.join(', ')}` : ''}.`);
   process.exit(2);
 }
 
