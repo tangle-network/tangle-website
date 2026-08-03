@@ -1,5 +1,5 @@
 ---
-title: "Operator Health Monitoring on Tangle"
+title: "Operator Health Monitoring: Heartbeats, Quotes, and Recovery"
 slug: operator-health-monitoring-tangle-heartbeats-quote-lifetimes
 summary: "How Tangle operator heartbeats, off-chain health checks, and quote TTLs surface service failure signals before slashing occurs."
 description: "How Tangle operator heartbeats, off-chain health checks, and quote TTLs surface service failure signals before slashing occurs."
@@ -8,12 +8,12 @@ author: Drew Stone
 tags: ["tangle", "blueprint-sdk", "x402", "operator-monitoring", "blockchain-infrastructure", "health-checks"]
 series: x402 Production Runway
 seriesOrder: 12
-coverImage: /images/covers/operator-health-monitoring-tangle-heartbeats-quote-lifetimes.png
-heroImage: /images/covers/operator-health-monitoring-tangle-heartbeats-quote-lifetimes.png
-imageAlt: 'Operator health monitoring on Tangle: heartbeats, quote lifetimes, failure signals'
+coverImage: /images/covers/editorial/x402-production-runway-v2.webp
+heroImage: /images/covers/editorial/x402-production-runway-v2.webp
+imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-You built a service. It runs jobs, accepts x402 payments, returns results. It worked fine in testing. Now it's live and you need to know: how does the network know if you stop working? And what actually happens to you when it finds out?
+Operator health monitoring answers whether a service is still able to accept work, report its state, and recover when a deployment stops responding. A blueprint is a packaged service definition with a typed job interface. x402 is a payment protocol for machine-to-machine requests. You built a service. It runs jobs, accepts x402 payments, returns results. It worked fine in testing. Now it's live and you need to know: how does the network know if you stop working? And what in practice happens to you when it finds out?
 
 The answer involves three interlocking systems. The first is an on-chain registry that tracks whether operators are showing up at regular intervals, the way a building's security system requires a guard to swipe their badge every hour. The second is an off-chain monitor that watches your actual running software and can automatically restart it if it crashes. The third is a quote cache that holds the pricing promises you've made to clients, and which quietly expires them if jobs aren't completed in time. Together these three systems give the network enough signal to distinguish "operator is slightly slow" from "operator has vanished and clients are losing money."
 
@@ -99,9 +99,9 @@ One more subtle point: if you voluntarily call `goOffline()` and then `goOnline(
 
 ## How Does Off-Chain Health Monitoring Work?
 
-The on-chain heartbeat system tracks whether your process is sending messages. It does not track whether your HTTP endpoint is responding or whether your container is actually executing jobs. That's the job of the [`HealthMonitor`](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/monitoring/health.rs) in blueprint-remote-providers.
+The on-chain heartbeat system tracks whether your process is sending messages. It does not track whether your HTTP endpoint is responding or whether your container is in practice executing jobs. That's the job of the [`HealthMonitor`](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/monitoring/health.rs) in blueprint-remote-providers.
 
-The HealthMonitor runs a polling loop every 60 seconds against active deployments. It tracks consecutive failures per deployment internally and triggers auto-recovery when a threshold is reached:
+The source reports that the HealthMonitor runs a polling loop every reported 60 seconds against active deployments. It tracks consecutive failures per deployment internally and triggers auto-recovery when a threshold is reached:
 
 ```rust
 let monitor = HealthMonitor::new(provisioner, tracker)
@@ -124,7 +124,7 @@ InstanceStatus::Terminated → HealthStatus::Unhealthy
 InstanceStatus::Unknown    → HealthStatus::Unknown
 ```
 
-When a deployment reaches three consecutive `Unhealthy` results, the monitor terminates the old instance, waits 10 seconds, provisions a replacement at the same region and resource spec, and updates the deployment tracker with the new instance ID. The failure counter resets when a `Healthy` check comes through.
+When a deployment reaches a reported threshold of three consecutive `Unhealthy` results, the monitor terminates the old instance, waits a reported 10 seconds, provisions a replacement at the same region and resource spec, and updates the deployment tracker with the new instance ID. The failure counter resets when a `Healthy` check comes through.
 
 For application-level checks beyond instance state, `ApplicationHealthChecker` handles HTTP and TCP probes:
 
@@ -148,7 +148,7 @@ An important implication: auto-recovering a crashed deployment does not reset yo
 
 ## How Does the Quote Registry Signal Service Health?
 
-The [`QuoteRegistry`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) is an in-memory DashMap that holds pricing promises made to clients. When a client requests a quote, the operator inserts a `QuoteEntry` with a price, a TTL, and an expiry timestamp. When the client submits payment, `consume()` marks it as consumed. When neither happens before the TTL expires, the quote simply returns `None` on the next lookup.
+The [`QuoteRegistry`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) is an in-memory DashMap that holds pricing promises made to clients. When a client requests a quote, the operator inserts a `QuoteEntry` with a price, a TTL, and an expiry timestamp. When the client submits payment, `consume()` marks it as consumed. When neither happens before the TTL expires, the quote directly returns `None` on the next lookup.
 
 ```rust
 pub struct QuoteEntry {
@@ -189,7 +189,7 @@ The consumed-versus-expired distinction matters operationally. A consumed quote 
 
 The registry is in-memory and not persisted. A process restart clears all outstanding quotes. Clients holding valid quote digests will get `None` on lookup after a restart, and will need to request new quotes. Plan for this in your restart procedures.
 
-## What Failure Signals Should Operators Actually Watch?
+## What Failure Signals Should Operators Watch?
 
 The monitoring surface across all three systems gives you five key signals:
 
@@ -211,7 +211,7 @@ These are emitted on-chain whenever a heartbeat carries a status code of 200 or 
 
 **5. Recovery strategy backoff state**
 
-The `RecoveryStrategy` default retries 3 times with exponential backoff starting at 2 seconds, capping at 30 seconds. If your deployment is cycling through recovery attempts, the 2s + 4s + 8s gap means roughly 14 seconds of unavailability per cycle. Repeated cycles in the same deployment point to a problem that restart-and-retry won't resolve.
+The source reports a `RecoveryStrategy` default of 3 retries with exponential backoff starting at 2 seconds and capping at 30 seconds. If your deployment is cycling through recovery attempts, the 2s + 4s + 8s gap means roughly 14 seconds of unavailability per cycle. Repeated cycles in the same deployment point to a problem that restart-and-retry won't resolve.
 
 ## What Metrics Should Operators Instrument?
 
@@ -240,7 +240,7 @@ If a `SlashingTriggered` event was emitted while you were down, monitor for whet
 
 **What happens if I miss the heartbeat interval by a few seconds due to block time variance?**
 
-The registry calculates `missedBeats` as `elapsed / config.interval` using integer division. A heartbeat submitted at interval + 30 seconds counts as 1 missed beat, not 0. Submit heartbeats slightly before the interval deadline to absorb block time variance. Targeting 90% of the interval (4.5 minutes for a 5-minute window) is a reasonable buffer.
+The registry calculates `missedBeats` as `elapsed / config.interval` using integer division. A heartbeat submitted at interval + 30 seconds counts as 1 missed beat, not 0. Submit heartbeats slightly before the interval deadline to absorb block time variance. Targeting a reported 90% of the interval (4.5 minutes for a 5-minute window) is a reasonable buffer.
 
 **Does auto-recovery in the HealthMonitor affect my on-chain status?**
 
@@ -252,7 +252,7 @@ Yes. Codes in the 1–99 and 100–199 ranges both map to `Degraded` on-chain. T
 
 **Why does goOnline() return Degraded instead of Healthy?**
 
-The registry treats returning operators as unverified until they demonstrate active liveness. `Degraded` signals "present but not fully trusted." A successful heartbeat submission transitions you to `Healthy`. This prevents operators from gaming their online status by calling `goOnline()` without actually being ready to serve.
+The registry treats returning operators as unverified until they demonstrate active liveness. `Degraded` signals "present but not fully trusted." A successful heartbeat submission transitions you to `Healthy`. This prevents operators from gaming their online status by calling `goOnline()` without in practice being ready to serve.
 
 **The QuoteRegistry is in-memory. What happens to outstanding quotes after a deploy?**
 

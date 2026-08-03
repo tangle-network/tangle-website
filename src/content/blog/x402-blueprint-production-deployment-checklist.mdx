@@ -8,16 +8,16 @@ author: Drew Stone
 tags: ["blueprint", "x402", "tangle", "deployment", "production", "tee", "pay-per-call"]
 series: x402 Production Runway
 seriesOrder: 13
-coverImage: /images/covers/x402-blueprint-production-deployment-checklist.png
-heroImage: /images/covers/x402-blueprint-production-deployment-checklist.png
-imageAlt: 'x402 Blueprint production deployment checklist: dev, staging, and mainnet config'
+coverImage: /images/covers/editorial/x402-production-runway-v2.webp
+heroImage: /images/covers/editorial/x402-production-runway-v2.webp
+imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-Imagine you've built a small API service. It accepts requests, does computation, returns results. Now you want to charge for each call. The problem is that this isn't a normal web API with a billing dashboard. Payment happens on-chain, in stablecoins, before your compute even runs. The payment configuration you deploy with is the payment configuration that executes. There's no refund process, no dispute resolution, no "oops" button. A misconfigured operator wallet address doesn't generate a startup error; it silently routes every settled payment to the wrong address forever.
+A TEE is a hardware-isolated environment that can report which code ran. An operator is the person or service responsible for running a job. Imagine you've built a small API service. It accepts requests, does computation, returns results. Now you want to charge for each call. The problem is that this isn't a normal web API with a billing dashboard. Payment happens on-chain, in stablecoins, before your compute even runs. The payment configuration you deploy with is the payment configuration that executes. There's no refund process, no dispute resolution, no "oops" button. A misconfigured operator wallet address doesn't generate a startup error; it silently routes every settled payment to the wrong address forever.
 
 A rollout sequence is the discipline of promoting that configuration through environments in the right order, changing only what needs to change at each stage, so you catch misconfigurations before they touch real money. For most web services, a wrong environment variable causes 500 errors. For an x402-enabled Blueprint, the wrong token address means payments fail at settlement. The wrong chain ID means the facilitator can't clear. The wrong operator address means every successful payment is a donation to a burn wallet.
 
-This article walks through three environments: dev (local, loopback), staging (remote, testnet), and production (mainnet, TEE enforced). At each stage, a small set of fields changes. Knowing which fields those are, and why they change, is the difference between a smooth launch and a very expensive config mistake.
+This article walks through three environments: dev (local, loopback), staging (remote, testnet), and production (mainnet, TEE enforced). At each stage, a small set of fields changes. Knowing which fields those are, and why they change, is the difference between a smooth launch and an expensive config mistake.
 
 If you need the gateway wiring first, start with [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). If you are enabling confidential execution, pair this checklist with [x402 and TEE production gating](/blog/blueprint-tee-x402-production-gating).
 
@@ -50,9 +50,9 @@ Before flipping to mainnet, verify each of these. The validator catches some of 
 
 ---
 
-## What does the dev config actually do?
+## What does the dev config do?
 
-The example config that ships with the x402 Blueprint is designed to be safe by construction. It cannot receive real payments, cannot be reached from the internet, and won't accidentally forward money anywhere meaningful. Here's the full [`x402.toml`](https://github.com/tangle-network/blueprint/blob/main/examples/x402-blueprint/config/x402.toml):
+The example config that ships with the x402 Blueprint is designed to be safe by construction. It cannot receive real payments, cannot be reached from the internet, and won't accidentally forward money anywhere meaningful. The full [`x402.toml`](https://github.com/tangle-network/blueprint/blob/main/examples/x402-blueprint/config/x402.toml):
 
 ```toml
 bind_address = "127.0.0.1:0"
@@ -88,7 +88,7 @@ Walk through each field:
 
 **`default_invocation_mode = "disabled"`** -- any job not listed in `job_policies` is blocked from x402 access. This is the [struct default](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L21) and the right choice in every environment. Explicit allowlisting prevents accidental exposure of jobs you haven't priced.
 
-**`pay_to = "0x0000000000000000000000000000000000000001"`** -- the field that will burn you. Address `0x1` is a placeholder. It's a valid EVM address so it passes validation, but any payment that actually settles against this config goes nowhere recoverable. The validator checks that `pay_to` is a parseable EVM address; it does not check that you own it.
+**`pay_to = "0x0000000000000000000000000000000000000001"`** -- the field that will burn you. Address `0x1` is a placeholder. It's a valid EVM address so it passes validation, but any payment that in practice settles against this config goes nowhere recoverable. The validator checks that `pay_to` is a parseable EVM address; it does not check that you own it.
 
 **`network = "eip155:8453"` and `asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"`** -- Base mainnet chain ID and USDC on Base mainnet, even in the dev config. The validator checks CAIP-2 format and EVM address parseability; it does not check that the contract exists or that you have access to the chain. For dev testing, this is acceptable because no real settlement occurs.
 
@@ -102,7 +102,7 @@ The job pricing lives in a separate file, [`job_pricing.toml`](https://github.co
 1 = "10000000000000000"  # keccak256: 0.01 ETH
 ```
 
-Prices are denominated in wei, where 1 ETH = 10^18 wei. The gateway converts these to stablecoin amounts using your `rate_per_native_unit` and `markup_bps`. The math: `0.001 ETH * 3200 USDC/ETH * 1.02 markup = 3.264 USDC = 3,264,000 smallest units`. This conversion runs in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179). Wei as the denomination is deliberate: operators set prices once in native units, and the stablecoin conversion is a runtime concern that varies by token and market rate.
+Prices are denominated in wei, where the reported conversion is 1 ETH = 10^18 wei. The gateway converts these to stablecoin amounts using your `rate_per_native_unit` and `markup_bps`. The reported math is: `0.001 ETH * 3200 USDC/ETH * 1.02 markup = 3.264 USDC = 3,264,000 smallest units`. This conversion runs in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179). Wei as the denomination is deliberate: operators set prices once in native units, and the stablecoin conversion is a runtime concern that varies by token and market rate.
 
 ## What changes in staging?
 
@@ -210,13 +210,13 @@ The critical production changes:
 
 **`invocation_mode = "restricted_paid"`** -- production commonly graduates jobs from `public_paid` to `restricted_paid` to enforce caller access control. `restricted_paid` requires both `tangle_rpc_url` (for `eth_call` permission checks) and `tangle_contract` (the contract implementing `isPermittedCaller`). The validator rejects their absence. Note that `restricted_paid` with `auth_mode = "payment_only"` is also rejected at load time; `payment_only` provides no caller identity to check against.
 
-One production-specific operational consideration: the `AttestationFreshnessPolicy` is currently [only `provision_time_only`](https://github.com/tangle-network/blueprint/blob/main/crates/tee/src/config.rs#L218). Attestation is captured once at provision and the hash stored on-chain. If the enclave reboots, the stored hash becomes stale, and key exchange with `on_chain_verification = true` will fail until you re-provision. Periodic re-attestation is planned but not yet implemented. Factor this into your incident runbook.
+One reported production-specific operational consideration: the `AttestationFreshnessPolicy` is currently [only `provision_time_only`](https://github.com/tangle-network/blueprint/blob/main/crates/tee/src/config.rs#L218). Attestation is captured once at provision and the hash stored on-chain. If the enclave reboots, the stored hash becomes stale, and key exchange with `on_chain_verification = true` will fail until you re-provision. Periodic re-attestation is planned but not yet implemented. Factor this into your incident runbook.
 
-## Which config fields will actually cost you money?
+## Which config fields cost you money?
 
 Three fields deserve extra attention because mistakes in them don't cause startup errors; they cause lost funds or silent settlement failures.
 
-**`pay_to`** is the operator wallet that receives settlements. The validator confirms it's a parseable EVM address. It does not confirm you own it, that it exists on the right chain, or that it isn't the dev placeholder `0x1`. If you forget to replace `pay_to` before production, every settled payment goes to address `0x1`. The service runs fine. No alarm. The payments just go somewhere else permanently.
+**`pay_to`** is the operator wallet that receives settlements. The validator confirms it's a parseable EVM address. It does not confirm you own it, that it exists on the right chain, or that it isn't the dev placeholder `0x1`. If you forget to replace `pay_to` before production, every settled payment goes to address `0x1`. The service runs. No alarm. The payments go somewhere else permanently.
 
 **`network` and `asset` together** define which chain and token contract the facilitator uses for settlement. The validator checks that `network` is in CAIP-2 format (`eip155:<chain_id>`) with a valid `u64` chain ID, and that `asset` is a parseable EVM address. It does not check that the contract at `asset` exists on `network`. Carrying a Sepolia USDC address into a production config with `network = "eip155:8453"` loads cleanly, then fails at settlement time, not at config load time.
 
@@ -258,7 +258,7 @@ Never mix testnet and mainnet values in the same config. There is no validation 
 
 After promoting to production, run these checks before declaring the deployment done:
 
-1. **Submit a test request** to the service and confirm you receive a 402 response with a valid quote. The quote TTL is `quote_ttl_secs` (default 300 seconds); complete the verification within that window.
+1. **Submit a test request** to the service and confirm you receive a 402 response with a valid quote. The quote TTL is `quote_ttl_secs` (reported default 300 seconds); complete the verification within that window.
 2. **Complete a real payment flow**: sign and resubmit with payment proof. Verify the job executes and returns the expected result.
 3. **Verify settlement to your operator wallet**: check your production operator wallet on Base mainnet for the incoming transfer. The amount should match `rate_per_native_unit * price_in_eth * (1 + markup_bps / 10000)` minus facilitator fees.
 4. **Confirm TEE attestation**: check the on-chain attestation hash matches the hash submitted at provision time. A mismatch here means `on_chain_verification = true` will fail key exchange for all clients.
@@ -282,7 +282,7 @@ No. The validator rejects `restricted_paid` without both `tangle_rpc_url` and `t
 Wei prices are token-agnostic. An operator sets a price once in native units; the gateway converts to whatever stablecoin the client presents at settlement time, using `rate_per_native_unit` and `markup_bps`. Adding a second accepted token (DAI, for example) requires no changes to `job_pricing.toml`, only a new `[[accepted_tokens]]` entry in `x402.toml`.
 
 ### What does `markup_bps = 200` mean in practice?
-200 basis points is a 2% markup on top of the converted stablecoin price. For a job priced at 0.001 ETH at 3200 USDC/ETH: 3.20 USDC base + 2% = 3.264 USDC. The markup is applied in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179) before the quote is returned to the client. It covers settlement risk and operator margin; it is not a fee paid to the facilitator.
+The reported setting `markup_bps = 200` means 200 basis points, or a 2% markup, on top of the converted stablecoin price. For a reported job priced at 0.001 ETH at 3200 USDC/ETH: 3.20 USDC base + 2% = 3.264 USDC. The markup is applied in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179) before the quote is returned to the client. It covers settlement risk and operator margin; it is not a fee paid to the facilitator.
 
 ---
 
