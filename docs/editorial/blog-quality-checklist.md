@@ -370,16 +370,17 @@ Do not collapse them into one composite score.
 
 ## Current baseline and interpretation
 
-The August 3, 2026 audit covers 85 MDX posts and 13 series.
+The August 3, 2026 audit covers 85 MDX posts and 12 populated series.
+Planned series that do not yet have a post are not counted.
 
 - The deterministic site audit passes all 85 posts for frontmatter, headings, image alternative text, and target-query ownership.
-- The same audit reports a median heuristic SEO score of 93/100, but that score does not measure teaching depth, runnable proof, claim accuracy, or traffic.
-- The reader audit reports 0 P0 rewrites, 38 P1 revisions, and 47 P2 factual or link checks.
-- The content audit finds 44 posts under 1,000 words, 25 under 750 words, and 20 at or above 2,000 words.
-- Only 23 posts contain actual syntax code rather than notation or pseudocode, and only 8 contain shell-style blocks.
-- No fenced block contains a package-specific install or import example for `@tangle-network/sandbox`, `@tangle-network/agent-runtime`, `@tangle-network/agent-eval`, or `@tangle-network/agent-knowledge`.
-- The self-improving series has a median of about 2,948 words but no actual syntax-code posts; it needs concrete experiments and product walkthroughs, not more theory.
-- The Agent Intent Infrastructure, Blueprint Agent, Tangle Protocol, Browser Agent, and Code Auditor series have medians between 720 and 789 words and need full teaching rewrites.
+- `scripts/audit-blog.mjs` passes all 85 posts and reports a median heuristic score of 100/100; that score does not measure teaching depth, runnable proof, claim accuracy, or traffic.
+- `scripts/audit-blog-reader.mjs --json` reports 0 P0 rewrites, 37 P1 revisions, 48 P2 factual or link checks, and 0 hard failures.
+- The same deterministic audit counts 41 posts under 1,000 words, 21 under 750 words, and 19 at or above 2,000 words.
+- The reader audit finds fenced code blocks in 63 posts; that structural count does not prove that every example runs.
+- The sandbox rewrite now contains a public `@tangle-network/sandbox` install and import example; public examples for `@tangle-network/agent-runtime`, `@tangle-network/agent-eval`, and `@tangle-network/agent-knowledge` remain follow-up work.
+- The self-improving series has a median of 2,420 words by the deterministic audit; it needs concrete experiments and product walkthroughs alongside its theory.
+- The Blueprint Agent, Tangle Protocol, Browser Agent, and Code Auditor series have medians of 735, 745, 719, and 755 words respectively and still need full teaching rewrites.
 
 These findings mean the next work is editorial depth and product proof, not another metadata-only pass.
 
@@ -392,12 +393,14 @@ pnpm check:blog
 pnpm check:blog:reader
 pnpm build
 git diff --check
-python3 ~/company/tools/seo-engine/cli.py site-audit \
-  --blog-dir ~/code/tangle-website/src/content/blog --json
+SEO_ENGINE_DIR=/path/to/seo-engine
+python3 "$SEO_ENGINE_DIR/cli.py" site-audit \
+  --blog-dir "$PWD/src/content/blog" --json
 ```
 
 Then inspect the rendered URL in a browser and check its canonical, structured data, social image, and internal links.
 
-The SEO engine’s composite score is diagnostic only until its data collection and period-comparison checks are complete.
+The SEO engine is a separate tool and must be checked out before this command can run.
+Its composite score is diagnostic only until its data collection and period-comparison checks are complete.
 
 The content PR is not ready when an automated check passes but the reader cannot explain what to do next.
