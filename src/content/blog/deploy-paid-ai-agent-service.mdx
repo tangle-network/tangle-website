@@ -1,8 +1,8 @@
 ---
-title: 'How To Deploy A Paid AI Agent Service'
+title: 'Deploying a Paid AI Agent Service: Start With One Traceable Job'
 slug: deploy-paid-ai-agent-service
 summary: >-
-  Deploying a paid AI agent service means exposing a stable API, attaching auth and payment, routing work, checking health, and verifying results before launch.
+  A practical path for exposing one paid AI job with discovery, authorization, payment, execution, recovery, and evidence that a buyer can inspect.
 date: '2026-06-27'
 author: Drew Stone
 tags:
@@ -13,89 +13,166 @@ series: Agent Intent Infrastructure
 seriesOrder: 11
 coverImage: /images/covers/agent-intent-infrastructure.svg
 heroImage: /images/covers/agent-intent-infrastructure.svg
-imageAlt: 'Paid AI agent service architecture with discovery, router, x402 payment, Blueprint execution, and verification'
+imageAlt: 'A paid agent request moving from discovery through payment, execution, and evidence'
 ---
 
-To deploy a paid AI agent service, expose a stable API, publish discovery metadata, route model and tool calls, attach auth, add x402 or another payment path, verify operator health, and record enough evidence to debug failures. In Tangle, the natural path is Blueprint Agent for the service workbench, Router for model calls, Sandbox for agent execution, and x402 for per-request payment. The launch question is not "does the endpoint respond?" It is "can a buyer pay, invoke, verify, retry, and trust the result?"
+A paid AI service has two promises to keep.
+It must accept a payment correctly, and it must do work that the buyer can understand and review.
 
-Paid agent services fail at the seams between product, runtime, and billing. Treat those boundaries as the deployment checklist.
+An **agent service** is an API that lets software delegate a task to an AI system.
+An **operator** is the person or team running that service.
+On Tangle, a **Blueprint** is the public service definition that describes the jobs an operator can run.
+A **trace** is the record of what happened during one invocation.
 
-## Launch Checklist
+The launch question is not “does the endpoint answer?”
+It is “can a buyer discover the job, pay for it, retry safely, understand what happened, and challenge a bad result?”
 
-| Gate | Proof |
+This guide starts with one narrow paid job.
+It treats discovery, payment, execution, health, and result evidence as separate decisions so a failure in one area does not disappear inside a generic API error.
+
+## The first service should be small
+
+Choose one input schema, one job, one price, and one output that a reviewer can inspect.
+
+| Boundary | First version |
 | --- | --- |
-| discovery | manifest, OpenAPI, README, docs URL |
-| auth | `TANGLE_API_KEY` or service-specific policy |
-| payment | 402 challenge, payment proof, retry path |
-| runtime | sandbox, tools, model routing, browser if needed |
-| health | operator and API health checks |
-| observability | logs, traces, job IDs, payment IDs |
-| verification | result checks before releasing output |
+| Input | One documented request shape |
+| Price | One fixed amount or a short price table |
+| Execution | One agent or Blueprint job |
+| Output | One result or artifact with a clear check |
+| Retry | An idempotent request identifier, so a duplicate cannot run twice by accident |
+| Support | A trace identifier returned with every response |
 
-Start with [Blueprint Agent](https://github.com/tangle-network/blueprint-agent), then connect [x402 payments for AI agents](/blog/x402-payments-for-ai-agents) and [agent runtime environments](/blog/agent-runtime-environments).
+An **idempotent** request produces the same effect when the client retries it.
+Payment retries need this property because a network timeout does not tell the client whether the first request reached the service.
 
-## Minimal First Service
+Do not launch a marketplace before one paid job survives a failed payment, failed execution, duplicate retry, and bad-result review.
 
-The first paid service should be narrow enough to audit:
+## Five questions a buyer should answer
 
-| Boundary | Minimal version |
+Before sending money, a buyer should be able to find:
+
+1. What does this job accept and return?
+2. What does it cost, and how long is the price valid?
+3. Who may call it?
+4. What happens when payment or execution fails?
+5. Which record proves what happened?
+
+Discovery metadata, an API description, and a health surface answer the first two questions.
+Authorization and payment policy answer the third.
+The incident paths and trace answer the last two.
+
+The public [Blueprint Agent repository](https://github.com/tangle-network/blueprint-agent) is one implementation surface.
+The [x402 payment explanation](/blog/blueprint-sdk-x402-payments-runnable-jobs) describes the pay-per-request flow.
+
+## Payment is a state machine, not a button
+
+For an x402-based service, the buyer sees this sequence:
+
+1. Request the job.
+2. Receive a 402 response with price and settlement options.
+3. Sign and settle the payment.
+4. Retry with payment proof.
+5. Receive either a dispatched job or an explicit rejection.
+
+The service should record which state it reached.
+“Payment accepted” is not the same as “job completed,” and “job completed” is not the same as “result accepted.”
+
+The [x402 protocol](https://www.x402.org/) defines the payment format.
+The [Coinbase x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) and [Cloudflare’s overview](https://blog.cloudflare.com/x402/) describe related deployment concerns.
+
+## Health should precede payment
+
+Do not accept a payment for work that the operator already knows cannot run.
+Check the service and its dependencies before presenting a price whenever the product can do so safely.
+
+Health information should answer:
+
+- can the service accept a new job?
+- is the selected model or tool available?
+- is the operator within its resource policy?
+- is the payment path reachable?
+- where will the request record appear?
+
+Health is a capacity signal.
+It is not proof that the eventual result will be correct.
+
+## Incident paths must be designed first
+
+Paid services need an answer for each failure that changes what the buyer believes.
+
+| Incident | Required policy |
 | --- | --- |
-| input | one schema, one endpoint |
-| price | one fixed price or small price table |
-| runtime | one agent or Blueprint job |
-| output | one verifiable artifact |
-| retry | idempotent request ID |
-| support | trace ID in every response |
+| Payment accepted, job failed | Refund, retry, or support path |
+| Job succeeded, result is wrong | Quality dispute and trace review |
+| Model or tool route degraded | Fallback or stop policy |
+| Operator unhealthy | Refuse new payment or mark the service unavailable |
+| Duplicate retry | Return the original result or a clear idempotency error |
+| Price expired | Ask for a new quote without running the job |
 
-Do not launch a marketplace before one paid endpoint can survive failed payment, failed execution, duplicate retry, and bad output review.
+If those policies are not written down, the first paying customer becomes the incident test.
 
-## Incident Paths
+## The evidence a buyer receives
 
-Paid agent services need incident paths before traffic:
+A useful response includes more than the final text.
+It can include:
 
-| Incident | Required answer |
+- a request and job identifier
+- the payment identifier and quote fingerprint
+- the model or tool route used
+- start and completion state
+- the result or artifact
+- the checks that ran
+- fields the service could not observe
+
+This record lets a buyer distinguish a model failure, a payment failure, a capacity failure, and a bad result.
+It also gives the operator a reproducible support path.
+
+The [Tangle verification overview](/blog/how-tangle-verifies-work) explains why result checks need to match the job.
+Payment alone does not prove quality.
+
+## Keep the product boundary honest
+
+Separate these claims:
+
+| Claim | Evidence needed |
 | --- | --- |
-| payment accepted, job failed | refund, retry, or support path |
-| job succeeded, result bad | quality dispute and trace review |
-| router degraded | fallback or stop policy |
-| operator unhealthy | health gate before payment |
-| duplicate retry | idempotency behavior |
+| The service is discoverable | Public metadata and working documentation |
+| The request was paid | Settlement record and payment proof |
+| The job ran | Execution record and completion state |
+| The claimed model or environment ran | Model identity or protected-execution evidence |
+| The result is correct | Task-specific check, replay, or review |
 
-If those answers are not written down, the first paying agent becomes the incident test.
+No single receipt proves all five.
+The service should show which claim each field supports.
 
-## Discovery And Smoke Calls
+## The practical decision
 
-```bash
-curl -fsS https://agents.tangle.tools/.well-known/tangle-agent.json
-curl -fsS https://agents.tangle.tools/openapi.json
-curl -fsS https://agents.tangle.tools/api/health
-curl -fsS https://router.tangle.tools/v1/models
-```
+Publish one narrow paid job when you can trace every invocation from discovery through payment, execution, and result review.
 
-Those calls let an agent discover the Agent Builder API, Router models, and safe health checks before generating integration code.
+Keep the service private while any of those states are ambiguous, especially when a payment can settle before a job fails.
+Add more jobs, models, tools, or pricing options only after the first job’s failure paths are visible.
 
-## Payment Flow
+The next useful action is a single paid smoke run with one intentional payment failure, one execution failure, one duplicate retry, and one successful result review.
 
-For x402-based services, the buyer should see a 402 challenge, attach payment proof, retry, and receive the paid response. The protocol references are [x402.org](https://www.x402.org/), [Coinbase x402 docs](https://docs.cdp.coinbase.com/x402/welcome), and Cloudflare's [x402 article](https://blog.cloudflare.com/x402/). The implementation details for runnable Blueprint jobs are covered in [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs).
+## Questions readers usually ask
 
-## What This Does Not Prove
+### Is x402 required?
 
-Payment does not prove the job was good. Health does not prove the result was correct. A deployed paid service needs both economic verification and task verification. Keep retries, refunds, operator dashboards, and result checks separate enough to reason about incidents.
+No.
+It is a good fit for programmatic pay-per-request buyers, while account or subscription billing may fit customers who need invoices, refunds, or long-running contracts.
 
-## Start
+### What should the service verify before launch?
 
-Publish discovery first, wire a read-only health check, then add payment to one narrow job. Do not price a broad agent service until you can trace every paid invocation from request to result.
+Verify discovery, authorization, the payment challenge and retry, operator health, execution, records, and the result check.
 
-## FAQ
+### Does a healthy operator guarantee a good result?
 
-### What do I need to deploy a paid AI agent service?
+No.
+Health says the service can accept work.
+Result quality needs a separate check.
 
-You need a stable API, discovery metadata, auth, payment handling, runtime execution, health checks, observability, and result verification.
+### Why start with one job?
 
-### Is x402 required for paid agent services?
-
-No, but x402 fits programmatic per-request buyers better than account-first subscription flows.
-
-### What should I verify before launch?
-
-Verify discovery, auth, payment challenge and retry, operator health, runtime execution, logs, traces, and result quality.
+One job makes the payment, retry, and evidence state machine small enough to inspect.
+That is the fastest way to find a missing failure policy before more customers depend on it.

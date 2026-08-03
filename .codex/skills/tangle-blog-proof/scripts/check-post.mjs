@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { parseFrontmatter } from '../../../../scripts/lib/blog-frontmatter.mjs'
 
 const file = process.argv[2]
 
@@ -10,6 +11,7 @@ if (!file) {
 }
 
 const text = fs.readFileSync(file, 'utf8')
+const { body, data } = parseFrontmatter(text)
 const errors = []
 const warnings = []
 
@@ -21,22 +23,19 @@ function warn(message) {
   warnings.push(message)
 }
 
-const frontmatterMatch = text.match(/^---\n([\s\S]*?)\n---\n/)
-if (!frontmatterMatch) {
+if (!Object.keys(data).length) {
   fail('Missing YAML frontmatter')
 }
 
-const frontmatter = frontmatterMatch?.[1] ?? ''
-const body = text.slice(frontmatterMatch?.[0].length ?? 0)
 const requiredFields = ['title', 'slug', 'summary', 'date', 'author', 'tags']
 
 for (const field of requiredFields) {
-  if (!new RegExp(`^${field}:`, 'm').test(frontmatter)) {
+  if (data[field] === undefined || data[field] === '') {
     fail(`Missing frontmatter field: ${field}`)
   }
 }
 
-const slug = frontmatter.match(/^slug:\s*['"]?([^'"\n]+)['"]?/m)?.[1]
+const slug = data.slug
 const firstWords = body
   .replace(/```[\s\S]*?```/g, ' ')
   .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
@@ -46,9 +45,9 @@ const firstWords = body
   .slice(0, 150)
   .join(' ')
 
-const internalLinks = [...body.matchAll(/\]\((\/(?:blog|services|overview|developers|operators|stake)[^)#\s]*)/g)].map((match) => match[1])
+const internalLinks = [...body.matchAll(/\]\((\/(?:blog|services|overview|developers|operators|stake|benchmarks|research|status|security)[^)#\s]*)/g)].map((match) => match[1])
 const externalLinks = [...body.matchAll(/\]\((https?:\/\/[^)]+)\)/g)].map((match) => match[1])
-const codeBlocks = (body.match(/```/g) ?? []).length / 2
+const codeBlocks = Math.floor((body.match(/```/g) ?? []).length / 2)
 const proofPatterns = [
   /\bcurl\b/,
   /\bnpm install\b/,
@@ -65,8 +64,9 @@ if (firstWords.length < 240) {
   warn('Opening answer capsule may be too thin for AEO')
 }
 
-if (!proofPatterns.some((pattern) => pattern.test(body)) && codeBlocks === 0) {
-  fail('Missing proof block: add an exact curl/install/CLI/API/manifest/code block')
+const hasPublicEvidence = externalLinks.length >= 2 || internalLinks.length >= 2
+if (!proofPatterns.some((pattern) => pattern.test(body)) && codeBlocks === 0 && !hasPublicEvidence) {
+  fail('Missing reader-usable proof: add a public source, measured artifact, or public install/API example')
 }
 
 if (internalLinks.length < 2) {
@@ -77,8 +77,8 @@ if (externalLinks.length < 3) {
   warn(`Only ${externalLinks.length} external link(s); standards/competitor posts usually need at least 3 primary sources`)
 }
 
-if (!/^## FAQ\s*$/m.test(body)) {
-  warn('Missing ## FAQ section')
+if (!/^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body)) {
+  warn('Missing FAQ section')
 } else if (!/^### .+\?\s*$/m.test(body)) {
   warn('FAQ exists but no ### question headings were found')
 }
@@ -116,7 +116,7 @@ for (const image of [...body.matchAll(/!\[[^\]]*]\((\/images\/[^)]+)\)/g)].map((
 }
 
 for (const field of ['coverImage', 'heroImage']) {
-  const image = frontmatter.match(new RegExp(`^${field}:\\s*['"]?([^'"\n]+)['"]?`, 'm'))?.[1]
+  const image = data[field]
   if (image?.startsWith('/images/')) {
     const imagePath = path.join(process.cwd(), 'public', image.replace(/^\/images\//, 'images/'))
     if (!fs.existsSync(imagePath)) {

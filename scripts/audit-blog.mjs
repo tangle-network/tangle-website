@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { asArray, parseFrontmatter } from './lib/blog-frontmatter.mjs'
 
 const root = process.cwd()
 const blogDir = path.join(root, 'src/content/blog')
@@ -70,67 +71,6 @@ function listFiles(dir, predicate) {
   return files
 }
 
-function cleanValue(value) {
-  const trimmed = value.trim()
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    return trimmed
-      .slice(1, -1)
-      .split(',')
-      .map((item) => cleanValue(item))
-      .filter(Boolean)
-  }
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1)
-  }
-
-  if (trimmed === 'true') return true
-  if (trimmed === 'false') return false
-  if (/^\d+$/.test(trimmed)) return Number(trimmed)
-  return trimmed
-}
-
-function asArray(value) {
-  if (Array.isArray(value)) return value
-  if (value === undefined || value === null || value === '') return []
-  return [value]
-}
-
-function parseFrontmatter(text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---\n/)
-  if (!match) return { frontmatter: '', body: text, data: {} }
-
-  const frontmatter = match[1]
-  const data = {}
-  let currentArray = null
-
-  for (const line of frontmatter.split('\n')) {
-    const arrayItem = line.match(/^\s*-\s+(.+)$/)
-    if (arrayItem && currentArray) {
-      data[currentArray].push(cleanValue(arrayItem[1]))
-      continue
-    }
-
-    const pair = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/)
-    if (!pair) continue
-
-    const [, key, rawValue] = pair
-    currentArray = null
-
-    if (!rawValue.trim()) {
-      data[key] = []
-      currentArray = key
-    } else {
-      data[key] = cleanValue(rawValue)
-    }
-  }
-
-  return { frontmatter, body: text.slice(match[0].length), data }
-}
-
 function relativeFile(file) {
   return path.relative(root, file)
 }
@@ -197,10 +137,10 @@ function auditPost(file) {
   const firstHalf = body.slice(0, Math.floor(body.length / 2)).toLowerCase()
   const headings = extractHeadings(body)
   const bodyWordCount = wordCount(body)
-  const codeBlockCount = countMatches(body, /```/g) / 2
+  const codeBlockCount = Math.floor(countMatches(body, /```/g) / 2)
   const internalLinks = countMatches(body, /\]\(\/(blog|research|status|security|blueprints|agent|sandbox|router|images)\//g)
   const externalLinks = countMatches(body, /\]\(https?:\/\//g)
-  const hasFaq = /^## FAQ\b/m.test(body)
+  const hasFaq = /^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body)
   const hasBodyImage = /!\[[^\]]*]\(\/images\//.test(body) || /<img\b|<figure\b|<picture\b/.test(body)
   const hasTable = /^\|.+\|$/m.test(body)
   const hasCover = Boolean(data.coverImage || data.heroImage)
@@ -467,7 +407,7 @@ for (const file of postFiles) {
   }
 
   const hasQuestionHeadings = /^###\s+.+\?/m.test(body)
-  if (/^## FAQ\b/m.test(body) && !hasQuestionHeadings) {
+  if (post.hasFaq && !hasQuestionHeadings) {
     addFinding(findings, 'warning', file, 'FAQ section should use actual questions as ### headings')
   }
 }

@@ -1,8 +1,8 @@
 ---
-title: 'Agent Profile Materialization: Which Fields Reach the Worker?'
+title: 'Agent Profiles: Why Settings Need a Delivery Contract'
 slug: agent-profile-materialization-contracts
 summary: >-
-  An AgentProfile can carry more settings than a run path can deliver. These explicit contracts show the 15, 6, and 19 profile axes each execution path accepts.
+  An agent profile can ask for more than a chosen run path can deliver. Explicit contracts make unsupported settings fail before a worker starts.
 date: '2026-08-01'
 author: Drew Stone
 tags:
@@ -17,161 +17,152 @@ heroImage: /images/covers/agent-intent-infrastructure.svg
 imageAlt: 'An agent profile divided into identity, model, prompt, tools, and resource fields'
 ---
 
-An `AgentProfile` can carry more settings than a run path can deliver.
-In the profile-aware agent-runtime source, the complete execution contract carries 15 canonical axes, the prompt-and-model path carries 6, and the isolated worktree CLI path carries 19.
-Those are different promises.
-Without an explicit contract, a dropped profile field looks like a weak model, a bad prompt, or a random run failure.
+Imagine saving an agent profile that says, “Use this model, these tools, this prompt, and these files.”
+You start a run and it launches without one of those settings.
+The run may still produce an answer, so the missing setting can look like a weak model, a bad prompt, or a random failure.
 
-This post starts the repaired [Agent Runtime Infrastructure](/blog/ai-dev-container-production-agent-runtime) series.
-The question is concrete: when a builder changes a profile, which changes can the selected worker receive?
+The real problem is simpler: the run path accepted a setting it could not deliver.
 
-## A profile is a set of delivery claims
+An **AgentProfile** is the saved set of choices for an agent.
+A **worker** is the process that carries out one run.
+An **execution path** is the particular route the runtime uses to start that worker.
+A **runtime** is the software that starts and manages the worker.
 
-An agent profile usually appears as one object.
-The runtime cannot treat it as one indivisible payload because its run paths consume different parts of that object.
+MCP is a standard way for an agent to connect to external tools.
 
-The profile-aware implementation expands compound values into leaf axes before checking a path.
-For example, `model` covers the model choice and its declared model properties, while `resources` covers files, skills, commands, and resource instructions.
-The check can then refuse one unsupported change instead of accepting a large object and silently dropping a field inside it.
+The runtime now treats those paths as explicit delivery contracts.
+A contract says which profile settings a path can carry and refuses unsupported changes before the worker starts.
 
-The canonical property list in [the public implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts) is:
+This is the first post in the repaired [runtime infrastructure series](/blog/ai-dev-container-production-agent-runtime).
 
-| Profile area | Canonical axes |
+## A profile is a promise, not a bag of settings
+
+It is tempting to treat a profile as one object that every worker receives unchanged.
+That is not how a runtime works.
+Different workers understand different settings, and different routes expose different capabilities.
+
+The profile-aware runtime breaks a profile into individual settings before it checks a path.
+That lets it reject one unsupported setting instead of accepting a large object and silently dropping a field inside it.
+
+The main profile areas are:
+
+| Area | What a reader can change |
 | --- | --- |
-| identity | `identity` |
-| prompt | `prompt` |
-| model | `model` |
-| execution | `harness` |
-| permissions | `permissions` |
-| tools | `tools` |
-| MCP | `mcp` |
-| connections | `connections` |
-| child agents | `subagents` |
-| resources | `resources` |
-| lifecycle | `hooks`, `modes` |
-| privacy and records | `confidential`, `metadata`, `extensions` |
+| Identity | Name, description, version, and tags |
+| Instructions | System prompt and task instructions |
+| Model | Default model and model-specific options |
+| Agent program | Which agent program should run |
+| Permissions | What the worker may access |
+| Tools | Tools the agent may call |
+| External connections | Connections to outside tools, including MCP connections |
+| Child agents | Whether the worker may start other agents |
+| Resources | Files, skills, commands, and resource instructions |
+| Lifecycle | Hooks and run modes |
+| Records | Privacy settings, metadata, and extensions |
 
-That list has 15 entries.
-It is deliberately smaller than the full leaf vocabulary because the leaf map is an accounting device, not a second execution contract.
+The name matters less here than the rule: a path must say whether it can carry those connections.
 
-## Three paths, three contracts
+The implementation expands compound areas such as `model` and `resources` into their individual settings before it checks them.
+That is why a change to one file or one model option can be rejected on its own.
 
-The runtime names a contract for each concrete path.
-The number is less important than the refusal behavior it enables.
+## Three paths carry different settings
 
-| Path | Axes carried | What it is for |
+The current source names eight delivery contracts.
+This article focuses on three of them because they cover the full-profile, prompt-and-model, and isolated-worktree cases.
+Their counts are not quality scores.
+They are inventories of what each path promises to carry.
+
+| Path | Settings it carries | Intended use |
 | --- | ---: | --- |
-| `full-profile-execution` | 15 | A worker that can receive every canonical profile property |
-| `prompt-model-execution` | 6 | A deliberately narrow path that carries prompt, model defaults, identity, harness, and metadata |
-| `worktree-cli-execution` | 19 | A local coding CLI in an isolated Git worktree |
+| Full-profile execution | 15 | A worker that accepts every canonical profile area |
+| Prompt-and-model execution | 6 | A deliberately narrow worker with prompt and model settings |
+| Isolated worktree command execution | 19 | A local coding agent in its own worktree |
 
-The prompt-and-model path carries `name`, `systemPrompt`, `instructions`, `modelDefault`, `harness`, and `metadata`.
-It does not pretend to carry tools, permissions, MCP connections, child agents, or file-backed resources.
+The narrow prompt-and-model path carries the worker's name, instructions, default model, agent program, and metadata.
+It does not claim to carry tools, permissions, external connections, child agents, or file-backed resources.
 
-The worktree CLI path adds native tools, permissions, MCP, child agents, files, skills, commands, hooks, and modes.
-It deliberately leaves out hub connections, confidential execution, provider-specific extensions, unused model hints, and `resources.failOnError`.
+The isolated worktree path adds native tools, permissions, external connections, child agents, files, skills, commands, hooks, and modes.
+It still leaves out hub connections, confidential execution, provider-specific extensions, unused model hints, and one resource failure option.
 
 Those omissions are useful information.
-An unsupported change can fail before a worktree or worker is created, instead of becoming a candidate that looks valid until a user notices the missing behavior.
+They tell a builder which path can deliver a proposed change before the runtime spends time creating a worker.
 
-## Compound fields need leaf checks
+## The failure should happen before the run
 
-The source maps compound profile areas to their leaves.
+Suppose a profile changes both its prompt and its tools.
+The selected path accepts prompt changes but has no way to deliver tools.
 
-| Compound area | Leaf examples |
-| --- | --- |
-| `identity` | `name`, `description`, `version`, `tags` |
-| `model` | `modelDefault`, `modelSmall`, `modelProvider`, `modelReasoningEffort`, `modelMetadata` |
-| `prompt` | `systemPrompt`, `instructions` |
-| `resources` | `files`, `resourceInstructions`, `skills`, `resourceTools`, `resourceAgents`, `commands`, `resourceFailOnError` |
-| `mcp` | `mcpConnections` |
+Without a contract, the worker starts with half of the requested profile.
+The builder sees a result and has to guess why the tools never appeared.
 
-This is the difference between checking that a profile object exists and checking that a changed profile can be delivered.
-An empty array does not claim support.
-An explicit `false` or `0` remains a meaningful request and is checked as a requested value.
+With a contract, the runtime reports the unsupported setting before launch.
+The builder can choose a path that carries tools or remove that change from the profile.
 
-## Refuse before the worker starts
+The error includes the unsupported setting and the settings the path does support.
+That makes the failure actionable instead of turning it into a mysterious model problem.
 
-The runtime exposes two operations around the contract.
-`validateProfileMaterialization` returns every changed axis the chosen path would drop.
-`assertProfileMaterialization` turns that list into an operator-facing error before execution begins.
+The check also preserves explicit values.
+An empty list, `false`, and `0` can all be deliberate requests, so the runtime does not treat them as if the setting were absent.
 
-The error names the contract, the dropped axes, and the supported axes.
-That makes the fix actionable: choose a path that carries the field, or remove the field from the candidate profile.
+## Counts do not mean behavior is complete
 
-```typescript
-const issues = validateProfileMaterialization({
-  contract: promptModelProfileMaterialization,
-  changedAxes: ['prompt', 'tools'],
-})
+The number 15, 6, or 19 describes a declared input contract.
+It does not prove that every worker or model implements the behavior represented by each setting.
 
-// [{
-//   contract: 'prompt-model-execution',
-//   axis: 'tools',
-//   reason: 'unsupported-axis',
-//   supportedAxes: ['name', 'systemPrompt', 'instructions', 'modelDefault', 'harness', 'metadata'],
-// }]
-```
+There are two boundaries to keep separate.
 
-The important result is not the error string.
-It is that `tools` cannot disappear between profile authoring and worker launch without leaving a record.
+Public source code can declare a contract.
+The worker must still implement the behavior.
+An installable package must also include that source before an application can use it.
 
-## Release boundary
+The source checked for this article was public, while the package version available on August 1, 2026 was still `@tangle-network/agent-runtime@0.117.0`.
+That means the source change and the installable release were not the same thing yet.
 
-The source contract is public at commit [`2cee3ae4`](https://github.com/tangle-network/agent-runtime/commit/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04).
-The package version checked on 2026-08-01 was still `@tangle-network/agent-runtime@0.117.0`.
-This post describes the source commit and does not imply that the contract is already present in every published package.
+## The practical rule
 
-That distinction is part of the runtime record.
-A source tree can contain a capability before an installable release carries it, as a profile can contain a field before a worker path carries it.
+When a profile changes, compare the changed settings with the selected path before starting a worker.
 
-The existing [LLM sandbox guide](/blog/llm-sandbox-environment-agent-runtime) covers the runtime boundary around command execution and session state.
-The [CodeTraceBench report](/blog/codetracebench-benchmark-measured-wrong-capability) applies the same evidence rule to an evaluation result.
+If a path cannot carry a setting, reject the candidate and name the missing capability.
 
-## Reproduce the contract counts
+If a path can carry the setting, the worker and provider still need to implement it and expose the resulting behavior.
 
-The counts come from the committed TypeScript arrays, not from a summary table.
+This turns configuration loss into an explicit decision instead of a debugging session after the run has already happened.
 
-```bash
-git clone https://github.com/tangle-network/agent-runtime.git
-cd agent-runtime
-git show 2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04:src/agent/profile-materialization.ts \
-  | sed -n '140,198p'
-npm view @tangle-network/agent-runtime version
-```
+## Read the implementation
 
-The source link and the package query answer different questions.
-The first shows what the implementation declares.
-The second shows what an installer can receive today.
+The [public profile-materialization implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts) lists the canonical settings and all eight delivery contracts.
 
-## FAQ
+The [agent-runtime API reference](https://github.com/tangle-network/agent-runtime/blob/main/docs/api/agent.md) describes the surrounding public API.
 
-### What is agent profile materialization?
+The [LLM sandbox guide](/blog/llm-sandbox-environment-agent-runtime) explains the session boundary around command execution and state.
 
-It is the runtime check that compares changed profile axes with the fields a selected execution path can carry.
+The [CodeTraceBench article](/blog/codetracebench-benchmark-measured-wrong-capability) applies the same rule to a measurement: name exactly what the system records and what it leaves out.
 
-### Why are there several profile contracts?
+## Questions readers usually ask
 
-Different workers consume different fields.
-A prompt-only path cannot honestly promise the same behavior as a full profile worker or a worktree CLI.
+### What does “materializing” a profile mean?
 
-### What happens when a profile changes an unsupported field?
+It means turning saved profile settings into the concrete inputs that a worker receives.
 
-The runtime returns the unsupported axis and the path's supported axes before the worker starts.
-The candidate must use another path or remove the unsupported change.
+The runtime checks those inputs against the chosen path before the worker starts.
 
-### Does the contract count mean every field is delivered to a model?
+### Why are there several contracts?
+
+Different workers consume different settings.
+A prompt-only worker cannot promise the same behavior as a full-profile worker or a coding worker with files and tools.
+
+### What happens when a profile asks for an unsupported setting?
+
+The runtime reports that setting and the path's supported settings before launch.
+The builder must choose another path or remove the unsupported change.
+
+### Does the count prove that every setting reaches the model?
 
 No.
-The count describes the execution path's declared inputs.
-The worker and provider still need to implement the behavior represented by each field.
+The count describes what the execution path declares as input.
+The worker and provider must still implement the behavior represented by each setting.
 
-### Is this in the published agent-runtime package?
+### Is the contract in the published package?
 
-The linked source commit is public, but the package query was `0.117.0` on 2026-08-01.
-Check the package version before depending on a newer contract.
-
-## Sources checked 2026-08-01
-
-The primary source is the [profile materialization implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts).
-The surrounding public API reference is in [agent-runtime's generated agent API](https://github.com/tangle-network/agent-runtime/blob/main/docs/api/agent.md), and the installable package source is the [agent-runtime repository](https://github.com/tangle-network/agent-runtime).
+The source implementation is public, but the package check on August 1, 2026 returned version 0.117.0.
+Check the package version before depending on a newer source contract.
