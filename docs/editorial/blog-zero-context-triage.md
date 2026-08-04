@@ -725,7 +725,7 @@ A hard failure always outranks the number and requires a rewrite review.
 - Native terms in opening: none detected
 - Repository debris: none detected
 - Style flags: none detected
-- Shape: 2818 words, 28 headings, 12 table rows, 2 code blocks, 8 external links, 4 internal links
+- Shape: 2853 words, 28 headings, 12 table rows, 2 code blocks, 8 external links, 4 internal links
 - Reader dimensions: reader problem 4/4; single story 4/4; definitions 4/4; jargon control 1/4; evidence 4/4; measurement honesty 3/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
 - Discovery dimensions: query ownership 4/4; title/snippet 1/4; answer clarity 3/4; evidence/entities 4/4; technical discovery 4/4
 - Reader takeaway to validate: During an afternoon review, an agent receives a private PDF and needs to produce a short summary before it can decide what to do next. The team does not want to build a GPU service, a browser runner, and a payment system for one workflow. It opens a service catalog and finds several names that sound close to the job.
@@ -765,10 +765,10 @@ A hard failure always outranks the number and requires a rewrite review.
 - Native terms in opening: none detected
 - Repository debris: none detected
 - Style flags: none detected
-- Shape: 2446 words, 25 headings, 15 table rows, 2 code blocks, 9 external links, 4 internal links
+- Shape: 2437 words, 25 headings, 15 table rows, 2 code blocks, 9 external links, 4 internal links
 - Reader dimensions: reader problem 4/4; single story 4/4; definitions 4/4; jargon control 1/4; evidence 4/4; measurement honesty 3/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
 - Discovery dimensions: query ownership 4/4; title/snippet 1/4; answer clarity 4/4; evidence/entities 4/4; technical discovery 4/4
-- Reader takeaway to validate: At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private. An outside AI service offers both. The service says the work runs in confidential hardware, and the invoice shows that the request was paid.
+- Reader takeaway to validate: At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private. The service promises a summary while keeping the contract inside protected hardware. The invoice shows that the request was paid.
 - Required action: check facts and links, then line-edit the weakest dimension
 
 ### 34. The x402 Facilitator Problem: Trust and Uptime
