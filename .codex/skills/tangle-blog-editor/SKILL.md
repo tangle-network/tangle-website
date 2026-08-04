@@ -1,6 +1,6 @@
 ---
 name: tangle-blog-editor
-description: "Audit, rewrite, or improve Tangle website blog posts in src/content/blog. Use for existing MDX posts that need stronger Tangle voice, SEO/AEO structure, answer capsules, proof blocks, internal links, FAQ, and publication-ready technical clarity."
+description: "Audit, rewrite, or batch-rewrite Tangle website blog posts in src/content/blog. Use for existing MDX posts that need stronger Tangle voice, SEO/AEO structure, answer capsules, proof blocks, internal links, FAQ, publication-ready technical clarity, or a parallel, fully validated editorial pass across a series or the whole corpus."
 ---
 
 # Tangle Blog Editor
@@ -49,6 +49,16 @@ If the user asks for the self-improving stack specifically, also inspect the tar
    - End with what the reader should choose, test, deploy, verify, or avoid.
    - Avoid restated thesis closers.
 
+## Batch rewrite mode
+
+When the request covers a series or the whole corpus, read `references/batch-rewrite-protocol.md` and use its one-turn worker contract.
+Inventory the repository before assigning work, partition by disjoint files and series context, and give every worker the same rubric plus its exact file list.
+Workers must finish their assigned files in one turn, run the cheapest relevant checks, report blockers with file and line evidence, and never edit another worker's files.
+The coordinating agent owns the queue, reconciles series continuity, runs repository-wide checks on the merged tree, and does not call the batch complete while any assigned file lacks a result.
+
+Use the requested model only when the runtime exposes it.
+If a requested model is unavailable, record the exact model-roster error and stop that lane or use an explicitly approved fallback; never silently substitute a cheaper model for a writing lane.
+
 ## Output Rules
 
 - If editing files, modify only the requested MDX post and directly required assets/metadata.
@@ -58,3 +68,7 @@ If the user asks for the self-improving stack specifically, also inspect the tar
 - Every SEO/AEO rewrite needs at least one exact install, curl, CLI, or API block unless the post is purely conceptual.
 - Use images from `public/images/blog/<slug>/` or `public/images/covers/`; do not reference non-existent assets.
 - Run `pnpm build` or a narrower available validation after substantive edits.
+
+## Then consider
+
+- `docs-slop-audit` when a completed batch needs an independent prose and claim scan.
