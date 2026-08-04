@@ -18,9 +18,14 @@ heroImage: /images/covers/editorial/blueprint-agent-v2.webp
 imageAlt: 'An editorial still life about choosing a runnable service'
 ---
 
-During an afternoon review, an agent receives a private PDF and needs to produce a short summary before it can decide what to do next.
+During an afternoon review, Maya gives an agent a private PDF and asks for a short summary before the agent decides what to do next.
 The team does not want to build a GPU service, a browser runner, and a payment system for one workflow.
 It opens a service catalog and finds several names that sound close to the job.
+
+One listing says “document intelligence.”
+Another says “private inference.”
+A third says “agent tools” and shows a cheerful screenshot.
+None of those labels tells Maya whether the service can accept the file, who will receive it, or what happens when a worker stops halfway through.
 
 The names are not enough.
 Before sending the PDF, the team needs to know who receives it, what the service can access, what the result looks like, how payment works, and what happens when the service disappears halfway through the request.
@@ -31,7 +36,7 @@ The contract gives a caller a place to inspect the service before choosing who r
 The contract does not verify isolation, service identity, or result correctness by itself.
 It gives the caller a place to ask the questions that a catalog name cannot answer.
 
-This guide reads the catalog as a builder.
+This guide reads the catalog as a builder and a cautious caller.
 It follows one job from request to result, shows a small contract model in TypeScript, explains how to inspect the public SDK and source, and gives separate decisions for callers and operators.
 
 ## A Blueprint is a service contract
@@ -70,6 +75,25 @@ An operator can return a summary without proving that the requested input was us
 The caller still has to decide what it will accept.
 
 Payment records, operator health, and result evidence stay separate, so a caller cannot treat one record as proof of another claim.
+
+## The catalog page is not the integration
+
+Maya's first mistake is treating discovery as selection.
+The catalog is useful for finding candidates, but it is not where the important decisions live.
+
+Consider three fictional entries that could all appear beside one another:
+
+| Listing | What the title suggests | What Maya still needs to learn |
+| --- | --- | --- |
+| Private document inference | The file might stay confidential | Which program runs, which operator sees metadata, and how the result is checked |
+| Fast document summary | The answer might arrive quickly | Maximum file size, timeout behavior, quote expiry, and whether a retry costs twice |
+| Agent document tool | The service might fit an agent loop | Whether it can reach the public network, store the file, or call other tools |
+
+The titles can be accurate and still be too small to carry the decision.
+The contract and the release are where the caller can find the missing details.
+
+This is also why a large catalog is not automatically a better catalog.
+More entries increase the number of plausible choices, but they do not remove the work of comparing inputs, boundaries, evidence, payment, and failure behavior.
 
 ## Start with the job you need
 
@@ -159,6 +183,50 @@ A good contract also makes an uncomfortable answer possible.
 If a service cannot return input and output bindings, the caller can decide not to send a sensitive document.
 If a service cannot say what happens after a timeout, the caller can keep it out of an automated retry loop.
 
+The caller can turn that contract into a decision before writing an SDK client:
+
+```ts
+type Candidate = ServiceContract & {
+  operator: string
+  quoteSeconds: number
+  supportsRetries: boolean
+}
+
+const candidates: Candidate[] = [
+  {
+    ...privateSummarizer,
+    operator: 'operator-a',
+    quoteSeconds: 60,
+    supportsRetries: true,
+  },
+  {
+    name: 'fast-summary',
+    input: ['documentBytes'],
+    output: ['summary'],
+    resources: ['inference'],
+    evidence: [],
+    failure: ['retry-on-timeout'],
+    operator: 'operator-b',
+    quoteSeconds: 300,
+    supportsRetries: false,
+  },
+]
+
+function chooseCandidate(options: Candidate[]) {
+  return options.find((candidate) =>
+    candidate.evidence.includes('input-output-binding') &&
+    candidate.failure.includes('retry-on-timeout') &&
+    candidate.supportsRetries,
+  )
+}
+
+console.log(chooseCandidate(candidates)?.operator)
+// operator-a
+```
+
+This toy selector does not contact Tangle and does not claim to be an SDK call.
+It demonstrates a useful habit: reject a service that cannot explain the evidence and retry behavior before you spend time integrating it.
+
 ## The public SDK gives builders a starting point
 
 If you are building a Blueprint rather than consuming one, the public SDK README documents the current CLI path for creating a project.
@@ -175,6 +243,10 @@ Check the release and documentation state before copying a command into a long-l
 A useful first Blueprint has one narrow job.
 It has typed inputs and outputs, a resource list, an operator startup path, a result check, and a failure response that you can exercise locally.
 Each added job brings another schema, retry rule, resource path, and failure case to test before the service is understandable to callers.
+
+The scaffold is not the product.
+It gives a builder a project shape; the builder still has to decide what a valid result means, what data can cross the boundary, and whether an operator can recover after a failed job.
+That is the difference between creating a repository and creating a service another team can safely call.
 
 The [Blueprint SDK deployment guide](/blog/blueprint-sdk-deployment-guide) covers the next step from a local service to an operator-run job.
 The [Tangle re-introduction guide](/blog/building-ai-services-on-tangle) shows how inference and code execution fit into the wider service model.
@@ -231,6 +303,14 @@ Read the tests for the job you plan to call rather than the tests for a neighbor
 If the repository has no way to exercise the job or reproduce its result, treat it as an experiment and keep your integration small.
 Without a repeatable test, you cannot verify regressions or reproduce a result.
 
+### 6. Look for the sentence that says “no”
+
+Good service documentation explains the cases it will refuse.
+Look for maximum input sizes, unsupported models, blocked network destinations, expired quotes, missing credentials, and outputs that are intentionally marked for human review.
+
+Those sentences are often more useful than a feature list because they tell your application when to stop.
+If the documentation never says what the service rejects, assume the caller will discover the boundary through an expensive failed request.
+
 ## Inspect releases and evidence after discovery
 
 A catalog can help you discover that a service exists.
@@ -243,6 +323,10 @@ Inspect the source repository's exact release, job contract, tests, and operator
 The old version of this article used a catalog count in its title.
 Counts age quickly and say little about whether a particular service fits your job.
 The more durable question is whether you can explain the request, execution, payment, result, and failure path to another engineer.
+
+Write that explanation before you approve the integration.
+If it takes one paragraph, a new teammate can review it.
+If it takes a dozen links and several private assumptions, the service may still be useful, but it is not yet an understandable dependency.
 
 ## The operator has a different decision
 
@@ -275,6 +359,20 @@ This is why a Blueprint review should include one unhappy path before any produc
 Run a timeout, an expired quote, a malformed output, or an unavailable operator in a low-risk environment.
 Record what the caller sees and what the operator must repair.
 
+Here is the same incident as a small timeline:
+
+| Time | Caller sees | Safe decision |
+| --- | --- | --- |
+| 14:00 | Quote `q-17`, valid for 60 seconds | Hold the request; do not pay until the input is final |
+| 14:01 | Payment authorized, job `j-17` accepted | Wait for the result or a clear timeout |
+| 14:05 | Connection closes, no result | Do not blindly submit the same payment again |
+| 14:06 | Quote `q-17` is expired | Ask for job status or a fresh quote |
+| 14:08 | Operator reports worker restart | Reconcile `j-17` before retrying |
+
+The important field is not the fictional timestamp.
+It is the job identifier that lets the caller distinguish “still running” from “never received” and “already paid” from “safe to retry.”
+Without that identifier, the same incident becomes a support ticket full of guesses.
+
 ## When a hosted API is the better choice
 
 An operator-run service is not automatically the right answer.
@@ -285,6 +383,10 @@ The hosted service may offer better support, a simpler billing relationship, or 
 Choose a Tangle Blueprint when the operator choice, resource boundary, payment path, or execution evidence is part of the application decision.
 The extra flexibility comes with extra review work.
 Your application must decide which evidence is sufficient and how it recovers from failure.
+
+That is a product choice, not a moral ranking.
+A hosted API may be the right answer for a low-risk feature that needs predictable latency and one accountable vendor.
+An operator-run service may be worth the review when the application needs to choose where computation happens, pay a worker directly, or keep a public record of how a job was executed.
 
 That tradeoff is the reason to read the contract before reading the catalog.
 
@@ -309,6 +411,39 @@ Send only the files, network access, credentials, and payment authority that thi
 Do not grant a browser or chain capability because another catalog entry might need it later.
 
 This sequence turns a catalog candidate into a decision based on observed behavior.
+
+For a team building an agent, the same sequence can become a reusable tool policy:
+
+```ts
+type JobRequest = {
+  blueprint: string
+  input: string
+  maxPrice: number
+  retryable: boolean
+}
+
+function canSend(request: JobRequest, contract: ServiceContract) {
+  const hasInput = contract.input.includes('documentBytes')
+  const hasResultEvidence = contract.evidence.length > 0
+  const hasFailurePlan = contract.failure.length > 0
+
+  return request.maxPrice > 0 && hasInput && hasResultEvidence && hasFailurePlan
+}
+
+const request: JobRequest = {
+  blueprint: privateSummarizer.name,
+  input: 'contract-17.pdf',
+  maxPrice: 0.02,
+  retryable: true,
+}
+
+console.log(canSend(request, privateSummarizer))
+// true
+```
+
+This is deliberately a toy policy.
+In a real agent, the contract would come from the public service description, the price would be checked against the current quote, and the result would still need application-specific validation.
+The point is to make “choose a service” an explicit decision that can be reviewed and tested.
 
 ## A practical decision rule
 

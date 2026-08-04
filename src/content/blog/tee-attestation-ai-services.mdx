@@ -20,8 +20,9 @@ imageAlt: 'An editorial still life about hardware-backed evidence for an AI serv
 ---
 
 At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private.
-The service promises a summary while keeping the contract inside protected hardware.
-The invoice shows that the request was paid.
+At 9:16, a vendor offers an attractive answer: upload the file, wait a few seconds, and receive a summary from an AI service running in protected hardware.
+At 9:20, the lawyer reviewing the vendor asks the question that changes the whole integration: “How do we know which program saw this contract?”
+The invoice shows that the request was paid, but a receipt cannot answer that question.
 
 The team still has two unanswered questions.
 Which program handled the contract, and what evidence connects the returned summary to that program?
@@ -35,6 +36,7 @@ It cannot certify that the program understood the contract or that the summary i
 Those promises are easy to collapse into one reassuring word such as “private” or “verified.”
 They are separate engineering decisions.
 This article follows one private summarization job from request to result so the difference stays visible.
+It is written for the person who has to decide whether a secret can leave an application, not for someone who already knows the vocabulary of confidential computing.
 
 ## Separate confidentiality, execution identity, and quality
 
@@ -99,6 +101,28 @@ The lawyer's review is evidence about whether the summary is usable.
 
 Each piece answers a different question.
 
+## The moment the promise becomes a decision
+
+The useful part of an attestation report is not the word “trusted” printed next to it.
+The useful part is the decision it lets a caller make before it releases a secret.
+
+The legal team's client can turn the vendor's broad promise into a small policy:
+
+| Before sending the contract | After receiving the result |
+| --- | --- |
+| The report is signed by an accepted provider root | The result carries the same job identifier as the request |
+| The measurement matches the reviewed summarizer build | The input hash matches the bytes the lawyer selected |
+| The report is fresh and not in debug mode | The output is checked for required clauses and routed to review |
+| The report's public key is the key approved for release | Payment, execution, and answer quality are shown as separate statuses |
+
+This changes the user interface as well as the server.
+Instead of a single green badge that says “verified,” the application can show “execution policy passed,” “payment authorized,” and “human review required.”
+That wording tells the lawyer which check passed and which decision still belongs to a person.
+
+The distinction matters during an incident.
+If the summary is wrong, the team can ask whether the wrong program ran, the right program received the wrong bytes, or the right program produced a poor answer.
+Without separate records for the report, the input hash, and the answer review, those three investigations collapse into an argument about whether the service met its promise, even though no one artifact covers all three claims.
+
 ## What a report contains
 
 An attestation report is easier to review when its fields have a job in the decision.
@@ -146,6 +170,30 @@ It says nothing about the program measurement or the quality of the summary.
 
 The `resultStatus` field is also separate.
 The application can accept a protected execution report and still route the summary to a human because the task is high risk.
+
+## The first result is allowed to be a useful failure
+
+The vendor's first test run returns a plausible paragraph, and every execution check passes.
+The paragraph still leaves out the contract's termination clause.
+
+That is not a contradiction.
+The attestation report answered, “Did the approved program run in the approved boundary for this request?”
+The legal review answered, “Can a lawyer rely on the answer?”
+
+The application should preserve both answers instead of overwriting the first with the second:
+
+```text
+job: contract-17
+execution: accepted
+payment: authorized
+input-binding: matched
+output: returned
+quality: needs-human-review
+reason: termination clause not found
+```
+
+This small record gives the operator a concrete bug to investigate and gives the legal team a safe next step.
+It also prevents a common product mistake: treating a technically well-formed response as an answer that is automatically safe to use.
 
 ## A small policy check you can run
 
@@ -216,6 +264,19 @@ The example accepts the report because the code, provider, input, freshness, and
 In a real deployment, `signatureValid` comes from a provider-supported certificate chain rather than a Boolean written by the caller.
 The expected measurement must come from a reviewed build, not from the report that arrived after the request.
 
+The policy function is intentionally small enough to test with ordinary unit tests.
+For example, this table of cases makes the failure behavior explicit:
+
+| Case | Expected decision | Why |
+| --- | --- | --- |
+| Matching measurement, fresh report, matching input | Release the document | The caller has the evidence it asked for |
+| Correct measurement, expired report | Request a fresh report | The caller cannot tell whether the workload restarted |
+| Correct report, different input hash | Reject the result | A plausible answer for another file is still the wrong answer |
+| Good execution, missing termination clause | Keep the result out of automation | Quality is a separate application decision |
+
+The table is more than documentation.
+It can become a test fixture, an operator runbook, and a support response when a customer asks why a request was refused.
+
 ## Reject stale or mismatched evidence
 
 Attestation matters at the moment a caller accepts or rejects execution evidence.
@@ -262,6 +323,26 @@ The service can still time out, return malformed data, or fail an application ch
 The caller needs a separate retry, refund, or dispute policy.
 Payment does not choose among those outcomes.
 
+## Debug a dispute with the records in order
+
+Imagine that the lawyer says the returned summary was generated from an older version of the contract.
+Do not begin by asking whether the model is trustworthy.
+Start with the records that can narrow the dispute:
+
+1. Compare the caller's `jobId` with the service's job record.
+2. Recompute the caller's input hash from the exact uploaded bytes.
+3. Compare that hash with the input hash in the returned artifact.
+4. Check the report's measurement, provider, debug flag, and expiry at the time the secret was released.
+5. Compare the output hash with the bytes the application displayed.
+6. Only then investigate model behavior, prompt construction, or a missing clause.
+
+If step two fails, the problem is a request-binding bug and the model may be innocent.
+If step four fails, the service violated the execution policy before it ever saw the document.
+If all six steps pass, the remaining problem is likely answer quality or application handling, which needs a different remedy.
+
+The order saves time because each record rules out a different class of failure.
+It also gives a customer a useful explanation instead of a vague promise that the workload “ran securely.”
+
 ## What TEE attestation cannot prove
 
 Attestation does not prove that the model's training data is accurate.
@@ -301,6 +382,33 @@ The [Tangle documentation](https://docs.tangle.tools/) and the [protected execut
 A Tangle service should make the expected measurement, accepted provider family, report age, input binding, output format, and failure behavior visible to callers.
 Those details belong beside the service contract because they change the decision a caller can make.
 
+For a caller, that information can be represented as a short acceptance record:
+
+```ts
+type JobDecision = {
+  jobId: string
+  execution: 'accepted' | 'rejected'
+  payment: 'authorized' | 'failed'
+  inputBinding: 'matched' | 'mismatched'
+  output: 'returned' | 'missing'
+  quality: 'unchecked' | 'accepted' | 'needs-human-review'
+}
+
+const decision: JobDecision = {
+  jobId: 'contract-17',
+  execution: 'accepted',
+  payment: 'authorized',
+  inputBinding: 'matched',
+  output: 'returned',
+  quality: 'needs-human-review',
+}
+
+console.log(decision)
+```
+
+This is an application-facing shape, not a provider wire format.
+Its value is that a dashboard, retry worker, and human reviewer can all see the same boundaries.
+
 The protocol can carry payment and service information.
 The application still chooses whether a result is good enough for its users.
 
@@ -320,6 +428,9 @@ Choose the smallest evidence set that answers the risk in your workload.
 Add output checks when correctness matters.
 Add payment rules when money moves.
 Add attestation when the execution boundary itself is part of the promise.
+
+The design also requires someone to approve new measurements, rotate keys, decide how long a report remains fresh, test a restart, handle a provider outage, and explain a rejected request to a customer.
+If the team cannot own those decisions, a simpler service with a narrower promise may be more honest.
 
 ## Questions to ask an operator
 

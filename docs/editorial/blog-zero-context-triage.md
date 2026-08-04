@@ -7,10 +7,10 @@ Query-language overlap is only a wording hint. Google can understand related lan
 The score is a ranking signal from the title, opening, full-text patterns, links, measurements, and structure; it is not a publish approval.
 A hard failure always outranks the number and requires a rewrite review.
 
-- P0 rewrite: 0
-- P1 revise: 36
+- P0 rewrite: 1
+- P1 revise: 35
 - P2 factual/link check: 49
-- Hard failures: 0
+- Hard failures: 1
 - Repository-debris findings: 0
 - Missing reader problem: 0
 - Missing reader decision: 0
@@ -23,37 +23,37 @@ A hard failure always outranks the number and requires a rewrite review.
 
 | Rank | Status | Reader | Search | Series | Post | Primary query | Hard failures | Style flags |
 | ---: | --- | ---: | --- | --- | --- | --- | --- | --- |
-| 1 | P1 — revise | 34/40 | 20/20 S3 — check live search | Agent Runtime Infrastructure | [AI Agent Runtime Architecture: Removing a Second Execution Path](/blog/agent-runtime-generic-executor-deletion) | AI agent runtime architecture | none | none |
-| 2 | P1 — revise | 34/40 | 19/20 S3 — check live search | the-self-improving-stack | [Evaluation Gates: The Rule That Decides Whether an Agent Improves](/blog/self-improving-stack-evaluation-gates) | evaluation gates | none | none |
-| 3 | P1 — revise | 34/40 | 20/20 S3 — check live search | the-self-improving-stack | [The Self-Improving Stack](/blog/the-self-improving-stack) | self-improving stack | none | none |
-| 4 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Agent Governance: Self-Improvement Needs a Safety Case](/blog/self-improving-stack-governance) | agent governance | none | none |
-| 5 | P1 — revise | 35/40 | 20/20 S3 — check live search | Agent Runtime Infrastructure | [Agent Profiles: Why Settings Need a Delivery Contract](/blog/agent-profile-materialization-contracts) | AI agent profile | none | none |
-| 6 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | the-self-improving-stack | [Agent Runtime Topology: When an Agent Needs More Than a Prompt](/blog/self-improving-stack-agent-runtime-topology) | agent runtime topology | none | none |
-| 7 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Re-Introduction | [AI Agent Infrastructure on Tangle: Inference and Code Execution](/blog/building-ai-services-on-tangle) | ai agent infrastructure | none | none |
-| 8 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | Agent Runtime Infrastructure | [AI Agent Observability: Make the Work Visible](/blog/agent-runtime-worker-observability) | AI agent observability | none | none |
-| 9 | P1 — revise | 35/40 | 20/20 S3 — check live search | The Instrument Problem | [AI Coding Agent Benchmark: What CodeTraceBench Measures](/blog/codetracebench-benchmark-measured-wrong-capability) | AI coding agent benchmark | none | none |
-| 10 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents) | ai e2e testing | none | none |
-| 11 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [AI Service Marketplace With Crypto Payments: From Discovery to Result](/blog/ai-service-marketplace-crypto-payments) | ai service marketplace crypto | none | none |
-| 12 | P1 — revise | 35/40 | 18/20 S3 — check live search | Tangle Protocol | [Anonymous LLM Usage: What Shielded Payments Do and Do Not Hide](/blog/anonymous-llm-usage-shielded-payments) | anonymous llm usage | none | none |
-| 13 | P1 — revise | 35/40 | 19/20 S3 — check live search | Blueprint SDK | [Blueprint Deployment: From a Local Service to an Operator-Run Job](/blog/blueprint-sdk-deployment-guide) | blueprint sdk deployment | none | none |
-| 14 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [Blueprint Protocol: Define an Operator-Run AI Service](/blog/blueprint-protocol-operator-services) | blueprint protocol | none | none |
-| 15 | P1 — revise | 35/40 | 19/20 S3 — check live search | Building an AI Tax Agent | [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns) | complex tax situations software | none | none |
-| 16 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [Decentralized Compute Protocol: How Tangle Blueprints Run Services](/blog/decentralized-compute-protocol-blueprints) | decentralized compute protocol | none | none |
-| 17 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent) | defi wallet testing | none | none |
-| 18 | P1 — revise | 35/40 | 20/20 S3 — check live search | Agent Intent Infrastructure | [Deploying a Paid AI Agent Service: Start With One Traceable Job](/blog/deploy-paid-ai-agent-service) | deploy paid ai agent service | none | none |
-| 19 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Re-Introduction | [How Blueprints Work](/blog/how-blueprints-work) | how blueprints work | none | none |
-| 20 | P1 — revise | 35/40 | 19/20 S3 — check live search | Tangle Re-Introduction | [How Decentralized AI Infrastructure Verifies Work](/blog/how-tangle-verifies-work) | how decentralized ai infrastructure verifies work | none | none |
-| 21 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | x402 Production Runway | [How to Deploy an AI Agent Service: Remote Providers and Payment](/blog/blueprint-deployment-architecture-remote-providers) | how to deploy ai agent service | none | none |
-| 22 | P1 — revise | 35/40 | 19/20 S3 — check live search | Building an AI Tax Agent | [K-1 Tax Filing For Multiple Entities](/blog/k-1-tax-filing-multiple-entities) | k-1 tax filing | none | none |
-| 23 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Memory Is Not Automatically Learning](/blog/self-improving-stack-memory-flywheels) | agent memory | none | none |
-| 24 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows) | metamask automated testing | none | none |
-| 25 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Multi-Agent Coordination: Personas Are Content, Coordination Is Structure](/blog/self-improving-stack-multi-agent-coordination) | multi-agent coordination | none | none |
-| 26 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents) | natural language test automation | none | none |
-| 27 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | Tangle Protocol | [Operator Staking for AI Blueprints: What Stake Can and Cannot Prove](/blog/operator-staking-ai-blueprints) | operator staking ai | none | none |
-| 28 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | x402 Production Runway | [Pay-Per-Request API Pricing: Wei, Token Conversion, and Markup](/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags) | pay per request api pricing | none | none |
-| 29 | P1 — revise | 35/40 | 20/20 S3 — check live search | x402 Production Runway | [Payment-Native Infrastructure for AI Agent Products](/blog/payment-native-infrastructure-ai-agent-product-strategy) | payment-native infrastructure | none | none |
-| 30 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Prompt Optimization Is Not The Whole Game](/blog/self-improving-stack-prompt-optimization) | prompt optimization | none | none |
-| 31 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | Standalone | [Tangle Blueprints: How to Choose an Operator-Run Service](/blog/30-blueprints) | Tangle blueprints | none | none |
+| 1 | P0 — rewrite | 32/40 | 16/20 S2 — revise search surface | Standalone | [Tangle Blueprints: How to Choose an Operator-Run Service](/blog/30-blueprints) | Tangle blueprints | native-jargon-before-definition, number-without-conditions | none |
+| 2 | P1 — revise | 34/40 | 20/20 S3 — check live search | Agent Runtime Infrastructure | [AI Agent Runtime Architecture: Removing a Second Execution Path](/blog/agent-runtime-generic-executor-deletion) | AI agent runtime architecture | none | none |
+| 3 | P1 — revise | 34/40 | 19/20 S3 — check live search | the-self-improving-stack | [Evaluation Gates: The Rule That Decides Whether an Agent Improves](/blog/self-improving-stack-evaluation-gates) | evaluation gates | none | none |
+| 4 | P1 — revise | 34/40 | 20/20 S3 — check live search | the-self-improving-stack | [The Self-Improving Stack](/blog/the-self-improving-stack) | self-improving stack | none | none |
+| 5 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Agent Governance: Self-Improvement Needs a Safety Case](/blog/self-improving-stack-governance) | agent governance | none | none |
+| 6 | P1 — revise | 35/40 | 20/20 S3 — check live search | Agent Runtime Infrastructure | [Agent Profiles: Why Settings Need a Delivery Contract](/blog/agent-profile-materialization-contracts) | AI agent profile | none | none |
+| 7 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | the-self-improving-stack | [Agent Runtime Topology: When an Agent Needs More Than a Prompt](/blog/self-improving-stack-agent-runtime-topology) | agent runtime topology | none | none |
+| 8 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Re-Introduction | [AI Agent Infrastructure on Tangle: Inference and Code Execution](/blog/building-ai-services-on-tangle) | ai agent infrastructure | none | none |
+| 9 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | Agent Runtime Infrastructure | [AI Agent Observability: Make the Work Visible](/blog/agent-runtime-worker-observability) | AI agent observability | none | none |
+| 10 | P1 — revise | 35/40 | 20/20 S3 — check live search | The Instrument Problem | [AI Coding Agent Benchmark: What CodeTraceBench Measures](/blog/codetracebench-benchmark-measured-wrong-capability) | AI coding agent benchmark | none | none |
+| 11 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents) | ai e2e testing | none | none |
+| 12 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [AI Service Marketplace With Crypto Payments: From Discovery to Result](/blog/ai-service-marketplace-crypto-payments) | ai service marketplace crypto | none | none |
+| 13 | P1 — revise | 35/40 | 18/20 S3 — check live search | Tangle Protocol | [Anonymous LLM Usage: What Shielded Payments Do and Do Not Hide](/blog/anonymous-llm-usage-shielded-payments) | anonymous llm usage | none | none |
+| 14 | P1 — revise | 35/40 | 19/20 S3 — check live search | Blueprint SDK | [Blueprint Deployment: From a Local Service to an Operator-Run Job](/blog/blueprint-sdk-deployment-guide) | blueprint sdk deployment | none | none |
+| 15 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [Blueprint Protocol: Define an Operator-Run AI Service](/blog/blueprint-protocol-operator-services) | blueprint protocol | none | none |
+| 16 | P1 — revise | 35/40 | 19/20 S3 — check live search | Building an AI Tax Agent | [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns) | complex tax situations software | none | none |
+| 17 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Protocol | [Decentralized Compute Protocol: How Tangle Blueprints Run Services](/blog/decentralized-compute-protocol-blueprints) | decentralized compute protocol | none | none |
+| 18 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent) | defi wallet testing | none | none |
+| 19 | P1 — revise | 35/40 | 20/20 S3 — check live search | Agent Intent Infrastructure | [Deploying a Paid AI Agent Service: Start With One Traceable Job](/blog/deploy-paid-ai-agent-service) | deploy paid ai agent service | none | none |
+| 20 | P1 — revise | 35/40 | 20/20 S3 — check live search | Tangle Re-Introduction | [How Blueprints Work](/blog/how-blueprints-work) | how blueprints work | none | none |
+| 21 | P1 — revise | 35/40 | 19/20 S3 — check live search | Tangle Re-Introduction | [How Decentralized AI Infrastructure Verifies Work](/blog/how-tangle-verifies-work) | how decentralized ai infrastructure verifies work | none | none |
+| 22 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | x402 Production Runway | [How to Deploy an AI Agent Service: Remote Providers and Payment](/blog/blueprint-deployment-architecture-remote-providers) | how to deploy ai agent service | none | none |
+| 23 | P1 — revise | 35/40 | 19/20 S3 — check live search | Building an AI Tax Agent | [K-1 Tax Filing For Multiple Entities](/blog/k-1-tax-filing-multiple-entities) | k-1 tax filing | none | none |
+| 24 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Memory Is Not Automatically Learning](/blog/self-improving-stack-memory-flywheels) | agent memory | none | none |
+| 25 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows) | metamask automated testing | none | none |
+| 26 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Multi-Agent Coordination: Personas Are Content, Coordination Is Structure](/blog/self-improving-stack-multi-agent-coordination) | multi-agent coordination | none | none |
+| 27 | P1 — revise | 35/40 | 19/20 S3 — check live search | Browser Agent | [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents) | natural language test automation | none | none |
+| 28 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | Tangle Protocol | [Operator Staking for AI Blueprints: What Stake Can and Cannot Prove](/blog/operator-staking-ai-blueprints) | operator staking ai | none | none |
+| 29 | P1 — revise | 35/40 | 16/20 S2 — revise search surface | x402 Production Runway | [Pay-Per-Request API Pricing: Wei, Token Conversion, and Markup](/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags) | pay per request api pricing | none | none |
+| 30 | P1 — revise | 35/40 | 20/20 S3 — check live search | x402 Production Runway | [Payment-Native Infrastructure for AI Agent Products](/blog/payment-native-infrastructure-ai-agent-product-strategy) | payment-native infrastructure | none | none |
+| 31 | P1 — revise | 35/40 | 20/20 S3 — check live search | the-self-improving-stack | [Prompt Optimization Is Not The Whole Game](/blog/self-improving-stack-prompt-optimization) | prompt optimization | none | none |
 | 32 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | Agent Intent Infrastructure | [Tangle Sandbox vs E2B: Choosing An AI Agent Sandbox](/blog/tangle-sandbox-vs-e2b) | tangle sandbox vs e2b | none | none |
 | 33 | P1 — revise | 35/40 | 17/20 S2 — revise search surface | Agent Intent Infrastructure | [TEE Attestation for AI Services: What the Evidence Proves](/blog/tee-attestation-ai-services) | tee attestation for ai services | none | none |
 | 34 | P1 — revise | 35/40 | 20/20 S3 — check live search | x402 Production Runway | [The x402 Facilitator Problem: Trust and Uptime](/blog/decentralizing-x402-facilitator) | x402 facilitator | none | none |
@@ -111,11 +111,31 @@ A hard failure always outranks the number and requires a rewrite review.
 
 ## Per-post rubric evidence
 
-### 1. AI Agent Runtime Architecture: Removing a Second Execution Path
+### 1. Tangle Blueprints: How to Choose an Operator-Run Service
+
+- File: src/content/blog/30-blueprints.mdx
+- Series: Standalone
+- Rank/status: 1 — P0 — rewrite
+- Rubric score: 32/40
+- Search score: 16/20 — S2 — revise search surface
+- Primary query: Tangle blueprints
+- Query visibility: 100% of query terms in title; 50% in opening
+- Search-surface issues: none detected
+- Hard failures: native-jargon-before-definition, number-without-conditions
+- Native terms in opening: worker
+- Repository debris: none detected
+- Style flags: none detected
+- Shape: 3624 words, 30 headings, 24 table rows, 4 code blocks, 8 external links, 4 internal links
+- Reader dimensions: reader problem 4/4; single story 4/4; definitions 3/4; jargon control 1/4; evidence 4/4; measurement honesty 1/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
+- Discovery dimensions: query ownership 4/4; title/snippet 1/4; answer clarity 3/4; evidence/entities 4/4; technical discovery 4/4
+- Reader takeaway to validate: During an afternoon review, Maya gives an agent a private PDF and asks for a short summary before the agent decides what to do next. The team does not want to build a GPU service, a browser runner, and a payment system for one workflow. It opens a service catalog and finds several names that sound close to the job.
+- Required action: define native terms before using them; add task, denominator, conditions, version/date, and limits for every number
+
+### 2. AI Agent Runtime Architecture: Removing a Second Execution Path
 
 - File: src/content/blog/agent-runtime-generic-executor-deletion.mdx
 - Series: Agent Runtime Infrastructure
-- Rank/status: 1 — P1 — revise
+- Rank/status: 2 — P1 — revise
 - Rubric score: 34/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: AI agent runtime architecture
@@ -131,11 +151,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Suppose two pieces of software start the same kind of coding job. One is 3,360 lines spread across 16 files. The other is shared by every run that uses the same remote service.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 2. Evaluation Gates: The Rule That Decides Whether an Agent Improves
+### 3. Evaluation Gates: The Rule That Decides Whether an Agent Improves
 
 - File: src/content/blog/self-improving-stack-evaluation-gates.mdx
 - Series: the-self-improving-stack
-- Rank/status: 2 — P1 — revise
+- Rank/status: 3 — P1 — revise
 - Rubric score: 34/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: evaluation gates
@@ -151,11 +171,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Short answer: An evaluation gate is the release rule that decides whether a new agent version is better enough to replace the current one.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 3. The Self-Improving Stack
+### 4. The Self-Improving Stack
 
 - File: src/content/blog/the-self-improving-stack.mdx
 - Series: the-self-improving-stack
-- Rank/status: 3 — P1 — revise
+- Rank/status: 4 — P1 — revise
 - Rubric score: 34/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: self-improving stack
@@ -171,11 +191,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Short answer: A self-improving agent system is software that changes its instructions, procedures, tools, or model and keeps the change only after a measured comparison.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 4. Agent Governance: Self-Improvement Needs a Safety Case
+### 5. Agent Governance: Self-Improvement Needs a Safety Case
 
 - File: src/content/blog/self-improving-stack-governance.mdx
 - Series: the-self-improving-stack
-- Rank/status: 4 — P1 — revise
+- Rank/status: 5 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: agent governance
@@ -191,11 +211,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Short answer: Governance is the set of owners, permissions, evidence requirements, and rollback rules that constrain an agent that can change itself.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 5. Agent Profiles: Why Settings Need a Delivery Contract
+### 6. Agent Profiles: Why Settings Need a Delivery Contract
 
 - File: src/content/blog/agent-profile-materialization-contracts.mdx
 - Series: Agent Runtime Infrastructure
-- Rank/status: 5 — P1 — revise
+- Rank/status: 6 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: AI agent profile
@@ -211,11 +231,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Imagine saving an agent profile that says, “Use this model, these tools, this prompt, and these files.” You start a run and it launches without one of those settings. The run may still produce an answer, so the missing setting can look like a weak model, a bad prompt, or a random failure.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 6. Agent Runtime Topology: When an Agent Needs More Than a Prompt
+### 7. Agent Runtime Topology: When an Agent Needs More Than a Prompt
 
 - File: src/content/blog/self-improving-stack-agent-runtime-topology.mdx
 - Series: the-self-improving-stack
-- Rank/status: 6 — P1 — revise
+- Rank/status: 7 — P1 — revise
 - Rubric score: 35/40
 - Search score: 16/20 — S2 — revise search surface
 - Primary query: agent runtime topology
@@ -231,11 +251,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Ask an AI coding assistant to “have three specialists work in parallel, compare their patches, and stop the losing attempts.” The sentence sounds precise. The assistant may still make one model call, mention three imaginary specialists, and return the first patch it wrote.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 7. AI Agent Infrastructure on Tangle: Inference and Code Execution
+### 8. AI Agent Infrastructure on Tangle: Inference and Code Execution
 
 - File: src/content/blog/building-ai-services-on-tangle.mdx
 - Series: Tangle Re-Introduction
-- Rank/status: 7 — P1 — revise
+- Rank/status: 8 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: ai agent infrastructure
@@ -251,11 +271,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: AI agent infrastructure is the software that lets an agent call models, run code, and return a result someone else can inspect. This post shows how that path works on Tangle. An AI service can return a plausible answer while leaving the customer unable to tell what produced it. A code-execution service can return the right output while exposing the customer’s data or the machine owner’s system.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 8. AI Agent Observability: Make the Work Visible
+### 9. AI Agent Observability: Make the Work Visible
 
 - File: src/content/blog/agent-runtime-worker-observability.mdx
 - Series: Agent Runtime Infrastructure
-- Rank/status: 8 — P1 — revise
+- Rank/status: 9 — P1 — revise
 - Rubric score: 35/40
 - Search score: 16/20 — S2 — revise search surface
 - Primary query: AI agent observability
@@ -271,11 +291,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: When an automated program runs for several minutes, silence is not a useful status. The person or program waiting for it needs to know whether it is thinking, using a tool, waiting on a remote service, or already finished.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 9. AI Coding Agent Benchmark: What CodeTraceBench Measures
+### 10. AI Coding Agent Benchmark: What CodeTraceBench Measures
 
 - File: src/content/blog/codetracebench-benchmark-measured-wrong-capability.mdx
 - Series: The Instrument Problem
-- Rank/status: 9 — P1 — revise
+- Rank/status: 10 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: AI coding agent benchmark
@@ -291,11 +311,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Imagine asking an AI agent to review a coding session and point to the step where the agent went wrong. You need a way to tell whether the answer is useful, so you run it against examples where the incorrect steps are already labeled.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 10. AI E2E Testing For Browser Flows
+### 11. AI E2E Testing For Browser Flows
 
 - File: src/content/blog/ai-e2e-testing-browser-agents.mdx
 - Series: Browser Agent
-- Rank/status: 10 — P1 — revise
+- Rank/status: 11 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: ai e2e testing
@@ -311,11 +331,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: AI E2E testing is most useful at the product boundary: signup, checkout, app setup, wallet connection, claim flow, dashboard load, and any workflow where the user's path crosses several systems. A coded test can be better for a stable button. An agent is better when the team needs to say the outcome in English and still get browser evidence.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 11. AI Service Marketplace With Crypto Payments: From Discovery to Result
+### 12. AI Service Marketplace With Crypto Payments: From Discovery to Result
 
 - File: src/content/blog/ai-service-marketplace-crypto-payments.mdx
 - Series: Tangle Protocol
-- Rank/status: 11 — P1 — revise
+- Rank/status: 12 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: ai service marketplace crypto
@@ -331,11 +351,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: An AI service marketplace becomes useful when a program can find a service, understand its job contract, pay for one request, and decide whether the returned result is usable. The marketplace is the request path, not a directory of logos.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 12. Anonymous LLM Usage: What Shielded Payments Do and Do Not Hide
+### 13. Anonymous LLM Usage: What Shielded Payments Do and Do Not Hide
 
 - File: src/content/blog/anonymous-llm-usage-shielded-payments.mdx
 - Series: Tangle Protocol
-- Rank/status: 12 — P1 — revise
+- Rank/status: 13 — P1 — revise
 - Rubric score: 35/40
 - Search score: 18/20 — S3 — check live search
 - Primary query: anonymous llm usage
@@ -351,11 +371,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A shielded payment rail can hide the link between payer identity and an AI request from a named observer, depending on the rail and its metadata. It cannot, by itself, hide the prompt from the model provider, remove a user's network address, or erase logs kept by the service provider.
 - Required action: answer the primary query in the opening
 
-### 13. Blueprint Deployment: From a Local Service to an Operator-Run Job
+### 14. Blueprint Deployment: From a Local Service to an Operator-Run Job
 
 - File: src/content/blog/blueprint-sdk-deployment-guide.mdx
 - Series: Blueprint SDK
-- Rank/status: 13 — P1 — revise
+- Rank/status: 14 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: blueprint sdk deployment
@@ -371,11 +391,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Getting a service to run on your laptop is not the same as making it possible for someone else to operate. That difference becomes important when several independent operators may run the same service for users.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 14. Blueprint Protocol: Define an Operator-Run AI Service
+### 15. Blueprint Protocol: Define an Operator-Run AI Service
 
 - File: src/content/blog/blueprint-protocol-operator-services.mdx
 - Series: Tangle Protocol
-- Rank/status: 14 — P1 — revise
+- Rank/status: 15 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: blueprint protocol
@@ -391,11 +411,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A Tangle Blueprint is a public service definition. It tells the person or service running it what to run, and that runner is called an operator . It also tells a buyer what can be requested. The definition should specify the job inputs and outputs, the program and runtime requirements, the payment rule, the evidence returned, and what happens when execution fails.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 15. Complex Tax Situations Software For Founders
+### 16. Complex Tax Situations Software For Founders
 
 - File: src/content/blog/complex-tax-situations-software-founder-returns.mdx
 - Series: Building an AI Tax Agent
-- Rank/status: 15 — P1 — revise
+- Rank/status: 16 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: complex tax situations software
@@ -411,11 +431,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Complex tax situations software should not act like a longer W-2 questionnaire. A founder return may combine salary, S corp income, partnership K-1s, foreign subsidiaries, crypto transactions, stock compensation, estimated payments, and state allocation. The software has to connect facts across documents and show the review packet before anything is filed.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 16. Decentralized Compute Protocol: How Tangle Blueprints Run Services
+### 17. Decentralized Compute Protocol: How Tangle Blueprints Run Services
 
 - File: src/content/blog/decentralized-compute-protocol-blueprints.mdx
 - Series: Tangle Protocol
-- Rank/status: 16 — P1 — revise
+- Rank/status: 17 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: decentralized compute protocol
@@ -431,11 +451,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: If you want several independent teams to run the same AI service, a decentralized compute protocol has to answer four ordinary questions: what job can a customer request, who runs it, how is it paid for, and what comes back when the job succeeds or fails? A Blueprint is a reusable service definition, and an operator is the person or service that runs it on its own machine. Tangle uses Blueprints and operators to coordinate that work.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 17. DeFi Wallet Testing With Browser Agents
+### 18. DeFi Wallet Testing With Browser Agents
 
 - File: src/content/blog/defi-wallet-testing-browser-agent.mdx
 - Series: Browser Agent
-- Rank/status: 17 — P1 — revise
+- Rank/status: 18 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: defi wallet testing
@@ -451,11 +471,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: DeFi wallet testing is painful because the important state is split between the web app, the wallet extension, the chain, and the user's signature intent. A normal browser script can click through the page and still miss the wallet prompt that matters. A browser agent has to cross that boundary and keep evidence from both sides.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 18. Deploying a Paid AI Agent Service: Start With One Traceable Job
+### 19. Deploying a Paid AI Agent Service: Start With One Traceable Job
 
 - File: src/content/blog/deploy-paid-ai-agent-service.mdx
 - Series: Agent Intent Infrastructure
-- Rank/status: 18 — P1 — revise
+- Rank/status: 19 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: deploy paid ai agent service
@@ -471,11 +491,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A paid AI service has two promises to keep. It must accept a payment correctly, and it must do work that the buyer can understand and review.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 19. How Blueprints Work
+### 20. How Blueprints Work
 
 - File: src/content/blog/how-blueprints-work.mdx
 - Series: Tangle Re-Introduction
-- Rank/status: 19 — P1 — revise
+- Rank/status: 20 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: how blueprints work
@@ -491,11 +511,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: x402 is a payment protocol for machine-to-machine requests. Day 2 of the Tangle Re-Introduction Series
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 20. How Decentralized AI Infrastructure Verifies Work
+### 21. How Decentralized AI Infrastructure Verifies Work
 
 - File: src/content/blog/how-tangle-verifies-work.mdx
 - Series: Tangle Re-Introduction
-- Rank/status: 20 — P1 — revise
+- Rank/status: 21 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: how decentralized ai infrastructure verifies work
@@ -511,11 +531,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A blueprint is a packaged service definition with a typed job interface. Day 3 of the Tangle Re-Introduction Series
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 21. How to Deploy an AI Agent Service: Remote Providers and Payment
+### 22. How to Deploy an AI Agent Service: Remote Providers and Payment
 
 - File: src/content/blog/blueprint-deployment-architecture-remote-providers.mdx
 - Series: x402 Production Runway
-- Rank/status: 21 — P1 — revise
+- Rank/status: 22 — P1 — revise
 - Rubric score: 35/40
 - Search score: 17/20 — S2 — revise search surface
 - Primary query: how to deploy ai agent service
@@ -531,11 +551,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A blueprint is a packaged service definition with a typed job interface. x402 is a payment protocol for machine-to-machine requests. When you build a service with the Blueprint SDK, your service logic runs inside a BlueprintRunner. The runner manages all the ways work arrives: from the Tangle blockchain, from direct HTTP calls, or from any custom source you wire in. Where that runner in practice executes, whether on your laptop, a cloud VM, or a Kubernetes cluster, is a separate decision called the deployment target.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 22. K-1 Tax Filing For Multiple Entities
+### 23. K-1 Tax Filing For Multiple Entities
 
 - File: src/content/blog/k-1-tax-filing-multiple-entities.mdx
 - Series: Building an AI Tax Agent
-- Rank/status: 22 — P1 — revise
+- Rank/status: 23 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: k-1 tax filing
@@ -551,11 +571,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: K-1 tax filing is easy to underestimate. A single clean K-1 can be entered by hand. Multiple K-1s from partnerships, S corporations, trusts, funds, or lower-tier entities can turn into a reconciliation job. The IRS partner instructions for Schedule K-1 (Form 1065) explain that a partnership uses the schedule to report a partner's share of income, deductions, credits, and related items. The taxpayer still has to report the items correctly on the return.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 23. Memory Is Not Automatically Learning
+### 24. Memory Is Not Automatically Learning
 
 - File: src/content/blog/self-improving-stack-memory-flywheels.mdx
 - Series: the-self-improving-stack
-- Rank/status: 23 — P1 — revise
+- Rank/status: 24 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: agent memory
@@ -571,11 +591,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Short answer: Agent memory becomes useful when a past run produces a scoped note, the next run retrieves it in the right situation, and a comparison shows that the result improved.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 24. MetaMask Automated Testing For Wallet Flows
+### 25. MetaMask Automated Testing For Wallet Flows
 
 - File: src/content/blog/metamask-automated-testing-wallet-flows.mdx
 - Series: Browser Agent
-- Rank/status: 24 — P1 — revise
+- Rank/status: 25 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: metamask automated testing
@@ -591,11 +611,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: MetaMask automated testing has to cover more than "click connect." The risky moments are the wallet prompts: account access, chain switching, typed data, approvals, transaction previews, and user rejection. A useful test has to operate both the app page and the extension UI, then save the proof.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 25. Multi-Agent Coordination: Personas Are Content, Coordination Is Structure
+### 26. Multi-Agent Coordination: Personas Are Content, Coordination Is Structure
 
 - File: src/content/blog/self-improving-stack-multi-agent-coordination.mdx
 - Series: the-self-improving-stack
-- Rank/status: 25 — P1 — revise
+- Rank/status: 26 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: multi-agent coordination
@@ -611,11 +631,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Short answer: Multi-agent coordination is not roleplay. It becomes real when agents have contracts, authority boundaries, tool permissions, state isolation, selection rules, budgets, and traces. More agents only help when disagreement becomes useful evidence under an equal-compute gate.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 26. Natural Language Test Automation That Leaves Proof
+### 27. Natural Language Test Automation That Leaves Proof
 
 - File: src/content/blog/natural-language-test-automation-browser-agents.mdx
 - Series: Browser Agent
-- Rank/status: 26 — P1 — revise
+- Rank/status: 27 — P1 — revise
 - Rubric score: 35/40
 - Search score: 19/20 — S3 — check live search
 - Primary query: natural language test automation
@@ -631,11 +651,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Natural language test automation lets a product team describe a workflow without writing a selector-heavy script. That is useful only if the English sentence becomes a real browser run. A model summary is not a test. A run with screenshots, actions, observations, and a final verifier is.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 27. Operator Staking for AI Blueprints: What Stake Can and Cannot Prove
+### 28. Operator Staking for AI Blueprints: What Stake Can and Cannot Prove
 
 - File: src/content/blog/operator-staking-ai-blueprints.mdx
 - Series: Tangle Protocol
-- Rank/status: 27 — P1 — revise
+- Rank/status: 28 — P1 — revise
 - Rubric score: 35/40
 - Search score: 17/20 — S2 — revise search surface
 - Primary query: operator staking ai
@@ -651,11 +671,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: Staking puts economic collateral behind a service provider. In Tangle, the provider that runs a service is called an operator . A Blueprint is the public definition of the jobs that service accepts. Staking does not turn that collateral into an automatic rating for an AI model, and it does not prove that a completion is correct.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 28. Pay-Per-Request API Pricing: Wei, Token Conversion, and Markup
+### 29. Pay-Per-Request API Pricing: Wei, Token Conversion, and Markup
 
 - File: src/content/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags.mdx
 - Series: x402 Production Runway
-- Rank/status: 28 — P1 — revise
+- Rank/status: 29 — P1 — revise
 - Rubric score: 35/40
 - Search score: 16/20 — S2 — revise search surface
 - Primary query: pay per request api pricing
@@ -671,11 +691,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: An operator is the person or service responsible for running a job. The pricing problem nobody wants to solve
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 29. Payment-Native Infrastructure for AI Agent Products
+### 30. Payment-Native Infrastructure for AI Agent Products
 
 - File: src/content/blog/payment-native-infrastructure-ai-agent-product-strategy.mdx
 - Series: x402 Production Runway
-- Rank/status: 29 — P1 — revise
+- Rank/status: 30 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: payment-native infrastructure
@@ -691,11 +711,11 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader takeaway to validate: A TEE is a hardware-isolated environment that can report which code ran. An operator is the person or service responsible for running a job. x402 is a payment protocol for machine-to-machine requests. Most AI agent products still inherit a human billing model. A human signs up, enters a card, creates an API key, sets a budget, and hopes the agent uses the capability correctly later. That is fine when the agent is a feature inside a SaaS product. It breaks when the agent is the buyer.
 - Required action: check facts and links, then line-edit the weakest dimension
 
-### 30. Prompt Optimization Is Not The Whole Game
+### 31. Prompt Optimization Is Not The Whole Game
 
 - File: src/content/blog/self-improving-stack-prompt-optimization.mdx
 - Series: the-self-improving-stack
-- Rank/status: 30 — P1 — revise
+- Rank/status: 31 — P1 — revise
 - Rubric score: 35/40
 - Search score: 20/20 — S3 — check live search
 - Primary query: prompt optimization
@@ -709,26 +729,6 @@ A hard failure always outranks the number and requires a rewrite review.
 - Reader dimensions: reader problem 4/4; single story 4/4; definitions 4/4; jargon control 1/4; evidence 4/4; measurement honesty 3/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
 - Discovery dimensions: query ownership 4/4; title/snippet 4/4; answer clarity 4/4; evidence/entities 4/4; technical discovery 4/4
 - Reader takeaway to validate: Short answer: Prompt optimization searches for better instructions, examples, tool descriptions, schemas, and judging rules.
-- Required action: check facts and links, then line-edit the weakest dimension
-
-### 31. Tangle Blueprints: How to Choose an Operator-Run Service
-
-- File: src/content/blog/30-blueprints.mdx
-- Series: Standalone
-- Rank/status: 31 — P1 — revise
-- Rubric score: 35/40
-- Search score: 16/20 — S2 — revise search surface
-- Primary query: Tangle blueprints
-- Query visibility: 100% of query terms in title; 50% in opening
-- Search-surface issues: none detected
-- Hard failures: none detected
-- Native terms in opening: none detected
-- Repository debris: none detected
-- Style flags: none detected
-- Shape: 2853 words, 28 headings, 12 table rows, 2 code blocks, 8 external links, 4 internal links
-- Reader dimensions: reader problem 4/4; single story 4/4; definitions 4/4; jargon control 1/4; evidence 4/4; measurement honesty 3/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
-- Discovery dimensions: query ownership 4/4; title/snippet 1/4; answer clarity 3/4; evidence/entities 4/4; technical discovery 4/4
-- Reader takeaway to validate: During an afternoon review, an agent receives a private PDF and needs to produce a short summary before it can decide what to do next. The team does not want to build a GPU service, a browser runner, and a payment system for one workflow. It opens a service catalog and finds several names that sound close to the job.
 - Required action: check facts and links, then line-edit the weakest dimension
 
 ### 32. Tangle Sandbox vs E2B: Choosing An AI Agent Sandbox
@@ -765,10 +765,10 @@ A hard failure always outranks the number and requires a rewrite review.
 - Native terms in opening: none detected
 - Repository debris: none detected
 - Style flags: none detected
-- Shape: 2437 words, 25 headings, 15 table rows, 2 code blocks, 9 external links, 4 internal links
+- Shape: 3350 words, 28 headings, 27 table rows, 4 code blocks, 9 external links, 4 internal links
 - Reader dimensions: reader problem 4/4; single story 4/4; definitions 4/4; jargon control 1/4; evidence 4/4; measurement honesty 3/4; product boundaries 3/4; reader decision 4/4; prose 4/4; structure 4/4
 - Discovery dimensions: query ownership 4/4; title/snippet 1/4; answer clarity 4/4; evidence/entities 4/4; technical discovery 4/4
-- Reader takeaway to validate: At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private. The service promises a summary while keeping the contract inside protected hardware. The invoice shows that the request was paid.
+- Reader takeaway to validate: At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private. At 9:16, a vendor offers an attractive answer: upload the file, wait a few seconds, and receive a summary from an AI service running in protected hardware. At 9:20, the lawyer reviewing the vendor asks the question that changes the whole integration: “How do we know which program saw this contract?” The invoice shows that the request was paid, but a receipt cannot answer that question.
 - Required action: check facts and links, then line-edit the weakest dimension
 
 ### 34. The x402 Facilitator Problem: Trust and Uptime
