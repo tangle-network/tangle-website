@@ -2,9 +2,8 @@
 title: 'TEE Attestation for AI Services: What the Evidence Proves'
 slug: tee-attestation-ai-services
 summary: >-
-  TEE attestation for AI services can identify the code and hardware boundary
-  that handled a job. It does not prove that a model answer is correct. Learn
-  how to check the report, bind it to a request, and handle failure.
+  TEE attestation for AI services can bind a request to approved code running on protected hardware, but it does not prove an AI answer is correct.
+  Learn how to check the report, release secrets safely, and handle failure.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -19,465 +18,392 @@ coverImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about hardware-backed evidence for an AI service'
 ---
 
-At 9:12 on a Monday, a legal team has a contract that needs a quick summary and a reason to keep the document private.
-At 9:16, a vendor offers an attractive answer: upload the file, wait a few seconds, and receive a summary from an AI service running in protected hardware.
-At 9:20, the lawyer reviewing the vendor asks the question that changes the whole integration: “How do we know which program saw this contract?”
-The invoice shows that the request was paid, but a receipt cannot answer that question.
+A legal team wants an AI service to summarize a contract.
+The team is willing to send the document to a remote provider, but only if the provider can show which program handled it and where that program ran.
+A payment receipt answers who paid.
+A normal application log answers what the service says it did.
+Neither one answers the security team’s question.
 
-The team still has two unanswered questions.
-Which program handled the contract, and what evidence connects the returned summary to that program?
+Attestation for a TEE, a trusted execution environment, addresses a narrower question.
+It can give a caller signed evidence about the protected hardware and the measured software that started a workload.
+The caller can check that evidence before releasing a secret.
+The evidence does not prove that the model understood the contract, that the code has no bug, or that the summary is safe to use.
 
-That is the problem behind a protected execution boundary.
-A **TEE** is a trusted execution environment that provides such a boundary.
-A **TEE attestation report** is a signed statement about the program and hardware that started the workload.
-The evidence can identify a program and the protected machine boundary where it started.
-It cannot certify that the program understood the contract or that the summary is safe to use.
+A TEE, or trusted execution environment, is a hardware-supported protected area for running code and data.
+Attestation is the process of obtaining signed claims about that protected environment.
+A measurement is a fingerprint of the code and configuration that the environment loaded.
+The [Confidential Computing Consortium](https://confidentialcomputing.io/) describes confidential computing as protecting data while it is being used, but each provider implements the boundary differently.
 
-Those promises are easy to collapse into one reassuring word such as “private” or “verified.”
-They are separate engineering decisions.
-This article follows one private summarization job from request to result so the difference stays visible.
-It is written for the person who has to decide whether a secret can leave an application, not for someone who already knows the vocabulary of confidential computing.
+The important design move is to keep four promises separate:
 
-## Separate confidentiality, execution identity, and quality
-
-An AI service can make at least three different promises about a job.
-
-| Promise | The question it answers | Evidence it needs |
+| Promise | Question | Evidence or control |
 | --- | --- | --- |
-| Confidentiality | Could the machine owner read the input while the job ran? | A protected execution boundary, a secret-release policy, and provider-specific security controls |
-| Execution identity | Did the approved program start in the expected protected environment? | A signed attestation report, an approved code measurement, and a caller-side policy check |
-| Output quality | Is the returned answer correct and safe for this application? | Tests, comparisons, validation rules, human review, or another workload-specific check |
+| Confidentiality | Who can read the document while it is processed? | TEE isolation, encryption, network policy, and secret-release rules |
+| Execution identity | Which code and platform started the workload? | Signed attestation, approved measurement, provider policy, and freshness |
+| Request binding | Did that workload process this document for this job? | Nonce, a one-use challenge, input hash, job identifier, and output binding |
+| Answer quality | Is the summary correct and usable? | Tests, required-clause checks, comparison, or human review |
 
-Payment is a fourth concern.
-A receipt can prove that a request was authorized and paid.
-It does not prove any of the three technical promises above.
+Payment is another boundary.
+A payment record can show that a request was authorized and settled.
+It does not replace any row in this table.
 
-The rest of this article is about the second row, with enough context to show where the other rows begin.
+## The contract must not leave before the check
 
-## The terms in ordinary language
+The safe sequence for the legal team is:
 
-A **trusted execution environment**, or **TEE**, is a protected area provided by a processor and its supporting software.
-The goal is to keep a workload's memory and data separated from the ordinary operating system that controls the machine.
-The exact protection depends on the hardware, cloud provider, configuration, and code running inside the protected area.
+1. Approve a specific summarizer build and its expected measurement.
+2. Start the summarizer inside the chosen TEE.
+3. Obtain an attestation report from the provider’s hardware and software path.
+4. Check the report signature, provider, measurement, debug state, and freshness.
+5. Bind the report to a caller nonce or a session key.
+6. Release the contract only after the policy passes.
+7. Hash the exact input bytes and attach that hash to the job.
+8. Return the summary with the job identifier, input hash, output hash, and report reference.
+9. Run a separate quality check before a lawyer relies on the result.
 
-**Attestation** is the signed report produced for that workload.
-The report describes claims such as the hardware platform, the program measurement, the report freshness, and whether the environment is running in a debug mode.
+The order matters.
+If the service receives the contract before the caller checks the report, the report can only describe what happened after the secret was already exposed.
+Attestation is most useful as a release decision, not as a reassuring badge added to a completed request.
 
-A **measurement** is a fingerprint of the code and configuration that the protected environment loaded.
-If an approved build has a known measurement, a caller can compare the report with that value before releasing a secret.
+The [AWS Nitro Enclaves attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html) illustrates the pattern.
+A Nitro attestation document can include a timestamp, platform measurements, a certificate chain, and optional public-key, user-data, and nonce fields.
+The caller validates the certificate chain and signature, then applies its own policy to the claims.
 
-An **operator** is the person or service that runs the workload.
-On Tangle, a **Blueprint** is a public service definition that describes the jobs an operator can run, their inputs and outputs, and the requirements for running them.
+Google’s [Confidential Computing attestation documentation](https://docs.cloud.google.com/confidential-computing/docs/attestation) describes a different provider path.
+It turns checks for supported confidential environments into claims that follow the Entity Attestation Token standard and can be consumed by a relying party.
+A relying party is the application that uses the claims to decide whether to release a key or accept an execution boundary.
 
-The words sound specialized because the evidence has to be precise.
-The useful claim is still simple: a checked report can identify a particular program running inside a particular protected environment at a particular time.
+The formats differ.
+The decision pattern is the same.
+The caller must know which claims it trusts before it receives sensitive data.
 
-The [Confidential Computing Consortium](https://confidentialcomputing.io/) describes this family of systems as protecting data while it is in use.
-Provider details remain important because [AWS Nitro Enclaves](https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html) and [Google Cloud Attestation](https://docs.cloud.google.com/confidential-computing/docs/attestation) expose different report formats, hardware assumptions, and operational controls.
+## What the report can and cannot say
 
-## Follow one private summarization job
+A report is useful only when each field changes a decision.
 
-Suppose the legal team wants a remote service to summarize a contract.
-The team has accepted the service's code measurement in advance.
-It has also decided that the result must be checked by a lawyer before anyone relies on it.
-
-The request should move through a sequence like this:
-
-1. The caller records the expected program measurement and the accepted provider families.
-2. The operator starts the summarizer inside a TEE and obtains an attestation report.
-3. The caller checks the report signature, measurement, debug flag, freshness, and provider policy.
-4. The caller releases the contract only after those checks pass.
-5. The service computes a hash of the input and records it with the job identifier.
-6. The service returns the summary, the input hash, the output hash, and the report reference.
-7. The application checks the summary before showing it to the legal team.
-
-The fifth step is an application design choice.
-Attestation does not automatically bind arbitrary inputs and outputs to a job.
-The service has to include those bindings in its result format or in a signed record that the caller can inspect.
-
-The report is evidence about the execution boundary.
-The hashes are evidence about which bytes the service claims to have processed.
-The lawyer's review is evidence about whether the summary is usable.
-
-Each piece answers a different question.
-
-## The moment the promise becomes a decision
-
-The useful part of an attestation report is not the word “trusted” printed next to it.
-The useful part is the decision it lets a caller make before it releases a secret.
-
-The legal team's client can turn the vendor's broad promise into a small policy:
-
-| Before sending the contract | After receiving the result |
-| --- | --- |
-| The report is signed by an accepted provider root | The result carries the same job identifier as the request |
-| The measurement matches the reviewed summarizer build | The input hash matches the bytes the lawyer selected |
-| The report is fresh and not in debug mode | The output is checked for required clauses and routed to review |
-| The report's public key is the key approved for release | Payment, execution, and answer quality are shown as separate statuses |
-
-This changes the user interface as well as the server.
-Instead of a single green badge that says “verified,” the application can show “execution policy passed,” “payment authorized,” and “human review required.”
-That wording tells the lawyer which check passed and which decision still belongs to a person.
-
-The distinction matters during an incident.
-If the summary is wrong, the team can ask whether the wrong program ran, the right program received the wrong bytes, or the right program produced a poor answer.
-Without separate records for the report, the input hash, and the answer review, those three investigations collapse into an argument about whether the service met its promise, even though no one artifact covers all three claims.
-
-## What a report contains
-
-An attestation report is easier to review when its fields have a job in the decision.
-
-| Field | What it lets the caller check | What it still does not answer |
+| Report claim | What it supports | What it does not support |
 | --- | --- | --- |
-| Signature and certificate chain | Whether the report comes from an accepted hardware and provider root | Whether the provider's broader service is honest |
-| Program measurement | Whether the loaded code matches the approved build | Whether the approved build is bug-free |
-| Provider and platform | Which hardware and cloud guarantees apply | Whether those guarantees cover every side channel or network log |
-| Debug flag | Whether the environment is running in a development mode | Whether the workload's normal code path is correct |
-| Timestamp and expiry | Whether the report is recent enough for the request | Whether the workload stayed unchanged after the report |
-| Ephemeral public key | Which key a caller can use to encrypt a secret | Whether a key service enforced the report policy |
-| Input hash and job identifier | Which request the result claims to represent | Whether the service calculated the hash correctly |
-| Output hash | Which returned bytes the service claims to have produced | Whether those bytes are useful or safe |
+| Provider certificate chain | The evidence came from an accepted provider root | The provider’s entire service is honest |
+| Platform identity | Which hardware and attestation system made the report | Every side channel or network log is protected |
+| Code measurement | The loaded image matches an approved fingerprint | The approved code is bug-free |
+| Debug or production state | The caller can reject development mode | The normal program path produces a good answer |
+| Timestamp or token expiry | The report is fresh enough for the policy | The workload never restarted afterward |
+| Nonce | The report responds to this challenge | The job processed the intended business input |
+| Ephemeral public key | The caller can encrypt a secret to the measured workload | The key-release service enforced the policy |
+| Input hash | The result claims to represent specific bytes | The bytes were the right business document |
+| Output hash | The returned bytes can be identified later | The output is correct or safe |
 
-The caller should know which fields are required before the service is deployed.
-If a team decides after a failure that it needed an input hash, the original result may be impossible to investigate.
+The last two fields are application design.
+TEE hardware does not automatically know which file your application intended to summarize.
+The service must calculate and carry the binding, or the caller must use a protocol that does it.
 
-## A worked artifact for the summarizer
+The input hash should be calculated from the exact bytes selected by the caller.
+A filename, database row ID, or user-facing document title is not enough.
+Two files can share a name.
+A normalized document can differ from the bytes the user approved.
 
-The following object is a small, public data shape for the legal team's job.
-It is deliberately boring.
-The point is to show the information that travels with the result, rather than to pretend that a made-up object is a provider's wire format.
+The output hash should be calculated from the bytes that the application returns.
+That gives the reviewer a way to distinguish “the service produced one result” from “the UI displayed another result.”
+
+## A small execution record
+
+The following object is an application record for the contract example.
+It is not an AWS, Google, Azure, or Tangle wire format.
 
 ```json
 {
   "jobId": "contract-17",
-  "inputHash": "sha256:contract-17",
-  "outputHash": "sha256:summary-17",
+  "inputHash": "sha256:contract-bytes",
+  "outputHash": "sha256:summary-bytes",
   "measurement": "sha256:approved-summarizer-v3",
-  "provider": "confidential-cloud-a",
+  "provider": "accepted-confidential-platform",
   "debugMode": false,
-  "reportExpiresAt": "2026-08-03T10:00:00Z",
+  "reportIssuedAt": "2026-08-03T15:00:00Z",
+  "reportExpiresAt": "2026-08-03T16:00:00Z",
   "payment": {
     "status": "authorized",
     "receipt": "public-payment-receipt"
   },
-  "resultStatus": "needs-human-review"
+  "quality": {
+    "status": "needs-human-review",
+    "reason": "termination clause requires review"
+  }
 }
 ```
 
-The `payment.status` field is intentionally beside the execution fields rather than inside them.
-It tells the caller that money moved through the payment path.
-It says nothing about the program measurement or the quality of the summary.
+The payment field is next to the execution fields rather than inside them.
+That keeps “money moved” separate from “approved code ran.”
+The quality field is separate for the same reason.
+A protected execution can pass while the summary still needs a lawyer.
 
-The `resultStatus` field is also separate.
-The application can accept a protected execution report and still route the summary to a human because the task is high risk.
+## What the verifier must retain
 
-## The first result is allowed to be a useful failure
+The caller should retain enough evidence to reproduce the release decision without asking the protected workload to explain itself later.
+That usually includes the provider root or policy version, the approved measurement, the report reference, the challenge value, the exact input hash, and the time at which the secret was released.
+It should also record whether the workload restarted between report verification and result delivery.
 
-The vendor's first test run returns a plausible paragraph, and every execution check passes.
-The paragraph still leaves out the contract's termination clause.
-
-That is not a contradiction.
-The attestation report answered, “Did the approved program run in the approved boundary for this request?”
-The legal review answered, “Can a lawyer rely on the answer?”
-
-The application should preserve both answers instead of overwriting the first with the second:
-
-```text
-job: contract-17
-execution: accepted
-payment: authorized
-input-binding: matched
-output: returned
-quality: needs-human-review
-reason: termination clause not found
+```json
+{
+  "policyVersion": "legal-summarizer-2026-03",
+  "reportReference": "attestation-report-17",
+  "releaseDecision": "accepted",
+  "secretReleasedAt": "2026-08-03T15:01:00Z",
+  "restartObserved": false
+}
 ```
 
-This small record gives the operator a concrete bug to investigate and gives the legal team a safe next step.
-It also prevents a common product mistake: treating a technically well-formed response as an answer that is automatically safe to use.
+This is not an attestation format.
+It is the caller’s audit record for the decision to release a secret.
+If the output hash does not match, the record tells the reviewer which measured workload received the input and whether the service restarted before returning the result.
+If a new build changes the measurement, the policy version shows which approval must change before release resumes.
 
-## A small policy check you can run
+## Make the caller’s policy explicit
 
-The following TypeScript is an illustration of the caller's policy.
-It is not a Tangle SDK API and it does not replace the provider's certificate and signature library.
-It makes the acceptance decision visible without requiring a cloud account or private repository.
+A caller-side policy can be small enough to test.
+The cryptographic library that validates certificates and signatures is provider-specific, so the example uses a Boolean only to keep the policy readable.
 
-Save it as `attestation-policy.ts` and run it with `npx --yes tsx attestation-policy.ts`.
-
-```ts
+```typescript
 type AttestationReport = {
   signatureValid: boolean
   measurement: string
   debugMode: boolean
   provider: string
+  issuedAt: number
   expiresAt: number
+  nonce: string
   inputHash: string
-  outputHash: string
 }
 
 type AcceptancePolicy = {
   expectedMeasurement: string
   acceptedProviders: string[]
-  inputHash: string
+  expectedNonce: string
+  expectedInputHash: string
   now: number
 }
 
-function acceptReport(report: AttestationReport, policy: AcceptancePolicy) {
-  if (!report.signatureValid) return { accepted: false, reason: 'bad signature' }
-  if (report.debugMode) return { accepted: false, reason: 'debug mode' }
+function acceptReport(
+  report: AttestationReport,
+  policy: AcceptancePolicy,
+) {
+  if (!report.signatureValid) {
+    return { accepted: false, reason: 'invalid signature' }
+  }
+
+  if (report.debugMode) {
+    return { accepted: false, reason: 'debug mode is not allowed' }
+  }
+
   if (!policy.acceptedProviders.includes(report.provider)) {
     return { accepted: false, reason: 'provider is outside policy' }
   }
+
   if (report.measurement !== policy.expectedMeasurement) {
     return { accepted: false, reason: 'unexpected program measurement' }
   }
-  if (report.expiresAt <= policy.now) {
-    return { accepted: false, reason: 'report is expired' }
+
+  if (report.nonce !== policy.expectedNonce) {
+    return { accepted: false, reason: 'challenge does not match' }
   }
-  if (report.inputHash !== policy.inputHash) {
-    return { accepted: false, reason: 'report is for a different input' }
+
+  if (report.inputHash !== policy.expectedInputHash) {
+    return { accepted: false, reason: 'input binding does not match' }
   }
+
+  if (report.issuedAt > policy.now || report.expiresAt <= policy.now) {
+    return { accepted: false, reason: 'report is outside its validity window' }
+  }
+
   return { accepted: true, reason: 'execution policy passed' }
 }
-
-const decision = acceptReport(
-  {
-    signatureValid: true,
-    measurement: 'sha256:approved-summarizer-v3',
-    debugMode: false,
-    provider: 'confidential-cloud-a',
-    expiresAt: 1_800_000_060,
-    inputHash: 'sha256:contract-17',
-    outputHash: 'sha256:summary-17',
-  },
-  {
-    expectedMeasurement: 'sha256:approved-summarizer-v3',
-    acceptedProviders: ['confidential-cloud-a'],
-    inputHash: 'sha256:contract-17',
-    now: 1_800_000_000,
-  },
-)
-
-console.log(decision)
 ```
 
-The example accepts the report because the code, provider, input, freshness, and debug policy all match.
-In a real deployment, `signatureValid` comes from a provider-supported certificate chain rather than a Boolean written by the caller.
-The expected measurement must come from a reviewed build, not from the report that arrived after the request.
+This function is illustrative TypeScript.
+It does not validate a real certificate chain, parse a provider report, or release a key.
+Those steps require the provider’s current software development kit (SDK) and a policy for the accepted hardware roots.
 
-The policy function is intentionally small enough to test with ordinary unit tests.
-For example, this table of cases makes the failure behavior explicit:
+The important test cases are easy to enumerate:
 
-| Case | Expected decision | Why |
+| Case | Expected result | Next action |
 | --- | --- | --- |
-| Matching measurement, fresh report, matching input | Release the document | The caller has the evidence it asked for |
-| Correct measurement, expired report | Request a fresh report | The caller cannot tell whether the workload restarted |
-| Correct report, different input hash | Reject the result | A plausible answer for another file is still the wrong answer |
-| Good execution, missing termination clause | Keep the result out of automation | Quality is a separate application decision |
+| Matching provider, measurement, nonce, input, and freshness | Accept execution | Release only the required secret |
+| Matching measurement but expired report | Reject execution | Request a new report |
+| Valid report with unexpected measurement | Reject execution | Review and explicitly approve the new build |
+| Valid report with wrong nonce | Reject execution | Treat the response as unrelated to this request |
+| Valid execution but missing contract clause | Keep out of automation | Send to human review |
+| Payment settled but job failed | Mark payment and execution separately | Apply retry, refund, or support policy |
 
-The table is more than documentation.
-It can become a test fixture, an operator runbook, and a support response when a customer asks why a request was refused.
+The table should become tests.
+A policy that exists only in prose will drift when the deployment changes.
 
-## Reject stale or mismatched evidence
+## Provider differences are part of the threat model
 
-Attestation matters at the moment a caller accepts or rejects execution evidence.
-The caller needs a response for each failed check.
+“TEE enabled” is not a complete deployment description.
+The hardware, boot chain, code measurement, network path, key-release service, debug settings, report freshness, and restart behavior all matter.
 
-### An unexpected measurement
+AWS Nitro Enclaves are isolated environments associated with an EC2 parent instance.
+AWS documents that the parent instance cannot access enclave memory or processes and that the enclave can request a signed attestation document from the Nitro Hypervisor.
+The [cryptographic attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) explains how external services can use measurements in access policies.
 
-The service returns a report for `approved-summarizer-v4`, while the caller approved `v3`.
-The caller rejects the request before sending the contract.
+Google Cloud Attestation supports confidential environments backed by AMD SEV, AMD SEV-SNP, and Intel TDX, each a provider-specific hardware isolation technology.
+Its claims and policy flow differ from Nitro’s platform configuration register (PCR) measurements and certificate structure.
+The [Google documentation](https://docs.cloud.google.com/confidential-computing/docs/attestation) is the authority for that provider’s report and policy behavior.
 
-The operator may have deployed a legitimate update.
-The report may also describe an accidental or hostile replacement.
-The caller cannot distinguish those cases from the report alone, so a new measurement requires an explicit approval step.
+Azure Attestation supports several trusted execution environments and turns evidence into policy-evaluated claims.
+The [Azure overview](https://learn.microsoft.com/en-us/azure/attestation/overview) describes the service as a way to verify platform and binary integrity and produce claims for relying parties.
 
-### A debug-mode report
+The caller should write down:
 
-The service is running inside a protected environment, but the report says the environment is in debug mode.
-That mode may expose inspection or development controls that the production policy does not allow.
-The caller should refuse to release secrets until a production report arrives.
+- accepted provider families;
+- accepted code measurements;
+- accepted debug state;
+- maximum report age;
+- nonce or session-key binding;
+- secret-release mechanism;
+- behavior after restart or redeploy;
+- records that remain outside the protected workload.
 
-### An expired report
-
-The report was created yesterday and the policy allows it for one hour.
-The caller requests a fresh report or marks the service unavailable.
-Reusing an old report can hide a restart or a changed deployment.
-
-### An input mismatch
-
-The output looks plausible, but its input hash does not match the contract the caller sent.
-The caller discards the result.
-An output that is valid for one input is not evidence about another input.
-
-### A good report and a bad answer
-
-The report passes every execution check, yet the summary omits a termination clause.
-The application sends the result to human review and records a quality failure.
-The execution checks passed.
-The application's quality check still rejected the summary.
-
-### Payment succeeds while execution fails
-
-If the service uses [x402 for paid HTTP requests](/blog/blueprint-sdk-x402-payments-runnable-jobs), the receipt can show that payment authorization succeeded.
-The service can still time out, return malformed data, or fail an application check.
-The caller needs a separate retry, refund, or dispute policy.
-Payment does not choose among those outcomes.
-
-## Debug a dispute with the records in order
-
-Imagine that the lawyer says the returned summary was generated from an older version of the contract.
-Do not begin by asking whether the model is trustworthy.
-Start with the records that can narrow the dispute:
-
-1. Compare the caller's `jobId` with the service's job record.
-2. Recompute the caller's input hash from the exact uploaded bytes.
-3. Compare that hash with the input hash in the returned artifact.
-4. Check the report's measurement, provider, debug flag, and expiry at the time the secret was released.
-5. Compare the output hash with the bytes the application displayed.
-6. Only then investigate model behavior, prompt construction, or a missing clause.
-
-If step two fails, the problem is a request-binding bug and the model may be innocent.
-If step four fails, the service violated the execution policy before it ever saw the document.
-If all six steps pass, the remaining problem is likely answer quality or application handling, which needs a different remedy.
-
-The order saves time because each record rules out a different class of failure.
-It also gives a customer a useful explanation instead of a vague promise that the workload “ran securely.”
-
-## What TEE attestation cannot prove
-
-Attestation does not prove that the model's training data is accurate.
-It does not prove that the prompt asked for the right task.
-It does not prove that the code has no bug.
-It does not prove that an operator priced the job fairly.
-It does not prove that the returned answer is safe to use.
-
-It also does not describe every system outside the protected workload.
-Network logs, request metadata, application logs, billing records, and the service's own output policy may live outside the TEE.
-Those surfaces need their own privacy and correctness decisions.
-
-A service can therefore have excellent execution evidence and poor product behavior.
-It can also have a useful answer and weak confidentiality.
-The two dimensions should be reported separately in the interface that the caller sees.
-
-## Provider differences change the operational story
-
-The TEE label does not describe one universal machine.
-
-AWS Nitro Enclaves run an isolated enclave alongside an EC2 instance and expose an attestation document for the enclave.
-Google Confidential Space runs workloads in confidential virtual machines and exposes an attestation token for policy decisions.
-Azure Confidential VMs use confidential-computing hardware and Azure's surrounding attestation services.
-
-Those services differ in startup time, supported hardware, report fields, networking, key release, and recovery after a host restart.
-The provider documentation is the authority for each boundary.
-The [protected execution overview on Tangle](/blog/trusted-execution-on-tangle) explains how the Blueprint-facing choices relate to those provider-specific modes.
-
-Do not write “TEE enabled” as if it were a complete deployment description.
-Name the provider family, accepted measurement, report age, secret-release policy, and restart behavior.
+Those choices are the security contract.
+The TEE label is only the implementation category.
 
 ## Where Tangle fits
 
-The public [Blueprint SDK](https://github.com/tangle-network/blueprint) gives a service author a place to describe jobs, operators, runtime requirements, and evidence.
-The [Tangle documentation](https://docs.tangle.tools/) and the [protected execution explainer](/blog/trusted-execution-on-tangle) describe provider modes and sealed-secret exchange in more detail.
+Tangle uses Blueprint for a reusable service definition.
+A Blueprint describes the jobs, inputs, outputs, artifacts, and execution requirements that an operator can run.
+An operator is the infrastructure provider that runs a live service instance.
+A service instance is one configured deployment of the Blueprint.
 
-A Tangle service should make the expected measurement, accepted provider family, report age, input binding, output format, and failure behavior visible to callers.
-Those details belong beside the service contract because they change the decision a caller can make.
+The public [Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) describes those roles.
+The public [Tangle TEE article](https://www.tangle.tools/blog/trusted-execution-on-tangle/) describes direct, remote, and hybrid execution modes in the Blueprint SDK and shows how provider-specific attestation can be connected to a service policy.
+Those implementation details can change with the SDK release, so use the current SDK source and provider docs when deploying.
 
-For a caller, that information can be represented as a short acceptance record:
+A Tangle runtime is the execution layer that provisions or starts the service, applies the job policy, and returns events and results.
+A trace is the record of the run’s inputs, tool calls, timing, outputs, and failures.
+An evaluation is the structured check of result quality, cost, and policy compliance.
+Neither trace nor evaluation should be mislabeled as hardware attestation.
+The companion guide [Trusted Execution on Tangle](/blog/trusted-execution-on-tangle) explains the provider modes in the Blueprint SDK.
+The [Blueprint TEE and x402 production guide](/blog/blueprint-tee-x402-production-gating) connects protected execution to payment and release policy.
 
-```ts
-type JobDecision = {
-  jobId: string
-  execution: 'accepted' | 'rejected'
-  payment: 'authorized' | 'failed'
-  inputBinding: 'matched' | 'mismatched'
-  output: 'returned' | 'missing'
-  quality: 'unchecked' | 'accepted' | 'needs-human-review'
-}
+A Tangle service that handles private AI data should make the following visible to its caller:
 
-const decision: JobDecision = {
-  jobId: 'contract-17',
-  execution: 'accepted',
-  payment: 'authorized',
-  inputBinding: 'matched',
-  output: 'returned',
-  quality: 'needs-human-review',
-}
-
-console.log(decision)
+```text
+accepted provider: AWS Nitro, Google Confidential Space, or an Azure confidential virtual machine
+approved measurement: sha256:...
+debug policy: production only
+report lifetime: 15 minutes
+input binding: request nonce plus SHA-256 of exact bytes
+secret release: only after report policy passes
+output record: job ID, input hash, output hash, report reference
+quality state: unchecked, accepted, or human review
 ```
 
-This is an application-facing shape, not a provider wire format.
-Its value is that a dashboard, retry worker, and human reviewer can all see the same boundaries.
+The text is a service-contract sketch.
+It is not a claim that every current Tangle provider returns those exact fields.
 
-The protocol can carry payment and service information.
-The application still chooses whether a result is good enough for its users.
+## Attestation is not answer quality
 
-## When to pay the complexity cost
+The legal team’s first run can pass every execution check and still produce a bad summary.
+The model can omit a termination clause.
+The prompt can ask for the wrong jurisdiction.
+The application can truncate the output.
+The reviewer can misread a correct summary.
 
-TEE attestation is worth the added complexity when all of the following are true:
+The quality check must match the task:
 
-- the operator should not be able to inspect sensitive data while the job runs;
-- the caller can check a report before releasing that data;
-- the workload has an approved build whose measurement can be managed; and
-- a failure or stale report has a clear recovery path.
+| AI service | Quality check |
+| --- | --- |
+| Contract summary | Required-clause extraction and lawyer review |
+| Code repair | Test suite, changed-file review, and regression check |
+| Classification | Labeled holdout set and threshold policy |
+| Retrieval | Citation presence, source match, and freshness |
+| Image or audio transformation | Media inspection and output constraints |
+| Autonomous action | State change, permission, and rollback check |
 
-For a public, low-risk inference request, ordinary isolation and a result test may be a better fit.
-For a high-value contract, private model, or regulated record, the execution boundary may be part of the product promise.
+A good attestation record can make these failures easier to investigate.
+It cannot eliminate them.
 
-Choose the smallest evidence set that answers the risk in your workload.
-Add output checks when correctness matters.
-Add payment rules when money moves.
-Add attestation when the execution boundary itself is part of the promise.
+The same distinction applies to payment.
+The current [Tangle x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) describes x402 as an HTTP payment ingress that verifies and settles payment before injecting a job call into a Blueprint runner.
+That payment path can correlate a payment with a job.
+It cannot certify the model’s result.
 
-The design also requires someone to approve new measurements, rotate keys, decide how long a report remains fresh, test a restart, handle a provider outage, and explain a rejected request to a customer.
-If the team cannot own those decisions, a simpler service with a narrower promise may be more honest.
+## Failure cases to design before launch
 
-## Questions to ask an operator
+A protected service needs an unhappy path for every trust decision.
 
-Before sending a secret to an AI service, ask for direct answers to these questions.
+An updated image produces a new measurement.
+The caller must reject it until someone approves the build.
 
-1. Which program measurement does the report cover?
-2. Which hardware and provider roots does the caller trust?
-3. How does the caller learn that the report is fresh?
-4. Is debug mode rejected?
-5. How is the input bound to the output?
-6. What happens after a host restart or a new deployment?
-7. Which logs and metadata remain outside the protected workload?
-8. What does the service do when payment succeeds and the result fails review?
+A report arrives in debug mode.
+The caller must not release the contract.
 
-If the answer is only “the job runs in a TEE,” the service has named a technology rather than a trust decision.
+A report is fresh, but its nonce does not match the request.
+The caller must discard the response as unrelated.
 
-## FAQ
+The caller releases the input, then the service restarts.
+The service needs a policy for whether the old session is invalid and whether the request can be safely retried.
 
-### What does TEE attestation prove for an AI service?
+Payment settles, but the runner never produces a result.
+The product needs a stable job ID and a rule for refund, retry, or human support.
 
-It can support claims about the approved program, protected hardware boundary, provider policy, debug mode, and report freshness when the caller checks those fields.
+The result passes execution checks but fails the quality test.
+The product should retain the execution evidence and mark the output as needing review.
 
-### Does TEE attestation prove an AI result is correct?
+Do not collapse these states into one green or red badge.
+A useful status record says which boundary passed and which boundary still needs a decision.
+
+## When the complexity is worth paying for
+
+TEE attestation is a good fit when:
+
+- the operator should not read a secret during processing;
+- the caller can check the report before release;
+- the workload has an approved build measurement;
+- provider roots and report freshness are part of policy;
+- input and output binding are recorded;
+- failures have a retry, refund, or review path.
+
+A TEE may be unnecessary when the data is public, the output is low risk, and ordinary isolation plus output checks answer the actual threat.
+A TEE may also be insufficient when the main risk is a wrong model answer rather than operator access to the input.
+
+Use the smallest evidence set that matches the promise.
+Add attestation for the execution boundary.
+Add output checks for answer quality.
+Add payment records for money.
+Add human approval when the consequence of a wrong answer is high.
+
+
+## What does TEE attestation prove for an AI service?
+
+It can support a claim that approved code ran in an accepted protected environment when the caller checks the provider evidence, measurement, freshness, and policy.
+
+## Does TEE attestation prove an AI answer is correct?
 
 No.
-Correctness needs tests, comparison with an expected answer, an independent execution, human review, or another check matched to the workload.
+Correctness needs task-specific tests, comparisons, source checks, or human review.
 
-### Should a caller send secrets before checking the report?
-
-No.
-Check the report and its measurement first, then release only the secret that the approved workload needs.
-
-### Does a payment receipt prove that the paid job ran correctly?
+## Should the caller send secrets before checking attestation?
 
 No.
-Payment records and execution evidence answer different questions.
-The application still needs a result policy and a failure path.
+Check the report and its measurement first, then release only the secret required by the approved workload.
 
-### How does a Tangle Blueprint use attestation?
+## What is a measurement?
 
-A Blueprint can describe a service that requires or prefers protected execution and can expose the evidence a caller needs.
-The current provider and release behavior belongs in the public SDK and provider documentation, so check those sources before relying on a particular mode.
+It is a cryptographic fingerprint of code or configuration loaded by the protected environment.
+The caller compares it with a value approved for a specific build.
 
-## Public sources
+## What does a Tangle operator do?
 
-- [Tangle Blueprint SDK](https://github.com/tangle-network/blueprint)
-- [Tangle documentation](https://docs.tangle.tools/)
-- [Tangle protected execution overview](/blog/trusted-execution-on-tangle)
-- [AWS Nitro Enclaves attestation](https://docs.aws.amazon.com/enclaves/latest/user/verify-root.html)
-- [Google Cloud Attestation](https://docs.cloud.google.com/confidential-computing/docs/attestation)
+An operator runs a Blueprint service and provides the infrastructure that executes its jobs.
+The operator’s presence does not by itself prove that the job ran in a TEE.
+
+## Does a payment receipt prove that a protected AI job succeeded?
+
+No.
+Payment, execution identity, request binding, and answer quality are separate records.
+
+## The decision
+
+Ask the vendor to show the exact report fields, accepted roots, approved measurement, freshness policy, input binding, secret-release rule, and restart behavior.
+If the answer is only “the model runs in a TEE,” the technology has been named but the trust decision has not.
+A useful attestation design lets the caller refuse to release the contract before execution identity passes and still sends the resulting summary to a quality check afterward.

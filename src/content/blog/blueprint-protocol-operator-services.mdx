@@ -2,7 +2,7 @@
 title: 'Blueprint Protocol: Define an Operator-Run AI Service'
 slug: blueprint-protocol-operator-services
 summary: >-
-  Learn how to define a Tangle Blueprint with a clear job interface, runtime contract, payment rule, evidence, and operator runbook.
+  Define a Blueprint protocol service with a typed job, reproducible runtime, payment rule, evidence record, and operator runbook.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,192 +16,337 @@ heroImage: /images/covers/editorial/protocol-operators-v2.webp
 imageAlt: 'An editorial still life about operators running services on a network'
 ---
 
-A Tangle Blueprint is a public service definition.
-It tells the person or service running it what to run, and that runner is called an **operator**.
-It also tells a buyer what can be requested.
-The definition should specify the job inputs and outputs, the program and runtime requirements, the payment rule, the evidence returned, and what happens when execution fails.
+You have a working document classifier and a second team wants to run it.
+The code works on your laptop.
+The model is available from one provider.
+The deployment instructions are a collection of private messages, environment variables, and assumptions that only you remember.
 
-This is different from a product landing page.
-A landing page describes a service to a human.
-The Blueprint's job schema, runner entrypoint, and install, upgrade, and health-check instructions let independent operators run the same service.
+That is not yet a service run by an independent provider.
+An independent service provider needs to know exactly what to install, which jobs to accept, what hardware and credentials are required, how payment works, and what evidence to return when execution finishes.
+That is the practical boundary of a Tangle service protocol: a reusable service must be runnable by someone who did not write the original code.
 
-The article assumes you have never used Tangle.
-Tangle's public protocol records Blueprint definitions, job requests, payment states, and result evidence so independent operators can run the same service.
-An **operator** supplies the machine and keeps the service available.
-A **service instance** is one running copy of that service.
-A **job** is one request sent to the instance.
+A **Blueprint** is Tangle’s public service definition for that agreement.
+It describes the software, jobs, artifacts, metadata, and optional protocol rules that operators can run.
+An **operator** is the person or service that supplies the machine and runs a Blueprint.
+A **Service** is one live instance created from a Blueprint.
+A **Job** is one callable unit of work inside that Service.
 
-## Start with the job, not the brand name
+The **runtime** is the environment where the code executes.
+It may be a native process, container, virtual machine, or trusted execution environment.
+The runtime choice matters because it controls available hardware, network access, credentials, isolation, and recovery.
 
-Suppose you want to offer a paid document classifier.
-The useful first sentence is “a caller submits a document and receives a list of labels, confidence values, and a reference to the model version used.”
+Tangle is the protocol network that gives these reusable services common records for operators, Jobs, payments, and lifecycle state.
 
-That sentence names the implementation artifacts: an input schema, a classifier entrypoint, an output schema, and a versioned runtime package.
-It defines the inputs, limits, failure codes, and payment cases the implementation must handle:
+This article focuses on the contract a builder must publish before asking an operator to accept a paid AI job.
+It is about making the service runnable and inspectable, not placing a generic “AI service” label on a page.
 
-- What file types are accepted?
-- What is the maximum document size?
-- What does a malformed file return?
-- How long may a job run?
-- Does the result include the input checksum and model version?
-- Is the caller charged for a rejected request?
+## Define the invoice-classification Job
 
-Write those answers down before choosing a network or payment rail.
+Suppose the service classifies invoices.
+A caller submits a PDF and receives labels, confidence values, and the model version used.
 
-## The Blueprint contract
+That sentence already implies a contract:
 
-The contract names the parts an operator and buyer must agree on.
+- The input has a media type, size limit, and encoding.
+- The output has a schema and a version.
+- The service has a timeout and a retry policy.
+- The model and prompt have an identifiable release.
+- A malformed file is rejected before expensive inference.
+- A caller can tell whether payment covers a rejected request.
 
-| Part | What to specify |
-| --- | --- |
-| job interface | names, inputs, outputs, limits, and error codes |
-| runtime | source artifact, dependencies, environment variables, ports, and hardware |
-| operator work | how to install, start, upgrade, health-check, and stop the service |
-| payment | fixed price, quote, payment challenge, refund, and expiry behavior |
-| evidence | result format, request ID, service version, timing, and any quality check |
+Write those decisions before adding operator choice.
+If the interface changes every day, a normal application backend will be easier to operate while the product is still finding its shape.
 
-The word “verification” needs care here.
-For a document classifier, the network can record which operator ran which version.
-That does not establish that the labels are correct.
-Correctness may require a test set, a second model, or human review chosen by the service owner.
+## Name the runtime, payment, and evidence contract
 
-## A small public SDK runner
+An operator and a buyer need different details, but they must agree on one versioned contract.
 
-The public [Blueprint SDK](https://github.com/tangle-network/blueprint) gives a Rust service a runner and a router.
-The router maps a job number to the function that handles it.
-The runner supplies the operator-facing process that receives jobs and returns results.
+| Contract part | Publish | Why it matters |
+| --- | --- | --- |
+| Job interface | Names, inputs, outputs, limits, and error codes | A caller can form a valid request |
+| Runtime | Artifact, dependencies, hardware, ports, and environment variables | An operator can reproduce the service |
+| Operations | Install, start, health check, upgrade, rollback, and stop steps | A live process can be kept healthy |
+| Payment | Fixed price or quote, authorization, expiry, refund, and settlement | The caller knows what it is buying |
+| Evidence | Request ID, version, timing, result, trace, and quality check | A result can be investigated and accepted |
 
-This is the smallest runner shape documented in the repository:
+The word “verification” needs a service-specific meaning.
+The protocol can record that a particular operator ran a particular artifact.
+That does not establish that the invoice labels are accurate.
+Accuracy may require a test set, an independent comparison, a trusted execution environment (TEE) attestation, or human review.
 
-```rust
+## Caller, operator, and reviewer read the same Blueprint
+
+The same Blueprint is read by a caller, an operator, and a support or review team.
+Each audience asks a different question.
+
+| Reader | Question | Contract fields that answer it |
+| --- | --- | --- |
+| Caller | Can I send this input and decide whether to accept the result? | Input, output, price, timeout, evidence, and failure action |
+| Operator | Can I run and support this service on my machine? | Artifact, resources, credentials, health, upgrade, and rollback |
+| Support or reviewer | Can I reconstruct what happened without private archaeology? | Request ID, versions, timings, payment record, trace, and result reference |
+
+Weak service definitions satisfy only the operator.
+They explain how to start a process but not what a caller can rely on after the process returns.
+Other definitions satisfy only the caller.
+They describe an endpoint but leave the operator to guess which model, secret, image, or network access the job requires.
+
+The contract is durable when each field has an owner and a failure meaning.
+The service author owns the output check.
+The operator owns the runtime and availability evidence.
+The payment layer owns the settlement record.
+The caller owns the decision to accept the result or escalate it.
+No single “verified” field should blur those responsibilities.
+
+## What the current SDK exposes
+
+The public [Blueprint SDK](https://github.com/tangle-network/blueprint) is a Rust toolkit for building Blueprints and running them against Tangle’s Ethereum Virtual Machine (EVM) protocol.
+The current [Blueprint SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) uses a `Router`, typed extractors, and typed results in its public service boundary.
+A job router is the dispatch table that maps an incoming job identifier to the function that handles it.
+
+The following illustrative handler keeps that public shape while making the job name explicit.
+
+~~~rust
 use blueprint_sdk::Router;
-use blueprint_sdk::runner::BlueprintRunner;
-use blueprint_sdk::runner::config::BlueprintEnvironment;
+use blueprint_sdk::alloy::sol;
+use blueprint_sdk::tangle::extract::{Caller, TangleArg, TangleResult};
 
-async fn classify() -> &'static str {
-    "labels:invoice,confidence:0.94"
+sol! {
+    struct ClassifyRequest {
+        string document_hash;
+    }
+
+    struct ClassifyResponse {
+        string label;
+        string model_version;
+    }
 }
 
-let environment = BlueprintEnvironment::default();
-let router = Router::new().route(0, classify);
+pub const CLASSIFY_JOB: u8 = 0;
 
-BlueprintRunner::builder((), environment)
-    .router(router)
-    .run()
-    .await?;
-```
+pub async fn classify(
+    Caller(caller): Caller,
+    TangleArg(request): TangleArg<ClassifyRequest>,
+) -> TangleResult<ClassifyResponse> {
+    let _caller = caller;
+    let _document_hash = request.document_hash;
 
-The return value is deliberately tiny.
-The example is there to show the public boundary, not to pretend that a string is a production classifier.
-In a real service, the function would validate an input, call the classifier, return a typed result, and map failures to documented error codes.
+    TangleResult(ClassifyResponse {
+        label: "invoice".to_string(),
+        model_version: "classifier-v1".to_string(),
+    })
+}
 
-Check the repository's current version and setup instructions before compiling this example.
-The public [Tangle documentation](https://docs.tangle.tools) is the source for current network and operator steps.
+pub fn router() -> Router {
+    Router::new().route(CLASSIFY_JOB, classify)
+}
+~~~
 
-## Make invalid input visible
+The function returns a fixed label because the example is about the public boundary, not a production classifier.
+A real job must validate input, call the model, map failures, and return the evidence promised by the contract.
+This snippet shows the handler boundary, not a complete runner.
+An EVM-backed deployment also needs runner configuration and the Tangle EVM protocol integration shown in the [current SDK example](https://github.com/tangle-network/blueprint/tree/main/examples/incredible-squaring).
+Follow the current [Blueprint SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) for package versions, runner configuration, and operator setup.
 
-An operator needs to know whether a job failed because the service was unhealthy or because the caller sent something the Blueprint forbids.
-Those cases should not look identical to the buyer.
+The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runner/introduction) describes the process that orchestrates jobs, handles events, manages state, and coordinates the `Router` with producers, consumers, and background services.
+That runner is part of the operator runtime.
 
-For the classifier example, the contract could define:
+## Invalid input should be visible before payment
 
-```text
-valid PDF under 20 MB -> classify and return labels
-unsupported MIME type -> reject before payment is captured
-oversized file -> reject with max_size
-model timeout -> return retryable_timeout and request ID
-provider error -> return upstream_failure and operator evidence
-```
+A paid service needs to distinguish an impossible request from an infrastructure failure.
+For the invoice classifier, the public behavior might be:
 
-This is a product decision, not a protocol default.
-Write the behavior in the public service contract and test each branch locally before an operator deploys it.
+~~~text
+valid PDF under 20 MB -> run classification
+unsupported media type -> return invalid_input
+oversized file -> return max_size
+model timeout -> return retryable_timeout with request ID
+provider failure -> return upstream_failure with operator evidence
+malformed model output -> return invalid_result and do not publish it downstream
+~~~
 
-## Publish the artifact an operator can run
+These are product rules, not automatic protocol behavior.
+Test every branch before an operator receives the release.
+The caller should know whether it can retry the same request, choose another operator, request a refund, or send the case to a person.
 
-The operator should not have to reconstruct the service from a blog post.
-Publish a versioned artifact, its source or source reference, required configuration, and a health check.
-If a model or prompt changes the output, include that version in the service record.
+One ambiguous error can create a costly loop.
+If a caller treats an invalid PDF as an operator outage, it may pay again for the same bad input.
+If it treats an operator timeout as a permanent rejection, it may discard a recoverable job.
 
-The public SDK repository documents a deployment flow based on a Blueprint definition and a metadata source.
-A representative public command is:
+## A migration is part of the interface
 
-```bash
-cargo tangle blueprint deploy tangle \
-  --network testnet \
-  --definition ./definition.json
-```
+Versioning identifies the path a caller follows when the output or runtime changes while old Services still have work in flight.
 
-The command and manifest fields can change, so use the current [deployment documentation](https://github.com/tangle-network/blueprint) as the authority.
-The point of the command is that an operator receives a named definition rather than a private set of instructions.
+Suppose `invoice-json-v1` returns `total` as a number and `invoice-json-v2` returns a currency object with `amount` and `code`.
+The service should publish which Blueprint version accepts each output, whether a caller can request the old version, and how long an operator will finish jobs already accepted under the old contract.
 
-Do not put credentials, private filesystem paths, internal commit inspection, or incident notes in a public Blueprint.
-The operator needs the public artifact and the public runbook.
+An illustrative migration record might say:
 
-## What an operator checks before accepting
+~~~text
+new requests -> invoice-json-v2
+in-flight v1 jobs -> complete under invoice-json-v1
+old v1 result -> accepted until the stated sunset date
+v1 caller after sunset -> receive unsupported_version with migration link
+~~~
 
-An operator should be able to answer these questions from the published materials:
+The exact fields belong to the service author.
+The principle is that a caller should receive a typed migration signal rather than a response that looks valid but has changed meaning.
+An operator should also be able to run both artifacts during the overlap or state that it will stop accepting the old Job before the migration begins.
 
-| Check | Reason |
+## Version the interface and the artifact together
+
+The Blueprint version identifies the job contract.
+The service version identifies the running artifact.
+The model version identifies the model weights or provider configuration that can change the output.
+
+Those three values should appear in the service record and result receipt.
+They answer different questions:
+
+| Version | Question it answers |
 | --- | --- |
-| What artifact is running? | prevents silent code or model drift |
-| What inputs are allowed? | avoids unsafe or unbillable work |
-| What hardware is required? | prevents jobs from landing on an unsuitable machine |
-| How is health measured? | separates a live process from a useful service |
-| How does payment work? | prevents unpaid or ambiguous jobs |
-| How are failures reported? | returns an error code, request ID, evidence, and retry guidance |
-| How is an upgrade rolled back? | limits damage from a bad release |
+| Blueprint | Did the caller and operator agree on the same input and output interface? |
+| Service artifact | Which program ran? |
+| Model or provider | Which inference behavior produced the result? |
 
-If the answer exists only in a private chat with the developer, the service is not ready for independent operation.
+Do not silently update a model behind a stable job contract when the output distribution or data policy changes.
+Publish a new release or an explicit migration rule.
+An operator needs a rollback target that is known to work, not a vague instruction to “use the previous image.”
 
-## Keep the user contract shorter than the runbook
+Before asking an operator to run the release, exercise a small acceptance matrix.
 
-A buyer should not need to learn operator key management or deployment internals to call a job.
-The user-facing page should show the job name, input schema, output schema, price or quote rule, expected latency, failure codes, and returned evidence.
+| Case | Expected observation | Release decision |
+| --- | --- | --- |
+| Valid input | Typed result, request ID, version, and timing | Continue to payment and support testing |
+| Invalid input | Typed rejection before model work when possible | Confirm the caller is not charged for impossible work |
+| Runtime failure | Retryable or permanent error with a clear owner | Confirm the caller can choose the next action |
+| Old artifact | Version mismatch is visible in the receipt | Reject or migrate deliberately |
+| Bad model output | Schema or evaluation check blocks publication | Do not pass the result downstream |
+| Restart | Job state and idempotency behavior are defined | Confirm recovery does not duplicate work or payment |
 
-The operator runbook can contain more detail.
-It may describe keys, ports, disk requirements, log retention, and the upgrade sequence.
-Both documents should refer to the same Blueprint version.
+Run these six cases on every release before publishing the artifact.
+It also exposes where the protocol ends.
+The protocol carries the `JobCall` and result receipt, but the service author must supply the invalid-input, result-quality, and recovery tests.
 
-Before accepting a request, compare the user-facing and operator documents' Blueprint version so an interface mismatch is visible first.
+Run the matrix against the operator’s stated boundary.
+Use the developer laptop as a separate comparison.
+Use the published artifact, the declared environment variables, the documented network permissions, and the same startup path an operator will use.
+If a test needs a private credential or an undocumented host mount, record that as a dependency instead of presenting the local result as portable.
 
-## What the protocol does not decide for you
+The clean-boundary test is especially important for AI services.
+A local model cache can hide a download requirement.
+A developer’s wallet can hide a payment permission.
+A mounted repository can hide the fact that the production Job receives only a URL.
+Reproducing the contract at the operator boundary turns those assumptions into fields the next release can name.
 
-At the protocol boundary, registration is recorded with the Blueprint, a job request advances through an explicit payment state, and the result carries evidence for that request.
-It does not choose a useful model, write a safe prompt, guarantee uptime, or determine whether a classification is correct.
+## Payment is a trigger and a separate record
 
-Those responsibilities belong in the service definition and the operator's runbook.
-If the service needs a second pass, a fixed test set, or a human approval, say so.
-Do not replace that requirement with a generic “verified” badge.
+**x402** is an HTTP payment protocol for machine-to-machine requests.
+The client asks for a paid resource, receives HTTP status 402 with payment requirements, retries with a signed payment payload, and receives the resource after the server or a facilitator verifies and settles the payment.
 
-For the economic side of this contract, read [Operator Staking For AI Blueprints](/blog/operator-staking-ai-blueprints).
-The preceding [Decentralized Compute Protocol article](/blog/decentralized-compute-protocol-blueprints) explains how shared job definitions, payment, and receipts fit together.
+The current [x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) names the request headers and settlement response.
+The [Tangle x402 gateway](https://docs.tangle.tools/developers/blueprint-runner/x402) can turn a verified payment into a Blueprint JobCall.
+
+Payment still needs a service policy:
+
+- Which job identifiers are exposed through x402?
+- What is the price and how is it converted to the accepted asset?
+- Is payment settled before compute starts?
+- Does a timeout produce a refund, retry credit, or no compensation?
+- Can the same payment be replayed?
+- Does the paid caller map to an on-chain caller or only to a payer?
+
+The payment receipt proves a payment event.
+It does not prove that a model result is correct.
+Keep payment evidence and result evidence as separate fields.
+
+## Make the operator runbook executable
+
+An operator should be able to answer these questions from the public release:
+
+| Operator check | Required answer |
+| --- | --- |
+| Artifact | Which source, image, binary, or package is approved? |
+| Capacity | Which CPU, GPU, memory, disk, and network limits apply? |
+| Credentials | Which keys are needed, where are they loaded, and what can they access? |
+| Health | Which endpoint or heartbeat shows that the service is alive and useful? |
+| Data | Which inputs are retained, encrypted, or deleted after the job? |
+| Payment | Which jobs are paid, at what price, and under which expiry rule? |
+| Upgrade | How does the operator roll forward and roll back? |
+| Result | Which fields, hashes, logs, or artifacts return to the caller? |
+
+The runbook can contain private host details.
+The Blueprint should contain the public requirements and the safe configuration boundary.
+Do not make a credential, private filesystem path, or undocumented manual step part of the public integration contract.
+
+The public [Tangle operator documentation](https://docs.tangle.tools/operators/introduction) describes the recurring work of running a Blueprint service, including the Blueprint Manager, heartbeats, job responses, and isolation choices.
+
+## Evidence needs a vocabulary
+
+Readers should not have to infer what a “verified result” means.
+Use separate names for separate claims.
+
+An **attestation** is a signed report about an execution environment that a checker has accepted under a policy.
+It may show that an expected binary ran in a hardware-backed boundary.
+It does not show that the binary has no bugs.
+
+An **evaluation** is a task-specific check of the output.
+For invoice extraction, it could check arithmetic, required fields, or a labeled test document.
+For open-ended classification, it may require sampling and human review.
+
+A **trace** is a structured record of one job’s request, steps, timings, errors, and result references.
+It helps an operator explain a timeout and helps a buyer distinguish an empty result from a failed call.
+
+Use the evidence that answers the service’s actual risk:
+
+| Risk | Useful evidence |
+| --- | --- |
+| Wrong code or environment | Artifact hash and attestation |
+| Operator disappeared | Heartbeat and lifecycle record |
+| Caller paid for a request | x402 or protocol payment receipt |
+| Model returned malformed data | Schema check and trace |
+| Model returned a plausible but wrong answer | Evaluation, comparison, or review |
+
+## What the protocol does not decide
+
+A Blueprint protocol does not choose the right model, guarantee uptime, set a fair price, or define a universal test for AI correctness.
+It gives a builder a place to specify those decisions and gives operators a common object to run.
+
+The protocol also does not eliminate the need for an ordinary service owner.
+Someone must maintain the artifact, respond to failures, update the data policy, and decide whether a new model release deserves promotion.
+
+For operator economics, read [Operator Staking For AI Blueprints](/blog/operator-staking-ai-blueprints).
+For the buyer path from discovery to payment, read [AI Service Marketplace With Crypto Payments](/blog/ai-service-marketplace-crypto-payments).
 
 ## Decision rule
 
-Use a Blueprint when more than one operator should be able to run the same service and the job contract can be written precisely.
-Keep the service in a normal application backend while the interface, failure behavior, or operating requirements are still changing every day.
+Use a Blueprint when more than one operator should be able to run the same service and the job contract can remain stable long enough to test.
+Keep the service in a normal application backend while its interface, data boundary, and failure behavior are changing every day.
 
-Start with one input, one output, and one evidence path that a local test can execute in one sitting.
-Once that path works, add payment, operator choice, and more demanding workloads one at a time.
+Before publishing, make one low-risk job pass through the complete path.
+The caller should send one valid input, receive one typed result, inspect one receipt, and exercise one failure branch without private instructions.
 
-## FAQ
 
-### What is a Blueprint protocol?
+## What is a Blueprint protocol?
 
-It is Tangle's model for publishing a reusable service definition that independent operators can run.
+It is Tangle’s model for publishing a reusable service definition that operators can run under shared network, payment, and lifecycle rules.
 
-### Is a Blueprint the same as Blueprint Agent?
+## Is a protocol Blueprint the same as Blueprint Agent?
 
 No.
-Blueprint Agent is a developer workbench.
+Blueprint Agent is Tangle’s developer workbench for creating and onboarding Blueprint projects.
 A protocol Blueprint is the service definition and job contract that an operator runs.
 
-### What should a Blueprint include?
+## What should a Blueprint include?
 
-It should include the job interface, runtime requirements, artifact source, payment behavior, evidence, failure codes, and operator runbook.
+It should include the job interface, runtime requirements, artifact source, payment behavior, evidence fields, failure codes, and operator runbook.
 
-### Does a Blueprint guarantee service quality?
+## Does a Blueprint guarantee service quality?
 
 No.
 It makes the service contract and operating responsibilities explicit.
-Quality still depends on the code, operator, monitoring, and service-specific checks.
+Quality still depends on the code, operator, monitoring, and service-specific evaluation.
+
+## Does x402 replace the protocol service model?
+
+No.
+x402 supplies a machine-readable HTTP payment path.
+The Blueprint still defines the job, runtime, operator behavior, result, and failure policy.

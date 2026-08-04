@@ -2,10 +2,10 @@
 title: 'Tangle Sandbox vs E2B: Choosing An AI Agent Sandbox'
 slug: tangle-sandbox-vs-e2b
 summary: >-
-  Tangle Sandbox and E2B both run code for AI agents, but they optimize for
-  different failure modes. E2B is a strong code sandbox; Tangle is built for
-  persistent agent workspaces, browser evidence, traces, and paid service
-  execution.
+  Tangle Sandbox and E2B both run code for AI agents, but they preserve
+  different things after a task fails: E2B offers isolated Linux sandboxes and
+  templates, while Tangle adds durable agent sessions, workspace recovery, and
+  trace-oriented review.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -19,121 +19,377 @@ coverImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-An agent runtime is the software that starts, controls, and records an agent run. A blueprint is a packaged service definition with a typed job interface. x402 is a payment protocol for machine-to-machine requests. If you are searching for an E2B alternative, the useful question is not "which sandbox is better?" It is: what has to survive after the agent finishes running code?
+An agent runs generated code, gets a plausible output, and reports success.
+A reviewer opens the result and asks where the file came from, which command produced it, and what happened when the first test failed.
+If the system kept only standard output (stdout), the most important part of the run is gone.
 
-E2B is a strong default for isolated code execution. Its docs, as of June 17, 2026, center on sandboxes, templates, filesystem access, lifecycle controls, persistence, secured access, and SDK-driven command execution. If your product needs to start a Linux sandbox, run generated code, read files, and return stdout, E2B deserves to be in the benchmark.
+That is the useful comparison between Tangle Sandbox and E2B.
+Both provide isolated environments where an AI agent can run code, inspect files, and use a Linux system.
+E2B’s public docs center on on-demand sandboxes, templates, filesystem operations, lifecycle controls, and command execution.
+Tangle Sandbox centers on an isolated computer for an agent, with a selectable coding backend, durable sessions, snapshots, optional GPU access, and traces for review.
 
-Tangle Sandbox is for a different pressure. I care about the moment after the command returns: did the agent leave a workspace I can inspect, did it preserve the failed step, did it attach browser evidence, did it keep credentials scoped, did it expose a manifest an agent can discover, and can the same work become a paid service on Tangle through Blueprints and x402? That is not a generic code sandbox problem. That is agent runtime infrastructure.
+The primary question is not which sandbox is universally better.
+It is what your product needs to preserve after the command returns.
+Choose E2B when the job is isolated code execution with a clear input and output.
+Choose Tangle Sandbox when the job is a continuing agent session that must recover, reconnect, expose workspace state, and leave a trace, the ordered run record.
 
-## Quick Answer
+This is a product-fit comparison.
+It is not a benchmark of current speed, price, or security strength.
 
-Use E2B when the job is mostly code execution: run snippets, process files, start from a template, collect command output, and shut the environment down.
+## A sandbox is a boundary, not a workflow
 
-Use Tangle Sandbox when the job is agent work: create or edit a repo, run commands, recover from failures, preserve evidence, combine browser automation with code execution, publish a snapshot-backed agent, and connect the result to Tangle's Router, Browser Agent, Blueprint, or x402 surfaces.
+A sandbox is an isolated environment for running code.
+The provider may implement it as a virtual machine, container, or another boundary.
+The isolation protects the host and neighboring workloads from the code that runs inside, but it does not automatically decide what the agent may access or what the output means.
 
-This is not a speed claim. It is not a pricing claim. It is a product-shape claim, and the right way to verify it is to run the same workload in both systems.
+An agent runtime is the software that starts the agent loop, gives it tools, enforces permissions and budgets, and records the work.
+A durable session is a run that can be found again after the caller disconnects.
+A snapshot is a saved environment state that can be used to restore or reproduce a workspace.
+A trace is a structured record of the task’s inputs, actions, outputs, timing, and failures.
 
-## Capability Map As Of June 17, 2026
+Tangle’s public terminology also uses agent profile for the configuration of models, tools, budgets, and policies.
+An evaluation is a repeatable assessment of task results, cost, and policy compliance.
+These terms matter because an AI agent is a process that makes decisions across several tool calls and may need to explain them later.
+
+## What E2B exposes
+
+E2B describes a sandbox as an on-demand Linux virtual machine with an isolated environment for agents.
+Its public quickstart creates a sandbox, runs a command, and reads stdout:
+
+```bash
+npm install e2b
+```
+
+```typescript
+import { Sandbox } from 'e2b'
+
+const sandbox = await Sandbox.create()
+const result = await sandbox.commands.run(
+  'python -c "print(2 + 2)"',
+)
+
+console.log(result.stdout)
+await sandbox.kill()
+```
+
+The [E2B documentation](https://e2b.dev/docs) identifies sandboxes and templates as core building blocks.
+Its [sandbox reference](https://e2b.dev/docs/sdk-reference/js-sdk/v2.0.0/sandbox) documents Linux access, files and directories, commands, isolated code, and internet access.
+Its [template documentation](https://e2b.dev/docs/template/start-ready-command) explains how a template can install dependencies, start a process during a build, wait for readiness, and capture the environment in a snapshot.
+
+E2B also documents lifecycle and persistence features.
+The [persistence guide](https://e2b.dev/docs/sandbox/persistence) is the source to consult for what can be paused, resumed, or retained in the current product.
+That is an important distinction from saying E2B is “ephemeral” as a blanket claim.
+The right question is which state is retained, for how long, under which lifecycle operation, and whether the retained state includes the agent’s full decision history.
+
+E2B is a strong first test for:
+
+- a code interpreter that runs untrusted snippets;
+- a data-processing job that reads files and returns artifacts;
+- a generated-script runner;
+- a notebook-like experience;
+- a short coding task that can be represented by a template, command sequence, and output bundle.
+
+If the job ends at “run code and return files,” E2B may be the simplest system to operate.
+
+## What Tangle Sandbox adds to the session
+
+Tangle’s [Sandbox docs](https://docs.tangle.tools/sandbox) describe a dev container or microVM, a lightweight virtual machine, with a shell, filesystem, ports, snapshots, optional GPU access, and a chosen coding backend.
+The same page documents durable agent sessions and traces that can be sent to Tangle Intelligence.
+The [quickstart](https://docs.tangle.tools/sandbox/quickstart) shows the current `@tangle-network/sandbox` client.
+
+```typescript
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY,
+  baseUrl: 'https://sandbox.tangle.tools',
+})
+
+const box = await client.create({
+  image: 'universal',
+  name: 'repair-test',
+  backend: { type: 'opencode' },
+})
+
+try {
+  const result = await box.exec('npm test')
+  console.log(result.exitCode, result.stdout)
+} finally {
+  await box.delete()
+}
+```
+
+The code creates a machine and runs a command.
+The important difference appears when the task is more than one command:
+
+```typescript
+const { sessionId } = await box.dispatchPrompt(
+  'Inspect the failing test, repair the code, and leave a reviewable workspace',
+  { sessionId: 'server-owned-task-17' },
+)
+
+for await (const event of box.session(sessionId).events()) {
+  console.log(event)
+}
+
+const result = await box.session(sessionId).result()
+console.log(result)
+```
+
+The public SDK reference says the same session identifier is idempotent, meaning that repeating it returns the existing session instead of starting duplicate work.
+A retry returns the in-flight or completed session instead of executing the work twice.
+That behavior is useful for background agent work, webhook delivery, or a paid request whose response is lost after the job starts.
+
+A Tangle trace does not prove that the repair is correct.
+It makes the repair inspectable.
+The evaluation still needs a test, an artifact check, a browser assertion, or human review matched to the task.
+
+## Compare the failure path
+
+Use one migration task in both products:
+
+1. Start from a known environment.
+2. Upload or check out a small repository.
+3. Install a dependency.
+4. Change one source file and one test.
+5. Run the test suite and preserve the first failure.
+6. Ask the agent to repair the code without resetting the workspace.
+7. Run the tests again.
+8. Return changed files, logs, artifact hashes, and the final status.
+9. Disconnect the client.
+10. Reconnect and inspect the same task.
+
+The result should be recorded as a test contract:
+
+```json
+{
+  "task": "repair-test",
+  "inputs": {
+    "repository": "public-fixture",
+    "dependency": "known-version"
+  },
+  "requiredArtifacts": [
+    "first-failure-log",
+    "changed-files",
+    "final-test-log",
+    "workspace-state"
+  ],
+  "checks": {
+    "repair": "tests-pass",
+    "reconnect": "same-task",
+    "duplicateExecution": false
+  },
+  "review": {
+    "trace": "attached",
+    "quality": "unchecked"
+  }
+}
+```
+
+This is a deliberately small application-level record.
+It does not claim that either vendor returns these exact fields.
+It gives the benchmark a stable question: what survived the run, and can the reviewer tell how the result was produced?
+
+## Recover a timed-out run before retrying
+
+Suppose the client times out immediately after the first test starts.
+The agent must not treat that timeout as proof that the sandbox disappeared.
+Store the request identity and sandbox identity before dispatching work, then query that record before creating anything new:
+
+```json
+{
+  "requestKey": "repair-test-17",
+  "requestDigest": "sha256:input-and-policy",
+  "sandboxId": "sandbox-17",
+  "state": "running | paused | completed | unknown",
+  "result": null
+}
+```
+
+If the record says `completed`, return its stored result.
+If it says `running` or `paused`, reconnect to `sandboxId` and inspect the existing workspace.
+If the state is `unknown`, query the service’s job record and payment or billing record before dispatching again.
+Only create a second sandbox after the application can show that the original request never started or that its policy explicitly permits duplicate work.
+E2B documents [`Sandbox.connect`](https://e2b.dev/docs/sdk-reference/js-sdk/v2.0.0/sandbox), pause and resume in its [persistence guide](https://e2b.dev/docs/sandbox/persistence), and sandbox IDs for this lifecycle.
+The record and retry policy remain application responsibilities.
+
+## Separate the template from the live workspace
+
+E2B’s template and sandbox solve different parts of the workflow.
+A template describes how to prepare dependencies and a ready process.
+A live sandbox holds the mutable files, commands, and external state for one run.
+A saved environment can help reproduce setup, but it is not automatically a replay of the agent’s decisions.
+
+For a repair task, use the template for the expensive and repeatable setup.
+Create a sandbox from that template.
+Copy the input repository or fixture into the live workspace.
+Record the first failing command before asking the agent to edit anything.
+Pause or reconnect the live sandbox when the caller loses its connection.
+Save changed files, logs, and a final test result before cleanup.
+
+The recovery record should identify both layers:
+
+This is an illustrative application record, not an E2B response schema.
+
+```json
+{
+  "template": "python-repair-v4",
+  "templateDigest": "sha256:known-environment",
+  "sandboxId": "sandbox-17",
+  "firstFailure": "tests/checkout.test.ts:42",
+  "finalStatus": "passed"
+}
+```
+
+If a dependency is wrong, rebuild the template and start a fresh test.
+If the agent’s edit is wrong, keep the live sandbox so the reviewer can inspect the failed state.
+If the network call is unknown, query the existing sandbox and job record before creating another one.
+This distinction prevents a setup snapshot from being mistaken for evidence that the repair itself was reproducible.
+
+The minimum useful comparison therefore has three identities.
+The template identity answers which dependencies and startup process were intended.
+The sandbox identity answers which mutable workspace held the run.
+The request identity answers whether a retry refers to the same task.
+Store all three beside the first failure and final result.
+If one is missing, a later reviewer cannot tell whether a changed output came from a new environment, a resumed workspace, or a duplicate request.
+
+This is also where E2B and Tangle can be combined with an application-owned evaluation layer.
+The sandbox executes the code.
+The evaluator checks the changed files and test result.
+The application decides whether a lost response means reconnect, poll, or start a new attempt.
+No vendor label can answer that last question without the task’s retry policy.
 
 | Decision surface | E2B | Tangle Sandbox |
 | --- | --- | --- |
-| Primary fit | Isolated code execution for agents | Persistent workspaces for agent tasks |
-| SDK start | `npm i e2b` and create a sandbox with `E2B_API_KEY` | `npm install @tangle-network/sandbox` and authenticate with `TANGLE_API_KEY` |
-| Environment model | Sandboxes, lifecycle controls, templates, persistence, filesystem, commands | Agent workspace, package installs, previews, snapshots, public templates, manifest discovery |
-| Browser evidence | Covered through E2B computer-use and cloud-browser docs | Designed to pair with Tangle Browser Agent and evidence traces |
-| Discovery by agents | Docs, SDKs, API references | `.well-known/tangle-agent.json`, `llms.txt`, OpenAPI, package entrypoints |
-| Payment/service path | Bring your own commercial layer | Blueprint and x402 path for paid agent service execution |
-| Best benchmark | "Can I run generated code safely and quickly?" | "Can I trust, replay, recover, and monetize this agent workspace?" |
+| Environment | On-demand Linux sandbox from a template or default image | Dev container or microVM with agent-oriented options |
+| Basic execution | Commands, files, isolated code, and internet access | Commands, files, ports, prompts, and task sessions |
+| Reusable state | Templates and documented persistence features | Snapshots plus durable sessions |
+| Agent loop | Compose your own loop or product | Select a coding backend and run it in the sandbox |
+| Recovery record | Depends on what the application stores | Trace and session surfaces are part of the Tangle workflow |
+| GPU | Check current E2B product surface and limits | Optional GPU lease documented in the SDK |
+| Service path | Add your own product and billing layer | Can connect to Tangle Blueprint and payment surfaces |
 
-Primary references worth checking before you decide: [E2B documentation](https://e2b.dev/docs), [E2B sandbox lifecycle](https://e2b.dev/docs/sandbox), [E2B persistence](https://e2b.dev/docs/sandbox/persistence), [E2B secured access](https://e2b.dev/docs/sandbox/secured-access), [E2B templates](https://e2b.dev/docs/template/quickstart), and the live [Tangle Sandbox manifest](https://sandbox.tangle.tools/.well-known/tangle-agent.json).
+The last row needs careful definition.
+A Tangle Blueprint is a reusable service definition that declares jobs, inputs, outputs, and execution requirements.
+An operator is the infrastructure provider that runs a live service instance from that definition.
+x402 is an HTTP payment protocol for machine-to-machine requests.
+Those are adjacent Tangle protocol surfaces, not evidence that a sandbox result is correct.
 
-## What E2B Is Good At
+## The strongest case for E2B
 
-The steelman for E2B is simple: it gives agents a clean place to execute code. That matters. A coding agent that can run arbitrary shell commands in your application environment is a liability; a sandbox with SDK control, lifecycle rules, filesystem APIs, and templates is a much better boundary.
+E2B’s appeal is operational clarity.
+The developer asks for a sandbox, selects or builds a template, runs commands, moves files, and collects output.
+The product maps cleanly to code-interpreter and generated-code workloads.
 
-E2B also has a mature documentation shape. You can find lifecycle controls, persistence, secured access, templates, filesystem operations, command streaming, CLI usage, and SDK references without guessing the product model. If your agent product is a notebook, a code interpreter, a generated-script runner, or a fast validation harness, E2B may be the cleaner first test.
+Templates also move setup work out of each run.
+A prepared environment can include dependencies and a ready process.
+That is useful when startup cost or reproducibility matters more than a continuing agent history.
 
-I would not replace that with Tangle solely to change vendors. The migration only makes sense if the missing surface is outside "run code in isolation."
+E2B should stay on the shortlist when:
 
-## Where Tangle Starts To Matter
+- the input can be serialized before execution;
+- the output can be serialized after execution;
+- command logs and files are enough for review;
+- the environment can be recreated from a template;
+- the application owns retries and cleanup;
+- browser control and agent-session recovery are not the central product promise.
 
-The hard part of real agent work is not always the first command. It is the recovery path.
+This is not a small use case.
+Many agent products need exactly this boundary.
 
-An agent installs the wrong dependency. A generated test fails. A browser step proves the UI is broken but the code command still exits zero. A credential has to be present for one tool call and absent from the artifact. The useful output is not stdout; it is the workspace state, the failed command, the corrected diff, the preview, and the trace that explains why a reviewer should trust the result.
+## The strongest case for Tangle Sandbox
 
-That is the Tangle frame. Tangle Sandbox is a surface inside a larger agent runtime stack:
+Tangle Sandbox starts to earn its extra surface when the agent behaves like a developer rather than a function.
+The agent may need to inspect an unfamiliar repository, keep a server running, fix one failure without losing the previous failure, open a browser, use a model through the Router, and return a result that another person can review.
 
-- [AI agent sandbox](/blog/ai-agent-sandbox) for workspace execution, package installs, previews, snapshots, and recovery.
-- [Browser automation for AI agents](/blog/browser-automation-for-ai-agents) when the artifact needs browser evidence, terminal output alongside browser evidence.
-- [OpenAI-compatible routers for agents](/blog/openai-compatible-routers-for-agents) when the sandboxed task needs model routing without rewriting the client.
-- [x402 payments for AI agents](/blog/x402-payments-for-ai-agents) and [deploying paid AI agent services](/blog/deploy-paid-ai-agent-service) when the workspace output becomes an agent-callable service.
+That workflow has state that does not fit neatly into stdout.
+The workspace, command history, browser evidence, model calls, profile, and evaluation status form one investigation.
 
-That stack is the reason to consider Tangle. If you only need an isolated VM, compare E2B directly. If you need a workspace that can become a discoverable, payable, evidence-bearing agent service, run the Tangle test.
+A Tangle agent profile can choose the model, tools, budgets, and permissions for that session.
+A Tangle runtime is the execution layer that provisions the machine, starts the session, streams events, and applies those rules.
+The trace gives the later reviewer a record of the run.
+These are product boundaries, not a claim that the underlying code is automatically correct.
 
-## Run The Same Migration Workload
+The internal posts [AI agent sandbox](/blog/ai-agent-sandbox), [agent runtime environments](/blog/agent-runtime-environments), and [Tangle Browser Agent](/blog/tangle-browser-agent-vs-browserbase-browser-use) show how the surrounding workflow fits together.
 
-Do not compare sandbox products with a hello-world command. A hello-world command mostly tests cold start, SDK ergonomics, and whether your API key is configured. Useful, but not enough.
+## Failure cases that change the answer
 
-Use a workload that creates the failure modes your product in practice has:
+The first failure is the important one.
 
-1. Start a fresh environment.
-2. Install one dependency.
-3. Create or edit two files.
-4. Run a command that fails the first time.
-5. Recover without resetting the environment.
-6. Save the final artifact.
-7. Return logs, changed files, and any browser evidence.
+A generated dependency can run a network call the user did not expect.
+A test can fail because a previous command changed the workspace.
+A result can be returned while the process that produced it is still running.
+A client can retry after a timeout without knowing whether the first task completed.
+A snapshot can restore files without restoring credentials or external service state.
+A trace can expose secrets if the application records environment variables or command arguments carelessly.
 
-The test should produce an answer like this:
+The comparison must therefore include:
 
-Run the same migration workload in both products and compare the resulting workspace, failure record, recovery state, and artifacts. The comparison is about what survives the run, not about copying setup commands into a post.
+| Failure | Question |
+| --- | --- |
+| Command timeout | Can the caller distinguish stopped work from unknown work? |
+| Lost response | Can it query the original task before retrying? |
+| Workspace corruption | Can it restore a known state without deleting useful evidence? |
+| Secret exposure | Are credentials excluded from logs, snapshots, and artifacts? |
+| Network side effect | Is outbound access explicit and reviewable? |
+| Bad answer | Is the output tested separately from the execution record? |
 
-The live sandbox manifest exposes the service description, homepage, package name, API key environment variable, and agent-facing discovery fields. The agents manifest exposes the publication path: build in a Sandbox workspace, publish a snapshot-backed agent, start an instance, then call the agent endpoint.
+Filesystem and network isolation reduce the blast radius of agent code.
+Isolation does not make credentials safe by default.
+It does not make the model’s plan sound.
+It does not prove that a returned file is the right file.
 
-That matters for AEO and GEO. Agents need stable discovery surfaces. Human docs are not enough. A crawler, coding agent, or procurement agent should be able to find the package, safe calls, auth shape, and invocation path without scraping marketing copy.
-
-## What This Comparison Does Not Prove
-
-This post does not prove Tangle is faster than E2B. It does not prove Tangle is cheaper. It does not claim E2B lacks persistence, templates, filesystem APIs, secured access, or browser-oriented products. E2B documents those surfaces, and a fair comparison has to respect them.
-
-This post claims a narrower thing: if your workload is moving from "execute code" to "operate an agent workspace that keeps evidence and can become a paid service," Tangle should be tested as a different category of runtime surface.
-
-The benchmark that would change my mind is also clear. If, on the same workload, E2B preserves enough workspace state, recovery evidence, browser proof, credential boundaries, and service handoff with less product glue, then E2B wins that workload. If the Tangle stack makes those artifacts easier to trust and reuse, then Tangle wins.
-
-## Decision Rule
+## Choose by the artifact that must survive
 
 Choose E2B when:
 
-- The task is short-lived code execution.
-- Your product mostly needs stdout, files, and lifecycle control.
-- Templates and SDK ergonomics are the main decision variables.
-- Payment, Router, Browser Agent, Blueprint, and trace integration are outside the product.
+- the job is primarily isolated code execution;
+- a template, command sequence, and output bundle describe the workflow;
+- files, stdout, and exit status are sufficient evidence;
+- your application wants to own the agent loop and retry policy.
 
 Choose Tangle Sandbox when:
 
-- The agent needs a persistent workspace, more than a command runner.
-- Recovery from failure is part of the product experience.
-- Browser evidence has to travel with code output.
-- Credentials need policy around the run and artifact boundary.
-- The output should become a discoverable agent or paid service.
-- You want the sandbox to sit inside Tangle's Router, Browser Agent, Blueprint, x402, and manifest stack.
+- the agent needs a continuing workspace;
+- the run must survive a dropped client or repeated webhook;
+- recovery depends on keeping the failed state;
+- browser evidence and code changes belong to one review;
+- the agent profile, model route, and trace should travel with the task;
+- the result may become a Tangle service or paid job.
 
-Run the shared workload before migrating. The winner is the one that gives your agent enough evidence to make the next decision safely.
+Run the same repair-test workload before migrating.
+Measure the completion result, recovery behavior, duplicate-work behavior, evidence quality, and cost under the exact policy you intend to ship.
 
-## FAQ
 
-### Is Tangle Sandbox an E2B alternative?
+## Is Tangle Sandbox an E2B alternative?
 
-Yes, when the workload needs more than isolated code execution. Tangle Sandbox is an E2B alternative for agent workspaces that need snapshots, recovery state, browser evidence, manifest discovery, Router integration, or a path into paid Blueprint and x402 services.
+Yes, when the missing capability is a durable agent workspace rather than isolated code execution alone.
+E2B remains a strong choice for code interpreters, generated scripts, templates, filesystem work, and clear input-output jobs.
 
-### When should I choose E2B instead of Tangle Sandbox?
+## When should I choose E2B instead?
 
-Choose E2B when you mainly need a fast, well-documented sandbox for code execution, templates, filesystem access, lifecycle control, command output, and SDK-driven isolation. If the job ends at "run code and return files," E2B may be the simpler benchmark to beat.
+Choose E2B when you can describe the task as “create a sandbox, run code, collect files and logs, then clean up.”
+Its template and SDK model may be the simpler fit.
 
-### How do I test Tangle Sandbox against E2B?
+## Does E2B support persistence?
 
-Run the same migration workload in both products. Install a dependency, edit files, force one failure, recover, preserve the final artifact, and collect logs. Then compare speed alongside artifact quality, replayability, credential boundaries, browser evidence, and downstream service integration.
+E2B documents persistence, lifecycle, templates, and snapshot behavior.
+Check the current persistence documentation for the exact state and limits your workflow needs.
+Do not infer that persistence means the agent’s complete decision history is retained.
 
-### Does Tangle claim to be faster or cheaper than E2B?
+## What does Tangle’s trace add?
 
-No. Any speed or cost claim needs current pricing, current limits, repeated runs, and a fixed workload. This comparison is about product fit as of June 17, 2026: E2B is a strong AI code sandbox, while Tangle Sandbox is aimed at evidence-bearing agent workspace execution.
+A trace records the events needed to inspect a run after the live stream ends.
+It can connect commands, prompts, tool calls, files, timing, and failures, but it does not certify that the final answer is correct.
+
+## How should I compare AI agent sandboxes?
+
+Use the same task with the same input, model policy, timeout, and retry rules.
+Force one failure, recover without a reset, disconnect the client, reconnect, and compare the final workspace and evidence.
+
+## The decision
+
+If the product promise ends at isolated code execution, start with E2B.
+If the product promise includes a durable agent workspace, recovery, browser evidence, and a trace that explains the run, test Tangle Sandbox.
+The winner is the environment that preserves the evidence your next decision depends on.
+For a broader lifecycle comparison across hosted environments, read [Tangle Sandbox vs Daytona and Modal](/blog/tangle-sandbox-vs-daytona-modal).

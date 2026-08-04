@@ -3,12 +3,12 @@
 ## Blocking Gates
 
 - Valid frontmatter for `src/content.config.ts`.
-- Primary query is visible in title, summary, first 150 words, headings, or FAQ.
+- Primary query is visible in the title, summary, first 150 words, or descriptive headings.
 - Answer capsule appears in the first 150 words for SEO/AEO posts.
 - At least one exact install, curl, CLI, API, manifest, config, or code block for agent-intent/operator posts.
 - At least two internal Tangle links for new posts.
 - At least three primary external links when referencing standards or competitors.
-- `## FAQ` section uses `###` question headings so `src/pages/blog/[...slug].astro` can extract FAQ JSON-LD.
+- Likely reader questions receive direct answers in the article or in descriptive question headings when that structure helps.
 - Direct CTA exists.
 - Referenced images exist.
 - No obvious AI-cadence banned phrases.
@@ -31,7 +31,7 @@
 - Convert vague claims into proof blocks.
 - Add a comparison table for "vs" or "alternative" posts.
 - Move Tangle-specific proof above generic background.
-- Add FAQ questions that match search intent.
+- Add question-led sections only when they answer distinct search intent; do not append a ritual FAQ.
 - Replace "What This Gets You" with a concrete CTA.
 - Replace raw archive totals with series cards, topic filters, or a date-sorted archive.
 - Replace markdown-only stretches with a diagram, table, screenshot, trace, terminal output, or designed cover.

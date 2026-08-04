@@ -2,8 +2,8 @@
 title: How Blueprints Work
 slug: how-blueprints-work
 summary: >-
-  Blueprints are the unit of deployable infrastructure on Tangle. This post
-  explains their architecture, lifecycle, and how operators run them.
+  How Blueprints work as reusable Tangle service templates, and how jobs move
+  from public metadata to operator execution, payment, verification, and expiry.
 date: '2026-02-14'
 author: Drew Stone
 tags:
@@ -17,223 +17,364 @@ heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
 imageAlt: 'An editorial still life about building a service on Tangle'
 ---
 
-x402 is a payment protocol for machine-to-machine requests. *Day 2 of the Tangle Re-Introduction Series*
+Your team has a working service that can summarize a document.
+The first customer wants to call it from an agent, choose which service providers may execute it, pay per Job, and inspect what happened when two answers disagree.
+A web endpoint can expose the summary function, but it does not by itself describe provider registration, service state, artifact identity, or a result rule.
 
----
+Tangle is a coordination network for services that independent parties run.
+Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
+Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
+That missing description is what a **Blueprint**, a reusable service template, supplies: it connects a service’s jobs, artifacts, service providers, and rules.
 
-Last month, an AI agent built on OpenClaw autonomously paid for its own GPU inference using the x402 protocol. The agent needed to render images. It found a compute provider, negotiated a price in USDC, and paid over HTTP without any human involvement. The transaction settled in seconds.
+How Blueprints work begins with these protocol objects and the provider that runs them:
 
-This is what agent commerce looks like in 2026. But it raises a question the payment rails alone cannot answer: how does the agent know it got what it paid for?
+1. A **Blueprint** is a reusable template for a service.
+2. A **Service** is one configured instance of that template.
+3. A **Job** is one callable unit of work inside the Service.
+4. An **operator** is the party that runs the artifact and executes the Job.
 
-The x402 protocol handles the payment. Coinbase and Cloudflare built it specifically for machine-to-machine transactions: agents paying for APIs, compute, data, other agents. But payment is only half the problem. The other half is execution. Did the compute in practice happen? Did the provider run the model they claimed to run? If the output is wrong, what recourse does the agent have?
+The [Tangle Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) describes those objects and the split between protocol coordination and off-chain application logic.
+The Blueprint software development kit (SDK) is the public Rust toolkit for packaging the logic, routing jobs, running an operator process, and testing the path against local Tangle contracts.
 
-This is where Tangle's blueprints come in. They provide the execution layer that x402 payments pay for, with built-in [verification](/blog/how-tangle-verifies-work) and economic consequences for misbehavior.
+A Blueprint puts service code, Job schemas, artifact sources, operator requirements, triggers, and usage policies into one versioned service definition.
 
-## Why This Needs a Blockchain
+## The request before the architecture
 
-Let me address the obvious skepticism: couldn't you do this with legal contracts and escrow services?
+Use a transcription service as an example.
+The customer sends an audio reference and a language hint.
+The service returns timestamped text.
 
-You could. And for many applications, you should. Traditional infrastructure works fine when:
+The public job contract might be:
 
-- Both parties are identified legal entities in cooperating jurisdictions
-- Transaction values justify the overhead of contract negotiation
-- Dispute resolution can wait weeks or months
-- The threat of litigation is a meaningful deterrent
-
-But agent commerce breaks these assumptions.
-
-Agents transact continuously, in small amounts, across jurisdictions. An agent might make thousands of micropayments per day to dozens of providers. The overhead of traditional contracts would exceed the value transacted. And when the counterparty is another agent, "legal entity" becomes a fuzzy concept.
-
-More fundamentally: agents operate at machine speed. A legal dispute that takes months to resolve is useless when the agent needed that compute ten minutes ago. The feedback loop has to be automatic and immediate.
-
-Blockchains provide three things traditional infrastructure cannot:
-
-**Programmable escrow.** Funds are held by a smart contract with explicit release conditions. No trusted third party, no counterparty risk on the escrow provider, no manual intervention required.
-
-**Automatic enforcement.** When an operator fails to deliver, the contract executes the consequences immediately. Slashing happens in the same block as verification failure. No lawyers, no arbitration, no delay.
-
-**Transparent state.** Every participant can see operator stakes, reputation histories, and service terms on-chain. Information asymmetry, the classic source of market failures, is dramatically reduced.
-
-The blockchain isn't here because it's trendy. It's here because it solves coordination problems that traditional mechanisms cannot solve at the speed and scale agents require.
-
-## What a Blueprint Is
-
-A blueprint is a template that defines a type of service: what computation it performs, how operators register, how jobs get verified, and what triggers slashing.
-
-When someone uses a blueprint, they're not trusting a provider's promises. They're relying on code that executes automatically, backed by economic stakes that make cheating unprofitable.
-
-A blueprint specifies:
-
-**The service logic.** The actual computation, whether that's AI inference, cryptographic signing, code execution, or anything else. This runs on operator hardware, off-chain.
-
-**Registration requirements.** What operators need to participate: minimum stake, specific hardware, attestations, or access control. The blueprint developer decides who can operate.
-
-**Verification hooks.** How to check that execution was correct. This is where blueprints differ from generic compute: the developer defines what "correct" means for their specific service.
-
-**Slashing conditions.** When operators lose stake. Failed verification, missed deadlines, provably malicious behavior. The conditions are explicit and enforced by smart contracts.
-
-A single blueprint can power thousands of service instances, each with different operators, different security configurations, different payment terms. But they all share the same underlying logic.
-
-### In Code
-
-A minimal blueprint looks like this:
-
-```rust
-/// Job ID for the squaring operation
-pub const XSQUARE_JOB_ID: u8 = 0;
-
-/// Receives input, returns output
-pub async fn square(TangleEvmArg(x): TangleEvmArg<u64>) -> TangleEvmResult<u64> {
-    TangleEvmResult(x * x)
-}
-
-/// Router wires jobs to the Tangle EVM layer
-pub fn router() -> Router {
-    Router::new()
-        .route(XSQUARE_JOB_ID, square.layer(TangleEvmLayer))
-}
+```text
+Job: transcribe
+Input:  { audio: <reference>, language: <optional code> }
+Output: { segments: [{ start, end, text }] }
+Failure: invalid reference, unsupported language, timeout, or execution error
 ```
 
-The SDK handles protocol integration, job routing, and settlement. You write the logic; the framework handles the plumbing.
+That contract answers the caller’s first questions.
+It says which input must be encoded, which output can be decoded, and which failures should be handled as a retry or a user-visible error.
 
-## The Lifecycle: From Request to Settlement
+If the caller is an AI agent, its **agent profile** is the versioned bundle of model choice, instructions, tools, permissions, and output rules that guide the workflow.
+The profile can choose a transcription Job without needing to understand how each operator stores a model or starts a process.
 
-### 1. Discovery
+The **runtime** is the process and environment that carries out the profile or service code.
+The **Blueprint Manager** is the off-chain operator process that watches protocol state, obtains artifacts and metadata, and runs assigned services.
+The **Blueprint Runner** is the job-execution process that receives calls, routes them to handlers, and returns results.
+A **Blueprint Service Manager** is a separate on-chain contract that can customize registration, service creation, authorization, payment, result checks, and slashing.
+The Manager and Runner are the off-chain processes that face that protocol state.
 
-A customer (or their agent) browses available blueprints. Each blueprint has metadata: what it does, what verification mechanisms it uses, what security guarantees it provides.
+The separation matters because a caller can choose the job contract while the operator chooses ordinary operational details such as machine size, process supervision, and local storage, subject to the Blueprint’s published requirements.
 
-For each blueprint, operators are visible with their stakes, reputation scores, and pricing. This transparency is the point: the information that matters for trust decisions is on-chain.
+## What belongs in a Blueprint
 
-### 2. Service Creation
+A deployable Blueprint normally contains more than the function that does the work.
 
-The customer configures their service instance:
+| Blueprint component | What it tells the system |
+| --- | --- |
+| Executable artifact | What an operator downloads and runs, such as a container or native binary |
+| Job handlers | Which units of work the service exposes |
+| Input and output schemas | How callers encode requests and decode results |
+| Triggers | Whether jobs arrive from chain events, HTTP, webhooks, schedules, or machine payments |
+| Metadata | What the service does, where its docs live, and which evidence it returns |
+| Execution policy | Whether standard or confidential execution is acceptable |
+| Optional manager contract | How registration, service creation, authorization, payment, result checks, or slashing are customized |
 
-- Which operators to use
-- What security level they need (minimum stake, redundancy requirements)
-- How to pay (per-job, subscription, or auction-based pricing)
+The [Blueprint sources guide](https://docs.tangle.tools/developers/deployment/sources/introduction) defines a source as the instructions for fetching and executing an artifact.
+A container source is still an artifact source, even when the Blueprint separately declares that it prefers or requires a trusted execution environment.
 
-Funds go into escrow via the blueprint's manager contract. The contract validates operator eligibility, holds payment, and tracks service state.
+The metadata is part of the public interface.
+It should let a customer decide whether the service fits before submitting a job.
+That includes the job schema, payment path, operator requirements, execution policy, result evidence, timeout, and expiry behavior.
 
-### 3. Execution
+## On-chain coordination and off-chain execution
 
-Jobs are submitted to the service. Operators receive them through the Blueprint Manager daemon, which watches for on-chain events and routes work to the appropriate handlers.
+Tangle uses on-chain and off-chain state for different jobs.
+A smart contract is a program whose state transitions are executed by a blockchain network.
+On-chain state is recorded in smart-contract state that participants can query and agree on.
+Off-chain work is computed by an operator process outside the chain.
 
-Actual computation happens off-chain. The blueprint specifies the execution environment: native binary, container, WASM sandbox, TEE enclave. The choice depends on isolation requirements.
+The chain can record service creation, operator registration, job identifiers, payment transitions, and lifecycle changes.
+The operator can process an audio file, call a model, and return a transcript without putting the file or every token into the chain.
 
-### 4. Verification
+The path looks like this:
 
-When a job completes, verification hooks run. This is where blueprints get interesting.
+A **job router** maps a job identifier to the handler that should run it.
+A **trace** is a time-ordered record of a run.
+A **task evaluation** is a test or judging procedure for the property a customer cares about.
 
-**For deterministic computation:** Compare outputs. If multiple operators run the same job and produce different results, someone is wrong.
+```text
+caller or agent
+      |
+      | job request, webhook, chain event, or paid HTTP call
+      v
+producer -> Blueprint Runner -> job router -> job handler
+                                      |
+                                      v
+                              result + trace fields
+                                      |
+                                      v
+                         consumer -> protocol or caller
+```
 
-**For cryptographic proofs:** Verify the proof on-chain. A ZK proof either verifies or it doesn't.
+A **producer** is an adapter that turns an external event into a job call.
+A **consumer** is an adapter that sends a job result to its destination.
+The [job-router documentation](https://docs.tangle.tools/developers/blueprint-runner/routers) describes routing, parameter validation, and the producer-consumer relationship.
 
-**For TEE execution:** Check the attestation. Hardware manufacturers sign attestations proving code ran inside an enclave. See [Trusted Execution on Tangle](/blog/trusted-execution-on-tangle) for how the SDK integrates TEE across cloud providers.
+For a transcription job it might include the call ID, input fingerprint, artifact version, start and end time, exit state, output reference, and evaluation result.
+A trace is useful evidence, but it does not become independent evidence merely because it has a timestamp.
 
-**For AI inference:** This is harder. More on this below.
+## The Blueprint lifecycle
 
-If verification fails, the failure is recorded. Repeated failures trigger slashing based on the blueprint's conditions.
+### 1. Publish the template
 
-### 5. Settlement
+The developer publishes the executable artifact, metadata, job definitions, and any manager contract or protocol configuration.
+The public definition should identify the versioned source and explain what operators and customers must provide.
 
-Payment flows automatically:
+The artifact needs a stable identity.
+A mutable `latest` tag can point to different bytes on different days, so a production service should record an immutable digest or release artifact and make updates visible as new versions.
 
-- **Operators** claim their share of service fees from the contract
-- **Blueprint developers** receive a portion of every transaction
-- **Delegators** who staked to operators earn a share of operator rewards
-- **Protocol treasury** takes a cut for ongoing development
+### 2. Operators register
 
-No invoicing. No payment disputes. No 30-day settlement cycles. The smart contract handles it.
+Operators register their willingness to run a Blueprint.
+Registration does not mean that a customer has already created a Service.
+It means the operator is available for a service instance of that type and can be evaluated against any requirements the Blueprint declares.
 
-## The AI Verification Problem
+The operator may need a keystore, remote procedure call (RPC) endpoints, hardware capabilities, a container runtime, or a confidential-computing setup.
+The [Blueprint Manager documentation](https://docs.tangle.tools/developers/blueprints/manager) says that the manager watches chain events, obtains the Blueprint’s artifacts and metadata, and runs assigned services natively, in a container, or in a virtual machine according to the definition and confidentiality policy.
 
-Here's where I need to be honest about what blueprints can and cannot do.
+### 3. A customer creates a Service
 
-AI inference is non-deterministic. Run the same prompt through the same model twice, you might get different outputs. This makes traditional verification approaches, comparing outputs from multiple executions, unreliable.
+The customer chooses a Blueprint and creates a Service with an owner, operator set, configuration, payment terms, and lifecycle state.
+The Service is the object the customer uses.
 
-Blueprints for AI services use alternative approaches:
+A Service can require a minimum number of operators or specify a confidentiality intent.
+It can have a time-to-live, or **TTL**, which is the period after which the protocol can stop accepting jobs or billing.
+The current [service lifecycle guide](https://docs.tangle.tools/developers/blueprints/service-lifecycle) explains that expiry does not necessarily perform application cleanup or return every asset.
 
-**TEE attestation.** If the model runs inside a Trusted Execution Environment, hardware attestation proves the correct model was loaded and executed. You're trusting Intel or AMD's security, but not the operator.
+If the transcription Service owns durable customer state, the Blueprint must provide a migration or exit path before the TTL ends.
 
-**Consistency checking.** Run the same input through the same service multiple times. If outputs are wildly inconsistent, something is wrong. This catches obvious substitution (running a cheaper model than claimed) but not subtle manipulation.
+### 4. A trigger creates a Job call
 
-**Cryptographic sampling.** Randomly verify a subset of outputs using more expensive methods. If spot checks pass, probabilistic guarantees extend to the full workload.
+x402 is an open protocol for programmatic payment over the Hypertext Transfer Protocol (HTTP).
+The caller sends a request, the server returns `402 Payment Required` with payment requirements, the caller signs a payment payload, and the server verifies and settles it before delivering or enqueuing the resource.
+The [official x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) documents the headers and steps.
 
-**Reputation and stake.** For some applications, economic deterrence is sufficient. An operator with $500K at stake is unlikely to risk it by serving degraded outputs.
+The Job can be triggered by an on-chain event, a web webhook, a schedule, a custom event source, or an x402-paid request.
+The producer turns the trigger into the internal job shape expected by the Runner.
 
-None of these are perfect. Verifying that an LLM produced a "correct" response in any absolute sense remains unsolved. What blueprints provide is explicit security models: you know what assumptions you're relying on, what verification is happening, and what the consequences are for misbehavior.
+Tangle’s optional [x402 gateway](https://docs.tangle.tools/developers/blueprint-runner/x402) turns a verified payment into a `JobCall`, the internal message for a configured service and job.
+The gateway can return `202 Accepted` when the request has been accepted and enqueued.
+That status is not a completed transcript.
 
-This is better than the status quo, where you pay a provider, hope they run what they claim, and have no recourse if they don't.
+### 5. The operator executes off-chain
 
-## x402 and the Agent Payment Stack
+The Runner receives the call and the job router selects the handler.
+The handler validates the input, calls the model or application code, applies resource limits, and produces a typed result or an explicit error.
 
-Tangle's blueprint system and the x402 protocol solve complementary problems. Together they form a complete stack for autonomous agent commerce.
+The operator may run a native binary, a container, or another source supported by the release.
+If the Blueprint requires confidential execution, the manager must refuse or filter out a runtime that cannot satisfy the policy.
+The current [execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) lists `any`, `tee_preferred`, `tee_required`, and `standard_required` as the protocol policy values.
 
-**x402 handles the payment.** An agent discovers a service, negotiates price, and pays in stablecoins over HTTP. The protocol is lightweight: an HTTP 402 response contains payment requirements, the agent pays, the service enables. No API keys, no accounts, no billing systems.
+### 6. The result moves to the consumer
 
-**Tangle handles the execution.** The service runs on operator infrastructure with stake at risk. Verification hooks check that the work was done correctly. If it wasn't, slashing happens automatically.
+The consumer submits or returns the result through the path associated with the trigger.
+For an on-chain job, that may produce a result event or state transition.
+For a web gateway, it may return a correlation identifier first and expose the eventual result through another endpoint or application callback.
 
-**The combination is useful.** An agent can autonomously find compute providers, pay for services, and have cryptographic guarantees that it got what it paid for. All at machine speed, with no human intervention.
+The result should carry enough context to connect it to the exact Service, Job, artifact version, and payment.
+Without that connection, a customer can receive a valid-looking transcript and still be unable to prove which execution produced it.
 
-This extends naturally to agent-to-agent transactions. One agent running on Tangle infrastructure can pay another agent for services, with both sides having economic guarantees on their respective contributions.
+### 7. Verification and settlement apply the chosen rules
 
-We're building blueprint templates that integrate [x402 payment verification](/blog/blueprint-sdk-x402-payments-runnable-jobs) directly into the service lifecycle. An x402 payment triggers service creation; job completion triggers payment release; failed verification triggers refund. The economic loop is closed and automatic.
+Verification is the procedure that checks a result against a rule.
+For deterministic work, the rule may compare outputs from multiple operators.
+For a cryptographic job, it may verify a proof.
+A **trusted execution environment**, or **TEE**, is a hardware-backed area that isolates a workload from ordinary host software.
+An **attestation report** is signed evidence about that environment and its measured workload.
+A **task evaluation** is a test or judging procedure for the property a customer cares about.
+For private inference, it may check an attestation report and a model measurement.
+For a language task, it may run a task-specific evaluation.
 
-## What Blueprints Cannot Do
+The Blueprint defines the rule or connects to a manager that does.
+The protocol does not supply a universal test for arbitrary output quality.
+The companion article [How Tangle Verifies Work](/blog/how-tangle-verifies-work) works through those boundaries.
 
-**Blueprints don't verify arbitrary computation automatically.** The developer must define verification logic. If that logic is incomplete, the blueprint provides incomplete protection. This is inherent: generic verification that works for any computation doesn't exist.
+Payment and verification are separate.
+A settled x402 payment proves that the payment path accepted the signed payload and settled according to its scheme.
+It does not prove that the transcript is accurate.
 
-**Blueprints don't stop irrational attackers.** Economic security assumes rational actors who won't attack when expected cost exceeds expected benefit. Against adversaries willing to lose their stake, guarantees are weaker.
+## The smallest job-router example
 
-**Blueprints don't eliminate trust entirely.** TEEs trust hardware manufacturers. Multi-party verification trusts that operators aren't colluding. Every mechanism has assumptions.
+The public SDK documents the central route shape as follows:
 
-**Numbers depend on the market.** What does a job cost? What do operators earn? What's the slashing ratio? These are set by blueprint developers and negotiated between operators and customers. The protocol provides the infrastructure; the market determines the prices. Early services will need to discover equilibrium pricing through experimentation.
+```rust
+use blueprint_sdk::Router;
 
-## Real Blueprints
+let router = Router::new()
+    .route(MY_JOB_ID, my_job)
+    .with_context(my_context);
+```
 
-This isn't theoretical. Blueprints in production or development:
+The names in this snippet are placeholders from the documentation’s minimal example.
+In a transcription Blueprint, `MY_JOB_ID` becomes the stable identifier for `transcribe`, `my_job` becomes the handler, and `my_context` can hold resources such as a model client or store.
 
-**MPC Signing (FROST):** Threshold Schnorr signatures where multiple operators cooperate to sign. No single operator can sign alone. Used for custody, bridge validation, any application needing distributed key management.
+The route does four useful things:
 
-**Cross-Chain Infrastructure:** LayerZero DVN and Hyperlane relayer blueprints provide operator infrastructure for cross-chain messaging, with slashing if relayers misbehave.
+- It gives the call a stable address inside the Blueprint.
+- It makes the handler selection explicit.
+- It gives the Runner a place to validate and decode the request.
+- It preserves a boundary where unknown job IDs can be rejected.
 
-**Code Execution:** Secure execution of arbitrary code (Rust, Go, Python, JavaScript) in isolated sandboxes. Serverless functions with operator accountability.
+The route does not encode the entire service.
+It does not publish the container, register an operator, create a Service, charge a customer, or evaluate the transcript.
+Those concerns belong to the surrounding package and protocol configuration.
 
-**AI Agents:** Coinbase AgentKit integration for agents that interact with crypto wallets and execute trades with economic guarantees.
+## Verification methods and their limits
 
-Each represents infrastructure that would traditionally require building and operating your own systems. Blueprints abstract that away.
+Suppose three operators transcribe the same short audio file.
+The Blueprint accepts a result when at least two normalized transcripts agree.
+That rule can detect a disagreement and tolerate one unavailable operator.
+It cannot prove the agreed transcript is correct if all three use the same faulty model or the same corrupted audio file.
 
-## FAQ
+Other verification designs make different tradeoffs:
 
-### What is a blueprint in Tangle?
-A blueprint is a reusable template that defines a type of service: its computation logic, operator registration requirements, verification hooks, and slashing conditions. A single blueprint can power thousands of service instances with different operators and configurations.
+A **zero-knowledge proof**, or **ZK proof**, demonstrates that a formally defined computation satisfied a relation without revealing its private inputs.
+Multi-party computation (MPC) lets several parties compute from split inputs without giving the complete input to one party.
+The [NIST definition of MPC](https://csrc.nist.gov/glossary/term/secure_multi_party_computation) describes the privacy boundary of that computation.
+An **optimistic challenge** accepts a result provisionally and lets a participant dispute it during a defined window.
 
-### How do blueprint developers earn revenue?
-Developers receive a portion of every transaction processed through their blueprint. When customers pay for jobs, the smart contract distributes fees automatically to operators, blueprint developers, delegators, and the protocol treasury.
+| Design | What it can establish | What remains open |
+| --- | --- | --- |
+| Redundant deterministic execution | The required operators produced matching output | Shared bugs and collusion can produce matching wrong output |
+| TEE attestation | An approved measured workload ran in a protected environment | The workload can still implement the wrong algorithm |
+| ZK proof | A formally defined computation satisfied a mathematical relation | The relation may omit the property the customer cares about |
+| Optimistic challenge | An incorrect deterministic result can be challenged during a window | Finality waits, and someone must monitor and challenge |
+| MPC | Parties can compute from split inputs under a threshold assumption | It can be expensive and still needs a correctness rule |
+| Task evaluation | A result passes selected examples, rules, or human review | Unseen cases and evaluator error remain |
 
-### Can AI agents use blueprints autonomously?
-Yes. Agents can discover blueprints via the on-chain registry, evaluate operator stakes and reputation, create service instances, submit jobs, and verify results, all without human intervention. Combined with x402 payments, the entire flow from discovery to settlement is automated.
+A **quorum** is the minimum number or weight of participants whose matching result is accepted.
+A **canary** is a known input used to detect a selected behavior change.
 
-### What verification mechanisms do blueprints support?
-Blueprints support multiple approaches: deterministic output comparison across operators, cryptographic proofs (ZK), TEE attestation, consistency checking, and canary prompts. The developer chooses which mechanisms match their service's trust requirements.
+These terms describe mechanisms, not product guarantees.
+The Blueprint must state which one it uses and which assumptions a customer is expected to accept.
 
-### What happens if an operator fails to deliver?
-The smart contract executes consequences immediately. Verification failure triggers slashing in the same block. There are no lawyers, no arbitration, and no delay. Funds are held in programmable escrow with explicit release conditions.
+## Rewards, stake, and slashing rules
 
-## What's Next
+An operator supplies infrastructure, keys, and availability.
+The service may reward the operator for jobs, require a stake, or apply a slashing rule after a detected violation.
 
-The next post in this series goes deeper on verification: how different blueprints implement different approaches, what the tradeoffs are, and where the hard problems remain unsolved.
+Slashing is not an instant refund button.
+The current public [slashing guide](https://docs.tangle.tools/developers/slashing) describes a proposal, a dispute window, and an executable or cancelled outcome.
+The evidence must be non-zero and the authorization and dispute rules matter.
 
-If you're building agents and want execution guarantees, or building infrastructure and want to reach agent customers, [find us on Discord](https://discord.gg/cv8EfJu3Tn). The intersection of x402 payments and Tangle execution is where agent commerce is heading.
+An economic rule is useful only if the customer can understand the condition that triggers it.
+“Bad output” is too vague for a contract unless the Blueprint defines how to identify the bad output and who may submit evidence.
+An operator may be penalized for a missed heartbeat or a provable protocol violation while a subjective language-quality disagreement remains outside that rule.
 
----
+The cost of verification also belongs in the pricing model.
+Running three copies of a deterministic job can provide redundancy at roughly three execution costs before network and coordination overhead.
+Generating a proof can take longer than running the job.
+Human evaluation can dominate the price even when the compute is cheap.
+The service should expose which layer the customer is paying for.
 
-**Sources:**
-1. x402 Protocol: [Coinbase Developer Docs](https://docs.cdp.coinbase.com/x402/docs/welcome)
-2. OpenClaw agents using x402: [x.com/nedos/status/2018602074397888682](https://x.com/nedos/status/2018602074397888682)
+## Registration, artifact, expiry, payment, and result failures
 
-**Links:**
-- [Discord](https://discord.gg/cv8EfJu3Tn)
-- [Twitter](https://twitter.com/tangle_network)
-- [Docs](https://docs.tangle.tools)
-- [Blueprint SDK](https://github.com/tangle-network/blueprint)
+### An operator registers but never runs
+
+Registration expresses willingness, not successful operation.
+The Blueprint needs health signals, timeouts, and a policy for removing or replacing an unavailable operator.
+
+### An artifact changes under the same label
+
+The caller and operator may disagree about which code is approved.
+Use an immutable digest or versioned release and include it in the service evidence.
+
+### A Service expires with state in use
+
+TTL is a protocol boundary, not a complete data-retention policy.
+Provide an exit path that does not depend on a fresh Job call if the operators may refuse renewal.
+
+### A request is paid twice
+
+Payment settlement and job idempotency are different controls.
+Give each request a correlation identifier and define whether a duplicate returns the original result, creates a second Job, or is rejected.
+
+### Two operators disagree on a non-deterministic result
+
+Do not pretend that string equality is a correctness rule for sampled text.
+Normalize what can be normalized, define acceptable variation, and add a task evaluation for the property the customer values.
+
+### The result is accepted before the work is complete
+
+An enqueued or paid state should not be named `completed`.
+The x402 gateway’s documented `202 Accepted` response is a useful example of keeping those states separate.
+
+## Blueprint fields and protocol responsibilities
+
+A Blueprint carries more than code.
+It is the agreement between developer, operator, and customer about what can be requested, who may run it, which artifact is approved, what evidence is returned, how payment works, and how the Service ends.
+
+Publishing machine-readable schemas, pricing, triggers, completion states, and evidence requirements gives an agent a discoverable callable surface.
+An agent can inspect the job schema and price, select a Service, pay through a machine-readable flow, wait for an explicit completion state, and decide whether the returned evidence satisfies its profile.
+
+Contract events, queryable lifecycle state, and result identifiers can expose those transitions.
+The application still has to define typed results, retry rules, idempotency keys, and terminal error states.
+
+## When a Blueprint fits
+
+A Blueprint is a good fit when the service needs independently operated infrastructure, on-chain lifecycle records, protocol-level payment, custom verification, or an operator set whose membership matters to the customer.
+
+A conventional service is usually better when one company should own the whole path, the input is already trusted to that company, the request is latency-sensitive, and an ordinary contract and audit satisfy the recourse requirement.
+
+Choose a Blueprint when independent operator choice, queryable lifecycle and payment state, result evidence, or slashing recourse addresses the customer’s feared failure; otherwise use the conventional service.
+
+
+## What is a Blueprint in Tangle?
+
+A Blueprint is a reusable service template that describes executable artifacts, jobs, schemas, metadata, triggers, and optional protocol logic.
+Operators run it, and customers create configured Services from it.
+
+## What is a Service?
+
+A Service is one live or configured instance of a Blueprint.
+It has an owner, an operator set, payment terms, configuration, and lifecycle state.
+
+## What is an operator?
+
+An operator is the party that registers to run a Blueprint, fetches its artifacts, executes assigned Jobs, and returns results.
+An operator can use cloud or bare-metal infrastructure while following the Blueprint’s published execution policy.
+
+## What does the Blueprint Runner do?
+
+The Blueprint Runner is the job-execution process that receives calls, passes them through a job router, invokes handlers, and sends results to consumers or protocol clients.
+
+## Is a Blueprint a smart contract?
+
+No.
+A Blueprint usually includes off-chain executable code and may connect to a smart-contract manager for registration, service creation, payment, verification, or slashing rules.
+The application logic normally runs on operator infrastructure.
+
+## Does a Blueprint verify every result automatically?
+
+No.
+The developer must define a result rule that matches the job.
+The rule might compare deterministic outputs, check a proof, validate an attestation, or run a task evaluation.
+
+## Can an AI agent call a Blueprint?
+
+Yes, if the Blueprint exposes a trigger and schema the agent can use.
+The agent can call a normal HTTP path, a webhook, an on-chain job, or an optional x402-paid gateway.
+It should distinguish payment accepted, job enqueued, job completed, and result evaluated.
+
+## Public sources
+
+Read the [Tangle Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) for the object model and roles.
+Read the [Blueprint Manager guide](https://docs.tangle.tools/developers/blueprints/manager) for the operator lifecycle.
+Read the [job-router reference](https://docs.tangle.tools/developers/blueprint-runner/routers) for job dispatch.
+Read the [x402 gateway guide](https://docs.tangle.tools/developers/blueprint-runner/x402) for paid job ingress and its `202 Accepted` semantics.
+Read the [Tangle CLI reference](https://docs.tangle.tools/developers/cli/tangle) and the [Blueprint SDK repository](https://github.com/tangle-network/blueprint) for current commands, code, examples, and release versions.
+
+Once the lifecycle is clear, the next design question is which verification mechanism belongs on each Job.
+That is the subject of [How Tangle Verifies Work](/blog/how-tangle-verifies-work).

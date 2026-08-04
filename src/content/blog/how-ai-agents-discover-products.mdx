@@ -16,72 +16,298 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. AI agents discover products by reading the same durable surfaces a careful engineer would check first: `/llms.txt`, `/.well-known/*` manifests, OpenAPI files, scoped package metadata, health endpoints, and README install blocks. For Tangle, the safe path is explicit: start at [llms.txt](https://tangle.tools/llms.txt), read the product manifest, use scoped packages only, then run a non-mutating smoke call before generating integration code. That is agent SEO: not keyword stuffing, but making the product easy for a coding agent to verify without guessing.
+An engineer asks a coding agent to add model routing to a service.
+The agent finds a polished product page, a short package name, three possible endpoints, and no clear statement about which request is safe to send first.
+It can produce an integration that looks finished while installing the wrong package or sending a credential to the wrong host.
 
-The mistake is treating agents like search crawlers with a different user agent. A search crawler can rank a page from prose. A coding agent has to decide whether it can call an API, install a package, route a model request, or launch a sandbox without breaking the user's environment.
+AI agents discover products by following a chain of durable, machine-readable surfaces.
+The chain normally includes a human-readable index, a product manifest, an API description, a scoped package, and a read-only health or catalog call.
+The agent should be able to say what it found, which action it took, and which claim remains untested before it writes integration code.
 
-## The Discovery Contract
+That is the practical meaning of agent SEO: publishing a product so software can discover, verify, install, and call it without guessing.
+Search visibility still matters for people, but an agent needs a contract it can execute.
 
-A good agent-facing product surface answers five questions quickly:
+## The product page is only the first clue
 
-| Question | Durable surface |
+A search crawler can index a paragraph that says “fast model routing for agents.”
+A coding agent has to answer harder questions before that sentence becomes useful:
+
+- Which package belongs in this repository?
+- Which base URL serves the API?
+- Which authentication header does it require?
+- Which endpoint can be called without changing state?
+- What does a successful response prove?
+- What happens when the service is paid, unavailable, or only partially supported?
+
+Suppose the requested integration is Tangle Router, a service that accepts a stable model-request format and chooses a provider or model route.
+The agent needs to know that the [Tangle Router manifest](https://router.tangle.tools/.well-known/tangle-agent.json) names `@tangle-network/tcloud`, points to an OpenAI-compatible API, and lists `/api/health`, `/api/status`, and `/v1/models` as safe discovery calls.
+It should learn those facts from the product’s public surfaces rather than infer them from a blog post.
+
+The same pattern applies to an isolated workspace, a browser driver, or a paid service.
+The product name is an entry point.
+The install command, request shape, permission boundary, and observable result are the product contract an agent can use.
+
+## Five surfaces make a product legible
+
+The following table is a useful minimum for an agent-facing service.
+
+| Question | Surface | What the agent can do with it |
+| --- | --- | --- |
+| What is this? | `llms.txt`, product docs, and a stable homepage | Build a short map of the product and its intended use |
+| Which machine-readable contract applies? | `/.well-known/` manifest | Read package names, auth variables, endpoints, and safe calls |
+| What is the request and response shape? | OpenAPI or another typed specification | Generate code without inventing fields or paths |
+| What should be installed? | Scoped npm, Python, or other package metadata | Avoid name collisions and copy the canonical install command |
+| Is the service answering now? | Health, status, or read-only catalog endpoint | Test liveness before attempting a write or a paid call |
+
+Each surface has a different job.
+An OpenAPI document can describe a `POST` body precisely, but it does not tell the agent whether the request spends money.
+A health endpoint can report that a server is alive, but it does not prove that a model route is available to the caller.
+A README can show a complete example, but it can become stale unless the package and manifest point to the same versioned contract.
+
+### `llms.txt` is a map, not an API
+
+The [`llms.txt` proposal](https://llmstxt.org/) describes a convention for giving language models a concise map of important pages.
+It is useful at the start of discovery because it reduces the number of pages an agent has to search.
+It is not a substitute for an API specification, authentication documentation, or a live request.
+
+Tangle’s public [`llms.txt`](https://tangle.tools/llms.txt) names the Sandbox, Router, Browser Agent, evaluation package, and Blueprint deployment surfaces.
+It also warns agents to install scoped packages instead of unrelated unscoped packages with similar names.
+That warning is a small piece of documentation with a real operational effect.
+
+### A manifest turns prose into fields
+
+The [well-known URI pattern in RFC 8615](https://www.rfc-editor.org/rfc/rfc8615) gives a site a conventional place for metadata that software can retrieve.
+Tangle uses that pattern for product manifests.
+
+The current [Sandbox manifest](https://sandbox.tangle.tools/.well-known/tangle-agent.json) includes fields like these:
+
+```json
+{
+  "name": "Tangle Sandbox",
+  "npm": "@tangle-network/sandbox",
+  "install": ["npm install @tangle-network/sandbox"],
+  "environment": {"api_key": "TANGLE_API_KEY"},
+  "safe_discovery_calls": [
+    "GET /health",
+    "GET /v1/public-templates"
+  ]
+}
+```
+
+This is a selected excerpt of the public shape, not a replacement for the live manifest.
+The important fields are explicit: package, credential name, and calls that do not create a workspace.
+An agent can use them to form a plan and can quote the manifest URL in its integration notes.
+
+### OpenAPI constrains endpoint invention
+
+[OpenAPI](https://spec.openapis.org/oas/latest.html) describes HTTP paths, parameters, request bodies, responses, and authentication schemes in a format tools can parse.
+Tangle Router publishes an [OpenAPI document](https://router.tangle.tools/openapi.json) with public health and model-listing paths plus the authenticated chat-completions path.
+
+The agent should still treat the document as a description rather than proof of behavior.
+It can validate the JSON shape against the specification, then make a safe request and record the response status.
+The two checks answer different questions.
+
+## Give each fact one source of truth
+
+An agent becomes cautious when two public surfaces disagree.
+It should not average the conflict or choose the page with the more confident wording.
+Give each integration fact a canonical source and publish a retrieval date or version where the value changes.
+
+| Fact | Canonical source | Safe fallback when it conflicts |
+| --- | --- | --- |
+| Package name and install command | Product manifest or package metadata | Stop and ask for a maintainer-approved package name |
+| Base URL and authentication variable | Manifest and OpenAPI security scheme | Do not send a credential until the two sources agree |
+| Request and response fields | OpenAPI or versioned SDK types | Generate a fixture from the specification and reject unknown fields |
+| Liveness call | Manifest safe-call list | Use only a documented read-only endpoint |
+| Price and payment network | Live price endpoint and payment contract | Treat a stale page as a discovery failure, not a quote |
+| Result meaning | Job documentation and response schema | Report the observed status without calling it success |
+
+For example, a README may show `https://api.example.test`, while the manifest names `https://router.example.test`.
+The agent should record both URLs, stop before authentication, and report the conflict with their retrieval times.
+Installing a package or sending a request first makes the integration harder to unwind and destroys the value of a safe discovery phase.
+
+This rule also helps product teams maintain the surfaces.
+When an endpoint moves, update the manifest, OpenAPI document, package example, and health check in one change.
+When a fact cannot be kept synchronized, remove it from the surface that cannot promise freshness.
+
+## A worked discovery run
+
+Imagine a clean application repository with this request:
+
+> Add a model-routing client, but do not send a paid or authenticated request until the endpoint and package are verified.
+
+A careful agent can follow this order:
+
+1. Read the root [`llms.txt`](https://tangle.tools/llms.txt) and identify the Router surface.
+2. Open the Router manifest and record its package, base URL, auth variable, and safe calls.
+3. Open the OpenAPI document and confirm that `GET /v1/models` exists.
+4. Install `@tangle-network/tcloud` rather than an unscoped package named `tcloud`.
+5. Call the public health and model-listing endpoints.
+6. Ask for a credential or human approval only when the requested feature needs an authenticated completion.
+
+The discovery reads, package install, and safe requests can be reproduced from a terminal without a product checkout or a customer account:
+
+```bash
+curl -fsS https://tangle.tools/llms.txt
+curl -fsS https://tangle.tools/.well-known/tangle-agent.json
+curl -fsS https://router.tangle.tools/.well-known/tangle-agent.json
+curl -fsS https://router.tangle.tools/openapi.json
+npm install @tangle-network/tcloud
+curl -fsS https://router.tangle.tools/api/health
+curl -fsS https://router.tangle.tools/v1/models
+```
+
+The Router health response is a liveness signal.
+The model list is a capability catalog that can change as operators and provider routes change.
+Neither call authorizes a chat completion or guarantees that a chosen model will remain routeable later.
+
+The same sequence works for Sandbox and Browser Agent:
+
+```bash
+npm install @tangle-network/sandbox
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+curl -fsS https://sandbox.tangle.tools/health
+curl -fsS https://tangle.tools/.well-known/tangle-browser-agent.json
+```
+
+The Browser Agent manifest identifies the package, the `bad` command, the required provider-key names, and safe help commands.
+The [`@tangle-network/browser-agent-driver` README](https://github.com/tangle-network/browser-agent-driver) documents the same `PlaywrightDriver` and `BrowserAgent` exports used by its SDK example.
+
+## Tangle terms an agent must not guess
+
+Discovery becomes unreliable when product nouns are left undefined.
+Tangle uses a few terms that describe different layers of a service.
+
+| Term | Plain-language meaning | Discovery consequence |
+| --- | --- | --- |
+| **Blueprint** | A reusable template for a service, including its jobs, inputs, outputs, and runtime artifacts | Read the Blueprint metadata before choosing a running service |
+| **Service** | A live instance of a Blueprint with its own configuration and operators | The service is the callable instance |
+| **Job** | One callable unit of work inside a service | The job schema and side effects belong in the API contract |
+| **Operator** | The person or team running the service instance | Availability, pricing, and execution evidence can depend on the operator |
+| **Router** | A service that accepts a stable model-request format and selects a provider or model route | The route is a runtime choice, not necessarily the model name in the product title |
+| **Agent profile** | A versioned bundle of model choice, tools, permissions, resource limits, and budget | The same job can behave differently under different profiles |
+| **Trace** | The record of one run, including inputs, actions, results, errors, and identifiers | A discovery smoke test can be replayed or diagnosed instead of summarized from memory |
+
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) defines a Blueprint as a service template, a Service as a running instance, and a Job as a callable unit.
+It also explains that operators run the off-chain software while Tangle tracks service and lifecycle information.
+
+If a product advertises a paid job, it should define **x402** before asking an agent to call it.
+x402 is an open protocol that uses HTTP `402 Payment Required` to return payment requirements, then accepts a signed payment payload on a retry.
+The [x402 flow documentation](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) describes the request, payment, verification, settlement, and response sequence.
+A paid endpoint is not a safe discovery call merely because it uses HTTP.
+
+If a product advertises **attestation**, it should state what that term covers.
+A TEE attestation is signed evidence from a trusted execution environment about code or hardware state.
+It can narrow uncertainty about where code ran.
+It does not prove that the service’s answer is correct, and the [Tangle attestation guide](/blog/tee-attestation-ai-services) explains that boundary.
+
+## Turn discovery into a portable profile
+
+After reading the public surfaces, an agent can create a small integration profile for the rest of the task.
+The profile should contain facts and their sources, rather than a copied marketing paragraph.
+
+```json
+{
+  "product": "Tangle Router",
+  "manifest": "https://router.tangle.tools/.well-known/tangle-agent.json",
+  "package": "@tangle-network/tcloud",
+  "baseUrl": "https://router.tangle.tools",
+  "auth": "Authorization: Bearer ${TANGLE_API_KEY}",
+  "safeCalls": ["GET /api/health", "GET /api/status", "GET /v1/models"],
+  "writeBoundary": "POST /v1/chat/completions requires authentication"
+}
+```
+
+This profile is illustrative application data.
+It is not a Tangle API object, and it should be regenerated or checked when the manifest changes.
+Its value is that every later decision can point back to a URL and a field.
+
+An agent profile also makes a useful boundary for teams.
+One profile can permit public model discovery with no credential.
+Another can add an authenticated model route, a per-request budget, and a tool policy.
+The profile must not silently grant permissions that the discovery documents never described.
+
+## Discovery is verification in miniature
+
+An **evaluation**, or eval, is a repeatable test that runs a system against defined cases and checks its outputs against explicit criteria.
+For product discovery, the cases can be “identify the package,” “find the health endpoint,” “reject an unscoped package,” and “stop before a paid call.”
+
+The run should leave a **trace** with the product URL, manifest version or retrieval time, package name, commands or requests, status codes, and stop reason.
+That record makes a failed integration diagnosable.
+
+| Failure | Evidence that identifies it | Correct response |
+| --- | --- | --- |
+| Similar package installed | Package name and registry metadata | Remove the ambiguous dependency and use the scoped package |
+| Endpoint invented | OpenAPI path and request log | Fix the integration before adding credentials |
+| Health passed but workload failed | Health response and authenticated error are separate trace events | Treat liveness and capability as different checks |
+| Paid route called too early | Payment challenge or settlement record | Move the route behind explicit authorization |
+| Manifest and README disagree | URLs, retrieval times, and package version | Publish one canonical contract and link to it |
+
+The distinction matters for Tangle’s own products.
+The [AI agent sandbox](/blog/ai-agent-sandbox) needs a workspace test after discovery.
+The [Router guide](/blog/openai-compatible-routers-for-agents) needs an authenticated model request after `/v1/models`.
+The [paid service guide](/blog/deploy-paid-ai-agent-service) needs payment, execution, and result checks after the service is discoverable.
+
+## Make the handoff inspectable
+
+Discovery usually ends when a coding agent hands an integration to an application or another engineer.
+The handoff should carry the facts that shaped the decision and the facts that remain unknown.
+
+| Handoff field | Example |
 | --- | --- |
-| What is this product? | `/llms.txt` and product docs |
-| What can I call safely? | manifest `safe_discovery_calls` |
-| What is the API shape? | OpenAPI |
-| What package should I install? | scoped npm/PyPI/package README |
-| How do I verify it is alive? | health endpoint or read-only list endpoint |
+| Product and surface | Tangle Router manifest retrieved at a recorded time |
+| Package | `@tangle-network/tcloud` from the scoped package metadata |
+| Safe checks completed | Router health and public model listing returned responses |
+| Authentication boundary | Chat completion requires the documented bearer key |
+| First write or paid action | Authenticated completion, deferred until approval |
+| Uncertainty | Model availability, price, and output quality remain workload questions |
 
-For Tangle, that means linking the same surfaces from docs, blog posts, package READMEs, and manifests. The current entry points are [Tangle Sandbox](https://github.com/tangle-network/tcloud), [Browser Agent](https://github.com/tangle-network/browser-agent-driver), and [Blueprint Agent](https://github.com/tangle-network/blueprint-agent).
+This small record keeps discovery from being repeated in every integration and keeps an untested claim from becoming a comment that nobody revisits.
+It also gives the product team a concrete maintenance target: when the package, URL, or safe call changes, the handoff and its source should change together.
 
-## Safe Smoke Calls
+## What discovery cannot tell you
 
-Agents should start with read-only checks:
+A manifest cannot tell you whether the next deployment will preserve the same latency or price.
+An OpenAPI file cannot tell you whether a model output is accurate.
+A package name cannot tell you whether its default permissions are appropriate for a customer’s data.
+A health endpoint cannot tell you whether an operator will finish a long job.
 
-Begin with the public discovery documents linked below. A machine-readable manifest, an API description, and a health result give an agent enough information to decide whether to continue.
+Those questions belong to workload tests, operational monitoring, and product-specific evaluations.
+Discovery removes ambiguity at the boundary where an agent decides what to try.
+It does not replace testing the user’s required behavior.
 
-The root `llms.txt` tells agents not to install unscoped packages named `tcloud` or `bad`. It points to `@tangle-network/tcloud`, `@tangle-network/sandbox`, and `@tangle-network/browser-agent-driver`. That small instruction prevents a real class of agent mistakes: installing the wrong package because a short binary name looked plausible.
+## The decision for product builders
 
-## What To Publish For Agent Retrieval
+Give a fresh coding agent one product task and observe its first five actions.
+The discovery surface is ready when the agent can identify the right package, read the request shape, run a non-mutating check, name the authentication or payment boundary, and report what remains unverified.
 
-Use `llms.txt` for human-readable routing. Use manifests for machine-readable product contracts. Use OpenAPI for request and response structure. Use package metadata for install commands. Use health endpoints for current liveness.
+If it guesses a package, fabricates an endpoint, or spends money before a safe call, fix the public contract before adding more prose.
+The best next edit is usually a stable manifest field, an exact install command, a public OpenAPI URL, or a read-only endpoint with a documented response.
 
-This pattern is used beyond Tangle. The same pattern lines up with the [llms.txt proposal](https://llmstxt.org/), the [OpenAPI specification](https://spec.openapis.org/oas/latest.html), npm package metadata and README conventions in the [npm docs](https://docs.npmjs.com/cli/v11/commands/npm-view), and the well-known URI pattern in [RFC 8615](https://www.rfc-editor.org/rfc/rfc8615).
 
-## Decision Test
+## How do AI agents discover products?
 
-Ask a coding agent to integrate the product from a clean repo and watch the first five actions. If it guesses package names, invents endpoints, or writes authenticated code before a health check, the discovery surface is weak. If it reads `llms.txt`, opens a manifest, checks OpenAPI, installs a scoped package, and runs a safe call, the surface is doing real work.
+AI agents discover products by reading stable documentation, `llms.txt` indexes, well-known manifests, OpenAPI specifications, scoped package metadata, and safe live endpoints.
+They then use those sources to decide whether an installation or API call is allowed.
 
-The highest-use edits are usually boring:
+## What is agent SEO?
 
-| Weak surface | Better surface |
-| --- | --- |
-| marketing claim | exact manifest URL |
-| "install the SDK" | scoped package install command |
-| docs home only | OpenAPI plus safe endpoints |
-| hidden auth model | named env var and bearer header |
-| broad CTA | first smoke call |
+Agent SEO is the practice of making a product easy for software to discover, verify, install, cite, and call through durable machine-readable surfaces.
+It complements human search optimization and does not mean adding more keywords to a page.
 
-## What This Does Not Solve
+## Is `llms.txt` enough for an AI agent?
 
-Discovery does not prove product quality. A manifest can say the API exists; the agent still has to run a smoke call. An OpenAPI file can define a path; the agent still needs auth and rate limits. A README can publish an install command; the agent still has to choose the scoped package and pin the version when the host project requires reproducibility.
+No.
+`llms.txt` helps an agent find the right pages, while manifests, OpenAPI, package metadata, authentication details, and safe calls describe and test the product.
 
-Use discovery surfaces to remove ambiguity. Use tests, traces, and health checks to prove behavior.
+## Why should AI agents use scoped packages?
 
-## Start Here
+Scoped packages reduce name collisions and give an agent a publisher boundary it can inspect.
+For Tangle, the intended package is `@tangle-network/sandbox`, not an unrelated package that happens to use the word `sandbox`.
 
-Read [Tangle's `llms.txt`](https://tangle.tools/llms.txt), then call one safe endpoint before writing integration code. For model routing, start with [OpenAI-compatible routers for agents](/blog/openai-compatible-routers-for-agents). For runtime work, start with [AI agent sandbox](/blog/ai-agent-sandbox).
+## Does discovery prove a product is trustworthy?
 
-## FAQ
-
-### What is agent SEO?
-
-Agent SEO is the work of making a product easy for AI agents to discover, verify, cite, install, and call through stable machine-readable surfaces.
-
-### Is llms.txt enough for AI agents?
-
-No. `llms.txt` is a useful entry point, but agents also need manifests, OpenAPI files, package metadata, health URLs, and safe smoke calls.
-
-### Why does Tangle use scoped packages?
-
-Scoped packages reduce ambiguity. An agent should install `@tangle-network/sandbox`, not an unrelated unscoped package with a similar name.
+No.
+It proves that the product publishes a contract the agent can inspect.
+Trust still depends on execution evidence, security policy, operator behavior, payment rules, and result evaluation.

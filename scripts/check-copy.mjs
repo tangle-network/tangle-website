@@ -45,10 +45,8 @@ if (!existsSync(ROOT)) {
   process.exit(2);
 }
 
-// Resolve API key + endpoint. Prefer COPY_AUDIT_API_KEY if set, else
-// fall back through router → direct OpenAI. The router's free tier is
-// 5 calls/day per key — fine for single-page audits, hits the wall on
-// full-site sweeps. Direct OpenAI bypasses the router entirely.
+// Resolve API key + endpoint. Prefer COPY_AUDIT_API_KEY if set, then a
+// company router key, and only then a direct provider key.
 let API_KEY = process.env.COPY_AUDIT_API_KEY;
 let API_BASE = process.env.COPY_AUDIT_API_BASE;
 
@@ -77,18 +75,30 @@ if (!API_KEY) {
   }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
-  // Gemini supports the OpenAI chat-completions shape and avoids the router's
-  // low daily free-tier limit during full-site checks.
   try {
-    const k = execSync(`dotenvx get GOOGLE_AI_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+    const k = execSync(`dotenvx get TANGLE_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
     if (k) {
       API_KEY = k;
-      API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
-      MODEL ??= 'gemini-3-flash';
+      API_BASE = 'https://router.tangle.tools/v1';
+      MODEL ??= 'gpt-5.6-luna';
     }
   }
   catch {
     // ignore
+  }
+  // Direct providers remain fallbacks for environments without a company key.
+  if (!API_KEY) {
+    try {
+      const k = execSync(`dotenvx get GOOGLE_AI_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
+      if (k) {
+        API_KEY = k;
+        API_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai';
+        MODEL ??= 'gemini-3-flash';
+      }
+    }
+    catch {
+      // ignore
+    }
   }
   if (!API_KEY) {
     try {
@@ -162,9 +172,11 @@ function extractCopy(html) {
     .replace(/<svg[\s\S]*?<\/svg>/gi, '')
     .replace(/<head[\s\S]*?<\/head>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\/(?:th|td)>/gi, ' | ')
+    .replace(/<\/tr>/gi, '\n')
     .replace(/<\/(p|h[1-6]|li|div|section|article|header|footer)>/gi, '\n')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -178,7 +190,7 @@ function extractCopy(html) {
 }
 
 // ─── LLM rubric ──────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a senior staff engineer auditing marketing-page copy for a developer-tool company. You have ZERO tolerance for AI slop. Your standard is Linear, Vercel, and Stripe — every sentence earns its place.
+const MARKETING_SYSTEM_PROMPT = `You are a senior staff engineer auditing marketing-page copy for a developer-tool company. You have ZERO tolerance for AI slop. Your standard is Linear, Vercel, and Stripe — every sentence earns its place.
 
 You will be given the visible copy from one page. Score it 1–10 on the strict rubric below and emit a single JSON object. Do not include any other prose.
 
@@ -211,10 +223,43 @@ OUTPUT (JSON only):
   "wins": ["<phrase that's actually sharp, ≤80 chars>"]
 }`;
 
+const BLOG_SYSTEM_PROMPT = `You are a senior technical editor reviewing a public engineering article for Tangle. The reader has never heard of Tangle or its products. Judge the article as an expert technical blog, not as a landing page, product page, reference manual, tweet thread, or academic paper.
+
+Read the complete article. Score it from 1–10 and emit one JSON object with no surrounding prose. A 7 is publishable, 8 is strong, 9 is exceptional, and 10 is rare. Score the article holistically; do not subtract points mechanically for every sentence you could tighten.
+
+RUBRIC:
+
+1. STORY AND USEFULNESS: The opening presents a concrete reader problem or scene. The article develops one coherent argument, supplies enough context to stand alone, and ends with a practical decision. Penalize disconnected facts, generic listicles, repeated summaries, and documentation dumps.
+
+2. ZERO-CONTEXT CLARITY: Define Tangle-native and technical terms before relying on them. Necessary inline definitions are a strength, not bloat. Penalize repeated glossary entries, unexplained insider language, and definitions that interrupt the story without helping the reader.
+
+3. TECHNICAL DEPTH: Reward worked examples, current public code or API shapes, state models, calculations, traces, tables, and failure investigations. Long articles of roughly 2,000–4,500 words are appropriate when each section advances the argument. Do not penalize length by itself.
+
+4. CLAIM AND EVIDENCE HYGIENE: Important claims name a mechanism, public primary source, measured conditions, or explicit limitation. Teaching examples are clearly illustrative. Penalize invented results, unsupported superlatives, private implementation details, local paths, commit archaeology, and author-side repository commands.
+
+5. HUMAN PROSE: Penalize clipped tweet-thread cadence, canned transitions, ritual FAQs, fake quotations, throat-clearing, repeated heading templates, hollow adjectives, marketing clichés, and conclusions that merely restate the introduction. Do not penalize an occasional short sentence, numbered procedure, or descriptive heading that genuinely helps.
+
+6. PRODUCT BOUNDARIES: The article distinguishes protocol state, payment, execution, traces, evaluations, attestation, and result quality. It never implies that payment, a TEE, a model, an operator, or Tangle proves correctness beyond the evidence described.
+
+7. SEARCH AND ANSWER QUALITY: The reader's likely query is answered naturally in the title, opening, and descriptive headings. Direct question headings are useful when they answer distinct intent. Penalize keyword stuffing and generic FAQ scaffolding.
+
+8. RENDERED COPY: Treat table rows separated by pipes as real tables and code or CLI examples as technical artifacts. The public Tangle Browser Agent CLI is genuinely named "bad"; do not flag that executable as a typo. Do not invent truncation, malformed formatting, or missing sections when the supplied article reaches the END marker.
+
+OUTPUT (JSON only):
+{
+  "score": <1-10 integer>,
+  "verdict": "<one-sentence holistic take>",
+  "deductions": [
+    {"category": "story|jargon|claim|evidence|structure|style|boundary|search|other", "phrase": "<offending text, ≤80 chars>", "fix": "<concrete rewrite suggestion, ≤120 chars>"}
+  ],
+  "wins": ["<specific strength, ≤80 chars>"]
+}`;
+
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function auditPage(label, copy, attempt = 1) {
-  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy.slice(0, 12000)}\n=== END ===`;
+  const userMessage = `Page: ${label}\n\n=== COPY ===\n${copy}\n=== END ===`;
+  const systemPrompt = label.startsWith('/blog/') ? BLOG_SYSTEM_PROMPT : MARKETING_SYSTEM_PROMPT;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`copy auditor timed out after ${AUDITOR_TIMEOUT_MS}ms`)), AUDITOR_TIMEOUT_MS);
 
@@ -230,7 +275,7 @@ async function auditPage(label, copy, attempt = 1) {
       body: JSON.stringify({
         model: MODEL,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
         ],
         response_format: { type: 'json_object' },

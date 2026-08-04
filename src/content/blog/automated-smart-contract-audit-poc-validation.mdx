@@ -1,10 +1,9 @@
 ---
-title: 'Automated Smart Contract Audit: Prove Every Finding'
+title: 'Automated Smart Contract Audit: Prove High-Severity Findings'
 slug: automated-smart-contract-audit-poc-validation
 summary: >-
-  Require every high-severity smart contract finding to include a test,
-  simulation, trace, or exploit. Separate confirmed bugs from scanner
-  hypotheses.
+  An automated smart contract audit should validate high-severity findings with
+  a test, simulation, trace, or proof of concept before assigning severity.
 date: '2026-06-17'
 updated: '2026-08-01'
 author: Drew Stone
@@ -19,116 +18,334 @@ heroImage: /images/covers/editorial/code-auditor-v2.webp
 imageAlt: 'An editorial still life about reviewing code and producing evidence'
 ---
 
-A trace is the record of an agent run, including its actions and results. An automated smart contract audit is useful when automation produces proof, not a long list of pattern matches.
-For every high-severity finding, require the affected code, exploit preconditions, a reproduction command, the observed state change, and a regression test for the fix.
-Anything less should remain a hypothesis for review.
+A report says “critical reentrancy” in a vault that holds user funds.
+The reviewer can see the flagged external call, but the report does not show a caller, a transaction sequence, or a balance change.
 
-Tangle does not currently offer a public automated smart contract audit product.
-This article defines the evidence standard such a system should meet and can be applied to EVM, Solana, Move, and zero-knowledge codebases.
+The release risk is an unproven claim about code that can move money or change permissions.
+An **automated smart contract audit** should stop at that point and ask for proof.
+A smart contract is a program whose state and callable functions are exposed through a blockchain execution environment.
+For Ethereum-compatible contracts, that environment is the Ethereum Virtual Machine, or EVM.
 
-## PoC Validation Bar
+A **proof of concept**, often shortened to PoC, is a small demonstration that a claimed behavior can occur under stated conditions.
+A **trace** is the ordered record of calls, inputs, outputs, and state changes during one execution.
+The PoC shows the behavior; the trace shows how the behavior happened.
 
-| Claim | Better evidence |
-| --- | --- |
-| reentrancy | failing test or trace showing reentry before state update |
-| oracle manipulation | price path and profitable state transition |
-| access control bug | unauthorized caller succeeds in a test |
-| accounting drift | invariant test or balance mismatch |
-| signature issue | forged or replayed signature path |
-| upgrade risk | admin path and impact on funds or permissions |
+For a high-severity contract finding, require the affected code, exploit preconditions, a reproducible test or simulation, the observed state change, and a regression test for the fix.
+Anything short of that remains a candidate for review.
+A threat model states which attackers, assets, permissions, and execution paths the review covers.
 
-The Ethereum docs maintain a useful baseline on [smart contract security](https://ethereum.org/developers/docs/smart-contracts/security/), but each protocol needs repo-specific validation.
+This article defines the evidence standard for the Code Auditor direction described by Tangle.
+It does not claim that Tangle currently offers a public contract-audit endpoint.
 
-## Stack-Specific Sandboxes
+## Start with the state transition, not the label
 
-An automated audit system should run the target stack in a disposable workspace with explicit network, secret, and time limits.
+Here is a small Solidity example.
+Solidity is the programming language used to write many Ethereum-compatible contracts.
+It is a teaching contract with no deposit function or deployment configuration, so it is not a complete vault.
 
-| Stack | Typical checks |
-| --- | --- |
-| EVM Foundry | `forge test`, invariant tests, traces, static tools |
-| EVM Hardhat | unit tests, deployment scripts, TypeScript checks |
-| Solana Anchor | `anchor test`, account constraint review |
-| Move Aptos/Sui | move tests and ability/resource checks |
-| zk circuits | constraint tests and proof generation paths |
+```solidity
+pragma solidity ^0.8.0;
 
-Tangle's Code Auditor direction uses capability-specific sandboxes so the coordinator can hand work to the right toolchain.
+contract Vault {
+    mapping(address => uint256) public credit;
 
-## Report Shape
+    function withdraw() external {
+        uint256 amount = credit[msg.sender];
+        require(amount > 0, "no credit");
 
-```text
-finding
--> affected code
--> exploit preconditions
--> proof command or test
--> observed result
--> impact
--> fix recommendation
--> residual risk
+        (bool sent, ) = payable(msg.sender).call{value: amount}("");
+        require(sent, "send failed");
+
+        credit[msg.sender] = 0;
+    }
+}
 ```
 
-For general audit quality, read [AI Security Audit With Reproducible Findings](/blog/ai-security-audit-reproducible-findings). For agent runtime boundaries, read [AI Code Audit With Sandboxed Agents](/blog/ai-code-audit-sandboxed-agents).
+The suspicious order is visible in the source.
+The contract calls an address controlled by the caller before reducing the caller’s recorded credit.
 
-## Contract-Specific Checks
+The [Solidity security considerations](https://docs.solidity.org/en/latest/security-considerations.html) explain why an external call can hand control to another contract and describe the checks-effects-interactions pattern.
+That pattern performs precondition checks first, writes the contract’s state second, and calls another contract last.
 
-Smart contract findings should be tied to state transitions.
+The scanner has done useful work by pointing at the order.
+The audit still needs to answer whether the caller can receive the call, enter **withdraw** again, and make the final state violate the intended accounting rule.
 
-| Check | Evidence |
-| --- | --- |
-| authorization | unauthorized caller can or cannot reach the sensitive action |
-| accounting | balances, shares, and reserves stay consistent |
-| liquidation or oracle path | price source, timing, and profit path are shown |
-| upgradeability | admin powers and implementation changes are explicit |
-| reentrancy | callback path reaches vulnerable state before update |
-| signature replay | domain, nonce, chain, and signer checks are verified |
+A contract finding should name the invariant that failed.
+An invariant is a condition that should remain true across valid state transitions, such as “the amount paid to a caller does not exceed that caller’s recorded credit.”
 
-The audit agent should prefer a small number of validated findings over a long report of possible bug classes. A single failing Foundry test or Anchor test is more valuable than ten paragraphs of speculation.
+The evidence chain for the example looks like this:
 
-## Pre-Audit Use
+| Step | Question | Example evidence |
+| --- | --- | --- |
+| Pattern | Is there an external call before the accounting update? | Source location and static-analysis rule |
+| Preconditions | Can the caller create credit and supply a callback-capable address? | Setup code, caller identity, and initial balances |
+| Execution | Does the callback re-enter before the first call finishes? | Test output and call trace |
+| Impact | Does the final balance violate the accounting rule? | Before-and-after state values |
+| Repair | Does the same attack fail after the patch? | Regression test against the changed contract |
 
-Automated audit is most useful before formal review when it turns confirmed issues into regression tests and focused notes for human auditors.
+“Critical” belongs after this chain, not before it.
 
-```text
-run automated audit
--> fix validated highs and mediums
--> turn PoCs into tests
--> rerun audit
--> send cleaner repo to human reviewers
+## Separate code reachability from economic impact
+
+A contract can contain a dangerous-looking path without exposing a valuable asset under the current state.
+The audit should report those facts separately.
+
+For example, a callback may re-enter a withdrawal function in a local test while the deployed contract has no balance, the relevant function is disabled, or an **upgrade authority**, the account or process allowed to change the contract implementation, has already done so.
+Those conditions do not erase the code defect, but they change the impact claim for the reviewed deployment.
+
+Use a proof ladder that keeps each step visible:
+
+| Proof level | What it establishes | What it leaves open |
+| --- | --- | --- |
+| Static match | The source resembles a known risky pattern | Whether a caller reaches the path |
+| Reachability test | A caller can invoke the relevant function | Whether the claimed state change occurs |
+| Behavioral PoC | The function produces the suspected bad transition | Whether the affected asset has meaningful value in deployment |
+| Economic simulation | The transition can move value or permissions under stated state | Other markets, block timing, and external services |
+| Patched regression | The same proof fails after the change | Unrelated entry points and future upgrades |
+
+The report should stop calling a claim confirmed when it has reached only the first level.
+It should also avoid collapsing all later levels into one severity number.
+An access-control defect that exposes an administrator function and a rounding defect that changes one user’s share may both be reproducible while requiring different review paths.
+
+For a deployed protocol, include the relevant addresses and configuration in a private review record, then publish only the safe evidence needed for the engineering decision.
+The public article can show a local contract and a redacted state transition without exposing a live target.
+
+This separation is useful for automated triage.
+The agent can ask whether the code path is reachable, whether the state transition violates an invariant, and whether the deployment conditions make the transition consequential.
+The human reviewer can then decide whether the stated severity reflects the current release or a future configuration.
+
+## A PoC should be small enough to inspect
+
+The best proof is often a narrow test rather than a large exploit script.
+The test should isolate the suspected behavior, use fake funds or a local blockchain instance, and assert the state change that makes the issue important.
+
+The following pseudocode shows the shape without pretending to be a drop-in project test.
+Assume the test fixture exposes a test-only seed helper for the initial credit and that the local vault starts with 20 ether.
+
+```solidity
+function testReentryChangesCreditBeforeTheFix() public {
+    address attacker = address(new ReentrantReceiver(vault));
+    vm.deal(address(vault), 20 ether);
+
+    vault.seedCreditForTest(attacker, 10 ether);
+    uint256 beforeCredit = vault.credit(attacker);
+    uint256 beforeBalance = address(vault).balance;
+
+    ReentrantReceiver(attacker).attack();
+
+    assertEq(beforeCredit, 10 ether);
+    assertEq(vault.credit(attacker), 0);
+    assertEq(beforeBalance - address(vault).balance, 20 ether);
+}
 ```
 
-That loop saves expensive review time. It also reduces the chance that a human audit spends its budget on bugs the team could have found with a reproducible pre-check.
+This example is illustrative because the receiver, funding path, and test setup depend on the project.
+The `vm.deal` helper funds a local test address, and the two 10-ether payouts explain why the expected balance change is 20 ether even though the attacker has only 10 ether of credit.
+The test records both the caller’s credit and the vault’s balance instead of printing a single alarming line.
 
-## Regression Value
+A PoC should document its preconditions.
+For a price-feed manipulation claim, that may include which price source, timing assumption, liquidity, and transaction sequence were available.
+For an access-control claim, it may include the caller, initialization state, role assignment, and target function.
+For a signature replay claim, it may include the domain, nonce, chain identifier, signer, and reuse attempt.
 
-The best output of an automated smart contract audit is not the PDF. It is the new regression suite. Confirmed findings should become tests or invariant checks that stay in the repository. When the fix lands, the same proof should fail against the old code and pass against the patched code. That gives the audit finding a life after the report.
+The proof does not need to teach an attacker how to target a live system.
+Run it against a local deployment or isolated fork, redact sensitive values, and preserve enough information for a reviewer to reproduce the behavior safely.
 
-The audit system should name the test it added or the invariant it strengthened. Otherwise the team cannot tell whether the finding was fixed once or permanently guarded.
+## Match the proof to the stack
 
-## Tool References
+Smart-contract systems differ in language, execution model, testing tools, and state representation.
+The audit coordinator should choose a proof method that matches the stack rather than translating every issue into an EVM-shaped report.
 
-Match each proof to the tool that can produce it. [Ethereum smart contract security](https://ethereum.org/developers/docs/smart-contracts/security/) is the baseline reference for common EVM risks. [CodeQL](https://codeql.github.com/docs/) and [Semgrep](https://docs.semgrep.dev/) can support static review. [OWASP WSTG](https://owasp.org/www-project-web-security-testing-guide/) is useful when the contract system includes web surfaces, admin panels, or off-chain services. For scanner triage, read [AI Vulnerability Scanner Vs Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit).
+Foundry is an Ethereum development toolkit, Anchor is a framework for Solana programs, Move is a smart-contract language, and a zero-knowledge circuit is a set of constraints that checks a statement without revealing its private witness.
+A counterexample is the call sequence and inputs that make an invariant fail.
 
-## What This Does Not Prove
+| Stack | Public test surface | Evidence to retain |
+| --- | --- | --- |
+| EVM with Foundry | **forge test -vvvv** and invariant tests | Caller, transaction trace, state assertions, run configuration, and counterexample |
+| EVM with another framework | Project test runner and local deployment | Network mode, accounts, deployment state, output, and failing assertion |
+| Solana with Anchor | **anchor test** and program tests | Account inputs, instruction sequence, signer set, logs, and final account state |
+| Move package | **sui move test** or the package’s documented test command | Test annotation, expected failure, package state, and result |
+| Zero-knowledge circuit | Circuit constraint and proof-generation tests | Witness, public inputs, constraint result, proof result, and proof-check inputs |
 
-Automated smart contract audit does not prove the protocol is safe. It can run repeatable checks and attach exploit reproductions to confirmed issues, but final assurance still depends on human review, formal methods where appropriate, monitoring, bug bounties, and conservative release decisions.
+[Foundry’s invariant-testing guide](https://getfoundry.sh/forge/invariant-testing?highlight=invariant) describes randomized sequences of calls and the **runs** and **depth** controls that shape a campaign.
+Those controls belong in the report because a passing campaign says something different at one run depth than at another.
 
-## Decision Rule
+[Anchor’s testing documentation](https://www.anchor-lang.com/docs/testing) describes the framework’s test surfaces for Solana programs.
+The [Sui CLI cheat sheet](https://docs.sui.io/doc/sui-cli-cheatsheet.pdf) lists **sui move test**, while [The Move Book’s unit-testing reference](https://move-book.com/reference/unit-testing/) documents test annotations and expected failures.
+The links are tool references, not proof that a particular project’s tests cover its security properties.
 
-Use automated audit to turn static-analysis alerts into reproducible test cases before formal review and release decisions. Do not assign high or critical severity without a clear exploit path, command output, or proof-of-concept.
+Ethereum.org’s [smart contract security guidance](https://ethereum.org/developers/docs/smart-contracts/security/) places testing and independent review alongside other security practices.
+An automated audit should fit into that sequence by turning confirmed issues into repeatable tests before human review.
 
-## FAQ
+## Keep the report tied to a claim
 
-### What is automated smart contract audit?
+The report should make it possible to distinguish a pattern, a reachable path, an exploit, and an impact claim.
 
-It is security review of contract code using tools, agents, tests, and proof-of-concept validation to find vulnerabilities.
+```json
+{
+  "title": "Callback can withdraw before credit decreases",
+  "status": "reproduced",
+  "severity": "high",
+  "scope": {
+    "source": "illustrative release digest",
+    "chain": "local EVM",
+    "test": "testReentryChangesCreditBeforeTheFix"
+  },
+  "preconditions": [
+    "attacker controls the recipient contract",
+    "attacker has 10 ether of credit in the vault",
+    "vault has enough Ether for the repeated call"
+  ],
+  "observed": {
+    "call_sequence": [
+      "attacker calls withdraw() with 10 ether of recorded credit",
+      "vault calls attacker.receive()",
+      "attacker calls Vault.withdraw() again before credit is cleared"
+    ],
+    "state_change": "vault balance decreases by 20 ether after a 10 ether credit is withdrawn twice"
+  },
+  "fix_check": {
+    "patched_test": "reentry fails before the second withdrawal",
+    "intended_withdrawal": "authorized single withdrawal still passes"
+  },
+  "limits": [
+    "local EVM only",
+    "no contract upgrade path tested",
+    "no live price or liquidity state used"
+  ]
+}
+```
 
-### What is PoC validation?
+The values in this record are illustrative.
+The shape forces the report to connect the label to a caller, sequence, state change, patch check, and scope.
 
-It means proving a finding with a runnable test, trace, simulation, or exploit demonstration under the audit scope.
+If the setup fails, set the status to incomplete.
+If the caller reaches the function but the claimed state change does not occur, report reachable but not reproduced.
+If authorization blocks the path, retain the negative result and close or downgrade the candidate.
 
-### Can this audit non-EVM code?
+Negative evidence matters in smart-contract work because pattern rules often recognize code that is intentionally defensive.
+The report should say which guard, state transition, or deployment condition prevented the exploit.
 
-The auditor direction includes EVM, Solana, Move, and zk stacks, but each stack needs its own toolchain and validation rules.
+## A trace is evidence of execution, not a safety certificate
 
-### Does this replace a manual audit?
+A trace may show a top-level call, nested calls, emitted events, storage writes, reverts, gas use, and final state.
+Different tools expose different trace detail, so the report should name the tool and the fields captured.
 
-No. It should turn confirmed issues into regression tests and give expert reviewers fewer unsupported alerts, not replace expert review for high-value contracts.
+For the reentrancy example, a useful trace would show:
+
+```text
+withdraw(attacker)
+  -> Vault calls attacker.receive()
+    -> attacker calls Vault.withdraw() again
+      -> credit check reads the old value
+      -> Vault sends the second amount
+  -> first call reaches the delayed credit update
+```
+
+This trace is a teaching artifact, not output from a live contract.
+It explains why the order matters without publishing a target, wallet, or deployed address.
+
+A trace can be incomplete.
+It may omit off-chain price updates, an upgradeable contract’s implementation lookup, another transaction in the same block, or a service that supplies account data.
+The report should list those omissions beside the trace rather than describing it as the whole exploit.
+
+## Turn a confirmed issue into a regression test
+
+The most durable output of an automated audit is a test that remains after the report is archived.
+The original PoC should fail against the patched contract, while intended behavior and accounting invariants continue to pass.
+
+Use this loop:
+
+```text
+scan
+  -> isolate the candidate
+  -> prove the old behavior
+  -> patch the smallest cause
+  -> rerun the old proof
+  -> add the regression and invariant checks
+  -> review deployment and upgrade paths
+```
+
+For reentrancy, the patch may follow checks-effects-interactions or use a reentrancy guard appropriate to the project.
+For authorization, the patch may move a role check before the sensitive state read.
+For accounting, the patch may change rounding, units, or state updates and then need property tests across edge values.
+
+The fix check must include a non-exploit case.
+A patch that blocks every withdrawal has removed the demonstrated exploit by breaking the product.
+The regression should prove both the security condition and the intended user action.
+
+For an audit packet that covers setup, reproduction, severity, and reruns, read [AI Security Audit With Reproducible Findings](/blog/ai-security-audit-reproducible-findings).
+For the isolated execution workflow, read [AI Code Audit With Sandboxed Agents](/blog/ai-code-audit-sandboxed-agents).
+
+## Put the proof in an isolated run
+
+Tangle’s public [Sandbox](https://docs.tangle.tools/sandbox) provides an isolated machine for an agent, with a filesystem, processes, resource controls, and captured command results.
+That is a possible execution boundary for a compiler, local blockchain, test suite, and report writer.
+
+If this workflow is offered as a Tangle service, a **Blueprint** is the package that declares the jobs, metadata, contracts, and runtime rules.
+An **operator** is the person or service that runs the service instance and supplies the execution capacity.
+A **service instance** is the live registration and execution context for one service, not the reusable Blueprint package.
+The **runtime** is the environment in which the compiler, local blockchain, tests, and reporting code execute.
+The public [AI Agent Sandbox Blueprint overview](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes the split between protocol lifecycle and live machine I/O.
+
+An **agent profile** records the model, instructions, tools, permissions, and resource limits used for one audit.
+Pinning the profile helps compare runs and explain why two agents selected different paths.
+
+A **trace** records the actions, inputs, outputs, and execution results in order.
+It can link a PoC to the command that ran it and the state transition it observed.
+It does not establish that the PoC explored every contract entry point.
+
+The [AI Vulnerability Scanner Vs Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit) article explains where a scanner ends and an agent investigation begins.
+
+## What PoC validation cannot establish
+
+An automated smart contract audit cannot prove that a protocol is safe.
+It can prove that a specified test or simulation produced a specified result under a specified environment.
+
+It may miss cross-function reentrancy, transaction-ordering attacks that exploit which transaction executes first, economic behavior, upgradeable-contract changes, compiler defects, chain-specific rules, off-chain services, or a state combination absent from the test.
+Randomized invariant testing can explore many sequences while still missing a sequence outside its run and depth settings.
+
+A local fork, meaning a local copy of a chain state at a selected block, can omit an external service, a governance action, a new deployment, or a change in liquidity.
+A passing test can therefore be evidence for one path without being evidence for all paths.
+
+Human review remains necessary for the threat model, system boundaries, upgrade authority, deployment process, and release decision.
+Formal verification, a mathematical proof against a specified model, plus monitoring, bug bounties, and conservative limits may be appropriate for systems that control valuable assets.
+
+## The release decision
+
+Do not assign high or critical severity from a pattern match alone.
+Require a scoped PoC, simulation, invariant failure, or trace that shows the exploit preconditions and observed state change.
+Turn the proof into a regression test, rerun it after the patch, and list every execution or configuration boundary that remains untested.
+
+For the EVM branch, begin with the [Solidity security considerations](https://docs.solidity.org/en/latest/security-considerations.html) and [Foundry invariant-testing guide](https://getfoundry.sh/forge/invariant-testing?highlight=invariant).
+For the service boundary, use the [Tangle Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart).
+For the general report format, use [AI Security Audit With Reproducible Findings](/blog/ai-security-audit-reproducible-findings).
+
+
+## What is an automated smart contract audit?
+
+It is a review of contract code that combines static analysis, tests, simulations, traces, and a report of evidence and limits.
+
+## What is PoC validation?
+
+PoC validation is the process of proving a candidate finding with a runnable test, simulation, trace, or exploit demonstration under a stated scope.
+
+## Does every finding need a PoC?
+
+Every high-severity claim needs a strong proof path.
+That path can be a PoC, deterministic invariant failure, formal result, or another method that clearly establishes the claimed behavior and conditions.
+
+## Can one workflow audit EVM, Solana, Move, and zero-knowledge code?
+
+One coordinator can route those stacks, but each stack needs its own compiler, local environment, state model, and proof rules.
+Shared report fields do not make the execution tools interchangeable.
+
+## Does a trace prove a contract is safe?
+
+No.
+A trace records one execution and its observed results, while safety depends on the tested scope, threat model, and untested paths.
+
+## Does automated audit replace a manual audit?
+
+No.
+It should turn confirmed issues into regression tests and give expert reviewers smaller, better-supported questions.

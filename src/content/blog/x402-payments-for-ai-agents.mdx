@@ -2,8 +2,9 @@
 title: 'x402 Payments for AI Agents: v2 Safety Guide'
 slug: x402-payments-for-ai-agents
 summary: >-
-  Learn the current x402 v2 flow for AI agents: payment headers, wallet checks,
-  idempotent retries, settlement receipts, and what payment does not prove.
+  Learn how x402 payments for AI agents work in v2, how to inspect payment
+  requirements, prevent duplicate work, reconcile settlement, and separate a
+  payment receipt from proof that the service result is correct.
 date: '2026-06-17'
 updated: '2026-08-01'
 author: Drew Stone
@@ -18,172 +19,387 @@ coverImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. x402 is a payment protocol for machine-to-machine requests. x402 lets an AI agent pay for one HTTP request without opening an account or selecting a subscription first.
-The server responds with `402 Payment Required`, the agent evaluates the price and terms, the wallet signs a payment payload, and the agent retries with that signature.
-The server verifies and settles the payment before returning the purchased resource.
+An agent reaches a paid endpoint while processing a customer request.
+The server returns HTTP 402 and asks for a small stablecoin payment, a token designed to track a fiat currency.
+The dangerous implementation is to let the agent sign whatever amount appears in the response and retry automatically.
+The safe implementation treats the 402 response as a policy decision.
 
-Payment is only the commercial step.
-It does not prove that an agent service returned a correct, safe, or useful result.
+The x402 protocol is an HTTP payment flow for AI agents.
+It turns an HTTP request into a machine-readable purchase flow.
+The server states what payment it accepts.
+The agent checks the amount, asset, network, recipient, expiry, and requested capability.
+A wallet signs a payment payload.
+The agent retries the request.
+The server verifies and settles the payment, then returns the resource or accepts the job.
 
-This guide was checked on August 1, 2026 against the current [x402 payment flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works), [client and server responsibilities](https://docs.cdp.coinbase.com/x402/core-concepts/client-server), and Tangle Blueprint SDK commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/x402).
+That payment step does not prove the service did useful work.
+A receipt can show that payment conditions were met.
+It cannot show that a browser task reached the right page, a sandbox fixed the right file, or a model returned a correct answer.
 
-## Quick Answer
+This guide explains the current x402 v2 wire shape, the version boundary around Tangle's reusable service definitions and their jobs, and the failure states an autonomous buyer must keep separate.
 
-Use x402 when the buyer is software and the thing being purchased maps cleanly to a request, such as one browser task, model call, sandbox job, quote, conversion, or audit run.
-Use a subscription or prepaid account when the buyer needs invoices, negotiated limits, refunds, team administration, or predictable monthly spend.
+## Define the pieces before spending
 
-An agent should pay only after it checks the amount, asset, network, recipient, expiry, requested capability, and its own spending policy.
+x402 is an open payment protocol that uses the HTTP 402 Payment Required status to communicate payment requirements for a resource.
+It is designed for programmatic clients, including AI agents, that can inspect requirements, sign with a wallet, and retry without first creating a conventional account.
+The [Coinbase x402 overview](https://docs.cdp.coinbase.com/x402/welcome) and [protocol flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) document that sequence.
 
-## The Current x402 v2 Flow
+A wallet is the software or service that controls a payment key and signs a payment payload.
+The agent should be able to ask the wallet to sign within a spending policy.
+The agent should not receive a raw seed phrase as a tool input.
 
-The v2 wire flow uses three important headers:
+A facilitator is a service that helps a resource server, the endpoint selling the resource, verify and settle a payment on a supported network.
+The facilitator is part of the payment path.
+The purchased AI service performs the work after the payment path accepts the request.
 
-| Step | Header | Purpose |
+A Blueprint is a reusable Tangle service definition.
+It declares jobs, inputs, outputs, artifacts, and execution requirements.
+A job is one callable unit of work inside a live service.
+An operator is the infrastructure provider that runs the service instance created from the Blueprint.
+The [Tangle Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) defines those terms.
+
+A runtime is the process that receives a verified request, starts the job, enforces limits, and records its result.
+A trace is the structured record of the request, payment state, tool calls, outputs, timing, and failures.
+An evaluation is the repeatable check of the result, cost, and policy behavior.
+Payment is one event in that record, not the evaluation itself.
+The [Blueprint SDK x402 guide](/blog/blueprint-sdk-x402-payments-runnable-jobs) shows the adjacent Tangle job path.
+The [x402 Blueprint deployment checklist](/blog/x402-blueprint-production-deployment-checklist) covers the operator decisions that need to be settled before exposure.
+
+An agent profile is the configuration that sets the model, tools, permissions, budget, and spending rules for one agent.
+The profile should state which services and recipients the agent may pay and the maximum amount it may authorize.
+
+## The x402 v2 request flow
+
+The protocol flow is a short conversation between a buyer and a resource server:
+
+| Step | Direction | What happens |
 | --- | --- | --- |
-| Server challenge | `PAYMENT-REQUIRED` | Encodes the accepted payment options and requested amount. |
-| Client retry | `PAYMENT-SIGNATURE` | Carries the buyer's signed payment payload. |
-| Server response | `PAYMENT-RESPONSE` | Returns settlement information with the purchased resource. |
+| 1 | Agent to server | The agent requests a resource or job without a payment signature |
+| 2 | Server to agent | The server returns 402 and payment requirements |
+| 3 | Agent | The agent checks the requirements against its policy |
+| 4 | Wallet to agent | The wallet signs a payment payload |
+| 5 | Agent to server | The agent retries the same request with the payment signature |
+| 6 | Server and facilitator | The server verifies and settles the payment |
+| 7 | Server to agent | The server returns the resource and settlement response |
 
-At a high level:
+The Coinbase v2 documentation names three important headers:
+
+| Header | Direction | Purpose |
+| --- | --- | --- |
+| `PAYMENT-REQUIRED` | Server to client | Encodes accepted payment requirements in the 402 response |
+| `PAYMENT-SIGNATURE` | Client to server | Carries the signed payment payload on the retry |
+| `PAYMENT-RESPONSE` | Server to client | Returns settlement information with the resource |
+
+A generic request shape looks like this:
 
 ```http
 POST /paid-task HTTP/1.1
 Content-Type: application/json
-Idempotency-Key: task-2026-08-01-001
+Idempotency-Key: task-2026-08-03-001
 
 {"task":"summarize the attached report"}
 
 HTTP/1.1 402 Payment Required
-PAYMENT-REQUIRED: <base64-encoded payment requirements>
+PAYMENT-REQUIRED: <base64-encoded-payment-requirements>
 
 POST /paid-task HTTP/1.1
 Content-Type: application/json
-Idempotency-Key: task-2026-08-01-001
-PAYMENT-SIGNATURE: <signed payment payload>
+Idempotency-Key: task-2026-08-03-001
+PAYMENT-SIGNATURE: <base64-encoded-signed-payment-payload>
 
 {"task":"summarize the attached report"}
 
-HTTP/1.1 200 OK
-PAYMENT-RESPONSE: <base64-encoded settlement response>
+HTTP/1.1 202 Accepted
+PAYMENT-RESPONSE: <base64-encoded-settlement-response>
 Content-Type: application/json
 
-{"result":"...","artifact":"sha256:..."}
+{"jobId":"job-17","status":"accepted"}
 ```
 
-The exact payload schema depends on the x402 version, payment scheme, network, and implementation.
-Do not copy a v1 payload into a v2 client or infer field names from a blog post.
-Use the current [seller quickstart](https://docs.cdp.coinbase.com/x402/quickstart-for-sellers) and the implementation's typed SDK.
+The payload is not arbitrary JSON.
+Its exact fields depend on the x402 version, payment scheme, network, asset, and implementation.
+The [x402 migration guide](https://docs.cdp.coinbase.com/x402/migration-guide) documents the v1 and v2 header and network differences.
+The current v2 documentation uses CAIP-2 network identifiers, a standard namespace-and-reference format, such as `eip155:84532`, rather than assuming that a human chain name is unambiguous.
 
-## What the Agent Must Decide
+The `Idempotency-Key` in this example is an application-level header.
+It is not a replacement for payment-version compatibility or a guarantee that the service will deduplicate work.
+The server must define what the key means and retain enough state to answer a retry.
 
-Receiving a `402` response should start a policy decision, not an automatic payment.
+## A 402 response is not permission to pay
 
-| Check | Why it matters |
+The agent should decode the payment requirements and compare them with a local policy before asking a wallet to sign.
+
+| Check | Question |
 | --- | --- |
-| Capability | The endpoint must match the task the agent intends to buy. |
-| Amount and currency | The price must fit the task budget in an asset the wallet can spend. |
-| Network | The wallet and payment scheme must support the requested chain. |
-| Recipient | The destination should match the service or trusted payment policy. |
-| Expiry | The signature should not remain usable longer than necessary. |
-| Idempotency | A retry must not charge or execute the task twice. |
-| Output contract | The agent should know what result, receipt, and evidence it expects. |
+| Capability | Is this endpoint the service the agent intended to buy? |
+| Amount | Is the amount within the per-request and daily budget? |
+| Asset | Is the token an approved asset with a known decimal format? |
+| Network | Does the wallet support the requested chain identifier? |
+| Recipient | Does the destination match the service or an approved recipient? |
+| Expiry | Does the signature remain valid only for the necessary window? |
+| Scheme | Does the wallet support the requested payment scheme? |
+| Request binding | Does the signed request cover the method, URL, and required body fields? |
+| Output | Does the agent know what resource, job ID, receipt, or evidence it will receive? |
 
-For autonomous spending, set a per-request limit, a daily limit, an allowed recipient or service list, and a rule for when a human must approve.
-Fail closed when any required field is missing or ambiguous.
+A small policy function makes the decision testable:
 
-## Where Tangle Uses x402
+```typescript
+type PaymentRequest = {
+  resource: string
+  amount: string
+  asset: string
+  network: string
+  payTo: string
+  validBefore: number
+}
 
-Tangle's public [`blueprint-x402` crate](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/x402) exposes Blueprint jobs as paid HTTP routes.
-The gateway verifies payment through the configured facilitator and injects the resulting call into the Blueprint runner.
-The job implementation therefore receives a normal job call rather than implementing payment logic itself.
+type SpendPolicy = {
+  allowedResources: string[]
+  allowedAssets: string[]
+  allowedNetworks: string[]
+  allowedRecipients: string[]
+  maxAmount: bigint
+  now: number
+}
 
-The current route shape is:
+function approvePayment(
+  request: PaymentRequest,
+  policy: SpendPolicy,
+) {
+  if (!policy.allowedResources.includes(request.resource)) {
+    return { approved: false, reason: 'resource is not allowed' }
+  }
+
+  if (!policy.allowedAssets.includes(request.asset)) {
+    return { approved: false, reason: 'asset is not allowed' }
+  }
+
+  if (!policy.allowedNetworks.includes(request.network)) {
+    return { approved: false, reason: 'network is not allowed' }
+  }
+
+  if (!policy.allowedRecipients.includes(request.payTo)) {
+    return { approved: false, reason: 'recipient is not allowed' }
+  }
+
+  if (BigInt(request.amount) > policy.maxAmount) {
+    return { approved: false, reason: 'amount exceeds policy' }
+  }
+
+  if (request.validBefore <= policy.now) {
+    return { approved: false, reason: 'payment window is expired' }
+  }
+
+  return { approved: true, reason: 'payment matches policy' }
+}
+```
+
+This is an illustrative policy, not a parser for a particular SDK.
+The agent should use the payment requirements supplied by the server rather than inventing a payload.
+The wallet or x402 client library should perform the actual signing.
+
+Fail closed when a required field is missing or ambiguous.
+A cheap request is still unauthorized when it points to the wrong recipient.
+A valid signature is still unsafe when the agent did not understand what it buys.
+
+## The version boundary around Tangle Blueprint jobs
+
+The public x402 protocol documentation recommends v2 for new integrations.
+A particular service can still expose a different wire version or compatibility path.
+
+The current public [Tangle Blueprint x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) describes an optional off-chain, or non-blockchain, payment ingress for jobs.
+It says the gateway verifies and settles payment, meaning records the transfer as accepted, then injects a `JobCall`, a job invocation record, into the Blueprint runtime.
+It documents job routes in the form:
 
 ```text
 POST /x402/jobs/{service_id}/{job_index}
 ```
 
-The current source accepts legacy v1 `X-PAYMENT` and v2 `Payment-Signature` headers.
-New integrations should prefer the current x402 version supported by their client and facilitator, while compatibility code should make the version explicit.
+The same Tangle docs describe explicit invocation modes:
 
-Each job has an invocation policy:
-
-- `disabled` means the job cannot be called through x402.
-- `public_paid` means a valid payment can invoke it.
-- `restricted_paid` means payment is necessary but the caller must also pass the configured identity policy.
-
-That distinction matters for agent services.
-Paying for a task should not grant access to private data, administrative actions, or another customer's resources.
-
-## What x402 Does Not Prove
-
-x402 can prove or record that the payment conditions were satisfied.
-It does not prove the purchased work was correct.
-
-Pair the payment receipt with evidence appropriate to the task:
-
-| Purchased work | Useful result evidence |
+| Mode | Meaning |
 | --- | --- |
-| Browser task | final URL, screenshots, DOM state, and action record |
-| Sandbox job | command exit status, changed files, logs, and artifact hashes |
-| Model call | model identity, request policy, token usage, and structured output validation |
-| Code audit | affected lines, reproduction command, observed result, and regression test |
-| On-chain action | transaction hash, receipt status, chain, contract, and decoded event |
+| `disabled` | The job cannot be called through x402 |
+| `public_paid` | A valid payment can invoke the job |
+| `restricted_paid` | Payment is required and a caller policy must also pass |
 
-For long-running work, payment and execution may finish at different times.
-Return a stable job identifier and define whether a paid request returns the final result, a polling URL, or a callback contract.
+The current public [Blueprint x402 crate README](https://github.com/tangle-network/blueprint/tree/main/crates/x402) documents the x402 ingress with legacy `X-PAYMENT` and `X-Payment-Response` headers.
+The Coinbase v2 docs use `PAYMENT-SIGNATURE` and `PAYMENT-RESPONSE`.
+Those are not interchangeable examples.
 
-## Failure Cases to Test
+This is the integration rule:
 
-The successful request is the easiest path.
-A production integration also needs tests for:
+1. Identify the exact server endpoint and released package.
+2. Read that endpoint’s payment-version and header contract.
+3. Use a client and facilitator that support the same version and network.
+4. Test an unpaid request, a valid payment, a rejected payment, and a repeated request.
+5. Record the release or API version in the integration configuration.
 
-1. An expired or underfunded payment signature.
-2. A valid signature for the wrong recipient, amount, asset, or network.
-3. Two retries with the same idempotency key.
-4. Settlement success followed by job failure.
-5. Job success followed by a lost HTTP response.
-6. A facilitator timeout before the server knows whether settlement happened.
-7. A client that supports a different x402 version.
-8. A refund or support request tied to a transaction and job identifier.
+Do not copy a v2 header example into a Tangle endpoint that currently documents the legacy header.
+Do not assume a route called x402 has one universal payload shape.
 
-The recovery rule should distinguish “not paid,” “payment state unknown,” “paid but not executed,” and “executed but response lost.”
-Treating all four as a generic retry creates duplicate charges or duplicate work.
+Tangle’s public docs also expose a price discovery route and an authorization dry run for restricted jobs.
+The dry run is useful because it checks caller policy without enqueuing work or settling payment.
+Use it when the job has access restrictions, but do not treat a dry run as proof that the paid job will complete.
 
-## x402 or Subscription?
+## Payment acceptance is not job completion
 
-| Choose x402 when | Choose subscription or prepaid billing when |
+This distinction matters for agent services.
+The [Tangle x402 docs](https://docs.tangle.tools/developers/blueprint-runner/x402) state that a successful paid request returns `202 Accepted` after the job is accepted and enqueued.
+`202 Accepted` means the server accepted the work.
+It does not mean the job has finished.
+
+A paid request therefore needs a stable state model:
+
+| State | Meaning | Safe next action |
+| --- | --- | --- |
+| Not paid | No valid payment was accepted | Do not claim access or retry without policy |
+| Payment state unknown | The facilitator or network result is uncertain | Query the payment or job before signing again |
+| Paid and enqueued | Payment settled and work entered the runtime | Poll or follow the documented result path |
+| Paid but failed | Payment settled and execution failed | Apply refund, retry, or support policy |
+| Completed but response lost | Work may have finished even though the client timed out | Query by job ID before retrying |
+| Completed and reviewed | Output and task checks passed | Release the result to the next workflow |
+
+If the server returns only a Boolean “paid,” the buyer cannot safely recover from a lost response.
+The payment receipt and job ID should be correlated.
+The service should document whether a retry with the same request identifier returns the existing result or starts a new job.
+
+## Idempotency is a job property
+
+A payment protocol cannot infer whether two identical requests should produce one job or two.
+The endpoint must define that policy.
+
+For an idempotent job, meaning repeated identical requests produce one job, the server can store:
+
+```json
+{
+  "requestKey": "task-2026-08-03-001",
+  "requestDigest": "sha256:request-body",
+  "paymentState": "settled",
+  "jobId": "job-17",
+  "executionState": "running",
+  "result": null
+}
+```
+
+On a repeated request, the server compares the request digest and returns the existing job when the key matches.
+If the same key is used with a different body, the server should reject it.
+A server that ignores the body can accidentally return one customer’s result for another customer’s request.
+
+The [x402 FAQ](https://docs.cdp.coinbase.com/x402/support/faq) documents a Payment Identifier extension for handling duplicate calls.
+Use that extension or an application-level key according to the client and server versions in your deployment.
+Do not invent idempotency semantics at the agent layer after payment has already moved.
+
+Tangle’s restricted delegated-caller path adds a nonce, a value intended for one use, and a replay check.
+The public Tangle docs say a reused nonce in the same caller and job scope is rejected in the paid flow.
+That is a specific authorization control.
+It does not replace request deduplication for public paid jobs.
+
+## Payment and result evidence answer different questions
+
+An agent should return the purchased work with evidence matched to the task:
+
+| Purchased work | Payment evidence | Result evidence |
+| --- | --- | --- |
+| Browser task | Settlement response and job ID | Final URL, screenshots, DOM state, and action record |
+| Sandbox repair | Settlement response and job ID | Exit status, changed files, logs, and artifact hashes |
+| Model call | Settlement response and model route | Model ID, usage, structured-output validation, and policy checks |
+| Code audit | Settlement response and job ID | Reproduction, affected files, regression test, and findings |
+| On-chain action | Settlement response and transaction reference | Chain, transaction receipt, contract, and decoded event |
+
+A trace connects these records over time.
+An evaluation checks whether the work met the task contract.
+Neither one is created automatically by a successful payment.
+
+This is where many agent products make a category error.
+They show a payment receipt next to a fluent answer and call the pair “verified.”
+The receipt proves a payment event.
+The answer needs its own evidence.
+
+## Failure cases to test before launch
+
+The happy path is the smallest test.
+
+Test a signature for the wrong recipient.
+Test a signature with the wrong amount or asset.
+Test a network identifier that the wallet does not support.
+Test an expired payment window.
+Test a malformed payload.
+Test a facilitator timeout before settlement is known.
+Test settlement success followed by a job failure.
+Test job success followed by a lost HTTP response.
+Test two calls with the same request key.
+Test two calls with the same key but different bodies.
+Test a restricted job with a valid payer and an unauthorized caller.
+Test a client that speaks v1 against a server that requires v2.
+Test a v2 client against a service that documents legacy headers.
+
+For each case, record:
+
+```json
+{
+  "payment": "not-paid | unknown | settled",
+  "execution": "not-started | queued | running | failed | completed",
+  "response": "received | lost",
+  "retry": "safe | query-first | forbidden",
+  "customerAction": "retry | poll | refund | human-review"
+}
+```
+
+The categories are an application state model.
+They are intentionally separate because a retry can be safe in one state and harmful in another.
+
+## x402 or a subscription?
+
+x402 is a good fit when the commercial unit is one request and the buyer is software.
+A subscription or prepaid account is often a better fit when a team needs invoices, tax records, shared budgets, refunds, procurement, or predictable monthly administration.
+
+| Prefer x402 when | Prefer subscription or prepaid billing when |
 | --- | --- |
-| The buyer is an agent or script. | The buyer is a team with procurement requirements. |
-| The commercial unit is one request. | Usage spans many requests and users. |
-| Wallet-based payment is acceptable. | Card, invoice, tax, or refund workflows are required. |
-| Stateless access is valuable. | Account history and customer administration are valuable. |
-| Per-request settlement time is acceptable. | The request path needs the lowest possible latency. |
+| One request maps to one price | Many users share one account |
+| Wallet signing is acceptable | Card, invoice, tax, or refund workflows are required |
+| Stateless access is useful | Account history and team administration matter |
+| The agent can inspect payment terms | A human approves purchases in a dashboard |
+| Settlement latency fits the job | The request path needs a stable pre-funded balance |
+| The service can expose a clear result contract | Usage is pooled across many kinds of work |
 
-Services can support both paths if they converge on the same authorization and job-dispatch rules after payment.
+A service can support both paths.
+The important design is to converge them on the same authorization, job-dispatch, evidence, and refund rules after payment.
 
-## FAQ
 
-### What is x402 for AI agents?
+## What are x402 payments for AI agents?
 
-It is an HTTP payment flow that lets software receive payment requirements, sign a payment, retry the request, and receive a settlement response without first creating a conventional account.
+They are HTTP-native machine payments in which a server returns 402 payment requirements, an agent signs a payment payload with a wallet, and the agent retries to receive a resource or job result.
 
-### Does x402 replace API keys?
+## Does x402 replace API keys?
 
-It can replace an API key for public paid access.
-Restricted jobs may still require caller identity, permissions, or another authentication method in addition to payment.
+It can provide a paid access path without an API key for public jobs.
+A restricted job may still require identity, caller authorization, or another access policy in addition to payment.
 
-### What headers does x402 v2 use?
+## What headers does x402 v2 use?
 
-The current v2 flow uses `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`.
-Legacy v1 implementations commonly use `X-PAYMENT` and `X-PAYMENT-RESPONSE` variants.
+The documented v2 flow uses `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`.
+Legacy implementations use different `X-PAYMENT` names, so the server and client versions must match.
 
-### Does a successful payment prove the service result is correct?
+## Does a successful payment prove the service result is correct?
 
 No.
-Validate the result with task-specific evidence and retain a link between the payment receipt, job identifier, and output artifact.
+Payment proves a payment condition was met.
+The service must return task-specific evidence, and the buyer must evaluate that evidence.
 
-### Why does x402 matter for Tangle Blueprints?
+## What does `202 Accepted` mean for a Tangle x402 job?
 
-It gives a Blueprint job a standard paid HTTP entry point while leaving the job implementation on the normal runner path.
-The public source linked above shows the current integration and its access-policy options.
+The current Tangle docs use it to mean that payment was accepted and the job was enqueued.
+It does not mean the job has completed.
+
+## How should an agent avoid duplicate charges?
+
+Check the request key, payment state, and job state before retrying.
+Use the idempotency or payment-identifier feature supported by the exact client and server pair.
+
+## The decision
+
+Treat every 402 response as an authorization request with a budget, recipient, network, and capability.
+Keep protocol version, payment state, job state, and result quality visible in the same record.
+Use x402 when per-request machine payment is the simplest commercial boundary, and choose a subscription when account administration and refunds are the real product requirement.
+For a browser workflow that must carry a payment or wallet decision safely, see [natural-language end-to-end testing for wallet apps](/blog/natural-language-e2e-testing-wallet-apps).

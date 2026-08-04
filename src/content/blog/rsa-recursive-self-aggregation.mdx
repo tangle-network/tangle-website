@@ -2,9 +2,7 @@
 title: 'Recursive Self-Aggregation: Better Answers Without Bigger Models'
 slug: rsa-recursive-self-aggregation
 summary: >-
-  Recursive Self-Aggregation is a test-time scaling strategy that spends extra
-  inference calls on candidate aggregation. Tangle Router exposes it as a
-  request-time strategy, with budget checks and explicit latency tradeoffs.
+  Recursive Self-Aggregation is a test-time scaling strategy that spends extra inference calls on candidate aggregation, with explicit call budgets, latency, traces, and task-specific evaluation.
 date: '2026-04-15'
 author: Drew Stone
 tags:
@@ -16,84 +14,176 @@ heroImage: /images/covers/editorial/rsa-aggregation-v2.webp
 imageAlt: 'An editorial still life about combining multiple model attempts into one answer'
 ---
 
-There is a version of "use a better model" that is too blunt. Sometimes the cheaper model already knows enough, but one sample is brittle. It misses a constraint, takes the wrong branch, or writes the first plausible answer. Recursive Self-Aggregation, RSA, attacks that failure mode by spending test-time compute on a population of answers and repeatedly asking the model to aggregate them.
+An agent is preparing a migration plan.
+One cheap completion notices the database change but misses the rollback path.
+A larger model would probably do better, but the team wants to know whether extra work from the cheaper model can buy enough reliability without changing the model tier.
 
-Tangle Router exposes RSA as a gateway strategy on the normal chat-completions path. The important product point is not that RSA is free. It is that a caller can trade latency and extra calls for answer quality without changing the model API.
+**Recursive Self-Aggregation**, or RSA, is one answer to that problem.
+It generates several candidate reasoning chains, asks the model to combine subsets of those candidates, repeats the process for several rounds, and returns one candidate from the improved population.
 
-For the surrounding runtime, read [OpenAI-compatible routers for agents](/blog/openai-compatible-routers-for-agents) and [How AI agents discover products](/blog/how-ai-agents-discover-products). RSA is one request-time strategy inside that larger routing surface.
+This is **test-time scaling**.
+It spends more computation when a request arrives instead of changing the model’s weights before the request.
+Tangle Router, a model-serving gateway, exposes RSA as a request-time strategy on its OpenAI-compatible chat-completions surface.
 
-## Quick Answer
+A **Router** is a model-serving gateway.
+It accepts a standard request, chooses or calls one or more model backends, and can apply a strategy such as RSA without forcing the application to build its own fan-out service.
 
-Use RSA when a request can tolerate extra latency and the answer quality matters more than a single cheap completion: planning, code generation, structured analysis, eval pipelines, research summaries, and async agent steps.
+An **OpenAI-compatible** surface accepts a request shape familiar from the OpenAI chat-completions API.
+That label describes the interface shape, not identical model behavior, pricing, or support for every parameter.
 
-Do not use RSA for every chat turn. It multiplies calls. If the task is interactive, cheap, or already verifier-backed, the extra fan-out may be wasted.
+Tangle is the protocol and service network that provides the Router surface used in this example.
+The Router can change how a request is executed, but it does not make the underlying model or evaluation universally reliable.
 
-## What The Paper Shows
+The trade is concrete.
+RSA adds model calls, token usage, and serial rounds.
+Use RSA when parallel candidates can be evaluated before an irreversible action or release.
+It is a poor default for every chat turn.
 
-[Venkatraman et al.](https://arxiv.org/abs/2509.26626) study a simple but useful idea: generate a population of candidate reasoning chains, aggregate random subsets into improved answers, repeat, then return one converged candidate. In shorthand:
+## The paper’s idea in one population
 
-```text
-generate N candidates
+The [RSA paper](https://arxiv.org/abs/2509.26626) describes a population of candidate reasoning chains.
+Each round samples a subset of candidates for each population slot and asks the model to aggregate them into an improved candidate.
+The new population becomes the input to the next round.
+
+~~~text
+generate N candidate chains
 repeat T rounds:
-  for each candidate slot:
+  for each population slot:
     sample K candidates
     ask the model to aggregate them
-return population[0]
-```
+return one candidate
+~~~
 
-The method is interesting because it does not require a separate verifier. That is also the risk. If the model family is confidently wrong, aggregation can polish the wrong answer. RSA is a test-time scaling strategy, not a correctness proof.
+The paper reports gains as inference-time compute increases and describes competitive results from a small model on several reasoning benchmarks.
+Those results are workload-specific.
+RSA does not turn a small model into a universally stronger model.
 
-## Tangle Router Shape
+The method is different from majority voting because the model sees candidate reasoning rather than only final answers.
+It is different from sequential self-refinement because several candidate paths exist at the same time before each aggregation round.
+It is different from best-of-N selection because RSA does not require an external scoring function to choose the winner.
 
-RSA fits naturally in a Router because the caller should not have to build a parallel inference harness. The request stays OpenAI-compatible, with the strategy carried in gateway options:
+That last property is also its main limitation.
+If every candidate shares the same false assumption, aggregation can make the mistake more coherent.
 
-```json
+## The call budget is visible before work starts
+
+With population size N and T aggregation rounds, the simple call count is:
+
+~~~text
+initial candidates: N
+aggregation calls: N × T
+total: N + (N × T) = N × (1 + T)
+~~~
+
+The subset size K changes the context given to each aggregation call.
+It does not change the number of aggregation calls in this basic design.
+
+| N | K | T | Maximum calls | Practical use |
+| ---: | ---: | ---: | ---: | --- |
+| 4 | 2 | 2 | 12 | Small smoke test |
+| 8 | 3 | 3 | 32 | Asynchronous quality pass |
+| 16 | 4 | 5 | 96 | Expensive run requiring explicit budget |
+
+The gateway should calculate the maximum call count and estimated cost before launching the first candidate.
+If the caller cannot cover the maximum, fail before partial work begins.
+Partial fan-out is difficult to bill, retry, or explain.
+
+Cost also depends on prompt length, output length, model prices, context reuse, and failures.
+The call count is a useful upper-bound calculation, not a final invoice.
+
+## Turn the call budget into a spending limit
+
+The application can convert the upper bound into a conservative estimate before it enables RSA.
+Suppose a candidate call consumes 1,500 input tokens and 500 output tokens, and an illustrative model price is 2 units per million input tokens plus 8 units per million output tokens.
+For the N=8, T=3 configuration, the 32-call upper bound gives:
+
+~~~text
+input tokens = 32 × 1,500 = 48,000
+output tokens = 32 × 500 = 16,000
+input cost = 48,000 ÷ 1,000,000 × 2 = 0.096 units
+output cost = 16,000 ÷ 1,000,000 × 8 = 0.128 units
+estimated model cost = 0.224 units
+~~~
+
+The prices and token counts are illustrative.
+The calculation is useful because it makes the assumptions visible and can be replaced with the current provider price before production use.
+Add a margin for retries, longer aggregation prompts, failed calls, facilitator fees, and the cost of the Router or operator.
+
+A budget should also have a stopping rule.
+Stop after the configured rounds, stop when a deterministic checker passes, or stop when the remaining budget cannot change the decision.
+Do not silently continue the population because the first answer looked uncertain.
+That turns a bounded strategy into an unbounded bill.
+
+## A request-time Router option
+
+Tangle’s public RSA article documents a request shape like this:
+
+~~~json
 {
   "model": "google/gemini-3-flash",
   "messages": [
-    { "role": "user", "content": "Write and justify the migration plan." }
+    {
+      "role": "user",
+      "content": "Write and justify the migration plan."
+    }
   ],
   "gateway": {
-    "rsa": { "n": 8, "k": 3, "t": 3 }
+    "rsa": {
+      "n": 8,
+      "k": 3,
+      "t": 3
+    }
   }
 }
-```
+~~~
 
-The call budget is `N + N*T`. With `n=8` and `t=3`, the Router expects 32 model calls. With `n=16` and `t=5`, it expects 96. That number has to be visible before the first fan-out starts.
+The endpoint remains OpenAI-compatible from the caller’s perspective.
+The strategy is an option on one request rather than a second application-level service.
+The public [Tangle Router](https://router.tangle.tools) and [OpenAI-compatible router guide](/blog/openai-compatible-routers-for-agents) are the places to check current model names, authentication, and option support.
 
-## Budget Gate
+The parameters have simple meanings:
 
-RSA without a budget gate is an outage waiting to happen. The Router should estimate maximum spend before launching the population:
-
-| Setting | Calls | Production concern |
-| --- | --- | --- |
-| `n=4, t=2` | 12 | useful smoke test |
-| `n=8, t=3` | 32 | reasonable async quality pass |
-| `n=16, t=5` | 96 | expensive, slow, needs explicit approval |
-
-If the caller cannot cover the projected spend, the request should fail before work begins. In a paid service path, that means returning a payment or credit requirement instead of starting partial fan-out.
-
-## What It Costs In Latency
-
-RSA buys quality by spending serial rounds. The first population can run in parallel. Each aggregation round depends on the previous population. That means wall-clock latency grows with `T`, even if each round fans out internally.
-
-Use RSA when the output is worth waiting for:
-
-| Good fit | Bad fit |
+| Parameter | Meaning |
 | --- | --- |
-| async agent planning | live chat typing |
-| code generation before PR | autocomplete |
-| eval and judge tasks | tiny extraction |
-| research synthesis | low-stakes summarization |
-| migration plans | latency-sensitive tool calls |
+| n | Number of candidates in the population |
+| k | Number of candidates sampled for each aggregation |
+| t | Number of aggregation rounds |
 
-The useful default is not "turn RSA on." The useful default is "make RSA selectable at the step where the agent would otherwise ask a human to think harder."
+An application should record the selected values with the result.
+Otherwise a reviewer cannot tell whether a quality change came from RSA, a different model, a changed prompt, or a different budget.
 
-## Evidence To Capture
+## Latency grows with the rounds
 
-An RSA run should return more than the final answer when the caller is debugging quality:
+The initial N calls can run in parallel.
+Each aggregation round depends on the previous population.
+The total wall time grows with T even when each round fans out internally.
 
-```json
+That makes RSA a good fit for:
+
+- Agent planning before an irreversible action.
+- Code generation before a pull request or release.
+- Structured analysis with a human review step.
+- Research synthesis that can run as a background task.
+- Evaluation pipelines where cost and latency are recorded.
+
+It is a poor fit for:
+
+- Live chat where users expect a first response quickly.
+- Autocomplete or interactive tool selection.
+- Tiny extraction tasks with a deterministic checker.
+- Real-time control loops.
+- High-stakes decisions with no independent review.
+
+The right unit of selection is the agent step.
+Turn RSA on where an extra minute or extra calls are justified by the consequence of a weak answer.
+Leave ordinary low-risk turns on the cheaper path.
+
+## A trace makes the strategy inspectable
+
+A **trace** is a structured record of one run.
+For RSA, it should record the request, model, population settings, maximum and completed calls, timing, cost, failures, and final result reference.
+
+~~~json
 {
   "strategy": "rsa",
   "model": "google/gemini-3-flash",
@@ -106,15 +196,72 @@ An RSA run should return more than the final answer when the caller is debugging
   "stop_reason": "completed",
   "trace_id": "router-run-id"
 }
-```
+~~~
 
-The candidate text does not always need to be returned to the end user, but the trace should exist. Otherwise a bad RSA answer is impossible to inspect.
+The trace does not need to expose every candidate to the end user.
+It does need to remain available to the team that is deciding whether RSA improved the product.
+The [Tangle trace article](/blog/self-improving-stack-trace-systems) explains why a final score without the path that produced it is difficult to improve.
 
-## Two Extensions
+## Evaluation decides whether extra calls were worth it
 
-Mixture-of-Agents uses different models in the population and one model as aggregator:
+An **evaluation** is a task-specific check against a stated success condition.
+For code, it might run tests or inspect required functions.
+For structured data, it might compare fields to a labeled answer.
+For a migration plan, it might use a review rubric that checks rollback, data-loss risk, and sequencing.
 
-```json
+Do not judge RSA by whether the final answer sounds more polished.
+Compare a baseline model, RSA configurations, and a stronger model on the same tasks.
+Record pass rate, cost, latency, failure type, and the task denominator.
+
+The public [Tangle RSA benchmark repository](https://github.com/tangle-network/rsa-benchmark) reports a six-prompt smoke run with these quality pass rates:
+
+| Strategy | Model | N | K | T | Quality pass rate |
+| --- | --- | ---: | ---: | ---: | ---: |
+| baseline | Gemini 3 Pro Preview | not applicable | not applicable | not applicable | 50% |
+| rsa-small | Gemini 3 Flash Preview | 4 | 2 | 2 | 50% |
+| rsa-medium | Gemini 3 Flash Preview | 8 | 3 | 3 | 50% |
+| rsa-large | Gemini 3 Flash Preview | 16 | 4 | 5 | 33% |
+
+Those results are a small public smoke run, not a general conclusion.
+The repository also states that its displayed RSA cost was zero because preview-model pricing was missing from the Router pricing table.
+Treat that cost field as a measurement gap, not as free inference.
+Run the benchmark again with current pricing before making a cost claim.
+
+This is the right way to read a surprising result.
+RSA-medium matching the baseline on six prompts does not prove that it wins on your workload.
+RSA-large scoring lower shows that more calls can over-aggregate or reinforce a weak candidate.
+
+## Compare strategies under equal budgets
+
+A fair comparison should give each strategy the same task prompts, the same maximum wall time, and a declared cost ceiling.
+If RSA gets 32 model calls while the baseline gets one call and the stronger model gets a larger context window, the resulting quality difference is real but the product comparison is incomplete.
+
+The comparison table can make the trade visible:
+
+| Strategy | Model calls | Quality pass rate | Median latency | Cost per task | Failure mode |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Baseline | 1 | measured | measured | measured | timeout, wrong answer, or other typed outcome |
+| RSA | maximum N × (1 + T) | measured | measured | measured | budget, aggregation, or model failure |
+| Stronger model | declared by provider | measured | measured | measured | provider, budget, or task failure |
+
+The table is a template rather than new benchmark data.
+It prevents a quality percentage from hiding the reason the answer cost more or arrived later.
+If a strategy’s extra calls are valuable only on hard tasks, report the per-task result instead of averaging the easy cases into a single headline.
+
+Use paired tasks when possible.
+Send the same prompt and input to the baseline and RSA path, keep the acceptance rule identical, and record whether both paths had the same external tools and context.
+That lets the reviewer inspect the cases where RSA changed the decision rather than relying on two unrelated averages.
+
+For a migration plan, the paired result might show that both strategies notice the schema change, while only RSA includes a rollback step on three of twelve tasks.
+That is a useful hypothesis for more testing, not a general RSA advantage.
+The advantage exists only if the same pattern survives a larger task set and the extra cost remains acceptable.
+
+## Mixture and selection variants
+
+**Mixture-of-Agents** uses different models for the candidate population and one model to aggregate them.
+The diversity can help when the models have different blind spots, but it makes cost, latency, licensing, and failure analysis more complicated.
+
+~~~json
 {
   "gateway": {
     "rsa": {
@@ -130,44 +277,74 @@ Mixture-of-Agents uses different models in the population and one model as aggre
     }
   }
 }
-```
+~~~
 
-Best-of-N is the verifier-backed cousin: generate candidates, score them with a user-supplied scorer, and return the winner. If you have a real scorer, use it. RSA is more useful when you do not.
+**Best-of-N** generates several candidates, scores each with a separate checker, and returns the highest-scoring one.
+It can be stronger when the application has a real scorer.
+It can be misleading when the scorer rewards style rather than the behavior the user needs.
 
-## What RSA Does Not Prove
+RSA is most interesting when no reliable external scorer exists and the model can use partial reasoning from several candidates.
+That is a hypothesis to test, not a reason to remove a domain-specific checker.
 
-RSA does not prove a model is correct. It does not replace domain evaluation. It does not make a weak model safe for high-stakes execution. It increases the search and aggregation budget at inference time.
+## Shared blind spots and uncontrolled diversity
 
-The benchmark that matters for your product is simple: compare baseline, RSA, and a stronger model on the same tasks, with equal reporting of cost, latency, and failure cases. If RSA wins on quality per dollar and the latency is acceptable, use it. If the stronger model wins cleanly, use the stronger model.
+More candidates do not necessarily mean more independent evidence.
+If every call uses the same model, prompt, retrieved document, and temperature, the population may repeat one blind spot.
+Aggregation then increases the fluency of the shared mistake without increasing the information available to the final answer.
 
-## Start
+The opposite failure is uncontrolled diversity.
+Different models, prompts, or retrieval contexts can expose useful alternatives, but they also introduce different formatting, safety, licensing, and factual assumptions.
+The aggregator may spend its context resolving disagreements that a domain checker could have settled more cheaply.
 
-Open [Tangle Router](https://router.tangle.tools), read the [RSA paper](https://arxiv.org/abs/2509.26626), and run a small strategy first:
+Record the sources of diversity with the trace:
 
-```json
-{
-  "gateway": {
-    "rsa": { "n": 4, "k": 2, "t": 2 }
-  }
-}
-```
+| Source of variation | Possible benefit | Cost or failure mode |
+| --- | --- | --- |
+| Sampling settings | More independent candidate paths | More variance and less reproducibility |
+| Different models | Different blind spots | Model price, latency, and policy differences |
+| Different retrieval slices | Broader evidence | Conflicting or stale context |
+| Different prompts | Alternative decompositions | Harder attribution when quality changes |
 
-Then increase `n` and `t` only after you know the task benefits from aggregation.
+The useful experiment changes one source of variation at a time when the budget allows it.
+Otherwise a quality change can be real but impossible to explain.
 
-## FAQ
+## What RSA does not prove
 
-### What is Recursive Self-Aggregation?
+RSA does not prove that a response is correct.
+It does not replace a domain evaluation, a safety policy, or a human approval for consequential actions.
+It does not remove model-provider outages or privacy concerns.
+It does not guarantee that more candidates are independent.
 
-Recursive Self-Aggregation is a test-time scaling method that generates multiple candidate answers, repeatedly aggregates subsets of them, and returns a converged answer.
+Candidates can share a model, prompt, retrieved context, and mistaken assumption.
+Aggregation can amplify that shared error.
+Longer context can also reduce the quality of later rounds if the model loses the important constraint among the candidates.
 
-### Does RSA make a small model as good as a frontier model?
+The strategy can fail economically too.
+If an extra 31 calls reduce the error rate on a task by less than the cost of those calls, the strategy is a worse product even if the final answer looks better.
+If a 10-second run blocks a tool call that could have been checked deterministically, the extra reasoning is waste.
 
-Sometimes it can close a gap on specific tasks, but that is workload-dependent. It should be benchmarked against both the baseline model and a stronger model with cost and latency included.
+## Decision rule
 
-### Why put RSA in Tangle Router?
+Use RSA for asynchronous agent steps where the output matters, a few extra rounds are affordable, and the task has an evaluation you can measure.
+Start with N equal to 4 and T equal to 2, record the trace, and compare it with a single call on a fixed task set.
 
-The Router can run RSA behind the same chat-completions surface, estimate cost before fan-out, preserve traces, and let agents choose the strategy per request.
+Keep RSA only when the measured quality gain pays for its extra cost and latency.
+Use a stronger model, a domain checker, or a human review when those options solve the task more directly.
 
-### When should I avoid RSA?
 
-Avoid RSA for low-latency chat, tiny extraction tasks, high-stakes tasks without verification, or any workload where extra samples do not improve the measured outcome.
+## What is Recursive Self-Aggregation?
+
+It is a test-time scaling method that generates multiple candidate reasoning chains, repeatedly aggregates subsets of them, and returns a candidate from the improved population.
+
+## Does RSA make a small model as good as a frontier model?
+
+Measure whether RSA raises pass rate on a fixed task set; do not infer general gap closure from one task or benchmark.
+Compare it with both the single-call baseline and a stronger model.
+
+## Why put RSA in Tangle Router?
+
+The Router can expose RSA behind the same chat-completions surface, calculate the call budget, preserve run records, and let an application choose the strategy per request.
+
+## When should I avoid RSA?
+
+Avoid it for low-latency chat, tiny tasks with deterministic checks, high-stakes actions without independent review, and workloads where extra candidates do not improve the measured result.

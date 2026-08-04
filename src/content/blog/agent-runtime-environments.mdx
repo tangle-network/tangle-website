@@ -17,104 +17,89 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-Imagine a tax preparer asking an assistant to sort a client’s documents into a review packet.
-The assistant needs to read files, ask a model what each file contains, run a calculation, remember which documents it has already handled, and show a human what it did.
-The model’s final paragraph is only one part of that job.
+A tax preparer gives an assistant twelve documents and asks for a review packet.
+The assistant has to copy the files, identify the document types, ask a model about uncertain pages, calculate totals, remember which file produced which result, and show a human what happened before anything is filed.
+The final paragraph is the smallest part of the job.
 
-An **AI agent runtime environment** is the software that gives a model those capabilities and keeps their limits visible.
-It decides which model receives a request, where commands run, which files and network destinations are available, how a browser is controlled, and which records survive after the task ends.
+An **AI agent runtime environment** is the software and machine around a model that makes this multi-step work possible.
+It supplies tools and state, enforces permissions, manages resources, routes model requests, records actions, and decides what survives after the run.
+The model proposes decisions.
+The runtime determines which decisions can become side effects.
 
-This article uses a deliberately small tax-document workflow to explain the pieces.
-It is a teaching example, not tax advice and not a filing service.
-Each of those workflows uses the same mechanism: tools perform actions, state preserves intermediate files, execution checks enforce permissions, and an event log records what happened.
+The tax example is illustrative and is not tax advice or a filing service.
+Coding, browser automation, paid APIs, and model evaluation each need scoped tools, state, permissions, and retained evidence.
 
-## A model can answer; a runtime must do
+## The runtime starts where the prompt ends
 
-A model receives text and produces a response.
-That is enough for a question such as “What does this error message mean?”
-It is not enough for “Read these twelve documents, identify the missing form, calculate the totals, and prepare a packet for my review.”
+A model can answer “What does this error mean?” from text in a request.
+It cannot read twelve files, run a deterministic calculation, retry a failed parser, and prove which input produced the result unless another system gives it those capabilities.
 
-That second request has a visible sequence:
+The workflow needs at least these steps:
 
-1. Accept the request and define what the agent is allowed to change.
-2. Read the supplied documents without exposing unrelated files.
-3. Ask a model to classify each document and explain uncertainty.
-4. Run deterministic calculations outside the model.
-5. Keep the files, calculations, and decisions together as one run.
-6. Return a packet that a person can inspect before anything is submitted.
+1. Accept the request and establish the allowed authority.
+2. Copy only the supplied documents into a bounded workspace.
+3. Classify documents and keep uncertainty attached to each classification.
+4. Convert accepted fields into structured data.
+5. Run calculations outside the model’s prose generation.
+6. Save intermediate artifacts and failures under one run identity.
+7. Return a review packet with a human approval point.
 
-The runtime gives each step one run identifier.
-It passes approved outputs to the next step and records the actor, action, timestamp, status, and artifact in an event log.
-A prompt alone supplies neither.
+For this workflow, the runtime needs to make those steps observable.
+It should give each task an identifier, record the actor and action, pass approved outputs forward, and preserve failed attempts instead of replacing them with an empty result.
 
-## What an agent runtime must own
+## A small dictionary for the system
 
-The names of products vary, but a useful runtime has five responsibilities.
+Agent infrastructure uses ordinary words for different control layers.
+Define them before combining them.
 
-### Route model requests and record usage
+| Term | Meaning in this workflow | Boundary to preserve |
+| --- | --- | --- |
+| **Runtime** | Software and compute that execute model-directed actions | It owns lifecycle, tools, state, permissions, and records |
+| **Agent profile** | A versioned bundle of model, tools, instructions, permissions, resource limits, and budget | Changing it changes what the run can do and how its result should be compared |
+| **Router** | A service that accepts a stable model-request format and chooses an available provider or model route | A route record identifies which model path answered; it does not certify answer quality |
+| **Sandbox** | An isolated workspace for files, processes, packages, and artifacts | Isolation narrows side effects; it does not decide whether a patch is correct |
+| **Trace** | An ordered record of inputs, model calls, tool actions, outputs, errors, and artifacts | A trace makes a run inspectable without pretending every conclusion is true |
+| **Evaluation** | A repeatable set of cases with explicit checks and a comparison rule | An eval measures a defined behavior; it does not turn all model output into ground truth |
 
-The runtime sends a JSON request with a task ID, model choice, input reference, and timeout, then records the route used.
-For example, a router can choose a model for document classification while the application uses one OpenAI-compatible request shape.
-Switching models then changes a configuration value, not the application’s code paths.
-The route record should include the model name, input and output identifiers, and any error returned by the provider.
+An agent profile might allow a document classifier to read copied PDFs, call one model route, write a packet, and spend at most a fixed amount.
+It should not inherit the user’s home directory, filing credentials, or email permissions merely because the model could describe those actions.
 
-Model access answers “which model produced this text?”
-It does not answer whether the text is correct or whether the model was allowed to edit a file.
+## Per-document runtime record
 
-### Persist files and intermediate results
+The record should point to the artifact and its result, alongside the conversation.
 
-The runtime gives the agent a place to read inputs, write temporary files, run a calculation, and keep intermediate results.
-Persisting step status and artifacts lets the agent resume after a failed step instead of starting with an invented summary.
+| Stage | Input | Action | Output to retain |
+| --- | --- | --- | --- |
+| Intake | User-supplied file IDs | Copy into a scoped workspace | Input manifest and file hashes |
+| Classification | One copied document | Ask the model for a typed label and confidence explanation | Raw response, normalized fields, and model route |
+| Validation | Structured fields | Check required fields and allowed values | Validation errors and accepted fields |
+| Calculation | Accepted numeric fields | Run deterministic code | Formula version, inputs, output, and exit status |
+| Packet | Classifications and totals | Render a review document | Packet path, artifact hash, and unresolved questions |
+| Cleanup | Workspace and session IDs | Save required artifacts and delete temporary resources | Cleanup status and retained record |
 
-For the tax-document example, state might include a copied PDF, a machine-readable document index, a calculation result, and a list of files still needing review.
-The runtime should make those items addressable and should distinguish a file produced by the agent from one supplied by the user.
+The calculation row is deliberately separate from the model row.
+A model can extract a number from a document, but a normal program should add, compare, and round it when the rule is deterministic.
+The reviewer then sees which values came from interpretation and which came from a calculation.
 
-### Enforce filesystem and network access
+## A vendor-neutral runtime sketch
 
-Every action needs a rule.
-The document agent may read the supplied directory and write a review packet, but it should not read a developer’s home directory, send an email, or submit a return.
-
-Those rules belong to the service that executes the action, not to instructions shown to the model.
-A sentence in a prompt can describe a limit.
-Only the process handling the request can enforce it.
-
-### Record inputs, outputs, and failures
-
-Evidence is the material a reviewer can inspect after a run.
-For this workflow, that means the input file names, document classifications, calculation inputs, calculation output, model errors, and final packet.
-
-The runtime should preserve a failed attempt as a failed attempt.
-Replacing an error with an empty result makes the next decision look more certain than it was.
-
-### Clean up temporary resources
-
-The runtime starts a task, waits for the required resources, lets the task retry within its limits, and closes temporary resources when the task ends.
-It should also say what remains after cleanup.
-For example, a disposable workspace can disappear while the review packet and test log are copied to a durable store.
-
-These responsibilities are separate on purpose.
-A model route can be healthy while a sandbox is unavailable.
-A payment can settle while a job fails.
-A browser can show a page while the intended account change is rejected.
-
-## A small, vendor-neutral runtime in TypeScript
-
-The following example is intentionally a toy orchestration layer.
-It shows the records and boundaries an application needs without pretending to be an SDK.
-The function never files a return and never gives the model a direct path to the user’s original directory.
+The following TypeScript is a teaching example, not a Tangle API.
+It makes the important boundaries visible without hiding them behind a generic `runAgent` function.
 
 ```typescript
 type ReviewTask = {
   id: string
   inputFiles: string[]
   outputDirectory: string
-  allowedActions: Array<'read-inputs' | 'classify' | 'calculate' | 'write-packet'>
+  allowedActions: Array<
+    'read-inputs' | 'classify' | 'validate' | 'calculate' | 'write-packet'
+  >
 }
 
 type RunEvent = {
   at: string
   action: string
-  status: 'started' | 'completed' | 'failed'
+  status: 'started' | 'completed' | 'failed' | 'blocked'
   detail?: string
 }
 
@@ -127,24 +112,36 @@ type ReviewRun = {
 async function prepareReviewPacket(task: ReviewTask): Promise<ReviewRun> {
   const run: ReviewRun = { task, events: [], artifacts: [] }
 
+  requireAction(task, 'read-inputs')
   record(run, 'read-inputs', 'started')
   const documents = await readOnlyInputCopies(task.inputFiles)
   record(run, 'read-inputs', 'completed', `${documents.length} files copied`)
 
+  requireAction(task, 'classify')
   record(run, 'classify', 'started')
   const classifications = await classifyDocuments(documents)
   record(run, 'classify', 'completed')
 
-  record(run, 'calculate', 'started')
-  const totals = calculateFromStructuredFields(classifications)
+  requireAction(task, 'validate')
+  const fields = validateFields(classifications)
+  record(run, 'validate', 'completed')
+
+  requireAction(task, 'calculate')
+  const totals = calculateFromStructuredFields(fields)
   record(run, 'calculate', 'completed')
 
-  record(run, 'write-packet', 'started')
-  const packet = await writeReviewPacket(task.outputDirectory, classifications, totals)
+  requireAction(task, 'write-packet')
+  const packet = await writeReviewPacket(task.outputDirectory, fields, totals)
   run.artifacts.push(packet)
   record(run, 'write-packet', 'completed', packet)
 
   return run
+}
+
+function requireAction(task: ReviewTask, action: ReviewTask['allowedActions'][number]) {
+  if (!task.allowedActions.includes(action)) {
+    throw new Error(`blocked action: ${action}`)
+  }
 }
 
 function record(run: ReviewRun, action: string, status: RunEvent['status'], detail?: string) {
@@ -152,147 +149,181 @@ function record(run: ReviewRun, action: string, status: RunEvent['status'], deta
 }
 ```
 
-The names `readOnlyInputCopies`, `classifyDocuments`, and `writeReviewPacket` are application functions, not Tangle APIs.
-Their purpose is to make the boundary visible.
-The calculation receives structured fields rather than raw model prose, and the returned run contains both the packet and the events that explain how it was made.
+The application functions in the example are placeholders for parser, model, validation, calculation, and rendering code.
+The action list omits submission in this example, but the TypeScript type is only a compile-time check.
+The process that owns the filesystem and network still has to enforce the same rule outside the model context.
 
-In a real service, each function would also enforce the task’s allowed actions.
-The application could then reject a request that asks for `submit-return` because that action is not in the task type at all.
+## Treat the profile as a contract
 
-## Where Tangle surfaces fit
+An agent profile is easy to mistake for a long system prompt.
+It is more useful when it is a versioned input to the runtime and the evaluator.
+The runtime reads it to decide which tools and resources exist.
+The evaluator records it to explain why two runs are comparable or why they are not.
 
-Tangle’s public products map to the responsibilities above.
-Each one has a narrower job than “make the agent smart.”
+| Profile field | Example for the document task | Failure when it is missing |
+| --- | --- | --- |
+| Model route | `router/document-review` | A later run may use a different model without showing the change |
+| Tool set | Read files, classify, validate, calculate, write packet | The model may appear to have permission that the job never intended |
+| Workspace scope | One temporary directory containing copied inputs | A trace cannot show which files were reachable |
+| Network policy | Package registry and model endpoint only | A parser or model call can silently use an unreviewed destination |
+| Budget | Sample budget: 12 model turns and 10 minutes | A stuck recovery loop can become an unbounded cost |
+| Stop rule | Write a packet and wait for human review | The agent may treat a plausible draft as a filed result |
 
-| Runtime responsibility | Tangle surface | What it contributes | What it does not prove |
+Suppose the classifier labels `invoice-17.pdf` as an invoice with 0.61 confidence.
+The trace should retain the input ID, copied-file hash, profile ID, model route, raw response, normalized label, and the rule that sent the item to review.
+The calculation stage should then record the fields it accepted and the formula version that produced the total.
+That chain lets a reviewer ask whether the error came from the document, the model, the parser, the calculation, or the policy.
+
+If the same document is retried with a different model route or a larger budget, give the retry a new profile ID.
+The retry may be a good recovery, but it is not the same experiment as the first run.
+Keeping that distinction prevents a later score from hiding a change in authority or cost.
+
+## How Tangle surfaces fit the runtime
+
+Tangle’s products map to different responsibilities.
+Each surface should be added because the task needs it, not because “agent stack” sounds incomplete without it.
+
+| Runtime need | Tangle surface | Concrete contribution | What it does not prove |
 | --- | --- | --- | --- |
-| Model access | [Tangle Router](/blog/openai-compatible-routers-for-agents) | An OpenAI-compatible model request and usage record | That the model’s answer is correct |
-| Tools and state | [Tangle Sandbox](/blog/ai-agent-sandbox) | Files, processes, packages, and a workspace with explicit CPU, memory, and disk limits | That a command produced a safe or correct result |
-| Browser actions | [Browser Agent](https://github.com/tangle-network/browser-agent-driver) | Browser actions plus screenshots and page state | That an external site accepted the intended change |
-| Repeatable service | [Blueprint SDK](https://github.com/tangle-network/blueprint) | A typed service definition that a `BlueprintRunner` process can start and accept jobs from | That every job instance is healthy |
-| Paid invocation | [x402](https://github.com/coinbase/x402) | A payment request and settlement path for an HTTP job | That the paid job succeeded |
-| Review record | Application evidence | Events, artifacts, and task-specific acceptance checks | That untested conditions are safe |
+| Model access | [Tangle Router](https://router.tangle.tools/.well-known/tangle-agent.json) and [`@tangle-network/tcloud`](https://github.com/tangle-network/tcloud) | An OpenAI-compatible request surface, model discovery, route and usage information | That the selected model answered correctly |
+| Files and processes | [Tangle Sandbox](https://docs.tangle.tools/sandbox) and [`@tangle-network/sandbox`](https://www.npmjs.com/package/@tangle-network/sandbox) | Isolated workspaces, commands, files, sessions, snapshots, and resource limits | That a command was the right command or that its output is safe |
+| User-visible web work | [Tangle Browser Agent](https://github.com/tangle-network/browser-agent-driver) | Chromium control with DOM and screenshot evidence | That the external site accepted the intended business change |
+| Repeatable service | [Blueprint SDK](https://docs.tangle.tools/developers/blueprints/introduction) | A reusable service template with typed jobs, inputs, outputs, artifacts, and trigger choices | That each live instance is healthy or that every result is correct |
+| Service execution | Operator-run Blueprint Service | A live instance of the template that listens for jobs and returns results | That the operator followed the claimed implementation without an execution check |
+| Pay-per-request access | [x402 payment ingress](https://docs.tangle.tools/developers/blueprint-runner/x402) | Payment requirements over HTTP and a path from verified payment to a paid job request record | That payment settlement means the job finished or produced a good result |
+| Confidential execution | [TEE runtime and attestation](/blog/tee-attestation-ai-services) | Signed evidence about code or hardware-backed execution state | That a model answer or generated patch is correct |
+| Result improvement | [`@tangle-network/agent-eval`](https://github.com/tangle-network/agent-eval) | Cases, traces, judges, comparisons, and promotion records | That a score is meaningful without a calibrated case set and real backend |
 
-Use the table to map a user action to the smallest required surface.
-Add another surface only when the next step needs it.
+A **Blueprint** is a reusable template for software that can run as a service.
+A **Service** is a live instance created from that template.
+A **Job** is one callable unit of work inside the Service.
+An **operator** is the person or team that runs the Service’s software and returns Job results.
+The [Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) describes those relationships and the distinction between off-chain application execution and protocol coordination.
 
-## A real Sandbox lifecycle for the file step
+The **Blueprint Runner** is the process that dispatches Blueprint Jobs to their handlers.
 
-When the workflow needs a disposable filesystem and process environment, the published Tangle Sandbox package provides that boundary.
-This is a real server-side TypeScript example; keep the API key on the server.
+An **x402** request uses HTTP `402 Payment Required` to tell a caller which payment is required, then accepts a signed payment payload on a retry.
+Tangle’s x402 gateway verifies and settles the payment through a facilitator before injecting a paid request into the Blueprint Runner.
+The runner records that request as a `JobCall`, the identifier for one queued call, but that identifier does not mean the Job completed.
+The official [x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) and Tangle’s [gateway documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) both separate payment acceptance from resource delivery.
 
-```typescript
-import { Sandbox } from '@tangle-network/sandbox'
+A **TEE attestation** is signed evidence about a Trusted Execution Environment, such as a code measurement or hardware-backed execution state.
+It can answer “what execution boundary and measurement did the verification service accept?”
+It cannot answer “was the document classification right?”
+Use the [Tangle attestation explanation](/blog/tee-attestation-ai-services) when the trust claim depends on confidential execution.
 
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
-})
+## Smoke-test the boundaries before composing them
 
-const box = await client.create({
-  name: 'tax-review-example',
-  environment: 'universal',
-  resources: { cpuCores: 2, memoryMB: 4096, diskGB: 20 },
-})
+These public discovery calls check service availability without creating a workspace or running a Job:
 
-try {
-  await box.waitFor('running')
-  const result = await box.exec('node review-documents.js')
-
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr)
-  }
-
-  console.log(result.stdout)
-} finally {
-  await box.delete()
-}
+```bash
+curl -fsS https://router.tangle.tools/api/health
+curl -fsS https://router.tangle.tools/v1/models
+curl -fsS https://sandbox.tangle.tools/health
+npm install @tangle-network/sandbox
+npm install @tangle-network/agent-eval
 ```
 
-The lifecycle is explicit: create the workspace, wait until it is ready, run one command, inspect its exit code and output, and delete the temporary workspace even when the command fails.
-The [public Sandbox package documentation](https://unpkg.com/@tangle-network/sandbox@0.17.3/README.md) covers file operations, snapshots, sessions, network controls, and agent prompts.
+A Router health response says that the service can answer a health request.
+The model list says which model records are currently published and routeable according to that service.
+The Sandbox health response says that the public API answers.
+The install commands make package provenance explicit.
 
-The example does not claim that `review-documents.js` is a tax engine.
-It only shows where a deterministic parser or calculator can run, away from the client’s machine.
-The application still needs to choose the input files, validate the parser, preserve the logs, and require human review before any filing action.
+None of these calls runs the tax workflow.
+The next test should create one authenticated workspace, copy one non-sensitive sample file, run one deterministic parser, save the output, and delete the workspace.
+Only after that boundary works should the application add a model request, browser session, payment path, or confidential runtime.
 
-## Keep local work and hosted authority separate
+## From a run to an evaluation
 
-The safest place to run an action depends on what that action can affect.
+An evaluation, or eval, is a repeatable test over named scenarios with a defined check.
+For this document workflow, scenarios could cover a complete document set, a missing form, an unreadable scan, a malformed number, and a model timeout.
 
-| Action | Suitable starting boundary | Why |
+A **judge** is the code or model that applies the scoring rule to an output.
+Use deterministic checks for file presence, schema validity, arithmetic, and required review questions.
+Use a model judge only for qualities that cannot be checked exactly, and record the judge version and input it saw.
+
+The evaluation record should include:
+
+| Field | Why it matters |
+| --- | --- |
+| Scenario ID and input hash | Shows which case ran |
+| Agent profile ID | Shows model, tools, permissions, and budget |
+| Runtime and environment | Shows where the actions executed |
+| Trace and artifact IDs | Connects the score to observable work |
+| Baseline and candidate labels | Supports a fair comparison when something changed |
+| Check or judge version | Makes the scoring rule attributable |
+| Cost and duration | Prevents quality claims from hiding resource growth |
+| Failure category | Separates model, tool, policy, infrastructure, and evaluator failures |
+
+The [agent-eval repository](https://github.com/tangle-network/agent-eval) describes a trace-first approach that compares changes on the same cases and preserves run data for analysis.
+Preserve traces, artifacts, profiles, and check versions so evaluation results remain comparable and inspectable.
+For the concrete workspace lifecycle behind these records, read [AI agent sandbox](/blog/ai-agent-sandbox).
+
+## Failures need to stay in their own columns
+
+Assign each failure to the model, provisioning, workload, payment, or measurement boundary.
+
+| Observed failure | Likely boundary | Record that should exist |
 | --- | --- | --- |
-| Read public documentation | Local process | It has no private input or external side effect |
-| Classify copied documents | Isolated workspace | The agent needs files but does not need the original directory |
-| Run a deterministic calculation | Isolated process with captured input | A reviewer can rerun the same calculation |
-| Click through a customer portal | Browser session with scoped credentials | Screenshots and action logs show what was attempted |
-| Submit a paid or irreversible request | Hosted service with explicit authorization | The service can require approval and retain a result record |
+| Model returns an uncertain classification | Model or task contract | Prompt, model route, raw response, and uncertainty field |
+| Workspace never reaches `running` | Provisioning or quota | Create request, lifecycle states, timeout, and service error |
+| Command exits non-zero | Workload or dependency | Command, working directory, exit code, stdout, and stderr |
+| Browser shows a confirmation but backend rejects it | External service | Screenshot, request log, and service-side confirmation status |
+| Payment settles but job does not complete | Payment and execution are separate | Payment receipt, job ID, queue state, and failure policy |
+| Attestation validates but output is wrong | Execution identity versus task quality | Attestation fields plus independent result check |
+| Eval score rises while traces are incomplete | Measurement failure | Missing-span or missing-artifact record and a failed comparison |
 
-“Local” is not a synonym for safe, and “hosted” is not a synonym for trusted.
-The useful question is which authority the action needs and which record proves that the authority was used correctly.
+Replacing any of those failures with a generic “agent failed” loses the information needed for the next fix.
+The runtime should preserve the failure even when the product later shows a shorter user-facing message.
 
-## Test each boundary before composing the whole workflow
+## Choose the smallest complete environment
 
-Before connecting a model, sandbox, browser, service runner, and payment path, test each boundary with a small input.
-
-| Boundary | Small test | Evidence to keep |
-| --- | --- | --- |
-| Model route | Send one fixed classification request | Model name, request ID, response, and error behavior |
-| Workspace | Create a box, write one file, run one command, and delete it | Exit code, output, and cleanup result |
-| Browser | Visit a read-only page and capture one screenshot | URL, action list, screenshot, and final page state |
-| Service | Run one typed job with a known input | Job ID, input, output, and operator status |
-| Payment | Request a price, try without payment, then settle a test request | Price response, rejected request, settlement, and job result |
-
-These tests answer “which boundary failed?” before a long workflow turns that question into a debate.
-They also keep a payment record from being mistaken for a quality result.
-
-## What an agent runtime cannot promise
-
-A runtime can make actions possible and records inspectable.
-It cannot turn an uncertain model answer into a fact.
-
-| Record you have | Narrow claim it supports | Claim it does not support |
-| --- | --- | --- |
-| Model request and response | Which model produced the text | That the text is correct |
-| Workspace command result | What command ran and what it returned | That the command was the right command |
-| Browser screenshot | What the agent saw at one moment | That the account change was accepted |
-| Payment settlement | That the payment protocol settled | That the job completed successfully |
-| Review packet and events | What a reviewer can inspect | That an untested edge case is safe |
-
-This distinction is the reason to keep evidence next to the work.
-Without it, a runtime can report “completed” when all it knows is that a model stopped producing tokens.
-
-## Choose the smallest runtime that fits the job
-
-For a text-only answer, model access and a request record may be enough.
+A text-only answer may need model access and a request record.
 Add a sandbox when the task needs files, packages, processes, or retries.
 Add a browser when the task must operate a website.
-Add a Blueprint when you need a repeatable service that another operator can run.
-Add x402 when that service needs a payment request before a job starts.
-Add durable evidence whenever a person must review the result or a later run must explain the earlier one.
+Add a Blueprint when another team or operator must run the service repeatedly.
+Add x402 when a caller needs a programmatic payment challenge before a paid job.
+Add a TEE and attestation when the execution boundary itself changes the trust decision.
+Add an evaluation when a change needs to be compared against a defined set of cases.
 
-The practical design question is not “which agent stack should we buy?”
-It is “what action must happen, what authority does it need, and what record will let someone check it?”
-Answer those three questions before adding another component.
+The design question is concrete:
+what action must happen, what authority does it need, what state must survive, and which record lets another person check the result?
+If the answer fits in one local process and one deterministic test, a larger runtime is unnecessary.
+If the answer involves external side effects, multiple attempts, or a paid service, the boundaries should be explicit before the model receives more authority.
+For a continuing agent session that needs isolated state and recovery, compare [Tangle Sandbox and E2B](/blog/tangle-sandbox-vs-e2b).
 
-## Questions readers usually ask
 
-### What is an AI agent runtime environment?
+## What is an AI agent runtime environment?
 
-It is the software around a model that supplies tools, state, permission rules, lifecycle management, and records for a multi-step task.
+It is the software and compute around a model that supplies tools and state, enforces permissions, manages task lifecycle, routes model requests, and records what happened during a multi-step job.
 
-### Is the runtime the same thing as the model?
+## Is the runtime the same as the model?
 
 No.
-The model produces decisions or text; the runtime determines which actions are available and records what happened when those actions ran.
+The model generates decisions or text, while the runtime determines which actions are available, where they execute, and which results are retained.
 
-### Does adding more tools make an agent better?
+## What is an agent profile?
 
-Not automatically.
-Each tool adds another permission, failure path, and record to maintain.
-Add a capability only when a user action requires it.
+An agent profile is a versioned configuration for one run class.
+It usually names the model, tools, instructions, permissions, resource limits, budget, and output record.
 
-### What should I build first?
+## What does a Router do?
 
-Name one task, remove every capability that task does not need, run one successful and one rejected example, and save the resulting records.
-Expand only after a reviewer can explain both outcomes.
+A Router accepts a stable model-request format and selects a provider or model route according to its configuration and available capacity.
+It can simplify model switching and usage attribution, but it does not verify the correctness of the model’s answer.
+
+## What does an x402 payment prove?
+
+x402 payment verification proves that a caller supplied a payment payload accepted by the configured payment rules.
+The service still needs an execution record and a task-specific result check.
+
+## Does attestation prove an AI result is correct?
+
+No.
+Attestation can prove selected properties about code identity or a hardware-backed execution boundary.
+Correctness still needs an evaluation, deterministic check, replay, or human review appropriate to the task.
+
+## What should I build first?
+
+Name one task, remove every capability it does not need, run one successful and one rejected case, and save the trace and artifacts.
+Expand the runtime only when a reviewer can explain both outcomes from the retained record.

@@ -359,4 +359,4 @@ if (reportPath) fs.writeFileSync(path.resolve(root, reportPath), renderReport(ra
 if (json) console.log(JSON.stringify(output, null, 2))
 else console.log(`Blog rubric audit: ${posts.length} posts, ${output.summary.p0Rewrite} P0 rewrites, ${output.summary.p1Revise} P1 revisions, ${output.summary.p2FactualLinkCheck} P2 factual/link checks`)
 
-process.exit(0)
+process.exitCode = 0

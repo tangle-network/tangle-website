@@ -2,7 +2,8 @@
 title: 'AI Agent Runtime Architecture: Removing a Second Execution Path'
 slug: agent-runtime-generic-executor-deletion
 summary: >-
-  We removed a second program for starting coding agents only after a shared path could deliver the same saved settings and expose the missing run signals.
+  AI agent runtime architecture gets safer when one shared path can deliver the promised settings, progress, errors, and records.
+  We removed a second coding-agent path only after checking those boundaries.
 date: '2026-08-01'
 author: Drew Stone
 tags:
@@ -17,150 +18,313 @@ heroImage: /images/covers/editorial/agent-runtime-v2.webp
 imageAlt: 'An editorial still life about the software that runs an agent'
 ---
 
-Suppose two pieces of software start the same kind of coding job.
-One is 3,360 lines spread across 16 files.
-The other is shared by every run that uses the same remote service.
+Two programs can start the same coding agent and still give its caller different behavior.
+One path may stream progress, preserve tool calls, and accept an interrupt.
+The other may return only a final response.
 
-Deleting the larger one looks like obvious cleanup, but line count cannot tell you whether the two paths behave the same.
-The safe question is narrower: can the shared path deliver the settings, controls, errors, and records that users depend on?
+Deleting the larger path can remove duplicate code while also removing the only place a user could see what happened.
+Line count is therefore a useful result of cleanup, but a poor reason to begin it.
 
-We removed the second path only after the answer was “yes” for the capabilities we promised and “no” for the differences we could not carry.
-The result removed duplicate code, made saved settings apply consistently, and published the remaining losses instead of hiding them.
+This execution-path change used a stricter question.
+Could the shared path deliver the settings, controls, errors, and records that made the special path necessary?
+The answer was yes for the promised profile behavior and no for several backend-specific controls.
+The special path was removed, and those remaining losses were named.
 
-This is the second post in the repaired [runtime infrastructure series](/blog/agent-profile-materialization-contracts).
-The [observability post](/blog/agent-runtime-worker-observability) explains the run signals that made this deletion safe.
+> A second execution path is safe to delete only after the shared path can express the user-visible behavior that matters.
 
-## Start with the user-visible differences
+## Start with what the caller can observe
 
-An **agent** is software that uses a language model and tools to complete a task.
-A **worker** is one running copy of that software.
-An **execution path** is the program route that starts and controls a worker.
+An **agent** is a program that uses a language model and tools to complete a task.
+An **agent runtime** is the software that starts, controls, and records that program.
+A **worker** is one running copy of the agent.
+An **execution path** is the route that starts and supervises that worker.
 
-The special path started Pi, a coding-agent program, directly.
-The shared path used a connection to a remote model service, which we call a **bridge**.
-A bridge sends a worker's requests to that service.
+An **agent profile** is a saved set of instructions, model choices, tools, permissions, and resources.
+A **trace** is the record of a run's inputs, actions, tool events, outputs, and failures.
 
-Before removing the special path, we compared what a person could observe and control through each route.
-The comparison found four differences:
+The special path in this change started Pi directly.
+Pi is a coding-agent program, not a model.
+The shared path used a bridge.
+A **bridge** is an adapter that translates the runtime's worker requests into a remote service request and translates the service's events back.
 
-| Capability | Shared path before the change | Why it mattered |
+A **router** is a related but different service.
+It chooses or forwards model requests across providers or models.
+The bridge is the runtime adapter that gives a worker a route to that service.
+One system can contain both.
+
+A **parent** is the program that starts a worker and decides whether to wait, steer, stop, or restart it.
+Before removing a path, compare the boundary that a caller can see.
+For a coding task, that boundary includes more than the final text.
+
+| Capability | Shared path before the change | Why a caller needed it |
 | --- | --- | --- |
-| Live progress | No current activity was available | A parent program could not tell whether to wait or stop the worker |
-| Tool-call records | Tool requests stayed inside the final result | A reviewer could not see which tools the worker asked to use |
-| Mid-run steering | The request accepted no new input after it started | A person could steer only by stopping the process and starting again |
-| Provider errors | One provider failure could look like a successful empty response | A caller could mistake missing work for a valid result |
+| Live progress | No current activity was available | A parent program could not tell whether to wait or stop |
+| Tool-call records | Tool requests were discarded before the settled trace | A reviewer could not see what the worker asked to run |
+| Mid-run steering | A non-interactive request accepted no new input | A person had to stop and restart to change direction |
+| Provider errors | One failure could look like an empty successful response | A caller could mistake missing work for a valid result |
 
-The comparison did not say the special path should remain forever.
-It named the missing behavior that had to exist before removal.
+Without these signals, the parent has to infer state from silence.
+That is where an apparently harmless simplification becomes a behavior change.
 
-## Add the missing shared behavior first
+## Compare the edges, not the internals
 
-The shared path then gained two pieces of information from its existing event stream:
+Two execution paths rarely have identical implementations.
+One may use a local process and the other an HTTP connection.
+One may represent a cancellation as a signal and the other as a remote request.
+Parity therefore belongs at the boundary visible to the caller, not in a line-by-line comparison of internal functions.
 
-- current progress, such as a tool request or active turn
-- the input needed to record those tool requests in the run record
+For a coding task, write the comparison as a small contract before changing the route:
 
-The implementation also kept unknown values unknown.
-When the remote service did not report that a tool finished, the shared path did not invent a success or a duration.
+| Boundary | Old path must show | Shared path must show |
+| --- | --- | --- |
+| Inputs | The same effective profile and task | The same effective profile and task |
+| Activity | Whether a turn or tool request is in progress | Whether a turn or tool request is in progress |
+| Control | What steering and interruption mean | What steering and interruption mean |
+| Failure | The provider or process error | The provider or process error, without converting it to success |
+| Artifacts | The requested tool, files, and final record | The requested tool, files, and final record |
+| Completion | The terminal state and its reason | The terminal state and its reason |
 
-That distinction matters because a record of “the model asked for a tool” is not a record of “the tool completed successfully.”
-The [observability post](/blog/agent-runtime-worker-observability) shows that boundary in detail.
+The comparison should include a task that deliberately visits each boundary.
+For example, start with a profile containing a system prompt, a resource file, and one tool.
+Ask the worker to read the resource, request the tool, and stop after the first response.
+Then repeat with a provider failure and a cancellation.
+The useful output is not two identical transcripts.
+It is a result showing which caller-visible facts survived the route change.
 
-## The deletion
+This method catches a common false positive.
+Both paths may return the same final sentence for a task that never uses a tool.
+That says little about tool delivery.
+Both paths may return a failure, but one may preserve the provider error while the other returns an empty result.
+The final status matches while the recovery experience differs.
 
-Once those shared capabilities existed, the special path was removed.
-The public source change measured:
+The parity record should also name intentional differences.
+If the old path supported immediate mid-turn input and the shared path supports only queued steering, mark that as a changed control contract.
+The product can then decide whether queued steering is acceptable.
+It cannot make that decision if the comparison reports only “both completed.”
 
-| Part of the source change | Count |
-| --- | ---: |
-| Files changed | 16 |
-| Lines added | 50 |
-| Lines deleted | 3,360 |
-| Special executor code deleted | 880 lines |
-| Special tool-connection code deleted | 534 lines |
-| Tests for the special path deleted | 1,525 lines |
-| Public exports removed | 15 |
+## Add the shared behavior before deleting code
 
-These counts describe the source diff.
-They do not prove that the two paths were equivalent.
-The capability comparison is the evidence for that narrower claim.
+The public [bridge implementation](https://github.com/tangle-network/agent-runtime/blob/main/src/runtime/supervise/runtime.ts) now carries the shared observability behavior.
+It reads live progress from a local event mirror and records the OpenAI-shaped tool-call events arriving from the remote stream.
+It does not manufacture tool completion when the stream carries only the model's request.
 
-After the deletion, a Pi worker uses the same shared path as other workers.
-Pi is now a model choice within one execution route, not a second runtime family that needs a separate fix for every new feature.
+The resulting shape is easier to reason about:
 
-## Saved settings now travel through one route
+~~~text
+profile
+  -> delivery contract
+  -> shared bridge
+  -> coding worker
+       -> progress mirror
+       -> requested-tool trace
+       -> remote terminal status
+~~~
 
-An **agent profile** is a saved set of instructions, model choices, tools, and resources for a worker.
-The shared path carries the four profile areas that previously made the special path different:
+The diagram describes the public source change, not a promise that every provider sends the same events.
+The source can preserve a request when the remote service exposes a request.
+It cannot infer a tool result that never crossed the bridge.
 
-| Profile setting | What the shared path does |
+The shared path also received the profile behavior that the special path had carried separately.
+The public [runtime changelog](https://github.com/tangle-network/agent-runtime/blob/main/CHANGELOG.md#pi-runs-through-the-bridge-like-every-other-harness) names four important settings:
+
+| Profile setting | What the shared path does for the coding worker |
 | --- | --- |
-| Reasoning effort | Converts the saved level into the coding agent's thinking setting |
-| Tools | Applies the saved exclusions to the tools available in the run |
-| Resources | Places the saved files and instructions in the run directory |
-| System prompt | Passes the saved instructions to the coding agent |
+| Reasoning effort | Translates the saved level into the coding program's thinking option |
+| Tools | Applies the saved tool exclusions |
+| Resources | Places saved files and instructions in the run directory |
+| System prompt | Passes the saved instructions to the coding program |
 
-The important change is not the field count.
-It is that a saved profile no longer takes one interpretation on the special path and another on the shared path.
+The point is not the number of fields.
+The point is that the same saved profile no longer takes one interpretation on a special route and another on the shared route.
 
-## The losses stayed visible
+## The deletion changed the capability boundary
 
-The deletion did not preserve every Pi-specific behavior.
-Those differences are part of the public contract:
+The cleanup removed a special executor, its tool-connection code, and the tests that only exercised that path.
+That is an architectural change, not evidence that the shared route is equivalent in every respect.
 
-| Capability | Behavior after the deletion |
+The capability comparison and the named losses answer the useful question: which caller-visible behaviors survived, and which no longer have a channel?
+
+After the change, a Pi worker uses the shared bridge like the other supported workers.
+Pi becomes a model or backend choice inside one execution route rather than a separate runtime family that needs a second implementation of every new feature.
+
+That is a useful architectural reduction.
+It also concentrates risk.
+If the bridge later loses a capability, every worker using that bridge sees the loss.
+Shared code reduces divergence only when its contract is explicit and its missing signals are visible.
+
+## Publish the behavior that did not survive
+
+The deletion did not preserve every Pi-specific control.
+A reliable architecture description includes the losses beside the gains.
+
+| Removed capability | Behavior after the deletion |
 | --- | --- |
-| Mid-turn steering | New input arrives after the current non-interactive request; an interrupt stops the process tree |
-| Per-worker arguments and environment | The shared connection has no per-worker channel for them; configure them on the bridge service instead |
+| Immediate mid-turn steering | New input arrives after the current non-interactive request, and an interrupt stops the process tree |
+| Per-worker arguments and environment | The shared connection has no per-worker channel, so configure these on the bridge service |
 | Per-worker program override | The shared connection has no field for it |
-| Worker trace propagation | The old worker-specific environment row is removed because the shared connection has no worker environment channel |
-| Pi tool-connection file | Tool registration belongs to the bridge service; the runtime no longer writes a Pi-specific file |
+| Worker trace propagation through an environment variable | The old row is removed because the shared connection exposes no worker environment channel |
+| Pi-specific tool-connection file | Tool registration belongs to the bridge service, so the runtime no longer writes a Pi-specific file |
 
-This is why “3,360 fewer lines” is not the conclusion.
-The useful conclusion is: use one path when it carries the behavior the worker needs, and keep a specialized path only for a capability the shared connection cannot express.
+Those are not footnotes.
+They are the conditions under which a team might still need a specialized route.
+If a product depends on per-worker environment variables, deleting the special path is not a neutral cleanup until the product has another way to supply them.
 
-## Source and install boundaries are different
+The right architecture decision can therefore be conditional:
 
-The source change is public.
-An installable package is the version a user can add to an application, and it can lag behind the source repository.
-The latest package version checked for this article on August 1, 2026 was still `@tangle-network/agent-runtime@0.117.0`.
+~~~text
+Keep a special path when it expresses a required capability.
+Remove it when the shared path expresses that capability and records its limits.
+~~~
 
-Readers who need the source-level change should read the [public deletion record](https://github.com/tangle-network/agent-runtime/commit/fee88987ed5d495a765f2ea04bd0657ed9b71c8b).
-Readers who need an installable release should check the [agent-runtime package and release history](https://github.com/tangle-network/agent-runtime) before depending on the newer source.
+The source change chose the second case for the capabilities it promised.
+It kept the first case visible as an accepted difference.
 
-## The practical decision
+## A small parity check is better than a large assumption
 
-Do not remove a special execution path because its code looks repetitive.
-First compare the user-visible settings, controls, error behavior, and records.
-Add missing shared behavior before deleting the special case.
-Then publish the capabilities that remain unavailable.
+The public runtime package is installable with:
 
-That process turns cleanup into a decision a reader can inspect instead of a smaller diff that asks everyone to trust it.
+~~~bash
+pnpm add @tangle-network/agent-runtime
+~~~
 
-## Questions readers usually ask
+The current [public README](https://github.com/tangle-network/agent-runtime#supervise-a-team-of-agents) shows the runtime passing a profile, task, budget, model route, and backend into one supervision call.
+The exact adapter values belong to the application.
+The important design choice is that the execution location is data supplied to one shared flow rather than a hidden branch that silently changes the profile.
 
-### Why remove a backend-specific path?
+A parity test for a cleanup like this can be concrete:
 
-Because the shared path now carries the profile settings and run signals that made the special path different.
-Keeping both would make future fixes land twice.
+~~~typescript
+type ObservableRun = {
+  profile: string[]
+  progressKinds: string[]
+  toolRequests: string[]
+  providerError?: string
+  finalStatus: 'completed' | 'failed' | 'cancelled'
+}
 
-### Did the deletion remove behavior?
+function comparePaths(before: ObservableRun, after: ObservableRun) {
+  return {
+    profile: before.profile.every((setting) => after.profile.includes(setting)),
+    progress: before.progressKinds.every((kind) => after.progressKinds.includes(kind)),
+    tools: before.toolRequests.every((tool) => after.toolRequests.includes(tool)),
+    error: before.providerError === after.providerError,
+    finalStatus: before.finalStatus === after.finalStatus,
+  }
+}
+~~~
+
+This is illustrative test code, not an exported API.
+It makes the acceptance question visible.
+The real test should use a fixed task, a known tool request, a deliberate provider failure, an interrupt, and the same profile on both paths.
+
+Do not compare only successful final answers.
+A successful answer can hide a missing tool.
+A failed answer can reveal whether the path preserves the error that explains the failure.
+
+## What the cleanup proves, and what it does not
+
+The deletion proves that the special source path is no longer needed for the selected set of profile and run behaviors at the pinned source revision.
+It also proves that several Pi-specific controls no longer have a channel through the shared bridge.
+
+It does not prove that every model provider behaves the same.
+It does not prove that a remote service will remain healthy.
+It does not prove that a tool request completed.
+It does not prove that a worker's final code is correct.
+
+| Evidence | Narrow claim |
+| --- | --- |
+| Public deletion diff | Which source path and tests were removed |
+| Capability table | Which caller-visible behaviors were compared |
+| Shared observability change | Which live and trace signals the bridge now exposes |
+| Profile materialization source | Which settings the selected path declares it can carry |
+| Task-specific evaluation | Whether a particular coding task passed its acceptance checks |
+
+An **evaluation** is a structured check of a result against a stated criterion.
+For a coding worker, that might be a test command, a type check, a review rule, or a human decision.
+It is separate from architecture parity because two routes can produce the same trace shape and still produce different code.
+
+## The package boundary still matters
+
+Source and release are different evidence.
+The public repository records what the source contains.
+The package version is what an application can install without building from source.
+
+Check the [published package](https://www.npmjs.com/package/@tangle-network/agent-runtime) and its release notes before assuming that the current source behavior is in the version your application runs.
+
+This is a practical failure case.
+A team can read the deletion, install an older package, and conclude that the shared path still drops a setting.
+That conclusion may be correct for the installed package and wrong for the current source.
+Record the package version with the run.
+
+## Migration is part of the deletion
+
+Removing a path changes more than new runs.
+Existing sessions may still point at the old worker kind.
+Stored traces may contain event names that the shared path does not emit.
+Operational dashboards may count the old executor separately.
+Support tooling may offer a retry button that assumes the old path can accept per-worker environment values.
+
+Treat those consumers as part of the migration surface.
+Before release, find the records and controls that mention the old path and decide what each one should do.
+
+| Existing item | Safe migration question |
+| --- | --- |
+| In-flight session | Can it finish on the old route, or must the product stop and explain the change? |
+| Stored trace | Can readers display both old and shared event shapes? |
+| Retry action | Will retrying preserve the same profile and choose the shared route explicitly? |
+| Dashboard label | Does it describe a worker capability rather than a deleted implementation name? |
+| Rollback package | Can a release be reverted without starting a second worker for the same run? |
+
+The last question is about duplicate side effects.
+Rolling back code is not the same as replaying a task.
+If the worker already changed a repository or called an external service, a new path must inspect the existing run before trying again.
+Use a stable run identifier and preserve the old record even when the new runtime cannot resume it.
+
+This is also where the named capability losses become operationally useful.
+If per-worker environment overrides disappeared, the migration should reject requests that still depend on them.
+If steering moved from immediate input to queued input, the user interface should not promise an instant turn change.
+An honest incompatibility at release time is safer than a retry that appears to work while dropping the control.
+
+## A safer rule for deleting execution paths
+
+First, list the user-visible capabilities of the old and new routes.
+Second, add missing shared behavior before touching the old route.
+Third, run the same task through both paths with a profile that exercises tools, resources, progress, cancellation, and failure.
+Fourth, publish the differences that remain.
+Finally, remove the old path and keep a regression test for the shared contract.
+
+The process is slower than deleting a directory.
+It is faster than discovering months later that one customer relied on a field nobody thought to compare.
+
+The [agent profile contract guide](/blog/agent-profile-materialization-contracts) explains the input boundary that should be checked before launch.
+The [worker observability guide](/blog/agent-runtime-worker-observability) explains why progress and tool requests were prerequisites for this cleanup.
+For the filesystem and process boundary around a coding worker, read [AI dev container for production agents](/blog/ai-dev-container-production-agent-runtime).
+
+
+## Why remove a backend-specific execution path?
+
+Remove it when a shared route can carry the profile settings and run signals that made the special path necessary.
+The source becomes easier to change because a new feature no longer needs two implementations.
+
+## Did the deletion remove behavior?
 
 Yes.
-Mid-run steering is less immediate, per-worker argument and environment overrides have no shared channel, and tool registration moved to the bridge service.
+Immediate mid-turn steering, per-worker environment overrides, a per-worker program override, and a Pi-specific tool-connection file no longer travel through the shared route.
 
-### Does the line count prove the architecture is better?
+## Does deleting source code prove the architecture improved?
 
 No.
-The capability comparison and the named losses provide the evidence.
-The line count only shows how much duplicate source was removed.
+Source removal measures cleanup.
+The capability comparison, shared observability change, and named losses provide the evidence for the architecture decision.
 
-### Is the deletion in the published package?
+## Is the shared path the same as a model router?
 
-The source record is public, but the package check on August 1, 2026 returned version 0.117.0.
-Check the package version before depending on a newer source change.
+No.
+A router chooses or forwards model requests.
+The shared path is the runtime route that starts the worker and translates its events.
 
-## Sources checked 2026-08-01
+## Does a passing evaluation prove the two paths are equivalent?
 
-The primary records are the [shared observability change](https://github.com/tangle-network/agent-runtime/commit/76db51d37bc9885f985a2ff060fcdbb6970a8dee) and the [deletion](https://github.com/tangle-network/agent-runtime/commit/fee88987ed5d495a765f2ea04bd0657ed9b71c8b).
-The [agent-runtime repository](https://github.com/tangle-network/agent-runtime) provides the public source and release boundary.
+No.
+An evaluation covers the checks it defines.
+Use a task that exercises the capabilities your product depends on, including failures and cancellation.

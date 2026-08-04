@@ -2,7 +2,7 @@
 title: 'Anonymous LLM Usage: What Shielded Payments Do and Do Not Hide'
 slug: anonymous-llm-usage-shielded-payments
 summary: >-
-  Anonymous LLM usage is a privacy design problem across payment, prompts, routing, and logs. Learn what shielded payments protect.
+  Anonymous LLM usage depends on the observer and the request data in question, while shielded payments address only one part of the payment and logging path.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,181 +16,292 @@ heroImage: /images/covers/editorial/protocol-operators-v2.webp
 imageAlt: 'An editorial still life about operators running services on a network'
 ---
 
-A shielded payment rail can hide the link between payer identity and an AI request from a named observer, depending on the rail and its metadata.
-It cannot, by itself, hide the prompt from the model provider, remove a user's network address, or erase logs kept by the service provider.
+A researcher wants to ask a language model to summarize a sensitive report.
+The researcher is comfortable with the inference service reading the report, but does not want a payment processor to build a durable record linking their wallet to every request.
 
-The design decision is which observer must be unable to link payment to the request.
-The word “anonymous” describes an observer and a piece of information, not a magic property that covers the whole request.
+Another customer has the opposite requirement.
+They want the operator, the provider running the service, to be unable to read the prompt, even if the payment processor knows the payer.
 
-This article explains the privacy questions a paid language-model service should answer.
-x402 is an HTTP payment protocol for machine-to-machine requests; its [public documentation](https://www.x402.org/) is useful context, but payment support alone does not make a Tangle service anonymous.
-An operator is the service provider that runs the request.
+Both customers might search for **anonymous LLM usage**.
+They do not need the same product.
 
-## Payment processor, operator, provider, and ledger visibility
+An LLM is a large language model that generates or analyzes text from a request.
+Anonymous means that a named observer cannot link a particular identity to a particular action with the information available to that observer.
+That definition is deliberately narrower than “nobody can identify anything.”
 
-Imagine a researcher who wants to summarize a sensitive public report.
-The researcher is comfortable with the service seeing the report, but does not want a payment processor to build a durable link between their wallet and every request.
+The operator **runtime** is the environment where the service code and model call execute, including its process, hardware, network, credentials, and logs.
 
-Another user may want the opposite.
-They need the payment to be private from the operator, but they cannot send the prompt to a provider that stores it for training.
+A shielded payment can reduce the link between a payer and a payment.
+It cannot, by itself, hide the prompt from the model provider, remove a network address from server logs, or make a generated answer correct.
+The design starts by naming the observer and the fact that must stay hidden.
+USDC is a dollar-pegged token used here only as an example payment asset.
 
-Those are different products.
-Before choosing a payment rail, write down who may see what:
+Tangle is a protocol network for coordinating reusable services, operators, Jobs, payments, and execution records.
+In this article, it matters only as the service and operator layer around a paid inference request.
 
-| Observer | Possible exposure |
-| --- | --- |
-| payment processor | payer, amount, time, and service identifier |
-| operator | request metadata, prompt text, output, and network address |
-| model provider | prompt, account identifier, model, and usage data |
-| application owner | pre-request and post-request logs |
-| public ledger observer | payment amount, timing, and public addresses |
+## Privacy begins with an observer
 
-If a design does not name the observer, “private AI” is too vague to evaluate.
+Write the threat model before choosing a wallet or payment protocol.
+The observer table below is a practical starting point for a paid inference request.
 
-## A paid LLM request has several privacy layers
+| Observer | What may be visible | Question the product must answer |
+| --- | --- | --- |
+| Payment processor | payer, asset, amount, network, and time | Can this payment be linked to the request? |
+| Operator | request metadata, prompt, output, and source address | Can the operator read or retain the prompt? |
+| Model provider | prompt, account, model, and usage information | Does the provider store the input or use it for training? |
+| Network service | source address, destination, timing, and request size | Can traffic patterns identify the caller? |
+| Application owner | pre-request identity, prompt, output, and support data | Which records are kept and for how long? |
+| Public ledger observer | addresses, amounts, and transaction timing | Does the payment pattern reveal the service relationship? |
 
-An LLM request usually passes through more systems than the chat screen suggests.
-The application chooses a model, sends a prompt, pays for usage, waits for a response, and stores enough information to support the user.
-Each step can reveal a different fact.
+This table also exposes a common category error.
+Hiding a wallet address from an operator is a different outcome from hiding the prompt from the model provider.
+The first is payment privacy.
+The second is data confidentiality.
 
-| Layer | Question to answer |
-| --- | --- |
-| payment | Can the payment be linked to a wallet or account? |
-| routing | Who can see that this caller contacted this service? |
-| prompt | Can an operator or model provider read the input? |
-| runtime | Where does the model execute, and who administers that machine? |
-| logging | Which request fields are retained, for how long, and why? |
-| receipt | Can the user prove payment without publishing their identity? |
+## x402 handles a payment challenge, not a privacy promise
 
-Shielded payment addresses the payment row when it prevents the processor from linking payer identity, amount, or timing to the service request.
-It remains insufficient when the prompt or network path is more sensitive.
+**x402** is an open HTTP payment protocol for programmatic requests.
+In the documented flow, a client requests a paid resource, the server responds with HTTP status 402 and payment requirements, the client sends a signed payment payload, and the server verifies or settles the payment before returning the resource.
 
-## Where x402 fits
+The current [x402 payment flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) uses the headers named "PAYMENT-REQUIRED", "PAYMENT-SIGNATURE", and "PAYMENT-RESPONSE".
+An x402 facilitator is an optional service that checks payment payloads and can submit settlement transactions for the resource server.
 
-x402 is an HTTP payment flow for programmatic callers.
-A service can respond to an unpaid request with payment information, the caller can complete the payment, and the caller can retry with evidence of payment.
-The protocol is useful because a machine can pay for one request without first creating a conventional account and subscription.
+The request path is:
 
-The public [x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) explains the request and payment mechanics.
-Those mechanics do not automatically provide a private prompt path or a shielded ledger.
-The privacy properties come from the payment asset, network, wallet design, operator deployment, and logging policy chosen around x402.
+~~~text
+client requests the paid inference endpoint
+  -> server returns 402 and payment requirements
+  -> wallet creates a signed payment payload
+  -> client retries with PAYMENT-SIGNATURE
+  -> server or facilitator verifies and settles
+  -> service returns output and PAYMENT-RESPONSE
+~~~
 
-The request shape is therefore better described like this:
+This path can avoid a conventional account and subscription.
+It does not automatically hide the client’s network address, the prompt sent to the operator, the model provider’s records, or the public chain activity supported by the selected payment scheme.
 
-```text
-caller sends an AI request
--> service returns a payment challenge
--> caller pays through the selected rail
--> caller retries with payment evidence
--> operator runs the job
--> service returns a result and a receipt
-```
+The [x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) describes payment behavior.
+The payment asset, chain, wallet, facilitator, network path, operator runtime, and retention policy determine the privacy outcome around that behavior.
 
-The operator policy must state who can read the request, how long request data and backups remain, and what the receipt reveals.
+## Map the privacy layers of a paid LLM request
 
-## TypeScript policy object and request-path review test
+The payment step is only one layer in a request that may cross several systems.
 
-Teams often write a privacy page that says “we do not track you” and leave the implementation implicit.
-A small policy object is more useful because it forces every audience to be named.
-This TypeScript is a teaching example, not a Tangle or x402 SDK:
+| Layer | Example exposure | Control that must be explicit |
+| --- | --- | --- |
+| Identity | Account or wallet is attached to the request | Separate account, wallet, or session policy |
+| Payment | Amount and destination appear in processor or ledger data | Asset, chain, facilitator, and linkability analysis |
+| Routing | A proxy sees source, destination, timing, and size | Network path, proxy logs, and retention |
+| Prompt | Operator or model provider reads the input | Encryption, trusted execution, provider policy, or deliberate consent |
+| Runtime | A machine administrator can inspect process state | Isolation model and secret-release policy |
+| Receipt | Payment, job, and result identifiers are joined | Receipt audience, fields, and correlation policy |
 
-```ts
-type Visibility = 'provider' | 'operator' | 'payment-rail' | 'public'
+Shielded payment primarily addresses the second row.
+It may also change what a receipt reveals, but only if the service avoids reintroducing the same identity link in its application logs.
 
-type RequestPrivacy = {
-  prompt: Visibility[]
-  payer: Visibility[]
-  walletHistory: Visibility[]
+The right claim is specific.
+“Anonymous to the payment processor for the wallet-to-request link under this deployment” can be tested.
+“Private AI” cannot be tested until the product names the data and observer.
+
+## Model linkability as joins across records
+
+A request becomes identifiable when separate records share enough values to be joined.
+The values might be a wallet address, timestamp, amount, source address, request ID, prompt hash, or support ticket.
+No single record has to contain a legal name for the relationship to become obvious.
+
+Consider a researcher who sends one request at 14:03:11, pays 0.03 USDC, and receives a receipt containing `request_id=job-123`.
+If the operator log contains that same request ID and the payment processor exposes the timestamp, an analyst can connect the payment to the inference request even if the operator never sees the wallet address.
+If a proxy also stores the source address, the graph gains another edge.
+
+The service can reduce this linkability by separating audiences and retaining fewer join keys:
+
+| Record | Minimum useful fields | Risky field to avoid by default |
+| --- | --- | --- |
+| Payment receipt | settlement status and payment reference | A stable customer identity copied into every job |
+| Job receipt | job status, result reference, and expiry | The wallet address when the operator does not need it |
+| Operator trace | execution steps and timings | The full prompt or raw source address |
+| Support record | error class and redacted request reference | A copy of the payment payload and prompt together |
+
+This is not a universal privacy recipe.
+An operator may need an identity for abuse prevention, a regulated service may need a durable audit record, and a dispute process may need enough information to reconstruct a payment.
+The point is to make each retained join key intentional and to say which observer can see it.
+
+## Turn a privacy claim into a reviewable policy
+
+A small policy object forces a team to name the visibility boundary.
+This TypeScript is an illustrative review tool, not a Tangle or x402 library.
+
+~~~ts
+type Observer = 'payment-processor' | 'operator' | 'model-provider' | 'network' | 'public-ledger'
+
+type PrivacyPolicy = {
+  promptVisibleTo: Observer[]
+  payerVisibleTo: Observer[]
   requestLogRetention: string
+  resultReceiptFields: string[]
 }
 
-const policy: RequestPrivacy = {
-  prompt: ['provider'],
-  payer: ['payment-rail'],
-  walletHistory: [],
-  requestLogRetention: 'delete request body after completion'
+const policy: PrivacyPolicy = {
+  promptVisibleTo: ['model-provider'],
+  payerVisibleTo: ['payment-processor', 'public-ledger'],
+  requestLogRetention: 'delete request body after completion',
+  resultReceiptFields: ['request_id', 'payment_status']
 }
 
-function canClaimAnonymous(value: RequestPrivacy) {
-  return value.payer.length === 0 && value.walletHistory.length === 0
+function claimNeedsReview(policy: PrivacyPolicy) {
+  return {
+    promptPrivacy: policy.promptVisibleTo.length === 0,
+    payerPrivacy: policy.payerVisibleTo.length === 0,
+    receiptIsSmall: policy.resultReceiptFields.length <= 3
+  }
 }
-```
+~~~
 
-The example is intentionally strict about its name.
-If `payer` is visible to the payment rail, the application cannot honestly say that the payer is anonymous from every observer.
-If the provider sees the prompt, the service cannot promise private inference merely because the payment is shielded.
+The result is not a privacy score.
+It is a list of claims that can fail review.
+The example cannot claim private prompts because the model provider is named as an observer.
+It cannot claim anonymous payment from every observer because the payment processor and public ledger are named.
 
-In a real product, replace this toy object with a documented policy and a test that checks the actual request path.
-The important practice is to make a privacy statement that can fail a review when the code changes.
+In production, run the same review against the actual request path.
+Check reverse proxies, application logs, crash reports, model-provider settings, wallet metadata, backups, analytics, and support tooling.
+The policy is useful only when it changes with the implementation.
 
-## What a Tangle service can publish
+## What a Tangle Blueprint adds to this decision
 
-A Tangle Blueprint is a reusable service definition that an operator can run.
-For a privacy-sensitive inference job, the Blueprint and service page should say which parts of the request are visible to the operator, which payment rail is supported, and what receipt a caller receives.
+A Tangle **Blueprint** is a reusable service template that defines jobs, artifacts, metadata, and operator requirements.
+An **operator** is the provider that runs the Blueprint on a machine it controls.
+The operator **runtime** is the environment where the service code and model call execute.
 
-The [Blueprint repository](https://github.com/tangle-network/blueprint) and [Tangle documentation](https://docs.tangle.tools) are the public places to check current runtime and deployment behavior.
-Do not infer a privacy feature from the existence of an SDK type or a payment example.
-The deployed service and its published policy are the evidence a buyer can use.
+For a privacy-sensitive inference job, the Blueprint should publish more than “supports private inference.”
+It should say which request fields reach the operator, which fields reach the model provider, what payment path is accepted, and what the result receipt contains.
 
-An honest service description might say:
+The public [Tangle Blueprint docs](https://docs.tangle.tools/developers/blueprints/introduction) describe the service and job model.
+The [Tangle x402 gateway guide](https://docs.tangle.tools/developers/blueprint-runner/x402) describes an optional payment ingress that converts a verified x402 payment into a job call.
+The [TEE attestation guide](/blog/tee-attestation-ai-services) explains which execution claims an attestation can support.
+Neither document turns payment support into an anonymity guarantee.
 
-| Claim | What it must name |
+If confidentiality depends on a trusted execution environment, define that term before using it.
+A **trusted execution environment**, or TEE, is a hardware-backed area intended to isolate code and data from the host system.
+An **attestation** is a signed report that a checker accepted about the code or environment that ran.
+Attestation can reduce uncertainty about code identity and secret release.
+It does not prove that a model answer is correct, and it does not hide a prompt from a provider that receives the prompt outside the TEE.
+
+For a job with a TEE requirement, publish:
+
+| Field | Why it matters |
 | --- | --- |
-| payment metadata is reduced | which rail, asset, network, and observer lose the link |
-| prompts are not retained | whether the operator, provider, and backups are included |
-| operator cannot read prompts | the encryption or trusted execution boundary that enforces it |
-| receipts are private | who can verify the receipt and what it reveals |
-| result check | the exact test, attestation, or comparison used |
+| Expected code measurement | Lets a caller compare the running artifact with the approved artifact |
+| Attestation issuer and policy | Names who checked the report and what they accepted |
+| Input and output binding | Shows whether the report is connected to this job |
+| Secret-release rule | Explains when a key can enter the protected environment |
+| Operator and network metadata | Makes remaining linkability visible |
+| Receipt and trace fields | Shows what can be correlated after execution |
 
-“Private” without those details is a marketing adjective, not a technical property.
+A **trace** is a structured record of a run, including request identifiers, steps, timings, errors, and outputs or hashes.
+The trace is useful for accountability, but it can also become a privacy leak if it stores the prompt or joins identity and payment fields unnecessarily.
 
-## Failure cases that change the answer
+## Match the control to the observer
 
-The payment succeeds but the model provider keeps the prompt for thirty days.
-The payment layer worked, but prompt privacy did not.
+The strongest design does not begin with a fashionable privacy label.
+It begins with a sentence such as “the payment processor must not link the wallet to the prompt” or “the operator must process the prompt without seeing its plaintext.”
+Those sentences lead to different controls.
 
-The operator deletes its application log but the wallet and public ledger still reveal timing and amount.
-The request body is gone, but payment linkability remains.
+If the payment processor is the concern, inspect the payment asset, chain, facilitator, wallet reuse, and receipt fields.
+The relevant test is whether the processor can connect the payment to a request under the chosen deployment.
+Changing the wallet without changing a stable request ID or a proxy log may leave the link intact.
 
-The service hides the payer from the operator but forwards the request through an analytics proxy.
-The payment boundary is private while the routing boundary is not.
+If the operator is the concern, inspect where the prompt is decrypted and whether the model provider receives it.
+Encryption in transit protects the network hop, but it does not protect a prompt after the service has to read it for inference.
+A TEE can narrow the host’s access when the code, hardware, attestation policy, and secret-release path all line up.
+It still cannot protect data from a model provider that receives the plaintext outside that boundary.
+
+If the public ledger is the concern, inspect amount, timing, address reuse, and the relationship between the payment reference and the job receipt.
+The service may need a separate settlement or custody design, but that changes the trust and recovery model as well as the privacy model.
+
+If the application owner is the concern, the payment protocol is not the first control to change.
+Review account creation, analytics, support tooling, backups, retention, and who can query the request database.
+An application can defeat a private payment path by copying an account ID into every receipt.
+
+## Failure cases that change the product claim
+
+The payment succeeds, but the model provider retains the prompt for thirty days.
+The payment layer worked, while prompt privacy did not.
+
+The operator deletes the application log, but a public ledger and a proxy log still reveal the amount, timing, and destination.
+The request body is gone, while payment linkability remains.
+
+The service hides the payer from the operator, but an analytics proxy sees the source address and full request path.
+The payment boundary is private, while the routing boundary is not.
 
 The service returns a signed receipt for a bad completion.
-The receipt proves that a service produced the bytes, not that the answer is true.
+The receipt proves that a service produced some bytes, not that the bytes are true or useful.
 
-Each failure belongs in the product's threat model and support documentation.
+These are not edge cases to hide in legal language.
+They are the cases a buyer should test before sending sensitive prompts.
 
-## When to use anonymous LLM usage language
+## A privacy receipt should be smaller than an audit log
 
-Use “anonymous” only with a qualifier such as “anonymous to the payment processor” or “unlinkable from the service account under this deployment.”
-Use “shielded payments” when the selected rail hides the payment metadata you name, and link the public protocol documentation.
+The caller still needs evidence that a paid request completed.
+The privacy goal is not to make the job unobservable to everyone.
+It is to return the smallest receipt that supports the caller’s next decision and keep the richer operational record behind the right access boundary.
 
-Use “private prompts” only when the runtime, provider, and logs have a separate control for prompt visibility.
-If you cannot explain that control, say that the payment is private and leave prompt privacy open.
+A caller-facing receipt might contain:
 
-For many applications, a normal hosted provider with a stated retention duration, training-use policy, deletion scope, and contractual remedy is the better choice.
-Those terms can provide stronger controls than a multi-operator service whose privacy boundary a buyer cannot inspect.
+~~~json
+{
+  "request_id": "job-123",
+  "status": "completed",
+  "result_reference": "result-456",
+  "payment_status": "settled",
+  "expires_at": "2026-08-04T00:00:00Z"
+}
+~~~
 
-For the next protocol step, read [Blueprint Protocol For Operator-Run Services](/blog/blueprint-protocol-operator-services).
-It explains how to put the privacy and failure requirements into a service definition that an operator can run.
+The object is illustrative.
+It omits the prompt, raw model output, wallet address, source address, and internal trace because the caller may not need those fields to decide whether to fetch the result.
 
-## FAQ
+The operator can retain a more detailed trace under a separate policy for debugging or dispute handling.
+That trace should have an access list, a retention period, and a rule for redacting prompt content.
+If a dispute requires the raw request, the service should say who can authorize access and whether the payment or job identity can be joined to it.
 
-### What is anonymous LLM usage?
+Privacy improves when the receipt, trace, payment record, and support record are not automatically copied into one universal event.
+Accountability improves when an authorized reviewer can still reconstruct the necessary facts.
+Define separate access and retention rules for receipts, traces, payment records, and support records.
 
-It is LLM access designed to minimize the identity or request metadata exposed to a named observer.
-It is not a promise that nobody can learn anything about the request.
+## When anonymous LLM usage is the wrong goal
 
-### Do shielded payments hide prompts?
+Use precise anonymous-usage language when the privacy boundary changes a real decision.
+For example, a researcher may need a payment processor to be unable to connect a wallet to a service request.
+A regulated business may instead need a contract that controls provider retention, audit access, deletion, and breach response.
+
+A conventional hosted provider can be the better choice when its retention policy, training-use policy, access controls, and contractual remedies are easier to inspect than a multi-operator deployment.
+Shielded payment is not a substitute for a data-processing agreement or a prompt-retention control.
+
+For the next protocol layer, read [Blueprint Protocol For Operator-Run Services](/blog/blueprint-protocol-operator-services).
+It explains how to put the visibility, payment, evidence, and failure rules into a service definition an operator can run.
+
+
+## What is anonymous LLM usage?
+
+It is LLM access designed to prevent a named observer from linking a particular identity to a particular request under a stated deployment.
+It is not a promise that no system can learn anything about the request.
+
+## Do shielded payments hide prompts?
 
 No.
-They address payment visibility, while prompt visibility depends on the application, operator, model provider, and runtime.
+They address payment visibility.
+Prompt visibility depends on the application, operator, model provider, runtime, and logging policy.
 
-### Does x402 provide anonymity?
+## Does x402 provide anonymity?
 
-x402 provides a machine-readable payment flow.
-The privacy outcome depends on the payment rail and the systems around that flow.
+x402 provides a machine-readable HTTP payment flow.
+The selected payment scheme and the systems around it determine which identity and request fields remain linkable.
 
-### What should a privacy-sensitive service publish?
+## What should a privacy-sensitive service publish?
 
-It should publish the payment observer, prompt visibility, routing data, log retention, receipt contents, and the exact meaning of any word such as “anonymous” or “private.”
+It should publish the payment observer, prompt visibility, routing data, retention period, receipt fields, operator boundary, and the exact meaning of words such as “anonymous” and “private.”
+
+## Does attestation prove a private or correct answer?
+
+Attestation can support a claim about code identity or an execution boundary.
+It does not prove that the model answer is correct, and it does not remove every network or logging observer.

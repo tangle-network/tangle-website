@@ -1,9 +1,10 @@
 ---
-title: 'The x402 Facilitator Problem: Trust and Uptime'
+title: 'The x402 Facilitator: Trust, Uptime, and Safer Failure'
 slug: decentralizing-x402-facilitator
 summary: >-
-  An x402 facilitator simplifies payment verification and settlement but adds
-  uptime, policy, and metadata dependencies. Learn when to use or self-host one.
+  What an x402 facilitator verifies and settles, where a hosted facilitator
+  creates trust and uptime risk, and how a Blueprint service can choose hosted,
+  self-hosted, or local payment handling without executing unpaid work.
 date: '2026-03-22'
 updated: '2026-08-01'
 author: Drew Stone
@@ -19,141 +20,346 @@ heroImage: /images/covers/editorial/x402-production-runway-v2.webp
 imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. An x402 facilitator is optional infrastructure that verifies signed payment payloads and submits settlement transactions for a resource server.
-It cannot rewrite a buyer's signed payment without invalidating the signature, but it can still reject requests, go offline, apply policy, observe payment metadata, or delay settlement.
-The practical decision is therefore not “trust the facilitator or trust math.”
-It is whether to outsource availability, gas sponsorship, network access, and compliance checks to a hosted service or operate those responsibilities yourself.
+Your agent reaches a paid service during an outage.
+The service is alive, the client has signed a payment authorization, and the facilitator endpoint does not answer.
 
-This article was checked on August 1, 2026 against the current [Coinbase x402 facilitator documentation](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator), [x402 payment flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works), and Tangle Blueprint SDK commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/x402).
+Should the service run the job anyway?
+Should it try a second facilitator?
+Could the first request have settled even though the response was lost?
 
-## Quick Answer
+Those are the real questions behind a facilitator, a payment service in x402, an HTTP payment protocol.
+The facilitator moves payment verification and settlement calls out of the resource server, but it also becomes a dependency in the payment decision.
+When its answer is unknown, the resource server should pause execution, preserve the payment reference, and reconcile settlement state before retrying.
 
-Use a hosted x402 facilitator when you want the shortest production path and accept the provider as an availability and policy dependency.
-Self-host or verify and settle locally when you need control over uptime, supported networks, compliance policy, data exposure, or gas strategy.
-In either case, verify that the final transaction settled on-chain before delivering expensive or irreversible work.
+## Choose who owns payment state
 
-## What a Facilitator Does
+An x402 facilitator is a payment service that verifies a client’s payment authorization and can submit or complete settlement on the network.
+It is not the AI runtime, not the service provider running Tangle jobs, and not an evaluator of the job result.
 
-In the current x402 flow, a resource server returns `402 Payment Required` with payment requirements.
-The client signs a payment payload and retries the request.
-The server then verifies and settles that payload either locally or through a facilitator.
+Use a hosted facilitator when you want a provider endpoint without operating payment verification, settlement, or chain infrastructure.
+Self-host when you need control over availability, data handling, and deployment.
+Use local verification and settlement when the network and token scheme make it practical and your team can operate the chain integration.
 
-A facilitator normally exposes two operations:
+In all three models, an unknown payment state must not be treated as approval.
+After settlement, the service owes the client a durable job outcome or a documented recovery path.
+
+## Name the actors before the outage
+
+x402 is an open Hypertext Transfer Protocol (HTTP) payment protocol.
+The **client** is the agent or application that wants a resource.
+The **resource server** is the service that owns the endpoint and decides whether to admit work.
+The **facilitator** is the optional payment utility that verifies and settles on the resource server’s behalf.
+
+A **Blueprint** is a public Tangle service definition with named jobs, operator rules, and an execution lifecycle.
+An **operator** supplies the machine and runs a Blueprint service instance.
+
+A **runtime** is the process that executes a job.
+A **job router** maps a job type to its handler.
+
+An **agent profile** is the client-side policy for accepted networks, tokens, recipients, budgets, timeouts, and retries.
+A **trace** is the record joining the HTTP request, payment decision, job, runtime attempt, and result.
+
+A **service-level agreement (SLA)** is a provider’s stated availability or response commitment, not a guarantee that the paid job will finish.
+
+An **evaluation** is a check against an expected result condition.
+The facilitator can say that payment authorization satisfied payment rules; it cannot say that an AI summary was accurate.
+
+## What the facilitator does
+
+The current x402 flow has a clear division of labor.
+The [x402 protocol repository](https://github.com/x402-foundation/x402) describes the resource server returning `PAYMENT-REQUIRED`, the client retrying with `PAYMENT-SIGNATURE`, and the server returning `PAYMENT-RESPONSE` after payment processing.
+
+With a facilitator, the resource server usually makes two calls:
 
 ```text
-POST /verify  -> validate the signed payload against the payment requirements
-POST /settle  -> submit the payment on-chain and wait for confirmation
+resource server -> facilitator /verify
+resource server -> facilitator /settle
 ```
 
-The hosted service can pay transaction fees, maintain blockchain connections, screen addresses, and normalize behavior across supported networks.
-Coinbase documents its CDP facilitator as one production option, while the x402 protocol permits other hosted or self-run facilitators.
+Verification asks whether the authorization is valid for the requested scheme, network, asset, amount, recipient, and current state.
+Settlement asks the facilitator to submit or complete the transfer and return a result.
 
-## The Real Trust Boundary
+The facilitator does not normally need the job’s private input, model output, or business logic.
+The resource server should send only payment metadata and the authorization required by the scheme.
 
-The signed payment payload narrows what a malicious facilitator can do.
-It does not remove every dependency.
+The [x402 facilitator documentation](https://docs.x402.org/core-concepts/facilitator) and [Coinbase facilitator documentation](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator) describe these roles from the protocol and provider perspectives.
+The provider’s current terms and supported networks remain the authority for a specific deployment.
 
-| Question | What protects you | What remains exposed |
-| --- | --- | --- |
-| Can it change the recipient or amount? | The buyer's signature should fail if signed fields change. | The server must still validate that the signed fields match its own requirements. |
-| Can it claim a transaction settled? | Settlement is recorded on-chain and can be checked independently. | A server that trusts only the facilitator response may act before performing its own receipt check. |
-| Can it refuse a valid payment? | Nothing forces a hosted service to accept every request. | Provider policy, rate limits, sanctions screening, or an outage can deny service. |
-| Can it take the service offline? | The resource server can support another facilitator or local settlement. | A single configured URL is still a single operational dependency. |
-| Can it observe payment metadata? | On-chain settlement is already public on transparent networks. | The facilitator also sees request timing, server identity, network, asset, and payment payload data. |
+## A Blueprint payment path
 
-The highest-risk implementation mistake is treating a successful HTTP response as stronger evidence than the chain transaction it refers to.
-For high-value work, retain the transaction identifier and check the receipt, recipient, asset, amount, network, and confirmation status.
+For a paid Blueprint job, the boundary can look like this:
 
-## Hosted, Self-Hosted, or Local
+```text
+agent profile
+    |
+    | POST /jobs
+    v
+resource server / x402 gateway
+    | \
+    |  \-- /verify --> facilitator
+    |  \-- /settle --> facilitator --> network
+    |
+    | settled payment
+    v
+Blueprint runner -> job router -> runtime -> result
+```
 
-| Option | Best fit | You operate | Main tradeoff |
+The gateway is the admission point.
+The runner is the job lifecycle.
+The job router is the handler dispatch.
+The facilitator is a payment dependency between the gateway and the network.
+
+The public [Tangle x402 gateway](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) pairs gateway behavior with a Blueprint producer so a verified payment can become a runnable job.
+It also exposes a settle-before-execution path.
+That ordering is important because expensive execution should not begin merely because a client sent a plausible signature.
+
+It creates a corresponding obligation.
+If settlement succeeds and the runtime crashes, the resource server must recover the job or record a failure with the payment reference.
+
+## Choose a facilitator operating model
+
+### Hosted facilitator
+
+A hosted facilitator gives a team a URL and a supported integration.
+It avoids operating payment-verification, settlement, and chain infrastructure during the initial deployment.
+It can support several networks when the provider already exposes every network, asset, and payment scheme the service accepts.
+
+The tradeoff is dependency concentration.
+The provider can have an outage, change limits, retire a scheme, change pricing, restrict regions, or expose metadata to its operators according to its policy.
+The service also depends on the provider’s latency and incident response.
+
+Hosted does not mean untrusted by definition.
+It means you are accepting a provider boundary instead of operating that boundary yourself.
+
+### Self-hosted facilitator
+
+Self-hosting moves the facilitator process into infrastructure your team controls.
+That keeps its logs, releases, network calls, and deployment schedule inside systems your team operates.
+It does not remove the need for chain nodes, signing policy, upgrades, monitoring, or network-specific correctness.
+
+Self-hosting is valuable when the facilitator is on the critical path for high-volume or high-value service requests.
+It is a poor choice if nobody owns its keys, upgrades, and incident response.
+
+### Local verification and settlement
+
+Some payment schemes allow the resource server to verify and settle directly.
+Direct settlement removes the facilitator network hop; measure verification and settlement latency before setting the service timeout.
+It also makes the resource server responsible for chain interaction, token semantics, nonce or authorization handling, gas, reorg behavior, and upgrade compatibility.
+
+The x402 project describes production options including a supported production facilitator, a self-hosted facilitator, and local verification and settlement where appropriate.
+Read the current [x402 production guidance](https://github.com/x402-foundation/x402) and scheme documentation before choosing.
+
+## Compare facilitator boundaries
+
+Ask what the facilitator can observe, change, delay, or deny.
+
+| Risk | Hosted facilitator | Self-hosted facilitator | Local handling |
 | --- | --- | --- | --- |
-| Hosted facilitator | Fast integration on supported networks | Resource server and application policy | External availability, policy, and data dependency |
-| Self-hosted facilitator | Teams that want the same interface under their control | Blockchain access, gas, monitoring, upgrades, and key security | More operational responsibility |
-| Local verification and settlement | High-control or specialized payment paths | The full verification and settlement path | Most code and operational complexity |
-| Multiple facilitator support | Services that need failover across providers | Routing, compatibility checks, and duplicate-settlement protection | More states to test safely |
+| Payment metadata visibility | Provider policy | Your infrastructure | Your infrastructure |
+| Availability | Provider SLA and incidents | Your deployment and chain access | Your deployment and chain access |
+| Scheme upgrades | Provider schedule | Your release process | Your release process |
+| Key custody | Provider or scheme-specific model | Your key policy | Your key policy |
+| Chain integration burden | Lower | Medium | Highest |
+| Operational blast radius | Shared provider | Your fleet | Your service and chain stack |
 
-Failover is not as simple as retrying the same call against another URL.
-The resource server needs idempotency and replay protection so two settlement attempts cannot charge the same authorization twice or execute the purchased job twice.
+The table is not a security score.
+It is a prompt to decide which boundary the business can own.
 
-## Tangle Blueprint SDK's Current Path
+A facilitator should not be able to alter the client’s intended recipient or amount without the payment authorization failing.
+That is the trust-minimizing goal of the protocol.
+The resource server should still inspect the returned payment result and confirm it matches the request it admitted.
 
-Tangle's public [`blueprint-x402` crate](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/x402) exposes paid Blueprint jobs over HTTP.
-Its configuration includes a `facilitator_url`, accepted tokens, quote lifetime, and a per-job access policy.
-Paid access is disabled by default until a job is explicitly configured as public or restricted.
+## Availability has two different failures
 
-```toml
-facilitator_url = "https://your-facilitator.example"
-quote_ttl_secs = 300
-default_invocation_mode = "disabled"
+**Known failure** means the facilitator answered that verification or settlement failed.
+The service can return a payment error and avoid execution.
 
-[[job_policies]]
-service_id = 1
-job_index = 0
-invocation_mode = "public_paid"
+**Unknown state** means the request timed out, the connection dropped, or the response was malformed.
+The service cannot infer whether the network accepted the transfer.
+
+The safe state machine is:
+
+```text
+payment received
+    |
+    +-- verification rejected --> no execution
+    |
+    +-- verification accepted -> settlement request
+                                  |
+                                  +-- settled --> admit one job
+                                  |
+                                  +-- rejected -> no execution
+                                  |
+                                  +-- unknown --> reconcile, do not execute
 ```
 
-The gateway accepts the legacy x402 v1 payment header and the v2 `Payment-Signature` header, then converts a verified payment into the same internal job-call path used by the Blueprint runner.
-That keeps payment handling at the edge instead of coupling every job implementation to a specific payment provider.
+In the last branch, executing before reconciliation creates unpaid compute.
+Executing on an unknown result may create unpaid compute.
+Retrying settlement blindly may create a duplicate effect if the scheme is not idempotent.
+The facilitator and payment scheme must document how to query or safely retry status.
 
-The current implementation also exposes limits worth planning for:
+## Fallback routing is not automatic
 
-- One configured `facilitator_url` is an availability dependency for x402 requests.
-- The quote registry is in memory, so outstanding quotes do not survive a process restart.
-- Operators own accepted-token configuration, exchange-rate freshness, markup, monitoring, and incident response.
-- Restricted jobs require an explicit caller policy; payment alone should not silently grant access to sensitive work.
+A second provider improves availability only after both providers support the same network, asset, scheme, authorization semantics, reconciliation process, and replay behavior.
 
-Those statements come from the linked source at commit `00c3cae`, not from a future architecture proposal.
+Do not send the same authorization to two settlement endpoints when the first call timed out.
+First reconcile the original settlement or use the scheme’s documented idempotency and status mechanism.
 
-## Production Checklist
+A sensible fallback design chooses the facilitator before the payment is signed.
+The agent profile or resource server policy records which provider is allowed for that request.
+If the first provider is unavailable before any authorization is signed, choose the second provider and issue a fresh payment requirement.
+If a settlement attempt is already in flight, reconcile it instead of racing another settlement.
 
-Before charging real users or agents, test the failure cases rather than only the successful payment:
+The tradeoff is operational complexity.
+You now need provider health, capability matching, route selection, and a way to explain which provider saw the authorization.
 
-1. Reject a payload with the wrong amount, recipient, asset, network, or expiry.
-2. Retry the same signed payment and prove it cannot execute the job twice.
-3. Interrupt the facilitator during verification and during settlement.
-4. Confirm the server does not deliver expensive work before the required settlement state.
-5. Record a transaction identifier that support staff and the buyer can inspect.
-6. Define what happens when the facilitator returns success but the independent receipt check fails.
-7. Rotate provider credentials or settlement keys without losing in-flight request state.
-8. Measure payment time separately from job execution time.
+## A small routing policy
 
-## When Decentralization Helps
+The following is illustrative TypeScript pseudocode.
+It shows the control decisions without claiming to be a drop-in x402 software development kit (SDK) interface.
 
-Decentralizing facilitation is useful when it removes a measured dependency, not when it merely adds operators.
-A multi-operator facilitator still needs a clear agreement rule, replay protection, a settlement authority, and a way to handle conflicting results.
-If those rules eventually resolve through one account or one RPC provider, the dependency has moved rather than disappeared.
+```ts
+type PaymentState = 'unverified' | 'verified' | 'settled' | 'unknown' | 'rejected'
 
-Start with the concrete risk you need to reduce:
+async function admitPaidJob(input: JobInput, payment: PaymentAuthorization) {
+  const provider = chooseProviderBeforeSigning(payment.network, payment.scheme)
+  const verification = await provider.verify(payment, input)
 
-- Add another provider or local fallback for availability.
-- Check on-chain receipts independently when false settlement responses are the concern.
-- Self-host when data policy or supported networks require it.
-- Use a staked multi-operator service only when its failure and penalty rules are explicit and testable.
+  if (!verification.accepted) {
+    return { status: 'payment_rejected' as const }
+  }
 
-## FAQ
+  const settlement = await provider.settle(payment)
 
-### Is an x402 facilitator required?
+  if (settlement.status === 'unknown') {
+    return { status: 'reconcile_before_execution' as const }
+  }
+
+  if (settlement.status !== 'settled') {
+    return { status: 'payment_failed' as const }
+  }
+
+  return enqueueExactlyOnce({ input, payment, settlement })
+}
+```
+
+The important detail is not the type names.
+The important detail is that only `settled` reaches `enqueueExactlyOnce`.
+The actual x402 client and facilitator APIs should come from their current official documentation.
+
+## Data minimization is part of decentralization
+
+Decentralizing the facilitator does not mean sending the same private payload to more services.
+Keep payment metadata and job data on separate paths.
+
+The facilitator may need:
+
+- Network and asset identifiers.
+- Amount and recipient.
+- The payment authorization.
+- A request or resource identifier.
+
+It should not need:
+
+- A private document.
+- Model weights.
+- The full prompt or output.
+- Internal operator credentials.
+- A private trace containing user content.
+
+The gateway can store a payment reference and pass an opaque input reference to the runner.
+The runtime can fetch the input from a protected store after payment admission.
+That design limits exposed data to the payment reference and necessary settlement metadata, although the facilitator may still observe payer, recipient, amount, network, asset, and timing.
+
+## What to monitor
+
+Track facilitator latency and unknown settlement states beside runner health, and pause Job admission while settlement remains unresolved.
+
+| Signal | What it tells you | Action |
+| --- | --- | --- |
+| Verification latency | Whether clients can complete the 402 retry | Route or investigate before timeouts rise |
+| Settlement latency | Whether paid jobs can be admitted | Hold execution when state is unknown |
+| Rejection rate | Whether tokens, domains, or signatures are wrong | Compare by network, scheme, and provider |
+| Unknown-state count | How many payments need reconciliation | Page an owner; do not discard records |
+| Provider capability drift | Whether a network or scheme changed | Refresh the agent profile and route table |
+| Settlement-to-result gap | Whether admitted jobs finish | Inspect the runner and recovery as well as payment |
+
+A **trace** for a paid request should include facilitator choice, verification result, settlement reference, and job outcome.
+Redact the authorization and user payload according to the payment provider’s retention policy.
+
+An **evaluation** can test the whole path with a small controlled payment.
+It should assert that an invalid authorization does not execute, a valid authorization produces one job, a repeated request is idempotent, and an unknown settlement state pauses execution.
+
+## Failure cases to rehearse
+
+**The facilitator returns a valid-looking response for the wrong resource.**
+Bind verification to the job identity, amount, recipient, network, and request policy.
+Do not accept a generic “valid” response.
+
+**The facilitator is reachable but the chain is congested.**
+Settlement latency can rise while verification remains healthy.
+Use separate timeouts and surface the difference to the client.
+
+**A provider changes a supported token contract.**
+The service should reject the new asset until it is approved in the agent profile and deployment policy.
+
+**A client retries after the first settlement response is lost.**
+Look up the existing payment and job before initiating a second effect.
+
+**The runner fails after settlement.**
+Persist the payment reference before starting the job and expose a status or recovery endpoint.
+
+**A fallback provider supports a different scheme.**
+Issue a new payment requirement and require the client to authorize that exact scheme.
+Do not reinterpret an old signature.
+
+**The facilitator is compromised.**
+Minimize metadata, validate responses against the client authorization, isolate facilitator credentials, and make the resource server fail closed on inconsistencies.
+
+## Choose hosted, self-hosted, or local settlement
+
+Choose a hosted facilitator when you need a provider endpoint without operating payment verification, settlement, or chain infrastructure and can accept that provider boundary.
+Choose self-hosting when payment availability and data handling justify owning the service.
+Choose local handling only when your team is prepared to own the network integration and failure modes.
+
+The x402 trust-minimizing mechanism is the client’s signed intent plus response checks against the requested amount, recipient, network, and scheme.
+The resource server remains responsible for whether paid work runs and returns a result.
+
+
+## Does an x402 facilitator hold user funds?
+
+The standard facilitator model is to verify and settle a client authorization rather than hold a custodial balance.
+The exact custody and key model depends on the provider and payment scheme, so read its current documentation and terms.
+
+## Can I run an x402 service without a facilitator?
+
+Sometimes.
+The supported payment scheme must allow the resource server to verify and settle locally, and the service must own the chain, token, gas, replay, and upgrade concerns.
+
+## What should happen when settlement status is unknown?
+
+Do not execute the paid job.
+Record the payment reference, reconcile through the scheme’s status or idempotency mechanism, and admit work only after settlement is known.
+
+## Is a second facilitator enough for high availability?
 
 No.
-The server can verify and settle payments locally, although a facilitator reduces the blockchain and gas-management work the server must operate.
+It helps only when capabilities and replay semantics match and the service chooses the fallback before signing or safely reconciles an in-flight settlement.
 
-### Can a facilitator steal by changing a signed payment?
+## Does the facilitator verify the AI result?
 
-Changing signed payment fields should invalidate the buyer's signature.
-The resource server still needs to compare the signed payload with its own payment requirements and confirm settlement.
+No.
+It handles payment checks.
+Result correctness belongs to the Blueprint’s job-specific verification or evaluation path.
 
-### Can anyone run an x402 facilitator?
+For the buyer-facing unit-price decision that follows settlement design, see [pay-per-request API pricing](/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags).
 
-The protocol permits custom facilitators.
-Operational compatibility depends on the x402 version, payment scheme, networks, assets, and response format used by the clients and resource servers.
+## Public sources
 
-### What is the main risk of one facilitator URL?
-
-Availability and policy concentration.
-If that service is unavailable or rejects the request, the paid endpoint cannot complete unless the server has another verified path.
-
-### Does Tangle's x402 gateway support both protocol versions?
-
-At commit `00c3cae`, the gateway source recognizes the v1 `X-PAYMENT` header and the v2 `Payment-Signature` header.
-Check the linked source or current release notes before integrating because protocol support can change.
+The [x402 protocol repository](https://github.com/x402-foundation/x402) documents the current resource-server, client, and facilitator flow.
+The [x402 facilitator guide](https://docs.x402.org/core-concepts/facilitator) describes the protocol boundary for verification and settlement.
+The [Coinbase facilitator guide](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator) describes verify and settle responsibilities.
+The [Tangle x402 gateway](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) shows how a paid request can feed a Blueprint runner.
+The [Tangle pricing and payments guide](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) distinguishes x402 ingress from on-chain service payment.
+The [paid Blueprint job guide](/blog/blueprint-sdk-x402-payments-runnable-jobs) explains how a settled request becomes runnable work.
+The [deployment architecture guide](/blog/blueprint-deployment-architecture-remote-providers) covers the remote runner that remains after payment admission.

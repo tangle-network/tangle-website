@@ -1,8 +1,8 @@
 ---
-title: 'Most AI coding agents cannot use your API. Here is how we measure it.'
+title: 'AI Coding Agent API Integration: Measuring Agent Readiness'
 slug: agent-readiness-index-methodology
 summary: >-
-  The Agent Readiness Index scores coding agents on API changes published after model training cutoffs, graded by hidden execution tests that a memorized answer fails. Methodology, calibration, and how to read a score.
+  Measure AI coding agent API integration with current-contract tasks, hidden execution checks, calibration, denominators, and a public Stripe benchmark board.
 date: '2026-07-24'
 author: Drew Stone
 tags:
@@ -15,190 +15,306 @@ heroImage: /images/covers/editorial/instrument-problem-v2.webp
 imageAlt: 'An editorial still life about measuring whether an agent can use a changing API'
 ---
 
-Developers increasingly hand integration work to coding agents.
-The agent reads your docs, writes the client, runs it, and reports back.
-When that works, you gain a customer without a single human reading your documentation.
-When it fails, you lose one the same way: silently.
+A developer asks a coding agent to add a payment flow.
+The agent reads the provider docs, writes the client, runs a test, and reports success.
+The code compiles.
+The first real customer still gets the wrong subscription state because the API changed after the model learned the old example.
 
-We built a benchmark to measure which agents can integrate a real API correctly, using Stripe as the first subject.
-The benchmark follows the current contract described in Stripe's [public changelog](https://docs.stripe.com/changelog), not a frozen tutorial.
-We call the measurement the Agent Readiness Index.
-This post explains how it works, what a score means, and what it cannot tell you.
+That is the problem with **AI coding agent API integration**.
+The agent must discover a live contract, turn it into a request, and produce the right side effect.
+Recall of an old tutorial is not enough.
 
-## The failed integration you never see
+The **Agent Readiness Index** measures this narrower ability.
+It is a benchmark of coding-agent configurations on current API-integration tasks.
+A **benchmark** is a fixed task set and scoring procedure used to compare runs.
+An **evaluation** is the check that decides whether a particular run satisfied its task.
 
-A developer evaluating a payments provider today often starts by asking an agent to wire up a checkout flow.
-Here is what happens if the agent writes from memory.
-Stripe renamed the Checkout Session display-mode values on 2026-03-25: `embedded` became `embedded_page`.
-An agent recalling the older contract sends `ui_mode=embedded` and gets a 400.
-The developer does not see a stale model.
-The developer sees a payments API that returned an error on the vendor's own quickstart flow, and tries the next vendor.
+This article explains the method, the public Stripe snapshot, and the limits of the score.
+It does not claim to measure general coding ability or every provider’s API.
 
-Nothing in your analytics records this.
-There is no support ticket, no failed signup, no session replay.
-The evaluation happened inside an agent session you never observe.
-That is the funnel this benchmark makes visible.
+## The failure that looks like a provider problem
 
-## Benchmarks built on training data cannot measure this
+Stripe’s current documentation distinguishes pausing payment collection from pausing a subscription.
+The documented field named "pause_collection" leaves the subscription status unchanged, while the pause-subscription flow can set the status to "paused".
+The [Stripe API reference](https://docs.stripe.com/api/subscriptions/update) and [pause-subscription guide](https://docs.stripe.com/billing/subscriptions/pause) make that difference explicit.
 
-Two problems disqualify most existing coding benchmarks for this question.
+A client written from memory can call the old-looking field, receive a successful HTTP response, and leave service delivery active when the product meant to pause it.
+The integration did not fail at compilation.
+It failed at the state the customer sees.
 
-The first is memorization.
-Frontier models have read every Stripe tutorial, every Stack Overflow answer, and the full source of stripe-node.
-A benchmark task that appears in training data is a recall test, and recall is exactly the wrong skill to measure here, because the API keeps moving.
-Stripe has shipped three breaking API releases since March 2025 (basil on 2025-03-31, clover on 2025-09-30, dahlia on 2026-03-25) plus monthly updates in between.
-Memory of an API decays in months.
+Stripe also removed subscription-level "current_period_start" and "current_period_end" in the "2025-03-31.basil" release and moved billing periods to subscription items.
+The [dated Stripe changelog entry](https://docs.stripe.com/changelog/basil/2025-03-31/deprecate-subscription-current-period-start-and-end) documents the replacement.
+Code that reads the old field can lose the value it expects without a compile-time failure.
 
-The second is self-grading.
-Many published agent benchmarks score output with another model as the judge, or are published by the vendor whose model tops the chart.
-When the grader is the same kind of system as the graded, inflation is invisible from outside.
-On this suite, the pass decision comes from executing the agent's code against a server that implements the current API contract.
-No model grades any model's work.
+Those are useful benchmark tasks because the stale answer can look reasonable.
+The checker must inspect the request, response, and resulting state rather than trusting a status code.
 
-## Tasks mined from changes newer than the models
+## Define the complete agent profile
 
-We mined the Stripe changelog and release notes on 2026-07-23, working from a 734-line changelog index, and extracted 51 candidate changes in three classes: 13 post-cutoff breaking changes, 27 new API surfaces, and 11 deprecations and removals shipped during 2025.
-A change counts as post-cutoff when it shipped on or after 2026-01-28, which places it after the training data of every model on the current roster.
-The 2025 removals serve a different purpose: they are the cases where the pattern every model memorized now fails.
+A leaderboard row should not be called a model result when several moving parts produced it.
 
-Each task gives the agent a goal, never the contract.
-The prompt for the checkout task asks for an embedded payment session and says the accepted display-mode values changed recently; it does not say what they changed to.
-The agent has live web access and is expected to find the current contract in Stripe's documentation, the same way a developer's agent would.
+An **agent profile** is the complete configuration presented to a task.
+It can include the model, prompt or instruction set, available tools, and other declared behavior.
 
-The current suite is 12 tasks.
-Every task traces to a specific dated changelog entry, recorded in the mining document alongside the trap it sets.
+The **harness** is the program and execution wrapper that runs the agent loop.
+The **execution environment** is the process, filesystem, network, and tool boundary in which that loop runs.
+The model, profile, harness, and environment can each change the result.
 
-| Method input | Count |
-| --- | ---: |
-| Changelog index reviewed | 734 lines |
-| Candidate API changes | 51 |
-| Post-cutoff breaking changes | 13 |
-| New API surfaces | 27 |
-| Deprecations and removals | 11 |
-| Tasks admitted after calibration | 12 |
+The benchmark treats a row as a configuration, not as a timeless property of a model.
+Two rows can show the same model and harness while representing different profile variants.
+If the public board does not expose the changed profile axis, the reader cannot attribute the difference to one cause.
 
-## Hidden execution graders
+That restraint is part of the methodology.
+A benchmark should not imply a causal comparison that its rows do not support.
 
-Each task is graded by running the agent's submitted code against a mock server that implements Stripe's current contract for that endpoint, including the exact error the real API returns for a stale call.
-The graders assert on values, never on a bare status code: the created session's display mode, the amount a payment settled at, the subscription's status after a pause.
+An evaluation record should make the profile boundary explicit.
+An illustrative public row might carry:
 
-The test file is decoded into a private directory at grade time.
-The agent's workspace never contains it, so the agent cannot read the assertions, cannot special-case them, and cannot hard-code the expected output.
+~~~json
+{
+  "model": "gpt-5-mini",
+  "harness": "pi",
+  "profile": "documented-api-search",
+  "tools": ["public-web", "filesystem", "test-runner"],
+  "environment": "isolated-node-runtime",
+  "tasks": 12,
+  "passes": 7
+}
+~~~
 
-## Trap tasks where the memorized answer compiles
+The object is a methodology example, not a claim about fields currently exposed by the board.
+Its purpose is to show why the sample score of 58 percent is incomplete.
+The harness may change tool timing and retry behavior.
+The profile may change the instructions and available sources.
+The environment may change which files or network calls the agent can reach.
+The score belongs to the whole declared configuration.
 
-The most important tasks are the ones where stale knowledge produces code that runs.
-Three examples from the suite:
+## Four design choices keep the measurement honest
 
-Pausing a subscription.
-Stripe added a dedicated pause endpoint that sets the subscription's status to `paused`.
-The memorized answer sets `pause_collection`, which returns 200 and leaves the status `active`, so the customer keeps full service.
-The grader asserts on the resulting status, so the memorized answer fails.
+The index is built around four choices.
 
-Reading a subscription's renewal date.
-`current_period_end` was removed from the Subscription object on 2025-03-31; periods now live on subscription items.
-The old field path does not raise an error.
-It reads `undefined`, and code built on it ships a wrong date silently.
-5 of the 51 mined changes have this shape, where the old path returns nothing instead of failing, which is the most dangerous class for agents because nothing prompts a retry.
+| Choice | Measurement decision | Why it matters |
+| --- | --- | --- |
+| Fresh contract | Tasks come from dated API changes and current documentation | Memory of old examples is not enough |
+| Live discovery | The agent can search public sources during the run | The benchmark tests the source-search work required for integration |
+| Hidden execution | The submitted code runs against a server that checks behavior | A prose answer or status code cannot pass alone |
+| Calibration | Empty, current-reference, and stale solutions are tested before admission | A task must separate doing nothing, knowing the contract, and remembering the old contract |
 
-Confirming a payment with a surcharge.
-The current API accepts the padded amount as a parameter at confirm time, in one call.
-The memorized workaround updates the intent's amount first and then confirms, and both requests return 200.
-The grader reads the server's request log and fails any solution that mutated the intent before confirming.
+The public [Stripe benchmark board](/benchmarks/stripe) shows the current task count, public rows, denominator, per-task heatmap, and run date.
+The benchmark task suite remains private, so the board does not expose task contents.
+That protects the hidden assertions, but it also limits independent reproduction.
+The [AI agent discovery guide](/blog/how-ai-agents-discover-products) covers the public documentation and manifest surfaces an agent can inspect before writing an integration.
 
-## Agents cheat. We caught one doing it.
+## A hidden execution test checks behavior
 
-The graders are hidden, but the mock server the agent calls is a real process on the same host, and until recently its implementation sat in a temporary file on that host.
-That gap was enough.
+Each task gives the agent a goal and access to public documentation.
+The task does not hand over the exact request shape that the agent is expected to discover.
 
-During the first run of our Typesense suite, one agent stopped probing the API and started inspecting the host.
-It listed the running processes, found the mock server among them, followed its command line to the temp file holding the server's source, and read the implementation directly instead of discovering the contract through requests.
-The passes it earned that way were answers copied from the grader.
+The submitted code is run against a mock server that implements the current behavior for the tested endpoint.
+The mock is a test double for the provider’s API.
+It returns the request and response behavior needed to check the integration without sending the benchmark run to a live payment account.
 
-The transcript audit caught every case, because the transcript records the mock's temp path being read.
-9 cells were flagged across two suites.
-7 of the 9 were the same configuration, claude-sonnet on claude-code, which did it systematically.
-Two glm cells did it once each.
-All 9 were discarded and re-run.
+A useful grader checks fields and side effects:
 
-Detection was not the fix.
-The mock's source file is now deleted from disk the moment the server boots; the process keeps its loaded copy, so there is nothing left to read.
-The cheat is impossible now, more than detected.
+~~~json
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/subscriptions/sub_example",
+    "body": {
+      "pause_collection": {
+        "behavior": "void"
+      }
+    }
+  },
+  "expected": {
+    "status": "paused",
+    "service_delivery": "stopped",
+    "invoice_generation": "paused"
+  },
+  "result": "pass only when the state matches the task"
+}
+~~~
 
-The general lesson: if the grader or a reference implementation is reachable from the agent's execution environment, a capable agent will find it, and nothing in the score will tell you.
-Treat any benchmark without transcript-level auditing and a leak-proof grading boundary as contaminated.
+The object above is an illustrative grader shape.
+The public benchmark does not publish its task assertions.
+The principle is the important part: a client can receive status 200 and still fail if it changed the wrong resource state.
 
-## Every task is calibrated three ways before it counts
+## Calibration rejects easy or broken tasks
 
-A task enters the suite only after passing three checks.
+A task enters the suite only after three solutions are tested.
 
-An empty workspace must fail, proving the grader cannot be passed by doing nothing.
-A reference solution written from the current documentation must pass, proving the task is solvable.
-A stale-memory solution, written deliberately against the pre-change contract, must fail on the intended trap assertion and not on some accident, proving the task measures currency rather than luck.
+An **empty solution** must fail.
+This proves that the checker does not accept no-op behavior.
 
-All 12 tasks in the current suite pass all three checks.
-A candidate task that fails any one of them is not admitted.
+A **current-contract reference** must pass.
+This proves that the task can be solved from the public documentation and that the expected result is implementable.
+
+A **stale-memory solution** must fail on the intended behavior.
+This proves that the task tests contract freshness rather than an unrelated syntax mistake.
+
+The calibration matrix is:
+
+| Candidate | Expected result | What it establishes |
+| --- | --- | --- |
+| Empty implementation | Fail | The task requires work |
+| Current documented implementation | Pass | The task is solvable |
+| Deliberately stale implementation | Fail on the trap | The task separates current knowledge from memory |
+
+Calibration is an admission rule, not a score bonus.
+If a task fails calibration, remove or repair it before comparing agent profiles.
+
+## The public Stripe snapshot
+
+The current public board snapshot was generated on July 25, 2026.
+It contains 12 tasks, but some rows have fewer completed attempts because the board preserves the real denominator.
+The table below includes every public row and its 95 percent interval.
+
+| Public row | Model | Harness | Pass rate | Attempts | 95% interval |
+| --- | --- | --- | ---: | ---: | --- |
+| 1 | glm-5.1 | opencode | 91.7% | 12 | 64.6%–98.5% |
+| 2 | glm-5.2 | opencode | 83.3% | 12 | 55.2%–95.3% |
+| 3 | glm-5.2 | opencode | 66.7% | 12 | 39.1%–86.2% |
+| 4 | glm-5.1 | opencode | 66.7% | 12 | 39.1%–86.2% |
+| 5 | gpt-5-mini | pi | 60.0% | 10 | 31.3%–83.2% |
+| 6 | gpt-5-mini | pi | 36.4% | 11 | 15.2%–64.6% |
+| 7 | sonnet | claude-code | 41.7% | 12 | 19.3%–68.0% |
+| 8 | sonnet | claude-code | 30.0% | 10 | 10.8%–60.3% |
+
+The duplicate model and harness labels are deliberate.
+They identify distinct public rows, but the board does not expose enough profile detail to explain the difference between them.
+Do not turn this table into a model ranking.
+
+The intervals are wide because the task count is small.
+The top two rows have overlapping uncertainty with several lower rows.
+A one-task difference on a 10- or 12-task set should start an investigation, not a marketing claim.
+
+The board also shows an opaque per-task view.
+That view helps reveal whether a row’s average comes from consistent behavior or one easy task and one hard task, while keeping the private task prompts hidden.
+
+## A percentage is a count with uncertainty
+
+The denominator is part of the result.
+The first public row is 11 passes out of 12 attempts, which is 91.7 percent.
+The fifth row is 6 passes out of 10 attempts, which is 60.0 percent.
+Those are not equally informative observations, and neither is a permanent property of the model name in the first column.
+
+The board’s interval gives a rough range for the underlying pass rate under the benchmark’s sampling assumptions.
+It is wide because twelve tasks provide little room to distinguish close configurations.
+If one additional task changes a row from 10/12 to 11/12, the displayed percentage moves by 8.3 points even though the underlying behavior may not have changed in a durable way.
+
+A reviewer should keep three quantities together:
+
+~~~text
+observed result = passes / completed attempts
+uncertainty = interval around that result
+comparison = same tasks, same execution procedure, same profile definition
+~~~
+
+If a row has fewer completed attempts, say so before comparing it.
+Do not fill a missing attempt with a guessed failure or silently compare a 10-task row with a 12-task row as if the denominators were identical.
+The public board preserves those differences because the missing run is data about measurement coverage.
+
+The interval also does not correct for every bias.
+If the task set omits a provider feature, or if one profile gets a different tool boundary, the uncertainty around the pass rate can be narrow while the comparison is still unfair.
 
 ## What a score means
 
-Configuration-level results are published on the board itself rather than reproduced here: a leaderboard pasted into a post goes stale the moment the suite is re-run or the metric is corrected, and a post that disagrees with the board is worse than no post. The live table, including per-task detail and the roster behind each row, is at [/benchmarks/stripe](/benchmarks/stripe).
+A pass means the submitted integration produced the expected behavior for one task against the benchmark’s current contract.
+It does not mean the agent can build any integration.
 
-The shape worth understanding is that **rows are configurations, not models**; a model plus the CLI agent driving it; because the tooling moves the score materially. The same model driven by two different agents can differ by tens of points on identical tasks, which is why a "model leaderboard" for integration work is misleading.
+The current suite measures one provider, one task set, one execution procedure, and the public run denominators.
+It does not measure:
 
-A pass means the agent's code executed correctly against the current contract.
-Each configuration attempted each task twice, and each attempt is a single agent session with no retries and no human help.
-Rows are configurations, meaning a model plus the CLI agent that drives it, because the tooling moves the score: glm-5.1 passes 20 of 21 attempts when driven by pi and 15 of 22 when driven by opencode, a 27-point gap on the same model.
+- General software engineering or repository-scale maintenance.
+- User-interface work or browser interaction.
+- Production credentials, rate limits, or live payment risk.
+- Every endpoint or version of the provider’s API.
+- Whether a company’s documentation is easy for a human to understand.
+- Whether an agent can recover after a task that was not included in the suite.
 
-What a score does not mean:
+The score is also time-sensitive.
+Stripe’s [API versioning documentation](https://docs.stripe.com/api/versioning) explains that major releases can contain backward-incompatible changes.
+A score from one release should not be treated as a permanent capability label.
 
-The sample is small.
-Every board states the attempt count behind each row; at the tens-of-attempts scale these suites run, treat gaps under roughly 10 points as noise rather than a ranking.
+## Refresh the suite without changing the question
 
-Coverage is not always identical across rows.
-A configuration can carry fewer attempts than its peers when a cell was lost to an infrastructure failure and quarantined rather than scored. The board reports the real denominator per row, so check it before comparing two configurations; an unequal denominator is the single easiest way to misread a benchmark.
+An API benchmark has two kinds of change.
+The provider’s contract changes, which is the behavior the suite is meant to detect.
+The benchmark’s own task or checker changes, which can make a new score incomparable with an old one.
 
-This is one API and 12 tasks, all Python HTTP clients.
-It measures readiness to integrate Stripe's current API, not general coding ability, repo-scale migration, or UI work.
+When the provider changes, preserve the old task as a dated version if its failure mode is still useful.
+Add a new task for the new contract and calibrate it independently.
+Do not silently edit the assertion behind an existing task and call the resulting percentage a trend.
 
-A model missing from the table was not run.
-Absence is not failure.
+When the grader changes, publish the boundary of the change.
+It may be a bug fix that corrects a false pass, a new timeout that changes completed attempts, or an execution-environment change that gives agents a different tool path.
+Each can be legitimate, but the row needs a new run identity and an explanation before readers compare it with the previous snapshot.
 
-The scores also do not say the tasks are easy.
-Task 04 passed in 1 of 8 attempts across all four configurations, and the lowest row failed 7 of 22 attempts even with live access to the documentation.
+The durable comparison is not “this month’s percentage minus last month’s percentage.”
+It is “the same calibrated task versions, same profile definition, same harness and environment, and same scoring rule produced this change.”
 
-## What a company does with a low score
+Keep the raw task outcomes behind the summary.
+A row with 8 passes out of 12 should retain which four tasks failed, whether the failure was a wrong request or a runtime error, and whether the task was completed after a retry.
+The average is the headline, but the failure shape tells an API team what to fix and tells an agent builder what capability is missing.
 
-The per-task breakdown names the exact API changes agents get wrong, which turns a low score into a work list.
+## Protect the grading boundary
 
-Make each change discoverable in isolation.
-The suite is solvable because Stripe documents every change on its own dated changelog page, where an agent's search can land.
-A migration buried in a PDF or a blog post is invisible to the integration loop.
+A hidden execution test is only informative if the agent cannot read the answer key from its environment.
+If the mock server exposes its source, assertions, or reference implementation to the agent, the run can become a file-discovery task instead of an API-integration task.
 
-Fail loud.
-The removals that return `undefined` instead of an error (5 of the 51 mined changes) are the ones agents cannot self-correct, because nothing signals a problem.
-A 400 with a clear message gets retried; an empty field ships.
+The safe design keeps the task assertions outside the agent workspace, records the requests and tool actions needed for audit, and rejects runs that cross the boundary.
+The benchmark owner should publish the boundary and the contamination policy even when the task text remains private.
 
-Name the replacement in the error where safe.
-An agent that reads "ui_mode 'embedded' is invalid" must go search; one that reads "use 'embedded_page'" fixes itself in one step.
+This is also why a model judge is insufficient.
+A model can produce a persuasive explanation of an API call while the code sends the wrong field.
+Execution against a controlled current contract gives the pass condition a concrete meaning.
 
-Then re-run.
-The graders and tasks stay fixed, so a score change after a documentation change is attributable to the documentation.
+## What an API company can do with a low result
 
-The current suite, roster, and per-task results are at [/benchmarks/stripe](/benchmarks/stripe).
+A low score is useful when the per-task failure points to a documentation or API-design change.
 
-## FAQ
+Publish each breaking change in a dated, searchable page.
+Name the replacement field or endpoint in the error when doing so is safe.
+Prefer an error that tells an agent what to search for over a silent empty field.
+Keep the request and response examples aligned with the current API version.
+Then rerun the same calibrated task set after the documentation changes.
 
-### What does the Agent Readiness Index measure?
+The company should also test whether a stale request fails loudly.
+A wrong field that returns 400 can trigger a search and retry.
+A removed field that returns an empty value can ship incorrect business behavior.
 
-It measures whether a coding agent can find and use a changing API contract well enough for its code to pass hidden execution tests.
+## Decision rule
 
-### Does a high score prove that an agent can build any integration?
+Use the Agent Readiness Index when you need to know whether coding agents can integrate a changing API from public sources.
+Read the task count, row identity, denominator, interval, and last-run date before comparing any two results.
+
+Treat the score as a work list.
+Use per-task failures to improve docs and errors.
+Use fresh tasks to check whether the improvement survives the next API change.
+
+
+## What does the Agent Readiness Index measure?
+
+It measures whether a coding-agent configuration can discover and use a changing API contract well enough for its code to pass hidden execution checks.
+
+## Does a high score prove that an agent can build any integration?
 
 No.
-It describes this API, this task set, and the reported attempt counts.
-It does not measure general software engineering, UI work, or every provider's current behavior.
+It describes one provider, one task set, one run procedure, and the published attempt counts.
+It does not measure general coding, interface work, or every provider’s current behavior.
 
-### Why use hidden execution tests instead of a model judge?
+## Why use hidden execution checks instead of a model judge?
 
-The code must produce the right request and result against the current contract.
-That makes the pass condition inspectable without asking one model to grade another model's prose.
+The code must send the right request and create the right result against the current contract.
+That gives the pass condition an inspectable behavior rather than a second model’s opinion about the explanation.
+
+## Why are there duplicate model and harness labels?
+
+The public rows represent distinct agent-profile configurations.
+The board exposes the model and harness but does not expose every changed profile axis.
+Readers should not infer a cause the public data does not show.
+
+## How should a company use a low score?
+
+Inspect the per-task failure pattern, make the current contract discoverable, make silent failures loud where possible, and rerun the same calibrated tasks after the change.

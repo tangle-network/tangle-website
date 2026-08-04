@@ -2,7 +2,8 @@
 title: 'DeFi Wallet Testing With Browser Agents'
 slug: defi-wallet-testing-browser-agent
 summary: >-
-  DeFi wallet testing needs browser automation for extensions, network prompts, signatures, transaction previews, screenshots, and run evidence.
+  DeFi wallet testing follows the app, wallet extension, chain, and approval
+  boundary with screenshots, provider state, safe fixtures, and a reviewable trace.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,103 +17,265 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-DeFi wallet testing is painful because the important state is split between the web app, the wallet extension, the chain, and the user's signature intent. A normal browser script can click through the page and still miss the wallet prompt that matters. A browser agent has to cross that boundary and keep evidence from both sides.
+The swap page says “Connected,” but the wallet prompt shows a different account on a different chain.
+The test clicks through the page, reports success, and never inspects the prompt where the user would have noticed the problem.
 
-Tangle Browser Agent is built for these flows: connect wallet, switch network, sign typed data, preview a transaction, submit, and verify the app state after confirmation.
+DeFi wallet testing has to follow four states at once: the application, the wallet extension, the chain connection, and the user’s approval.
+DeFi means finance applications that use blockchain accounts and smart contracts, or programs deployed on a blockchain, for actions such as swaps, lending, borrowing, and liquidity provision.
+A token allowance is a limit on how much a contract may spend from an account.
+A wallet extension manages keys and displays the approval prompts.
+The browser page can request work from the wallet, but it does not own the key or the final approval.
 
-## What To Test
+Tangle Browser Agent opens pages, observes Document Object Model state, and executes bounded browser actions toward a stated goal.
+After installing the public driver, run `bad --help` to inspect the Browser Agent commands available from a terminal.
+The public driver repository documents wallet and DeFi testing support alongside screenshots, page observations, and browser actions.
+The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
+Capture page, wallet, provider, and chain evidence in one timeline.
+For the narrower MetaMask fixture and release workflow, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows).
 
-| Flow | Evidence to save |
-| --- | --- |
-| connect wallet | app state, wallet popup, selected account |
-| switch network | requested chain, wallet confirmation, app network state |
-| sign message | message text, signature prompt, app response |
-| typed data signing | structured payload shown to the user |
-| swap or supply | token, amount, route, gas, confirmation state |
-| failure path | rejected signature, insufficient balance, wrong network |
+## Track application, wallet, provider, and chain state
 
-Wallet integrations often use the provider pattern described by [EIP-1193](https://eips.ethereum.org/EIPS/eip-1193). Typed signing commonly uses [EIP-712](https://eips.ethereum.org/EIPS/eip-712). Test evidence should show what the user was asked to approve alongside the app's post-click state.
+A form test usually reads and submits Document Object Model state from one page.
+A DeFi flow crosses several state owners whose values can disagree.
+RPC, or remote procedure call, is the request-and-response interface used to ask a wallet provider or chain client for account, chain, balance, and transaction information.
 
-## Agent Run Pattern
+| State | What it controls | Example failure |
+| --- | --- | --- |
+| application | selected asset, amount, route, and displayed status | The page keeps an old account after the wallet changes. |
+| wallet extension | account access, network prompts, signatures, and transaction confirmation | The prompt names the wrong chain or spender. |
+| provider and RPC client | requests between the page, wallet, and chain client | The request is rejected or points at a disconnected chain. |
+| chain and contract | balances, allowances, transaction execution, and confirmation | The transaction reverts or the UI reports success too early. |
 
-Run the wallet flow in an isolated test environment and save the app state, wallet prompt, and final transaction result. The test plan matters more than a shell recipe.
+A dapp is a web application that calls smart contracts through wallet and provider interfaces from a web page.
+A spender is the contract allowed to use tokens under that allowance.
 
-Then run a browser goal:
+The test should name which state it is checking at each step.
+A sample instruction such as “Swap 10 test tokens” is incomplete if the test does not record the account, chain, token, route, approval, transaction state, and final balance or status.
 
-```bash
+## Work through a safe swap example
+
+Use a resettable account funded only on a local chain or named test network.
+Start with a small read-only quote.
+Stop at the wallet prompt before any signature unless the case explicitly authorizes a test-wallet transaction.
+
+~~~text
+Goal: connect the disposable wallet, switch to the configured test chain,
+enter a small token swap, verify the quoted route and approval details,
+capture the wallet prompt, and stop before signing.
+Starting state: fresh browser profile, known account, funded test balance,
+known token contracts, and reset application data.
+Forbidden actions: production-network (mainnet) signing, real-value transfer, unknown approval,
+or accepting a prompt whose account or chain does not match the case.
+~~~
+
+Record the connect, chain, quote, prompt, rejection, and final-state checkpoints:
+
+1. The application detects the wallet and shows the selected account.
+2. The provider reports the expected chain identifier.
+3. The quote shows the requested input token, output token, amount, and route.
+4. The wallet prompt shows the account, chain, contract, and requested action.
+5. The application remains truthful when the user rejects the prompt.
+6. The run stops or continues only according to the explicit test policy.
+
+The test should capture the prompt before approval.
+Capture the quote, route, amount, and requested action beside the page screenshot.
+Require the wallet screenshot to show the account, chain, spender, asset, amount, and action presented for authorization.
+The post-rejection screenshot explains whether the app recovered.
+
+## What to save for each checkpoint
+
+A trace is the ordered record of an agent run.
+For wallet testing, it needs page state and wallet state in the same timeline.
+
+| Checkpoint | Evidence to capture | Question it answers |
+| --- | --- | --- |
+| before connect | app screenshot, web address (URL), available wallet state | Did the app offer the right connection path? |
+| after connect | selected account in app and wallet, provider response | Are both sides using the same account? |
+| after network request | requested and selected chain identifiers | Did the app ask for the intended network? |
+| before sign | quote, token, amount, spender or contract, wallet prompt | What would the user approve? |
+| after reject | wallet rejection, provider error, app error state | Did the app recover without claiming success? |
+| after test transaction | receipt or local-chain result, app state, balance | Does the page reflect the chain result? |
+| stop | final screenshot, terminal status, reason | Why did the test end? |
+
+Store sensitive values according to the test environment’s retention policy.
+Redact private keys, seed phrases, session cookies, and personal addresses that the reviewer does not need.
+Keep enough account and chain context to distinguish a wrong fixture from a product defect.
+
+## Inspect `accountsChanged`, `chainChanged`, and provider error `4001`
+
+An EIP, or Ethereum Improvement Proposal, is a public specification for an Ethereum interface or protocol change.
+The [EIP-1193 provider specification](https://eips.ethereum.org/EIPS/eip-1193) defines a common JavaScript API, or application programming interface, between an Ethereum web application and a wallet or client.
+Its request method returns a result or rejects with a provider error.
+Its events include connect, disconnect, chainChanged, and accountsChanged.
+
+Those events are test signals.
+If the chain changes, the app should update its network state.
+If the account changes, the app should update or invalidate account-specific state.
+If a request is rejected with code 4001, the app should treat it as user rejection rather than as successful approval.
+
+Typed signing uses structured data rather than an opaque byte string.
+The [EIP-712 standard](https://eips.ethereum.org/EIPS/eip-712) defines typed data, a domain separator, and a signing method designed to let wallets present meaningful fields to users.
+It explicitly does not provide replay protection by itself.
+The dapp and contract still need a nonce, or one-use counter, expiry, chain binding, or another replay policy appropriate to the operation.
+
+An illustrative provider listener can make the app-side evidence explicit:
+
+~~~typescript
+type ProviderError = Error & { code?: number; data?: unknown }
+
+const provider = window.ethereum
+
+if (!provider) {
+  throw new Error('No injected wallet provider was found')
+}
+
+provider.on('accountsChanged', (accounts: string[]) => {
+  console.log({ event: 'accountsChanged', accounts })
+})
+
+provider.on('chainChanged', (chainId: string) => {
+  console.log({ event: 'chainChanged', chainId })
+})
+
+try {
+  const accounts = await provider.request({ method: 'eth_accounts' })
+  const chainId = await provider.request({ method: 'eth_chainId' })
+  console.log({ accounts, chainId })
+} catch (error) {
+  const providerError = error as ProviderError
+  console.error({
+    message: providerError.message,
+    code: providerError.code,
+    data: providerError.data,
+  })
+}
+~~~
+
+This is an illustrative browser-side example based on EIP-1193.
+The [MetaMask Connect](https://docs.metamask.io/metamask-connect/) software development kit is MetaMask’s connection software for choosing supported wallet environments.
+An application using MetaMask Connect or another wallet library may expose a different integration object.
+The test should observe the public behavior that the application relies on, not assume that every wallet uses one implementation.
+
+## Test rejected, pending, reverted, and stale states
+
+Create a small matrix before adding many actions.
+
+| Starting state | Expected application behavior | Required evidence |
+| --- | --- | --- |
+| no wallet extension | explain supported connection methods | app screenshot and stop reason |
+| wallet access is unavailable | request access or stop the case | prompt or blocked state |
+| wrong chain | request a switch or block the action | requested and selected chain |
+| account changed | refresh account-specific data or require reconnect | account event and app state |
+| empty test balance | prevent submission or explain the missing balance | balance state and disabled action |
+| rejected signature | show a recoverable error and keep the quote state honest | provider error and app screenshot |
+| pending transaction | show pending without claiming completion | transaction identifier and pending UI |
+| reverted transaction | show failure and preserve retry context | receipt or local-chain result |
+| stale allowance | show the requested spender and allowance change | approval prompt and post-action state |
+
+Asset symbols and shortened addresses can hide a wrong contract target.
+An asset symbol in the app can differ from the contract address the transaction targets.
+A shortened address can hide the wrong contract.
+A friendly route name can conceal a different path after the quote expires.
+Capture the raw identifiers where a reviewer needs them, and show the human-readable prompt where the user makes the decision.
+
+## Separate approval from settlement
+
+Wallet flows often collapse several statuses into one button label.
+A request can be created without being signed.
+A signature can be returned without a transaction being broadcast.
+A broadcast transaction can remain pending.
+A mined transaction can still revert.
+
+Keep those states distinct in the case:
+
+| State | Meaning | Evidence |
+| --- | --- | --- |
+| requested | the dapp asked the provider or wallet to act | provider request and page context |
+| presented | the wallet displayed the approval | wallet prompt screenshot |
+| rejected | the user or wallet declined the request | provider error and app recovery |
+| signed | a signature or transaction authorization was returned | response record in a test environment |
+| broadcast | the transaction reached a chain client | transaction identifier and RPC result |
+| pending | the chain has not produced the expected confirmation | pending UI and subsequent observation |
+| confirmed | the owning system reports the expected result | receipt, event, or application-owned confirmation |
+| failed | the request or transaction produced an error | error details and truthful app state |
+
+The case may stop at any of these states.
+For a smoke test, stop at `presented` unless signing is explicitly authorized.
+Continuing to confirmed requires a controlled wallet, a known chain, test funds, and a check owned by the chain or application rather than by the model’s description.
+
+## Run the Tangle driver at the browser boundary
+
+The live [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) names the package, the bad binary, and the documented safe discovery commands.
+The public [driver README](https://github.com/tangle-network/browser-agent-driver) includes a wallet and DeFi testing section.
+
+~~~bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
 bad run \
   --url https://app.example.com \
-  --goal "Connect MetaMask, switch to the local test network, submit a small swap, and verify the app shows the completed transaction"
-```
+  --goal "Connect the disposable wallet, verify the configured test chain, enter a small swap quote, capture the wallet prompt, and stop before signing"
+~~~
 
-For MetaMask-specific cases, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows).
+The URL and wallet are illustrative.
+Run against a staging app, local chain, or another environment with test funds.
+Do not pass a production storage state or seed phrase to an exploratory agent.
 
-## Why Screenshots Matter More Here
+The runtime is the environment that contains the browser process, model calls, files, network access, and wallet fixture.
+Record its browser version, extension version, chain endpoint, account class, and reset method.
+An agent profile is the named model, observation mode, permissions, turn limit, and stop policy used for the run.
+Record the model, observation mode, permissions, turn limit, and stop policy beside every run.
+Compare runs with identical settings before attributing prompt differences to the application.
 
-Transaction safety is visual and contextual. The wallet prompt is where the user sees the account, chain, token, amount, and permission request. If the test cannot capture that moment, it can miss the real product risk.
+## Separate page, wallet, provider, and chain evidence
 
-| Risk | Browser evidence catches |
-| --- | --- |
-| wrong chain | wallet network prompt and app network indicator |
-| wrong asset | token symbol and contract display |
-| bad approval | approval amount and spender context |
-| hidden rejection | wallet rejection screen and app error state |
-| stale balance | balance before and after the transaction |
+Browser Agent can run as a local package and CLI without the service-packaging layer described by Tangle Blueprints.
+If a team offers wallet testing as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) can define the job inputs, runtime requirements, and returned artifacts, while an operator is the provider that runs the job.
+The Blueprint records Job inputs, runtime requirements, returned artifacts, and operator responsibility.
+It does not validate a wallet prompt, a contract, or a chain result.
 
-The public [MetaMask developer docs](https://docs.metamask.io/metamask-connect/) are a useful baseline for wallet connection behavior. Your test artifacts should show how your app in practice presents that behavior.
+Return application state, wallet state, provider responses, and chain confirmations as separate evidence fields so a reviewer can see which boundary produced each claim.
 
-## Wallet State Matrix
+## What browser wallet testing does not prove
 
-Test more than the happy path.
+A browser run can prove that a particular application and wallet fixture presented a particular flow.
+It cannot prove smart contract safety.
+It cannot replace contract tests, transaction simulation, audits, monitoring, or chain-level accounting.
+It cannot prove that a live-network transaction will settle at the quoted price.
+It cannot prove that a wallet extension version will preserve the same UI.
+It cannot make a signing action safe merely because a model reached the prompt.
 
-| State | Expected behavior |
-| --- | --- |
-| no wallet installed | app explains supported wallets |
-| wallet locked | app waits or prompts user to enable |
-| wrong network | app requests switch or blocks action |
-| empty balance | app blocks submit before gas failure |
-| rejected signature | app recovers without corrupting state |
-| pending transaction | app shows truthful status |
-| failed transaction | app exposes failure and retry path |
+The strongest claim is narrow:
+under a recorded runtime and disposable fixture, the application showed the expected wallet state, the wallet showed the expected approval details, and the app reported the resulting state honestly.
 
-The state matrix should be small enough to run but broad enough to catch user-trust issues. Wallet bugs are often not contract bugs; they are mismatches between app state and what the wallet asked the user to approve.
 
-## Evidence Hand-Off
+## What is DeFi wallet testing?
 
-Every DeFi wallet test should hand off a packet to engineering:
+DeFi wallet testing checks a finance application across the web page, wallet extension, provider, chain, and user approval boundary.
 
-| Evidence | Why it matters |
-| --- | --- |
-| app screenshot before prompt | shows context |
-| wallet prompt screenshot | shows approval details |
-| provider event log | connects app state to wallet response |
-| final app screenshot | verifies user-visible result |
-| transaction hash or local trace | connects UI to chain or simulator |
+## Why is it harder than ordinary browser testing?
 
-For a MetaMask-focused breakdown, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows). For general browser evidence, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
+The decisive state can live outside the page.
+The application can show one account or chain while the wallet prompt shows another.
+The test must capture both sides.
 
-## What This Does Not Prove
+## What is the minimum evidence?
 
-DeFi wallet testing in a browser does not prove smart contract safety. It proves the user flow, wallet prompts, and UI state around the transaction. Pair it with contract tests, simulation, audits, and monitoring.
+Capture the starting app state, selected account, chain identifier, wallet prompt, action log, provider error or transaction result, final app state, and stop reason.
 
-## Decision Rule
+## Should a browser agent sign transactions?
 
-Use a browser agent when the wallet flow has extension popups, signatures, or network changes. Require screenshots of the wallet prompt and the final app state before accepting the run.
+Only in a controlled test environment with a disposable wallet, test chain, non-production credentials, and an explicit policy that permits the action.
+Otherwise stop at the signing prompt.
 
-## FAQ
+## Does this replace a smart contract audit?
 
-### What is DeFi wallet testing?
+No.
+It tests the user flow around contract interactions.
+It does not establish that the contract logic or economic design is safe.
 
-It is testing the browser and wallet flow for actions such as connect, sign, approve, swap, supply, and withdraw.
+## Set the approval boundary before you automate
 
-### Why is wallet testing harder than normal browser testing?
-
-The key state lives outside the page in a wallet extension or provider, so the test must handle popups and signature prompts.
-
-### Does this replace smart contract audits?
-
-No. It tests the user flow around contract interactions, not the contract logic itself.
-
-### What does Tangle Browser Agent add?
-
-It can drive browser and wallet flows while saving screenshots, actions, and verdicts for review.
+Use a browser agent to inspect application state, wallet prompts, network changes, and recovery behavior.
+Use deterministic tests and chain-level tools for contract invariants and transaction semantics.
+Accept a wallet-flow result only when a reviewer can see the account, chain, requested action, outcome, and reason the run stopped.

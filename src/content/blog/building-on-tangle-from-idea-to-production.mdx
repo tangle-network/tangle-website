@@ -2,8 +2,8 @@
 title: 'How to Build a Tangle Blueprint: Test and Deploy'
 slug: building-on-tangle-from-idea-to-production
 summary: >-
-  Build a Tangle Blueprint with typed Rust jobs, local Anvil tests, and a
-  versioned deployment definition, using the current public SDK example.
+  How to build a Tangle Blueprint from one typed job to a tested operator
+  service, with public SDK commands for local Anvil testing and testnet deployment.
 date: '2026-02-22'
 updated: '2026-08-01'
 author: Drew Stone
@@ -18,55 +18,182 @@ heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
 imageAlt: 'An editorial still life about building a service on Tangle'
 ---
 
-An operator is the person or service responsible for running a job. A Tangle Blueprint is a Rust service package that defines jobs, their typed inputs and outputs, and how operators run those jobs for a network service.
-The shortest reliable path is to start from a maintained example, make one job pass against local Anvil contracts, and only then create a deployment definition for testnet.
+Your team has a useful Rust function on a laptop.
+It accepts a structured request, does the work, and returns the right answer in a unit test.
+The first customer asks a harder question: who will run it tomorrow, how will the request reach that process, and what will either of you be able to inspect when the answer is disputed?
 
-This guide was checked on August 1, 2026 against Blueprint SDK commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/main), including the current [`hello-tangle` example](https://github.com/tangle-network/blueprint/tree/main/examples/hello-tangle).
-Use the linked release and source when commands change; older Blueprint tutorials may show job macros and deployment flows that no longer match the current SDK.
+That is the point at which an application function becomes a service.
+Tangle is a coordination network for services that independent parties run.
+Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
+This guide explains how to build the service, test the same job and runner path locally, and publish a versioned deployment definition for a real network.
 
-## Quick Answer
+A **Blueprint** is a reusable service template.
+It describes the executable artifact, the jobs it exposes, their inputs and outputs, the metadata needed to discover them, and any protocol rules around the parties that run it, services, payments, or verification.
+An **operator** is the party that runs the Blueprint and executes its jobs.
+A **Service** is one configured running instance of the Blueprint with an owner, operator set, payment terms, and lifecycle state.
+A **Job** is one callable unit of work inside that Service.
+The **runtime** is the process and environment that executes the package.
+Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
+An **evaluation** is a repeatable check that compares observed behavior with an expected rule.
 
-Build a Blueprint in five steps:
+The current [Tangle Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) uses those three objects as the basic model.
+The [public Blueprint SDK repository](https://github.com/tangle-network/blueprint) supplies Tangle’s Rust software development kit (SDK), runner, command-line interface (CLI), testing utilities, and examples.
+Anvil is a local Ethereum development network used by the public testing utilities.
+The `testcontainers` library starts disposable containers for integration tests such as the maintained example.
 
-1. Install Rust and the `cargo-tangle` command.
-2. Scaffold a Blueprint or copy the maintained example closest to your service.
-3. Define a typed job and add it to a router.
-4. Run the job against local Anvil contracts and assert the decoded result.
-5. Deploy a versioned definition to testnet, register an operator, and exercise the public service path before mainnet.
+The shortest reliable path is:
 
-Do not treat `cargo build` as production proof.
-A Blueprint is ready for real users only after the same packaged artifact, contract configuration, operator process, payment path, and result checks work on the target network.
+1. Scaffold or copy a maintained example.
+2. Add one typed job and route it to one handler.
+3. Run the example’s Anvil-backed integration test.
+4. Package an immutable artifact and metadata.
+5. Deploy the definition to testnet.
+6. Register an operator and exercise the public job path.
+7. Test restart, timeout, duplicate submission, payment, and expiry behavior before calling the service ready.
 
-## When a Blueprint Fits
+The command `cargo build` proves that a Rust package compiles.
+It does not prove that the operator process can discover a job, execute the intended artifact, submit a result, or recover when the service expires.
 
-Use a Blueprint when independent operators, on-chain service coordination, cryptographic signing, payment settlement, or accountable job execution are part of the product requirement.
+## Begin with one request and one observable result
 
-| Good fit | Poor fit |
+Use a video-transcription service as the running example.
+The customer sends a video reference and a language hint.
+The job returns transcript segments with timestamps.
+
+Before adding payments or several operators, write down the smallest public contract:
+
+```text
+Input:  { video: <reference>, language: <optional language code> }
+Output: { segments: [{ start, end, text }], usage: { seconds } }
+Failure: invalid input, unavailable media, timeout, or execution error
+```
+
+The input and output are part of the job contract, not a detail left to a particular operator.
+The caller needs to know whether a retry is safe, whether the response is complete, and which fields can be evaluated.
+
+The Blueprint can run ordinary application logic off-chain.
+The network coordinates which artifact and operators belong to the service, while the operator runtime performs the transcription.
+That split keeps large files and model work out of the chain without making the service invisible.
+
+## The SDK pieces have different jobs
+
+The names become easier once each one has one responsibility.
+
+| SDK or protocol object | Plain-language role | Typical failure |
+| --- | --- | --- |
+| Blueprint artifact | The binary, container, or other runnable package | The image is missing, mutable, or incompatible with the operator |
+| Job handler | The function that performs one kind of work | It accepts malformed input or returns an unstable shape |
+| Job router | A traffic director from job IDs to handlers | A valid job ID points to the wrong function or an unknown ID is accepted |
+| Blueprint Runner | The process that receives job calls and invokes the job router | It cannot start, connect, or submit results |
+| Producer | The adapter that turns an event into a job call | It misses, duplicates, or misdecodes a trigger |
+| Consumer | The adapter that sends a handler result to its destination | It loses result metadata or fails to publish the outcome |
+| Blueprint Manager | The operator process that watches protocol state and runs services | It cannot fetch the artifact, satisfy policy, or recover the process |
+| Service | A configured instance with an owner and operator set | It expires, runs out of funds, or loses an operator |
+
+The **runtime** is the process and environment that executes the package.
+The Blueprint Runner is part of that runtime for job handling.
+The Blueprint Manager is the operator-facing process that keeps the off-chain runtime aligned with the on-chain service lifecycle.
+
+The [Blueprint Manager documentation](https://docs.tangle.tools/developers/blueprints/manager) describes the operator flow: register for a Blueprint, obtain its artifacts and metadata, and execute assigned services according to the definition and confidentiality policy.
+
+## Route a job before you add a network
+
+A job router keeps the job interface explicit.
+The following is the minimal shape shown in the [official job-router documentation](https://docs.tangle.tools/developers/blueprint-runner/routers):
+
+```rust
+use blueprint_sdk::Router;
+
+let router = Router::new()
+    .route(MY_JOB_ID, my_job)
+    .with_context(my_context);
+```
+
+`MY_JOB_ID`, `my_job`, and `my_context` are placeholders from the public example.
+Replace them with the stable identifier, handler, and resources for the transcription job.
+The important boundary is the route itself: a job call names a job ID, the job router selects the handler, the handler validates and executes the input, and a consumer receives the result.
+
+A job router is not a correctness system.
+It can direct a request to the intended handler and reject an unknown job ID.
+It cannot decide whether a transcript is accurate.
+That requires a task-specific evaluation, such as a labeled sample with expected words and timestamps.
+
+Keep the first test close to that boundary.
+Give the handler a valid request, an invalid request, an unavailable media reference, and a timeout.
+Assert the output shape and the error shape.
+The [Tangle testing guide](https://docs.tangle.tools/developers/testing-with-tangle) describes the later Anvil-backed path that adds protocol state around the same runner.
+
+## Run the maintained example before inventing a layout
+
+The public repository contains a minimal `hello-tangle` Blueprint.
+Its test starts Anvil through the test container utilities, seeds an operator key, starts the Blueprint Runner, submits an application binary interface (ABI)-encoded request, and waits for a job-result event.
+The [example README](https://github.com/tangle-network/blueprint/tree/main/examples/hello-tangle) names those steps and the current test command.
+
+The repository’s current public installation path is:
+
+```bash
+cargo install cargo-tangle --git https://github.com/tangle-network/blueprint --force
+cargo tangle blueprint create --name my-service
+cd my-service
+cargo build
+```
+
+Pin the SDK revision or released CLI in continuous integration.
+Installing the moving `main` branch is convenient for exploration and unsuitable as a reproducibility policy for a production artifact.
+
+The maintained example’s integration test is:
+
+```bash
+cargo test -p hello-tangle-blueprint --test anvil -- --nocapture
+```
+
+The test requires Docker because the current example starts Anvil through `testcontainers`.
+The test is valuable because it checks more than a handler in isolation:
+
+1. A local Tangle contract state is available.
+2. A temporary operator key is usable.
+3. The Runner’s job router is wired to the job.
+4. The request is encoded and submitted through the protocol path.
+5. A result event arrives with a decodable receipt.
+
+Replace the example’s document job with the transcription job only after the original test passes.
+That gives a known-good control case when a later failure could come from the handler, the route, the contract fixture, or the runner configuration.
+
+## Package the operator runtime
+
+An operator cannot run a source repository description.
+The operator needs a fetchable artifact, the metadata that explains it, and enough configuration to connect the runtime to the protocol.
+
+The artifact can be a native binary, a container image, or another source supported by the current SDK path.
+The [Blueprint Sources documentation](https://docs.tangle.tools/developers/deployment/sources/introduction) says that sources describe how operators fetch and execute an artifact.
+The source type is separate from the confidentiality policy.
+
+For a container source, publish a versioned tag and record the immutable digest in your release evidence.
+Do not point a production definition at a mutable `latest` tag.
+If the image changes while the tag stays the same, two operators can believe they are running the same Blueprint while executing different code.
+
+Metadata should answer a caller’s first questions:
+
+| Metadata field | Why a caller needs it |
 | --- | --- |
-| Threshold signing or multi-party protocols | A conventional CRUD application |
-| Paid compute run by independent operators | A request path with a stated sub-10ms limit |
-| Services that need on-chain job and result records | A private service that must stay on one company's infrastructure |
-| Agent-callable services with explicit payment and access rules | A frontend with no operator or protocol requirement |
+| Name and description | Whether this is the right service |
+| Job names and schemas | How to form a valid request |
+| Source and version | Which artifact an operator should fetch |
+| Payment terms | What a request may cost and when it settles |
+| Execution policy | Whether ordinary or confidential execution is acceptable |
+| Evidence returned | What the caller can inspect after completion |
+| Failure and expiry rules | Whether it is safe to retry or migrate |
 
-The tradeoff is control.
-A distributed operator service adds contract state, keys, service registration, deployment artifacts, and network failure modes that a single web server does not have.
+The definition manifest is the file that binds this material to a deployable Blueprint.
+The public CLI uses the `--definition` option for a definition file in JSON, YAML, or TOML.
+The current [SDK README](https://github.com/tangle-network/blueprint#deploying-to-testnetmainnet) lists `metadata_uri`, `manager`, at least one job, at least one source, and either a metadata hash or a metadata file as the minimum shape for a real-network deployment.
 
-## Start From a Maintained Example
+The exact schema can change with the SDK and protocol release.
+Treat the linked repository and current CLI reference as the source of truth for field names.
 
-The current public repository includes examples for Tangle, EigenLayer, x402 payments, API-key access, and multi-operator aggregation.
-For a first Tangle job, use [`examples/hello-tangle`](https://github.com/tangle-network/blueprint/tree/main/examples/hello-tangle).
+## Deploy the definition after the local path passes
 
-Its local test command is:
-
-Start from the maintained example linked above and run its current test from the repository documentation. The useful artifact is a passing job receipt and decoded result, not a copied checkout transcript.
-
-Pin the release or source commit in CI rather than installing an unspecified future revision on every run.
-Record `cargo tangle --version`, the Blueprint SDK version, and the generated project commit with deployment evidence.
-
-## Create the Deployment Definition
-
-Testnet deployment uses a definition file that describes the metadata, jobs, and artifact sources the network should register.
-The current command shape is:
+The current public command shape is:
 
 ```bash
 cargo tangle blueprint deploy tangle \
@@ -74,62 +201,213 @@ cargo tangle blueprint deploy tangle \
   --definition ./definition.json
 ```
 
-The definition needs a metadata URI, manager information, at least one job, at least one artifact source, and either a metadata hash or a local metadata file for the command to hash.
-Use immutable container digests, release artifacts, or versioned native binaries.
-Do not point a production definition at a mutable `latest` tag.
+This command registers a service definition on the target network.
+It does not launch an operator on a machine, prove the handler’s output, or test your payment endpoint.
 
-## Register and Run an Operator
+A testnet definition should use a real metadata URI or a reproducible metadata file and an artifact that operators can fetch.
+For a confidential workload, the current Tangle documentation places the policy under `metadata.execution_profile.confidentiality`.
+The policy values include `any`, `tee_preferred`, `tee_required`, and `standard_required`.
+The [execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) explains that policy in detail.
 
-Deployment creates the service definition; it does not prove an operator can execute it.
-The operator path also needs:
+An illustrative fragment looks like this:
 
-- network HTTP and WebSocket endpoints;
-- a keystore with the correct operator keys;
-- the deployed contract addresses and service identifiers;
-- a packaged Blueprint artifact the manager can fetch;
-- logs and health checks for the runner process;
-- a restart plan that does not lose durable work or payment state.
+```json
+{
+  "metadata": {
+    "name": "transcription-service",
+    "execution_profile": {
+      "confidentiality": "any"
+    }
+  },
+  "sources": [
+    {
+      "kind": "container",
+      "registry": "ghcr.io",
+      "image": "example/transcription-service",
+      "tag": "0.1.0"
+    }
+  ]
+}
+```
 
-The current repository documents `cargo tangle blueprint register-tangle`, `preregister`, and `run` commands in its [main README](https://github.com/tangle-network/blueprint/blob/main/README.md#getting-started).
-Copy the current flags from that source because contract addresses and CLI options are environment-specific.
+This fragment is an illustrative shape, not a complete deployment file.
+Use the current public schema for the full `metadata_uri`, manager, job, and hash fields.
 
-## Production Proof
+The point of a manifest is accountability across the handoff.
+The developer publishes what should run.
+The operator fetches the declared artifact.
+The service records which Blueprint and operator set it uses.
+The caller can compare the returned evidence with the declared contract.
 
-Before calling a Blueprint production-ready, retain one inspectable record for each layer:
+## Run the operator process separately from deployment
 
-| Layer | Required evidence |
-| --- | --- |
-| Source | repository commit and clean build output |
-| Artifact | immutable digest or checksum |
-| Contracts | network, addresses, deployment transaction, and confirmation |
-| Operator | registration transaction, running version, and health output |
-| Job | input identifier, submission transaction or request, and result event |
-| Correctness | decoded result plus a domain-specific assertion |
-| Payment | amount, asset, recipient, settlement receipt, and job identifier |
-| Recovery | tested behavior for restart, timeout, duplicate request, and partial failure |
+The operator flow has its own configuration.
+The current SDK docs show remote procedure call (RPC) endpoints, a keystore path, contract addresses, a settings file, and a chosen protocol.
+The public local command shape is:
 
-Production is the whole path, not the deploy command.
-If one row is missing, label that part untested rather than inferring it from another layer.
+```bash
+cargo tangle blueprint run \
+  --protocol tangle-evm \
+  --http-rpc-url http://127.0.0.1:8545 \
+  --ws-rpc-url ws://127.0.0.1:8546 \
+  --keystore-path ./local-operator-keys \
+  --settings-file ./settings.env
+```
 
-## FAQ
+The endpoints above are local examples from the public testing guide.
+Use the target network’s current RPC endpoints and contract configuration for testnet or mainnet.
 
-### Do I need Rust to build a Tangle Blueprint?
+An operator needs more than a process that stays alive.
+The operator runbook should answer:
 
-The current Blueprint SDK and maintained examples are Rust-based.
-Other languages can call exposed HTTP or on-chain interfaces, but the operator service itself follows the Rust SDK path documented here.
+- How is the signing key created, stored, rotated, and backed up?
+- Which artifact version and digest is running?
+- What happens when the process restarts while a job is in flight?
+- How are duplicate job calls identified?
+- What does a health endpoint report, and what does it omit?
+- How are payment records linked to job records?
+- What happens when an operator leaves or a Service reaches its time-to-live?
 
-### What should I build first?
+The service’s **time-to-live**, or TTL, is the period after which protocol checks can stop accepting jobs or billing.
+A TTL of `0` means that the Service has no expiry.
+The current [service lifecycle guide](https://docs.tangle.tools/developers/blueprints/service-lifecycle) warns that expiry does not necessarily perform application cleanup or refund behavior.
+Stateful or custodial Blueprints need an escape hatch, a migration path, or an explicit termination flow.
 
-Add one typed job to the maintained `hello-tangle` example and make its Anvil test pass.
-That proves the job can cross the same contract, router, and runner path used by the example before you add payment, networking, or multi-operator behavior.
+## Treat production as a chain of proof obligations
 
-### Is a successful local Anvil test enough for production?
+The simplest production mistake is to treat each green layer as proof of the next.
+A green build does not prove the container was published.
+A successful deployment does not prove an operator registered.
+An accepted payment does not prove a job completed.
+A returned transcript does not prove its words are correct.
+
+Keep one record for each layer:
+
+| Layer | Evidence to retain | What it does not prove |
+| --- | --- | --- |
+| Source | Repository revision and dependency lockfile | That the deployed artifact matches it |
+| Build | Reproducible build output | That the operator used that output |
+| Artifact | Registry reference and immutable digest | That the process started successfully |
+| Definition | Network, deployment transaction, metadata URI, and hash | That a customer can invoke the service |
+| Operator | Registration state, running version, and health result | That the handler returns correct work |
+| Job | Request identifier, trigger, result event, and output | That the output passes a domain evaluation |
+| Payment | Amount, asset, payer, recipient, settlement result, and job ID | That a service fulfilled the job |
+| Recovery | Restart, timeout, duplicate, operator exit, and expiry tests | That an untested failure will behave well |
+
+This table is also an evaluation plan.
+For the transcription Blueprint, include a small labeled set with word-error or timestamp tolerances, an invalid-media case, a long-media timeout, and a retry case.
+Keep the evaluation separate from the payment receipt and from the operator health check.
+
+## The failure paths are part of the Blueprint
+
+### The job is accepted but the runner is offline
+
+The protocol may record a request while no operator process is ready to execute it.
+The Service needs a timeout, a retry policy, and a way to distinguish queued work from completed work.
+The caller should never infer completion from an accepted request alone.
+
+### Operators return different results
+
+For deterministic work, the Blueprint can compare outputs or use a threshold rule.
+For transcription, different models and decoding settings can produce different punctuation or segmentation even when the content is acceptable.
+Define normalization and tolerance before comparing results.
+Disagreement should create an inspectable state, not an invisible winner.
+
+### The same bug reaches every operator
+
+Multiple operators are not independent if they run the same faulty image or dependency.
+A task evaluation or reference check is still required for shared bugs.
+
+### A paid request is replayed
+
+The payment layer and the job layer need a correlation identifier and an idempotency policy.
+Idempotency means that retrying the same request does not create a second job.
+x402 is an open protocol for programmatic payment over the Hypertext Transfer Protocol (HTTP).
+It provides payment headers and settlement information, while the Blueprint must decide whether the same job call can be accepted twice.
+The current [Tangle x402 guide](https://docs.tangle.tools/developers/blueprint-runner/x402) documents a `202 Accepted` enqueue result and replay controls for restricted delegated-caller mode.
+
+### The Service expires while customers still depend on it
+
+Renewal is a new operational agreement.
+If the current operators will not renew, a stateful Blueprint needs a migration or exit path.
+Build that path before customers store durable state behind the service.
+
+## When a Blueprint is the wrong abstraction
+
+A conventional web service is usually the better choice when one company should control the whole request path, the data is already trusted to that company, and the latency budget leaves no room for protocol coordination.
+
+A Blueprint fits when the product needs independently operated services, explicit operator registration, protocol-recorded lifecycle, machine payment, cryptographic evidence, or a defined economic consequence for a detected violation.
+
+The extra machinery has real costs:
+
+- Operators must manage keys, artifacts, RPC connections, and upgrades.
+- Customers must understand Service state, payment, and expiry.
+- Verification can add duplicate execution, proof generation, or review delay.
+- Protocol failures become part of the product’s support burden.
+- A public definition can make metadata and lifecycle state more visible than a private deployment would.
+
+Choose the smallest Blueprint that tests the requirement you have.
+Do not add three operators because a diagram looks better.
+Add them when the failure they reduce matters to a customer and the result rule can distinguish agreement from truth.
+
+## A practical readiness check
+
+Before moving from testnet to a production proposal, ask the following:
+
+1. Can a new reader form a valid job request from public metadata?
+2. Can the maintained Anvil test submit a request and decode the result?
+3. Is the artifact immutable and recoverable if the registry is unavailable?
+4. Can the operator restart without losing or duplicating durable work?
+5. Does the caller know the difference between accepted, running, completed, rejected, and expired?
+6. Does every verification statement name the property it supports?
+7. Does the payment record link to the exact job and Service?
+8. Can a customer leave or migrate if the Service expires?
+
+If one answer is no, record it as an untested boundary.
+The next useful change is the one that turns that boundary into an observable test.
+
+
+## What is a Tangle Blueprint?
+
+A Tangle Blueprint is a reusable definition for a service that operators can run.
+It packages jobs, artifacts, metadata, and optional protocol logic for registration, payments, verification, and lifecycle behavior.
+
+## What is the difference between a Blueprint and a Service?
+
+The Blueprint is the reusable template.
+The Service is one configured instance created from that template with an owner, operator set, payment terms, and lifecycle state.
+
+## Do I need Rust to build a Blueprint?
+
+The current public Blueprint SDK and its maintained examples use Rust.
+Another application can call a Blueprint through its public HTTP or on-chain interface, but the operator package follows the Rust SDK path described in the public repository.
+
+## Is an Anvil test enough for production?
 
 No.
-It proves the local contract and runner path for that case.
-You still need a versioned testnet deployment, operator registration, public invocation, failure testing, monitoring, and the same packaged artifact intended for production.
+Anvil is a local Ethereum development network used by the public testing utilities.
+It can prove that a local contract and runner path works for a case.
+It cannot prove that a testnet operator, immutable artifact, payment route, monitoring system, or recovery policy works.
 
-### Where is the current SDK reference?
+## What does a job router do?
 
-Use the [Blueprint repository](https://github.com/tangle-network/blueprint), [Tangle documentation](https://docs.tangle.tools/), and the example closest to your service.
-Prefer links pinned to a release or commit when reproducing a result.
+A job router maps a job identifier to the handler that should execute it.
+It helps the Runner dispatch work and reject unknown jobs.
+It does not evaluate whether the handler’s output is correct.
+
+## Where should I find current CLI flags?
+
+Use the [official Blueprint SDK repository](https://github.com/tangle-network/blueprint), the [Tangle SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk), and the maintained example closest to your service.
+CLI flags and contract fields can change, so pin the version used by your build and update the commands with that release.
+
+## Public sources
+
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the source for the public CLI, examples, and release state.
+The [Tangle Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) defines Blueprint, Service, Job, and operator roles.
+The [Tangle testing guide](https://docs.tangle.tools/developers/testing-with-tangle) documents the seeded Anvil flow.
+The [service lifecycle guide](https://docs.tangle.tools/developers/blueprints/service-lifecycle) documents expiry, renewal, and migration constraints.
+The [Blueprint lifecycle explanation](/blog/how-blueprints-work) gives the object model behind the commands in this guide.
+
+Once the deployment path is clear, the next question is what a Blueprint can prove about the work it runs.
+That question is the subject of [How Tangle Verifies Work](/blog/how-tangle-verifies-work).
+For the service-building path that follows verification, continue with [building AI services on Tangle](/blog/building-ai-services-on-tangle).

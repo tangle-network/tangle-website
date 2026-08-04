@@ -2,7 +2,8 @@
 title: 'Natural Language Test Automation That Leaves Proof'
 slug: natural-language-test-automation-browser-agents
 summary: >-
-  Natural language test automation is credible only when English goals become browser runs with screenshots, actions, verdicts, and reviewable failure reasons.
+  Natural language test automation turns an English user goal into a browser
+  run with an explicit final condition, screenshots, actions, and reviewable failure evidence.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,114 +17,310 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-Natural language test automation lets a product team describe a workflow without writing a selector-heavy script. That is useful only if the English sentence becomes a real browser run. A model summary is not a test. A run with screenshots, actions, observations, and a final verifier is.
+A team tells an agent, “Test onboarding,” and receives a result that leaves basic facts unresolved.
+The team still needs to know which account started the flow, which route opened first, what completed onboarding looked like, and what happened when an invitation was missing or a required field was rejected.
 
-Tangle Browser Agent exposes that pattern through the `bad` CLI and SDK. For wallet-specific English tests, read [Natural Language E2E Testing For Wallet Apps](/blog/natural-language-e2e-testing-wallet-apps).
+Natural language test automation is useful when an English goal answers those questions and a browser run leaves proof of the answer.
+The language supplies intent, the browser supplies observed state, and the final condition supplies the decision.
+Screenshots, actions, page observations, and a stop reason let someone review the result after the run.
 
-## Write Goals Like Acceptance Criteria
+Tangle Browser Agent is Tangle’s browser driver for running natural-language goals against real browser pages.
+The public `bad` CLI starts those Browser Agent runs from a terminal.
+This article turns a vague prompt into a reviewable case, explains the profile and runtime that influence it, and shows when deterministic code should take over.
+For the full browser safety loop, read [AI Browser Automation Needs An Evidence Loop](/blog/browser-automation-ai-evidence-loop).
 
-Weak prompt:
+## Start with the outcome a person can see
 
-```text
+Take a pricing-page signup.
+The team wants to know whether a new visitor can choose the free plan, create a workspace, and reach the dashboard.
+
+This prompt is too broad:
+
+~~~text
 Test onboarding.
-```
+~~~
 
-Useful prompt:
+It names a topic rather than an outcome.
+An agent could open a page, click a few controls, and produce a confident paragraph without checking whether the account was created.
 
-```text
-From the pricing page, start the free plan signup, create an account, finish onboarding,
-and verify the dashboard shows the new workspace name.
-```
+This goal gives the run a testable shape:
 
-The second version gives the agent a start, path, final condition, and visible proof target.
+~~~text
+Open the pricing page.
+Choose the free plan.
+Create a disposable account with the supplied test address.
+Name the workspace Smoke.
+Finish onboarding.
+Verify that the dashboard shows Smoke as the active workspace.
+Stop before purchasing a paid plan or inviting a real person.
+~~~
 
-## Run Shape
+The second version states the entry point, allowed work, final condition, and safety boundary.
+It names the start, allowed actions, visible result, and stop boundary for review.
 
-```bash
+## Define the start, allowed actions, result, and stop boundary
+
+A natural-language case becomes useful when it answers four questions.
+
+| Part | Question | Example |
+| --- | --- | --- |
+| starting point | Where does the run begin? | Public pricing page in a fresh profile |
+| allowed transition | What may the agent do? | Select Free, fill signup, and submit |
+| final condition | What visible state proves completion? | Dashboard shows Smoke as active workspace |
+| stop boundary | What action requires a separate approval? | Do not purchase, invite, or delete |
+
+The final condition should name a page, value, status, or visible relationship.
+“Make sure it works” gives the evaluator nothing to compare.
+“The dashboard heading says Smoke and the plan badge says Free” gives it two observable checks.
+
+An evaluation is the comparison between that expected condition and the evidence from the run.
+A deterministic evaluation can inspect text or state.
+A screenshot-based evaluation can judge layout or visual presence.
+A human can review a sensitive step.
+The test should state which kind of evaluation it expects rather than letting the agent decide after the fact.
+
+## Carry one example through the run
+
+The Smoke workspace example can be written as a compact case brief:
+
+~~~text
+Goal: create the disposable Smoke workspace on the free plan.
+Start URL (web address): https://example.com/pricing
+Starting state: logged out, empty browser profile, test inbox available.
+Allowed actions: navigate, click, type, submit the free signup form, and dismiss a related cookie banner.
+Required evidence: pricing selection, signup result, dashboard heading, plan badge, and final URL.
+Stop before: payment, invitation, deletion, or any action that sends a message to a real person.
+Pass condition: the dashboard shows Smoke as the active workspace and Free as the plan.
+~~~
+
+This case does not prescribe every page query.
+The agent can use accessible names, page text, or visual layout as the interface changes.
+The case still fixes the business meaning of success.
+
+The test author should keep the wording close to the product promise.
+If the product promise is “a new workspace opens after signup,” use that visible state.
+If the promise is “an export contains all selected rows,” inspect the downloaded file or a page confirmation that the product owns.
+Do not accept a model’s statement that a hidden request probably succeeded.
+
+## Run the public driver surface
+
+Tangle publishes the [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) with the scoped package, binary name, safe commands, and software development kit (SDK) exports.
+The [public driver README](https://github.com/tangle-network/browser-agent-driver) documents the CLI installation and run examples.
+
+~~~bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
+bad run --help
 bad run \
   --url https://example.com/pricing \
-  --goal "Start the free plan signup, create an account, finish onboarding, and verify the dashboard shows the workspace"
-```
+  --goal "Choose the free plan, create a disposable Smoke workspace, and verify the dashboard shows Smoke as active. Stop before payment or invitations."
+~~~
 
-The browser driver should record the same evidence a careful QA engineer would save: screenshots, observed controls, actions taken, and the final reason for pass or fail.
+The commands use the public package name.
+The web address and goal are safe examples for a public or disposable page.
+Add authentication only after the runner’s permissions, storage state, and stop policy have been checked.
 
-## When Natural Language Beats A Script
+The driver also documents a library API, or application programming interface, for callers that need to start runs from code.
+The following example uses the public PlaywrightDriver and BrowserAgent exports:
 
-| Scenario | Why English helps |
+~~~typescript
+import { chromium } from 'playwright'
+import {
+  BrowserAgent,
+  PlaywrightDriver,
+} from '@tangle-network/browser-agent-driver'
+
+const browser = await chromium.launch()
+const page = await browser.newPage()
+const agent = new BrowserAgent({
+  driver: new PlaywrightDriver(page),
+  config: {
+    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    observationMode: 'hybrid',
+    plannerEnabled: true,
+  },
+})
+
+try {
+  const result = await agent.run({
+    goal: 'Read the public page title and report the visible heading',
+    startUrl: 'https://example.com',
+  })
+
+  console.log({ success: result.success, reason: result.reason })
+} finally {
+  await browser.close()
+}
+~~~
+
+The example is read-only.
+The model key belongs in the process that owns the browser session.
+The installed package and its README are the source of truth for changing options.
+
+## The prompt is part of the test artifact
+
+When a natural-language case fails, inspect the wording before blaming the model.
+
+| Weak wording | Problem it creates | Better wording |
+| --- | --- | --- |
+| “Make sure checkout works” | No product, amount, or end state | “Add the sample item and verify the review page shows the expected total.” |
+| “Try the wallet” | No account, chain, or action | “Connect the test account, confirm the expected chain, and stop at the signature prompt.” |
+| “Do onboarding” | No starting or completion state | “Create Smoke and verify the dashboard heading and plan badge.” |
+| “Look for visual bugs” | No viewport or visual criteria | “Check the pricing page at the recorded viewport for clipped text, overlapping controls, and unreadable contrast.” |
+| “Test permissions” | No role or denied action | “As a viewer, open settings and verify the billing control is unavailable.” |
+
+A better prompt cannot repair a broken application.
+It can make the failure interpretable.
+The case author owns the business condition.
+The agent owns the browser navigation within the allowed boundary.
+
+## Version the case like a product requirement
+
+The English prompt is part of the test’s source material.
+Store a case identifier and revision beside its run artifacts.
+When the product changes the wording, final condition, or stop boundary, create a new revision rather than silently replacing the old claim.
+
+| Change | Keep the same revision? | Reason |
+| --- | --- | --- |
+| clearer wording with the same goal and stop boundary | usually | The claim is unchanged. |
+| different final page or data condition | no | The evaluation now asks a different question. |
+| new account role or permission | no | The starting state has changed. |
+| changed model or observation mode | record the profile change | The route and evidence may differ. |
+| changed application copy with the same outcome | usually | The goal remains stable, but the trace should show the new path. |
+
+Prompt versioning makes failures comparable.
+If revision 2 adds “stop before payment,” a run that reaches the payment page should be marked against revision 2’s boundary rather than compared with an older case that allowed the page.
+If a goal becomes longer without becoming clearer, remove the extra words and keep the observable condition.
+
+## Record a profile and a runtime
+
+An agent profile is the named configuration that shapes a run.
+It can include the model, observation mode, planner setting, browser mode, maximum turns, allowed tools, and recovery rules.
+The profile belongs beside the prompt in the test record.
+The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
+Changing from DOM-only observation to hybrid observation can change both cost and behavior.
+
+The runtime is the environment that executes the test process and browser.
+It includes the browser version, operating system, viewport, network access, installed extensions, filesystem, and credentials policy.
+Two profiles can behave differently in the same runtime.
+The same profile can behave differently in two runtimes.
+
+The trace is the ordered record of what happened.
+At minimum, it should connect the goal to each observation, action, result, recovery, final check, and stop reason.
+The trace makes a natural-language case reviewable rather than ephemeral.
+
+| Record field | Why retain it |
 | --- | --- |
-| feature launches | flows change before selectors settle |
-| product reviews | PMs can describe the outcome directly |
-| design QA | visual state matters as much as DOM state |
-| partner onboarding | each partner has slightly different setup |
-| wallet apps | popups and extensions create branching paths |
+| goal text | preserves the author’s intent |
+| starting state | explains the first page and available data |
+| profile and runtime | explains the execution conditions |
+| observations | shows what the agent could see |
+| actions | shows what it attempted |
+| screenshots or page state | shows what a reviewer would see |
+| final condition | fixes the meaning of pass |
+| terminal status | separates pass, fail, blocked, and inconclusive |
 
-Browser automation standards such as [WebDriver](https://www.w3.org/TR/webdriver2/) and frameworks such as [Playwright](https://playwright.dev/docs/intro) remain the base layer. Natural language should sit above them, not pretend the browser is magic.
+## Let natural language own the changing surface
 
-## Guardrails
+Use English-first tests when the user goal stays stable while page structure and accessible labels change.
 
-| Guardrail | Why it matters |
+| Good fit | Why |
 | --- | --- |
-| one goal per run | keeps the verdict meaningful |
-| explicit final state | prevents "I clicked around" passes |
-| saved artifacts | makes failures fixable |
-| stable accounts | avoids setup failures hiding product bugs |
-| known environment | separates app defects from test data drift |
+| launch review | copy and layout may change before page queries settle |
+| partner onboarding | each partner may have a slightly different path |
+| design review | the claim concerns rendered state as well as DOM state |
+| wallet flow | extension prompts and network state sit outside the page |
+| support replay | a human report starts as a goal rather than a stable page-query map |
 
-If a run cannot say why it failed, it is not ready for CI.
+The [WebDriver standard](https://www.w3.org/TR/webdriver2/) describes a language-neutral way to control browsers.
+[Playwright](https://playwright.dev/docs/intro) supplies deterministic browser control, assertions, isolation, and reports for end-to-end tests.
+Use an agent to navigate changing page structure, and use Playwright assertions for stable values.
+It should not pretend the browser or the product has become predictable merely because a model can describe it.
 
-## Prompt Review
+## Move stable invariants into code
 
-Natural-language tests still need review. The prompt is the test case.
+Use natural language to navigate changing user journeys.
+Move exact totals, API contracts, permissions, and other narrow conditions into deterministic code.
 
-| Prompt smell | Better version |
+| Keep the goal in natural language | Prefer deterministic code |
 | --- | --- |
-| "make sure it works" | state the exact final screen or data condition |
-| "try checkout" | name product, plan, and confirmation target |
-| "test wallet" | name connect, network, sign, reject, or submit |
-| "look for bugs" | define visual, accessibility, or flow goal |
-| "do onboarding" | specify account state and completion condition |
+| exploratory signup review | exact tax or billing calculation |
+| visual inspection of a new page | a stable accessibility assertion |
+| partner-specific smoke | application programming interface (API) response contract |
+| wallet prompt and stop boundary | transaction simulation and contract invariant |
+| support reproduction | database or permission rule |
 
-This review step is cheap and prevents most false passes. A browser agent can adapt to UI changes, but it cannot infer the business outcome if the test author does not state it.
+The two forms can cooperate.
+An agent can find the checkout review page.
+A deterministic assertion can read the displayed total and compare it with the expected test fixture.
+An agent can navigate to a wallet prompt.
+A lower-level test can confirm the chain identifier and requested contract address.
 
-## When To Convert To Code
+The decision should follow the claim.
+Use the flexible layer to reach a changing surface.
+Use the deterministic layer to protect a stable invariant.
 
-Natural language is best while the flow changes. Convert to deterministic Playwright or lower-level tests when the invariant is stable and frequent.
+## Failure is part of the authoring loop
 
-| Keep natural language | Convert to code |
+A failed case needs enough context to tell whether the prompt, product, or environment owns the next fix.
+
+| Failure record | Likely next question |
 | --- | --- |
-| launch review | stable checkout calculation |
-| exploratory QA | permission matrix |
-| partner-specific smoke | API contract |
-| visual inspection | pure function behavior |
+| agent could not identify the plan control | Does the page expose a clear accessible name? |
+| form accepted text but dashboard stayed empty | Did the create request succeed and did the page refresh? |
+| consent dialog covered the target | Is one bounded dismissal allowed? |
+| login redirected to an unapproved account | Is the storage state correct and disposable? |
+| human-verification challenge appeared | Should the case stop as blocked rather than bypass it? |
+| final screenshot is ambiguous | Should the goal name a stronger visible condition? |
 
-For CI gate design, read [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents). For the browser evidence loop, read [Browser Automation AI Needs An Evidence Loop](/blog/browser-automation-ai-evidence-loop).
+Allow one named recovery, such as dismissing a cookie banner, and record it in the trace.
+Unbounded recovery turns it into a different test.
+The runner should stop when it would have to change the user’s intent, bypass a human control, or take an irreversible action.
 
-Keep a small prompt library and review failures weekly. When a prompt fails because the expected state was unclear, fix the prompt. When it fails because the app changed, decide whether the natural-language case or a deterministic test should own that behavior.
+## What natural-language automation cannot prove
 
-The library should keep examples of good and bad prompts. That helps product, QA, and engineering teams write consistent cases without turning the browser agent into an open-ended instruction follower.
+An English goal does not create coverage for conditions the author omitted.
+An agent that reaches the dashboard does not prove that every account role, locale, browser, network, or backend state works.
+Screenshots do not prove a hidden API write was accepted.
+A successful browser flow does not prove an on-chain program is safe.
+A signed report about the runner’s code or execution environment does not prove the page’s business result.
 
-## What This Does Not Prove
+Wallet and payment tests need stricter boundaries.
+Use disposable accounts and test funds.
+Stop before signing or payment unless the case explicitly authorizes a controlled test transaction.
+Read [Natural Language End-to-End Testing for Wallet Apps](/blog/natural-language-e2e-testing-wallet-apps) for that boundary.
 
-Natural language test automation does not remove the need for engineering-owned tests. It gives non-test-authors a way to generate product-flow coverage while still leaving evidence engineers can inspect.
 
-## Decision Rule
+## What is natural language test automation?
 
-Use natural language test automation when the workflow is user-facing and the desired outcome is easy to state but expensive to encode. Keep deterministic tests for stable invariants.
+It is browser test automation in which a human states a user goal and an agent navigates the page, observes the result, and returns inspectable evidence.
 
-## FAQ
+## Can a product manager write one?
 
-### What is natural language test automation?
+Yes, when the goal states the start, allowed actions, final condition, and stop boundary.
+An engineer still needs to supply safe fixtures, credentials policy, and the right lower-level assertions.
 
-It is test automation where a human describes the user goal in normal language and an agent drives the browser to verify it.
+## Does natural language testing replace Playwright?
 
-### Can product managers write these tests?
+No.
+Playwright remains useful for deterministic browser control and stable assertions.
+Natural language cases cover changing, conditional, or visually judged user journeys.
 
-Yes, if the system records artifacts and the goals are written as acceptance criteria.
+## Can these tests run in continuous integration?
 
-### Does this work with CI?
+Yes, if the runner records the prompt, profile, runtime, screenshots, actions, final condition, and terminal status.
+Secrets should stay in the continuous-integration environment rather than the prompt.
 
-It can, but CI runs should save artifacts and return explicit pass, fail, blocked, or inconclusive outcomes.
+## What should the first case test?
 
-### How does this relate to Tangle Browser Agent?
+Choose a public or disposable read-only flow with a clear visible result.
+Add authentication, wallet extensions, and irreversible actions only after the evidence and stop rules work.
 
-Tangle Browser Agent is the browser automation product that turns natural-language goals into evidence-producing browser runs.
+## Choose the owner of each claim
+
+Use natural language test automation when the user goal is stable but the route through a changing interface is expensive to encode.
+Use deterministic tests for stable invariants.
+Keep the prompt, profile, runtime, trace, and evaluation together so a green result means one specific thing that another person can inspect.
+
+For a wallet-specific case, [DeFi Wallet Testing with Browser Agents](/blog/defi-wallet-testing-browser-agent) applies the same rule to account, chain, and approval state.

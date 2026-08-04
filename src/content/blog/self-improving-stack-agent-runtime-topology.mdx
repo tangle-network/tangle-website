@@ -1,8 +1,8 @@
 ---
-title: 'Agent Runtime Topology: When an Agent Needs More Than a Prompt'
+title: 'Agent Runtime Topology: How Execution Shape Changes Agent Behavior'
 slug: self-improving-stack-agent-runtime-topology
 summary: >-
-  A prompt can request parallel work, review, or cancellation, but only the software running the agent can create those behaviors and record whether they happened.
+  Agent runtime topology determines whether a request for parallel work, review, retries, cancellation, and evidence becomes an executed workflow or remains a sentence in a prompt.
 date: '2026-06-05'
 author: Drew Stone
 tags: ['agents', 'runtime', 'systems', 'self-improvement']
@@ -14,189 +14,329 @@ imageAlt: 'An editorial still life about how an agent system improves'
 ---
 
 Ask an AI coding assistant to “have three specialists work in parallel, compare their patches, and stop the losing attempts.”
-The sentence sounds precise.
-The assistant may still make one model call, mention three imaginary specialists, and return the first patch it wrote.
+The assistant may still make one model call, describe three imaginary specialists, and return the first patch it wrote.
+That mismatch comes from the runtime topology: the prompt states an intention, while the runtime decides which workers start, what state they can see, how their outputs are checked, and whether losing branches can stop.
 
-The deciding fact is whether the software running the agent can create those actions.
+An **agent runtime** is the software that starts model and tool work, manages the loop, records events, and decides when a run ends.
+A **worker** is one bounded execution of an agent inside that runtime.
+The runtime’s **topology** is the shape of the work: serial steps, parallel branches, retries, handoffs, review stages, or a supervisor loop.
+A **trace** is the record of the run, including each worker, tool call, artifact, decision, cost, and failure.
+An **agent profile** is the versioned bundle of model, prompt, tools, permissions, skills, and runtime settings used for a run.
+An **evaluation** is a repeatable test of an agent on a defined case.
+A **baseline** is the version already trusted for comparison, and a **candidate** is a proposed replacement.
+A **validator** is a check that turns an artifact into pass or fail evidence.
+A **judge** is a scorer for qualities that a deterministic validator cannot fully capture.
+A **winner rule** is the rule that chooses among valid branch results.
+A **promotion gate** is a fixed rule that decides whether a candidate may replace the baseline.
+A **sandbox** is an isolated execution boundary that limits access to files, networks, credentials, or processes.
+A **Blueprint** is Tangle’s reusable template for software that runs as a service.
+A **Blueprint Runner** is Tangle’s runtime for dispatching a Blueprint job to the handler registered for that job.
+A **trusted execution environment**, or **TEE**, is a hardware-backed area intended to isolate code and secrets from the host.
 
-An **agent runtime** is the software that starts an agent, gives it tools, records its work, and decides when the run ends.
-A **worker** is one running copy of that agent.
-The runtime’s **execution shape** is the order and relationship of those actions: one worker after another, several workers at once, a review step, a retry, or a human approval.
-
-This post argues for one simple rule: a prompt can request a behavior, but the runtime must own any behavior that needs to be enforced, measured, or repeated.
+The rule is simple:
+a prompt can request a behavior, but the runtime must own any behavior that needs to be enforced, measured, cancelled, or repeated.
 
 ## A request is not an action
 
-Consider the phrase “work in parallel.”
-For a person, it means several independent runs, a limit on how many run at once, separate state, a way to collect results, and a rule for choosing among them.
+For a person, “work in parallel” implies several details:
 
-For software, those are separate capabilities:
+- Independent attempts.
+- Separate state or files.
+- A limit on concurrent work.
+- A way to collect results.
+- A rule for comparing them.
+- A cancellation path.
+- A record of what each attempt did.
 
-| Desired behavior | Runtime must provide |
+For software, each detail is a capability.
+
+| Desired behavior | Runtime capability |
 | --- | --- |
-| Start several attempts | A way to create independent workers |
-| Prevent conflicts | Separate files, memory, or other mutable state |
-| Limit spending | A shared limit for calls, tokens, time, or money |
-| Compare results | A checker and a visible scoring rule |
-| Choose a winner | A decision that the runtime follows |
-| Stop losing work | Cancellation that reaches every child worker |
-| Learn from the run | A record containing each branch and its result |
+| Start several attempts | Worker creation and bounded concurrency |
+| Prevent conflicts | Isolated state, files, or namespaces |
+| Limit spending | A shared token, call, time, and dollar budget |
+| Compare results | A validator or judge with a visible contract |
+| Choose a winner | A winner rule the runtime enforces |
+| Stop losing work | Cancellation that reaches child work |
+| Learn from the run | A trace that keeps branches and outcomes |
 
-If the runtime has none of those controls, the prompt can only ask the model to pretend.
-That may produce a convincing explanation, but it does not create parallel execution.
+If the runtime has none of these controls, a prompt can only ask the model to imitate them.
+The result may read like a team report while one worker did all the work.
+That is a control-flow failure, not a wording failure.
 
-## What execution shape means
+## Topology is an execution shape
 
-The word **topology** is useful here only as shorthand for the execution shape of the work.
+The word topology is useful here only as shorthand for the shape of execution.
 It answers four questions:
 
-- which agent or tool runs
-- in what order or at the same time
-- what state each run can see
-- what condition ends the work
+1. Which worker or tool runs?
+2. In what order or at the same time?
+3. What state does each branch see?
+4. Which condition ends or escalates the run?
 
-One simple run has one worker and one result.
-A refinement run repeats the same task after a checker rejects the previous result.
-A fanout run starts several attempts, checks each result, and applies a winner rule.
+A serial refinement run looks like:
 
-The important object is not the worker’s persona.
-It is the control structure that determines what happened.
+```text
+task → worker → validator → retry or finish
+```
 
-## Why prompts cannot provide runtime authority
+A parallel run looks like:
 
-A prompt cannot create an operating-system process.
-It cannot reserve a separate worktree, cap the number of simultaneous requests, guarantee that every child record is saved, or resume a run after the host dies.
+```text
+task → worker A ┐
+      worker B ├→ validator → winner or retry
+      worker C ┘
+```
 
-It also cannot make a checker’s decision final if the loop ignores that decision.
-The model can be asked to stop after a pass, while the runtime continues making calls.
-The model can be asked to ask for approval, while the tool remains available without approval.
+A handoff looks different:
 
-Those are control failures, not wording failures.
+```text
+triage worker → specialist worker → final reviewer
+```
 
-## The smallest useful runtime model
+The model can be identical in all three cases.
+The execution shape still changes the available evidence, cost, latency, and failure behavior.
 
-A runtime needs a few explicit pieces:
+## What belongs in the runtime
 
-| Piece | Plain-language job |
+Keep policy text and execution authority separate.
+The model can suggest a next step, but the runtime should enforce the boundaries that matter:
+
+| Runtime responsibility | Why it cannot be left to prose |
 | --- | --- |
-| Loop | Start work, receive a result, and decide whether another step is needed |
-| Worker description | State which model, tools, instructions, and resources one run receives |
-| Checker | Turn a result into a pass, fail, or explained score |
-| Execution shape | Choose refinement, fanout, handoff, retry, or another flow |
-| Budget | Limit time, model calls, tools, tokens, or dollars |
-| Record | Preserve inputs, events, decisions, outputs, and failures |
-| Cancellation | Stop work that no longer matters |
+| Worker count | The model cannot create an operating-system process through a sentence |
+| Concurrency limit | A model cannot reserve shared capacity across branches |
+| State isolation | A role label does not create separate files or memory |
+| Budget accounting | “Be efficient” does not stop a runaway loop |
+| Validation | A model can claim it passed a check without running it |
+| Cancellation | A model can say “stop” while child calls continue |
+| Replay | A summary cannot recover an omitted tool call |
+| Promotion | The candidate should not decide whether it replaces itself |
 
-Changing the execution shape should not require rewriting the model prompt.
-That separation lets a team compare one worker with a refinement loop while holding the model, tools, and task constant.
+The boundary also improves experiments.
+When the driver, worker profile, validator, and budget are explicit, a team can compare serial refinement with fanout while holding the model and task set fixed.
 
-## What the public runtime exposes
+## A public runtime example
 
-The public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) contains a loop that can run repeated attempts and bounded parallel attempts.
-Its public design separates the loop, the execution-shape choice, the checker, the worker description, and the output parser.
+Tangle’s public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) exposes a TypeScript kernel for bounded agent rounds.
+Its public quickstart shows a driver that reads the previous worker output, composes the next prompt, stops when a validator passes or a shot limit is reached, and returns a recorded decision.
 
-In plain language, the source describes two useful flows:
+The shape is:
 
-| Flow | What it does |
+```ts
+import { runAgentRounds } from '@tangle-network/agent-runtime/kernel'
+
+const result = await runAgentRounds({
+  task: { prompt: 'Write a release note that mentions rollback.' },
+  driver: {
+    name: 'refine',
+    plan: async (task, history) => {
+      const last = history[history.length - 1]
+      if (!last) return [task]
+      if (last.verdict?.valid || history.length >= 3) return []
+      return [{ prompt: 'Rewrite the note to mention the rollback path.' }]
+    },
+    decide: (history) =>
+      history.some((shot) => shot.verdict?.valid)
+        ? 'pick-winner'
+        : history.length < 3
+          ? 'refine'
+          : 'fail',
+  },
+  agentRun: { profile: { name: 'note-writer' }, taskToPrompt: (task) => task.prompt },
+  output,
+  validator,
+  ctx: { sandboxClient: worker },
+  maxIterations: 3,
+})
+```
+
+The example is adapted from the repository’s public offline quickstart.
+The output parser, validator, and worker are adapters supplied by the application.
+The important property is that refinement is represented as executable driver state rather than as a promise in the prompt.
+
+The public repository also documents supervision and improvement calls.
+Use those interfaces as the source of truth for current names and options because runtime APIs change faster than an article.
+
+## Do not confuse agent routing with Blueprint routing
+
+Tangle uses the word Router in more than one nearby context.
+A **Router** in the Blueprint Runner is a traffic director that maps a job identifier to the handler for that job and validates its inputs.
+It is not automatically the planner that decides which AI worker should act next.
+
+A **Blueprint** is a reusable template for software that can run as a service.
+A **Service** is a live instance of that template.
+An **operator** is the party that runs the Service and handles its jobs.
+If the agent is wrapped inside a Blueprint, the Blueprint Runner Router can deliver a paid or on-chain job to the agent service, while the agent runtime can still have its own internal worker topology.
+
+That distinction matters for debugging.
+An accepted job at the outer Router does not prove that an internal worker started.
+An internal worker finishing does not prove that the outer job result was returned.
+The trace should connect those boundaries with a shared execution identifier.
+
+If the service accepts [x402](https://docs.tangle.tools/developers/blueprint-runner/x402), x402 is an optional off-chain HTTP payment path.
+The gateway verifies and settles payment, then injects a job call into the runner.
+A paid and enqueued request is not a completed job and is not proof of answer quality.
+
+If the service runs inside a trusted execution environment, an **attestation** is a signed report about the code and hardware state loaded by that environment.
+Attestation can support the claim that the expected code ran in the expected boundary.
+It does not prove that the agent chose the right tool or that the output passed an evaluation.
+
+## Trace fields that prove the execution shape
+
+A final answer cannot show whether the runtime executed the requested shape.
+For a claimed three-worker run, the trace should include:
+
+| Trace field | Question it answers |
 | --- | --- |
-| Refinement | Try one result, check it, and try again until it passes or reaches a limit |
-| Fanout and vote | Run several attempts, check each, and return the highest-scoring valid result or report that none passed |
+| Parent and child IDs | Which work belonged to the run? |
+| Agent profile | Which model, prompt, tools, and permissions did each worker use? |
+| Input context | Did branches see independent or shared state? |
+| Start and finish times | Did the timestamps show concurrency? |
+| Tool calls and outputs | What evidence did each branch collect? |
+| Validator result | Which checks passed or failed? |
+| Winner rule decision | Why did one branch win? |
+| Cancellation state | Did losing work stop or continue? |
+| Cost and tokens | What did the topology purchase? |
 
-The public repository is the authority for which interfaces and releases exist.
-This article does not turn a conceptual idea such as durable replay or nested supervision into a shipped API.
-The [evaluation-gates article](/blog/self-improving-stack-evaluation-gates) explains how to test the resulting behavior, while [harness evolution](/blog/self-improving-stack-harness-evolution) covers the evidence needed when the control path changes.
+Without these fields, a successful output does not prove that parallelism helped.
+It may prove only that one branch happened to solve the task.
 
-## Compare execution shapes at equal cost
+**Artifact lineage** is the chain linking a final artifact to the branches and evidence that produced it.
+The [trace systems article](/blog/self-improving-stack-trace-systems) explains why raw provider activity, tool spans, and artifact lineage matter.
+The [harness evolution article](/blog/self-improving-stack-harness-evolution) covers what to do when the current runtime cannot capture or enforce the required boundary.
 
-An eight-worker design can beat a one-worker design because it spent eight times as much, not because its control structure was better.
-That can still be the right product choice, but the comparison must say what was purchased.
+## Equal-budget topology comparisons
 
-For each run, record:
+An eight-worker topology can beat a one-worker topology because it spent eight times as much.
+That can be a rational product decision.
+It is not evidence that coordination itself improved the result.
 
-- number of workers
-- model calls and tool calls
-- input and output tokens
-- wall-clock time
-- failed and cancelled branches
-- human approvals
-- total cost
-- final quality score
+For each comparison, record:
+
+- Worker count and maximum concurrency.
+- Model calls and tool calls.
+- Input and output tokens.
+- Wall-clock time.
+- Failed, timed-out, and cancelled branches.
+- Human approvals.
+- Total dollars and sandbox time.
+- Final quality and protected failure classes.
 
 Then compare the right question:
 
-| Question | Evidence needed |
+| Question | Required evidence |
 | --- | --- |
-| Is the result better at the same budget? | Paired tasks with equal limits |
-| Is the result cheaper at the same quality? | Cost and score together |
-| Is the result faster at the same quality? | Latency and score together |
-| Is the result safer? | Failure, approval, and policy records |
+| Is the topology better at the same budget? | Paired tasks with equal limits |
+| Is it cheaper at the same quality? | Cost and quality together |
+| Is it faster at the same quality? | Latency distribution and quality together |
+| Is it safer? | Permission, failure, approval, and trace records |
 
-Without those columns, “more agents” is not an improvement claim.
+The [evaluation gates article](/blog/self-improving-stack-evaluation-gates) gives the release rule.
+The [multi-agent coordination article](/blog/self-improving-stack-multi-agent-coordination) explains why independent-looking workers can still share one blind spot.
 
-## A checker and a winner rule are different
+## Failure behavior must be explicit
 
-A **checker** asks how well one result satisfies a task.
-A **winner rule** decides which result the runtime returns or which branch continues.
+Every topology needs policies for the unhappy path.
 
-The checker may report a score, but the winner rule also needs to account for cost, safety, deterministic failures, and missing evidence.
-If the runtime returns the first result regardless of the checker, the checker is decoration.
+If a branch times out, the runtime can retry, ignore it, stop the run, or ask for review.
+If a validator fails, the runtime can refine the same branch, open a new branch, or return a failure with evidence.
+If the winner rule receives no valid candidate, the result should be “no candidate passed,” not the first malformed output.
+If cancellation races with a tool call, the trace should record whether the side effect completed.
 
-Keeping the two decisions separate makes the system easier to test.
-The checker can be calibrated on examples.
-The winner rule can be tested against budgets, timeouts, failed branches, and approval requirements.
+Do not let the model choose among those policies in an unstructured paragraph.
+The model can propose a retry reason.
+The runtime owns the retry count, budget, side-effect policy, and final decision.
 
-## What a real multi-worker record must show
+Cancellation also has a cost boundary.
+Stopping a parent call does not necessarily stop a provider request, remote job, browser action, or child process.
+The runtime needs a cancellation contract for every adapter and must report adapters that cannot stop immediately.
 
-If a runtime claims to have used several workers, the record should let a reader answer:
+## Add a branch only when it adds a capability
 
-- which workers were created
-- what each one received
-- which tools each one used
-- what state was shared or isolated
-- which checks ran
-- why one result won
-- which branches were cancelled
-- how much time and money the run used
-- whether the control path can be replayed
+The simplest topology is one worker with one validator.
+Use refinement when a failed result contains enough information to improve the next attempt.
+Use fanout when independent attempts can explore useful alternatives and a reliable winner rule or validator can choose among them.
+Use a handoff when a new specialist should own the next step and the state transfer is explicit.
+Use a supervisor when work can be decomposed and the coordinator has authority over assignments, budgets, and merge rules.
 
-Without that record, a successful result does not show whether the extra workers helped, whether one worker did all the work, or whether the winner rule was ignored.
+Do not add a branch because the prompt sounds more sophisticated with five roles.
+Add one when it creates a measurable capability:
+
+- Different evidence.
+- Different tools.
+- Different model or skill.
+- A real isolated workspace.
+- An independent check.
+- A faster path through independent work.
+
+If five workers share the same context, model, evaluator, and missing source, five outputs may be five versions of the same error.
+
+## Separate the service job from the agent workflow
+
+The public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) places execution, supervision, and improvement in code that can be measured.
+The public [agent-eval repository](https://github.com/tangle-network/agent-eval) provides the comparison layer for candidate behavior.
+The [Blueprint Runner documentation](https://docs.tangle.tools/developers/blueprint-runner/introduction) describes the outer service lifecycle, job producers, Router, handlers, and consumers.
+
+These are related but not interchangeable.
+The Blueprint Runner routes a service job.
+The agent runtime executes the internal workflow.
+The evaluation system decides whether a new profile or topology earned promotion.
+The operator runs the service and records operational evidence; application checks still determine whether the agent’s answer meets the product contract.
+
+The profile must identify the full execution condition.
+If a candidate changes the Router, worker model, prompt, tool list, or sandbox mode, the evaluation should say so.
+Otherwise a topology claim can hide a profile change.
 
 ## The practical decision
 
-Keep coordination in a prompt when it is advice the model may follow.
-Move it into the runtime when it must be enforced, measured, or repeated.
+Keep coordination in the prompt when it is advice the model may follow.
+Move it into the runtime when it must be enforced, measured, cancelled, or repeated.
 
-Use a single worker when the task is small and the cost of extra attempts is not justified.
-Use refinement when a result can be checked and improved.
-Use fanout when independent attempts provide useful diversity and the winner rule can be explained.
+Use one worker when the task is small, the cost of extra attempts is not justified, or the evaluator is too weak to select among branches.
+Use refinement when the failure signal points to a repair.
+Use fanout when independent attempts create useful diversity and the winner rule is testable.
+Use a supervisor when the decomposition, state transfer, and merge contract are explicit.
 
-Do not call a system self-improving because it changes prompts after a run.
-It is improving its execution shape only when it can propose, run, compare, and retain a different control structure with the same evidence standard.
+The minimum proof is not a polished final answer.
+It is a trace that shows the requested workers existed, saw the intended state, ran the intended tools, received the intended checks, and consumed the reported budget.
 
-## Questions readers usually ask
+If a prompt says “parallel” and the trace contains one worker, the system did not parallelize.
+If the system cannot show why a branch won, it did not yet select a winner.
+If the service accepted payment but the job has not completed, it did not yet deliver a result.
 
-### Can a better prompt create true parallelism?
 
-No.
-It can ask the model to imitate parallel work, but real parallelism requires the runtime to start and track several independent workers.
-
-### Does several workers always improve quality?
-
-No.
-It may increase cost, latency, disagreement, and cleanup work.
-Compare execution shapes under the same budget before calling one better.
-
-### What happens when one branch fails?
-
-The runtime needs an explicit policy: retry, ignore, stop, or ask for human review.
-The policy and the failed branch should remain in the run record.
-
-### Is a score enough to choose a winner?
+## Can a better prompt create true parallelism?
 
 No.
-The winner rule also needs cost, safety, completeness, and deterministic-failure policy.
+It can request parallel work or imitate a team report, but true parallelism requires the runtime to create, track, isolate, and join multiple executions.
 
-### What should be built next?
+## What is agent runtime topology?
 
-The next useful primitive is a small, durable run record that preserves child attempts, budgets, cancellation, and replay boundaries.
-That evidence should come before a larger menu of coordination patterns.
+It is the executable shape of an agent workflow, including which workers and tools run, their order or concurrency, their state visibility, their budgets, and their stop rules.
+
+## Does more workers always improve quality?
+
+No.
+More workers can increase cost, latency, correlated errors, winner-rule mistakes, and cleanup work.
+Compare against equal-budget baselines and inspect branch-level traces.
+
+## What should a runtime record?
+
+Record the agent profile, parent and child execution IDs, context boundaries, tool calls, outputs, validators, winner-rule decisions, timing, cost, failures, and cancellation state.
+
+## Where does a Blueprint fit?
+
+A Blueprint defines a deployable service and its jobs.
+Its Router delivers a job to the service handler.
+The internal agent runtime can then choose a separate topology for the work.
+
+## Public contracts and comparisons
+
+- [Tangle agent-runtime](https://github.com/tangle-network/agent-runtime)
+- [Tangle agent-eval](https://github.com/tangle-network/agent-eval)
+- [Tangle Blueprint Runner introduction](https://docs.tangle.tools/developers/blueprint-runner/introduction)
+- [Tangle Router documentation](https://docs.tangle.tools/developers/blueprint-runner/routers)
+- [Tangle x402 payment gateway](https://docs.tangle.tools/developers/blueprint-runner/x402)
+- [OpenAI Agents SDK orchestration](https://openai.github.io/openai-agents-python/multi_agent/)
+- [Building effective agents from Anthropic](https://www.anthropic.com/engineering/building-effective-agents)

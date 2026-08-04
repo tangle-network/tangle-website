@@ -2,7 +2,7 @@
 title: 'AI Coding Agent Benchmark: What CodeTraceBench Measures'
 slug: codetracebench-benchmark-measured-wrong-capability
 summary: >-
-  CodeTraceBench gave a recursive trace analyst and a one-shot analyst nearly the same score, while the recursive run cost 5.57 times more.
+  This AI coding agent benchmark gave a recursive trace analyst and a one-shot analyst nearly the same localization score, while the recursive run cost about 5.57 times more.
 date: '2026-08-01'
 author: Drew Stone
 tags:
@@ -17,173 +17,349 @@ heroImage: /images/covers/editorial/instrument-problem-v2.webp
 imageAlt: 'An editorial still life about measuring an agent system'
 ---
 
-Imagine asking an AI agent to review a coding session and point to the step where the agent went wrong.
-You need a way to tell whether the answer is useful, so you run it against examples where the incorrect steps are already labeled.
+An engineer asks an analyst to inspect a failed coding-agent session and point to the step where the agent went wrong.
+The analyst names several steps.
+The next question is harder: did the analyst help the engineer repair the failure, or did it only point at labels that a benchmark already knew?
 
-We used CodeTraceBench, a fixed test that compares an analyst's reported steps with labeled steps in a coding-session record.
+That difference is the reason to read CodeTraceBench, a public benchmark, carefully.
+CodeTraceBench is a public benchmark for diagnosing agent trajectories, where a trajectory is the ordered record of actions and observations from one coding-agent run.
+Its step-level labels make one question measurable: did the analyst identify the steps marked incorrect or unuseful?
 
-This makes CodeTraceBench useful for one narrow question: did the analyst locate the labeled mistake?
-It does not answer every question a production reviewer cares about, such as whether the analyst explained the cause, ran a check, or proposed a repair that someone could trust.
+The benchmark is useful for that question.
+It does not by itself measure whether an analyst explained the cause, ran a check, proposed a safe repair, or reduced a reviewer's work.
 
-We ran two analysts over the same 32 pinned records, twice each.
-The recursive analyst could inspect the record, run Python over it, and investigate more than once.
-The one-shot analyst read the record once and returned its findings.
+In a public comparison over 32 pinned trajectories and two repetitions, a recursive analyst scored 0.3644 and a one-shot analyst scored 0.3673 on the report's completed-row F1, a measure combining precision and recall, which scores only run slots that produced a result.
+F1 combines precision, the share of reported steps that match labels, and recall, the share of labeled steps that the analyst found.
+The recursive run cost $6.73.
+The one-shot run cost $1.21.
+The ratio is about 5.57 to 1.
 
-The benchmark gave them almost the same score.
-The recursive analyst cost 5.57 times more.
+That result is not evidence that recursive investigation has no value.
+It is evidence that this benchmark score cannot show whether the extra investigation helped a reviewer.
 
-That is not evidence that recursion is useless.
-It is evidence that this score cannot tell us whether the extra investigation helped a reviewer.
+> A benchmark can score the intended field correctly and still omit the capability behind the product decision.
 
-This is the first post in [The Instrument Problem](/blog/series/the-instrument-problem/), a series about how a measurement can be correct and still answer the wrong product question.
+## The terms behind the score
 
-## First, the terms
+A **trace** is the record of an agent run.
+It can contain model messages, tool requests, observations, files, retries, errors, and final output.
 
-A **trace** is the record of an agent run: the model's messages, tool requests, files it touched, and the events that happened along the way.
+A **benchmark** is a fixed collection of cases used to compare systems under the same conditions.
+An **evaluation** is the process that runs a system on cases and applies a defined scoring rule.
+A **metric** is the number produced by that rule.
 
-A **benchmark** is a fixed set of examples used to compare systems under the same conditions.
+An **analyst** is the second program that reads a trace and reports findings.
+It is different from the coding agent that produced the trace.
 
-An **analyst** is a second program that reads that record and reports what went wrong.
-It is not the coding agent that produced the original trace.
+A **baseline** is the system used as the comparison point.
+A **candidate** is the system or configuration being considered against that baseline.
+A **repetition** is another run of the same case and configuration.
+A **completion** means that a run slot produced a result that the report could score.
 
-**F1** is a score that balances two simpler measures.
-Precision asks, “When the analyst names a step, how often is it one of the labeled mistakes?”
-Recall asks, “How many of the labeled mistakes did the analyst find?”
-F1 combines those answers into one number between 0 and 1.
+The public CodeTraceBench dataset's reported inventory contains 4,316 agent trajectories in two published splits.
+Its verified split contains 1,000 trajectories, and its full split contains 3,316.
+The [dataset documentation](https://huggingface.co/datasets/NJU-LINK/CodeTraceBench) says the trajectories have human-verified step-level annotations and cover coding and terminal tasks across several agent families and models.
 
-F1 is useful here, but it only sees whether the reported steps overlap the labels.
+The experiment discussed here used only 32 pinned trajectories from that larger dataset.
+It ran each trajectory twice, creating 64 run slots.
+The subset is the experiment's denominator.
+It is not a new score for all reported 4,316 trajectories.
 
-Here is a tiny example with two labeled mistakes and two reported steps.
-The analyst finds one correct step and one false alarm, so both precision and recall are one half.
+## What F1 can and cannot see
 
-```typescript
-const labeledMistakes = new Set(['step-2', 'step-5'])
-const reportedMistakes = new Set(['step-2', 'step-9'])
+The public scorer compares the analyst's reported step IDs with the labeled step IDs.
+Two simpler quantities make up F1.
 
-const hits = [...reportedMistakes].filter((step) => labeledMistakes.has(step)).length
-const precision = hits / reportedMistakes.size
-const recall = hits / labeledMistakes.size
-const f1 = (2 * precision * recall) / (precision + recall)
+**Precision** asks how many of the steps the analyst named were labeled mistakes.
+**Recall** asks how many of the labeled mistakes the analyst found.
+F1 combines precision and recall into one number between zero and one.
+
+Here is a small, runnable illustration:
+
+~~~typescript
+const labeled = new Set(['step-2', 'step-5'])
+const reported = new Set(['step-2', 'step-9'])
+
+const hits = [...reported].filter((step) => labeled.has(step)).length
+const precision = reported.size === 0 ? 0 : hits / reported.size
+const recall = labeled.size === 0 ? 0 : hits / labeled.size
+const f1 =
+  precision + recall === 0
+    ? 0
+    : (2 * precision * recall) / (precision + recall)
 
 console.log({ precision, recall, f1 })
 // { precision: 0.5, recall: 0.5, f1: 0.5 }
-```
+~~~
 
-CodeTraceBench repeats this comparison over many labeled traces and averages the result.
-The arithmetic is clear; the limitation is what the labels leave out.
+The example measures step overlap.
+It does not ask whether step 2 caused the failure.
+It does not inspect the evidence behind the accusation.
+It does not run a test to validate a repair.
 
-## What we compared
+Those omissions are not bugs in arithmetic.
+They are boundaries of the measurement.
 
-The input traces, labels, and scorer were held constant.
-The table has 64 run slots because each of the 32 traces was run twice.
+## Work one case all the way through
 
-| Analyst | What it did | F1 | Completed | Cost |
-| --- | --- | ---: | ---: | ---: |
-| Recursive analyst | Inspected the trace, executed Python, and could investigate in several steps | 0.3644 | 60/64 | $6.73 |
-| One-shot analyst | Read the trace once and returned its reported steps | 0.3673 | 63/64 | $1.21 |
-| CodeTracer, upstream | The upstream comparison row | 0.3128 | 61/64 | Not reported |
+Imagine a trace whose labels mark `step-2` and `step-5` as unuseful.
+Matching reported step sets make the scorer assign one F1 to analyst outputs with different evidence quality.
 
-The two main scores differ by 0.003.
-For this run, that is a tie.
-The recursive run also completed three fewer slots and cost $5.52 more, so the comparison must include completion and cost rather than the score alone.
+| Analyst output | F1 consequence | What a reviewer still needs to know |
+| --- | ---: | --- |
+| Reports step 2 and cites the command output that caused the mistake | Counts one correct overlap | Whether the cited output supports the explanation |
+| Reports step 2 and writes a plausible but unsupported sentence | Counts one correct overlap | Whether the explanation came from evidence or guesswork |
+| Reports steps 2 and 5 but reverses their causal order | Counts two correct overlaps | Whether the proposed order helps repair the run |
+| Reports step 9 because it sounds suspicious | Adds a false positive | Whether the analyst can recognize uncertainty |
 
-## What the score rewards
+The scorer sees the same step sets in the first two rows.
+An engineer does not.
+The first finding may shorten an investigation because it opens the relevant command output.
+The second may lengthen it by giving the reviewer another claim to disprove.
 
-CodeTraceBench labels incorrect steps in an agent trace.
-An analyst gets credit when its reported steps overlap those labels.
+A useful evaluation case should therefore retain the entire trace, the analyst's evidence references, and the action taken after the finding.
+It should ask the analyst to explain what would change its mind.
+It should also allow abstention when the trace does not contain enough evidence.
 
-That is a reasonable measure of step localization.
-If your question is “Can this system point to the labeled mistake?”, the table gives you a useful answer.
+Those additions do not make F1 obsolete.
+They preserve the step-localization number while adding a measure for the work the product asks an analyst to do.
 
-The recursive analyst did more than the score records.
-It executed Python over the trace and returned findings backed by those checks.
-CodeTraceBench does not award points for either action.
+## The head-to-head experiment
 
-The extra work may still matter in a real review, but this table cannot show that it matters.
+The public [recursive-run report](https://github.com/tangle-network/agent-eval/blob/main/benchmarks/trace-analysis/codetracebench-rlm-glm52-20260731/README.md) compares three rows over the same 32 pinned trajectories, with two repetitions per trajectory and one GLM-5.2 model through the metered router.
+A **router** is a model-access service that forwards requests to a provider and can record the model, usage, and cost of those requests.
 
-That distinction is the whole result.
-A benchmark can be implemented correctly, scored honestly, and still leave out the capability you need to choose a product.
+The recursive analyst could inspect the trace, write and run Python over it, and investigate in several steps.
+The one-shot analyst read the trace once and returned its reported steps.
+The CodeTracer row is the upstream tool from the [public CodeTracer project](https://github.com/NJU-LINK/CodeTracer).
 
-## We tested the obvious fix
+| Analyst | Process | Scored F1 | Precision | Recall | Completed | Known cost |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Recursive analyst | Inspect, execute Python, investigate repeatedly | 0.3644 | 0.3413 | 0.3909 | 60/64 | $6.73 |
+| One-shot analyst | Read once and return reported steps | 0.3673 | 0.3333 | 0.4091 | 63/64 | $1.21 |
+| CodeTracer | Upstream trajectory diagnosis tool | 0.3128 | 0.2857 | 0.3455 | 61/64 | Not reported in this summary |
 
-The first suspected problem was that the baseline named only one step when several neighboring steps belonged to the same failure.
-We changed the analyst so it could report a whole contiguous block of steps.
+The recursive and one-shot scores differ by 0.0029.
+That gap is smaller than the uncertainty created by 16 labeled cases and two repetitions.
+The report therefore treats them as tied for this experiment.
 
-The change did what it was supposed to do.
-The analyst reported blocks with a mean width of 2.27 steps, a median of 2, and a maximum of 11.
+The completion counts matter.
+The recursive row produced 60 scored results out of 64 slots.
+The one-shot row produced 63.
+The recursive row also cost $5.52 more in absolute terms and about 5.57 times as much.
 
-The benchmark moved only slightly.
+The report says that provider rate limits caused three recursive failures.
+One more failure came from a model-emitted block wider than the configured 12-step cap.
+When the provider omitted usage, the run charged the reserved maximum, so the reported recursive cost is an honest upper bound rather than a claim that every provider usage field was present.
+
+## Do not mix the F1 columns
+
+The public repository reports more than one aggregate for this benchmark family.
+The head-to-head README above reports a completed-row scored F1.
+The [trace-analysis leaderboard](https://github.com/tangle-network/agent-eval/blob/main/benchmarks/trace-analysis/LEADERBOARD.md) also reports an official all-row F1 that includes failed rows and a separate micro F1.
+Micro F1 pools step-level matches across rows before calculating precision and recall; it is diagnostic context here, not the ranking metric.
+
+For the corresponding published rows, the leaderboard lists:
+
+| Row | Official all-row F1 | Micro F1 | Failed slots |
+| --- | ---: | ---: | ---: |
+| Direct one-shot with test artifacts | 0.1347 | 0.3273 | 1 |
+| Recursive stock run | 0.1021 | 0.3282 | 3 |
+| CodeTracer comparison | 0.1161 | 0.2754 | 2 |
+
+These numbers are not interchangeable with the completed-row values in the first table.
+The all-row aggregate penalizes missing runs.
+The micro aggregate weights matched steps across rows.
+The completed-row summary answers a different question.
+
+The follow-up report uses still another table for its failure-block experiment.
+It is honest to show the denominator and aggregation beside every number rather than choose the most flattering one.
+
+## A denominator changes the decision
+
+The raw cost ratio is incomplete because completion changes how a buyer might read it.
+Using the report's simple completed-result counts, the recursive run cost about $6.73 divided by 60 completed results, or $0.112 per completed result.
+The one-shot run cost about $1.21 divided by 63 completed results, or $0.019 per completed result.
+That rough comparison is about 5.84 times higher for the recursive run.
+
+This is not an official benchmark metric.
+It is a transparent calculation from the report's cost and completion columns.
+It also treats the reported recursive cost as an upper bound because missing usage was charged at the reserved maximum.
+The calculation is useful only as a decision aid, not as a replacement for the published aggregates.
+
+The distinction between failure and missing evidence matters here.
+If a run fails before producing a finding, a product may prefer to retry it.
+If a run produces a finding but cannot cite its evidence, a product may prefer to route it to review.
+Both can appear as “not completed” in a coarse dashboard while requiring different operational responses.
+
+Report at least three denominators together:
+
+| Denominator | Question it answers |
+| --- | --- |
+| Scheduled slots | How often did the system complete the requested run? |
+| Scored rows | How accurate was the output when a score was available? |
+| Labeled steps or blocks | How much of the annotated material did the aggregate weight? |
+
+Keeping those denominators visible prevents a small completed subset from becoming a claim about the whole workload.
+
+## The score rewards localization, not investigation
+
+The recursive analyst did real additional work.
+It inspected the trace, executed Python, and returned findings tied to the investigation.
+The benchmark score awards credit only when reported steps overlap labeled steps.
+
+That creates a clean interpretation:
+
+| The score can answer | The score cannot answer |
+| --- | --- |
+| Did the analyst name labeled incorrect or unuseful steps? | Did its explanation identify the cause? |
+| How many named steps overlapped the labels? | Did a human replay the cited evidence? |
+| How did precision and recall change? | Did an executed check confirm the finding? |
+| How did analysts compare on the fixed cases? | Did a proposed repair work? |
+
+If the product decision is “Which analyst should help engineers review failures?”, the right next measurement needs to include those missing outcomes.
+The existing score can remain one column.
+It should not be promoted to the whole decision.
+
+The same issue appears in the trace record.
+An analyst can point to a step without preserving the file diff, command output, or observation that makes the accusation inspectable.
+An evaluation that rewards only the step ID will not distinguish a supported finding from a lucky label match.
+
+## Widening the label did not fix the aim
+
+The first follow-up hypothesis was that the one-shot analyst lost recall because it named one step from a failure block instead of the whole contiguous block.
+The [failure-block report](https://github.com/tangle-network/agent-eval/blob/main/benchmarks/trace-analysis/codetracebench-phasea-blocks-20260731/README.md) tested that contract over the same 32 trajectories and two repetitions.
+
+The report's full comparison is:
 
 | Measure | One-shot baseline | Failure-block run |
 | --- | ---: | ---: |
-| F1 | 0.3273 | 0.3407 |
+| Scored F1 | 0.3273 | 0.3407 |
 | Precision | 0.2727 | 0.2875 |
 | Recall | 0.4091 | 0.4182 |
+| Official all-row F1 | 0.1347 | 0.1296 |
+| Matched steps | 45 | 46 |
+| Predicted steps | 165 | 196 |
+| Predicted steps landing on a labeled step | 19.7% | 16.5% |
 | Completed | 63/64 | 55/64 |
 | Cost | $1.208 | $1.219 |
 
-The analyst found one more labeled step, but it also reported many more steps overall.
-Only 16.5% of the predicted steps in the block run landed on a labeled step.
+This table belongs to the follow-up report.
+Its baseline summary is not the completed-row 0.3673 in the recursive-run README, so the two tables should not be merged into one ranking.
+The reports expose different run contexts and aggregates.
+The raw artifacts and labels are the authority for reproducing either comparison.
 
-The mechanism worked.
-The premise was wrong.
-The main problem was not that the analyst needed permission to name more neighboring steps.
-The main problem was where it aimed.
+The mechanism did fire.
+The block analyst emitted 123 blocks with a mean width of 2.27 steps, a median width of 2, and a maximum width of 11.
+The change therefore let the analyst name more than one step.
 
-## What the benchmark still cannot tell us
+It did not improve the product question.
+The block run found one additional matched step, but it added 31 predicted steps and completed eight fewer slots.
+Only 16.5% of its predicted steps landed on labeled steps.
 
-The score does not tell us whether a finding includes evidence a reviewer can replay.
+For this small corpus, the evidence points toward localization rather than block width as the binding problem.
+That is an inference from 16 labeled cases, 55 labeled steps per repetition, and 28 labeled blocks.
+It should guide the next experiment, not become a universal claim about every trace analyst.
 
-It does not tell us whether an executed check passed or failed.
+The report also records nine failed slots in the block run.
+Some failures came from contract violations such as a consequence step preceding the block's first step or a block wider than the 12-step cap.
+Those failures belong in the result because a production analyst must handle malformed or impossible output.
 
-It does not tell us whether a reviewer accepted the proposed repair.
+## Build the next measurement around the review decision
 
-It does not tell us whether the analyst admitted that the trace was too thin to support a conclusion.
+If engineers need a diagnosis they can act on, keep localization and add the evidence around it.
+An illustrative finding shape might be:
 
-Those are separate measurements, not details to hide inside F1.
+~~~json
+{
+  "stepIds": ["step-21", "step-22"],
+  "evidence": [
+    {
+      "traceEventId": "tool-17",
+      "artifact": "test-output-3"
+    }
+  ],
+  "cause": {
+    "statement": "The edit targeted the generated file instead of its source."
+  },
+  "checks": [
+    {
+      "name": "reproduce failing test",
+      "exitCode": 1
+    }
+  ],
+  "repair": {
+    "status": "proposed",
+    "artifact": "patch-4"
+  },
+  "abstained": false
+}
+~~~
 
-If the product decision is “Which analyst should help engineers review failures?”, the next version needs columns for replayable evidence, executed checks, accepted repairs, and unsupported claims so the table can answer it.
+This is a proposal for a measurement, not the current CodeTraceBench schema.
+It separates five questions:
 
-## The practical decision
+1. Did the analyst locate the labeled step?
+2. Did it cite evidence that a reviewer can open?
+3. Did an executed check support the diagnosis?
+4. Did the proposed repair change the right artifact?
+5. Did the analyst admit when the trace was too thin to support a claim?
 
-Keep CodeTraceBench for step localization.
-Do not use its F1 score alone to claim that a recursive analyst is better for engineering review.
+The benchmark can then report one column per question.
+Cost and completion should remain visible beside them.
+If a recursive analyst costs more but produces accepted repairs, that benefit can be measured directly.
+If it costs more and only produces the same step overlap, the cheaper baseline is the better choice for that task.
 
-Compare the analysts again when the benchmark records replayable evidence, executed checks, accepted repairs, and unsupported claims.
-Until then, the honest result is a tie at one-fifth the cost for the one-shot run.
+The public [agent-eval package](https://github.com/tangle-network/agent-eval) already describes the broader evaluation pattern as running cases, scoring results, comparing a candidate with a baseline, and analyzing traces or feedback.
+The benchmark-specific schema still has to decide which review outcomes matter for its users.
 
-## Read the evidence
+## Keep the benchmark, change the claim
 
-The complete [recursive run report](https://github.com/tangle-network/agent-eval/blob/main/benchmarks/trace-analysis/codetracebench-rlm-glm52-20260731/README.md) contains the inputs, completion counts, cost accounting, and scorer details.
+Keep CodeTraceBench when the question is step localization.
+Use its labels to compare analysts under a fixed corpus and fixed scorer.
+Report the case count, repetitions, completed slots, aggregation, cost, and model alongside the score.
 
-The [failure-block report](https://github.com/tangle-network/agent-eval/blob/main/benchmarks/trace-analysis/codetracebench-phasea-blocks-20260731/README.md) contains the follow-up experiment and its small-sample limits.
+Do not use its F1 alone to claim that a recursive analyst is better for engineering review.
+The head-to-head result is a tie at roughly one-fifth the cost for the one-shot run.
+The follow-up shows that allowing wider failure blocks barely changes localization and lowers per-step accuracy on this small sample.
 
-The [CodeTraceBench dataset](https://huggingface.co/datasets/NJU-LINK/CodeTraceBench) defines the labeled task that the score measures.
+Choose the recursive analyst when the product needs inspectable investigation and you have a separate measure for that value.
+Choose the one-shot analyst when step localization is the only measured requirement and the lower cost matters.
+Run a new comparison when the product requires evidence, checks, repairs, or abstention.
 
-The [upstream CodeTracer project](https://github.com/NJU-LINK/CodeTracer) is the source of the third comparison row.
+The [trace systems article](/blog/self-improving-stack-trace-systems) explains why those artifacts belong beside the score.
+This benchmark is a useful instrument.
+The [agent observability guide](/blog/agent-runtime-worker-observability) shows how missing events should remain missing instead of becoming false success values.
+It becomes a misleading product decision only when the team asks it to measure a capability it never records.
 
-## Questions readers usually ask
 
-### Did recursion improve this benchmark?
+## What does CodeTraceBench measure?
+
+It measures whether an analyst's reported step IDs overlap human-verified incorrect or unuseful step labels in coding-agent trajectories.
+
+## Did recursion improve the benchmark?
 
 No.
-The recursive analyst scored 0.3644 and the one-shot analyst scored 0.3673 on the same run slots.
-That difference is a tie for this experiment.
+The recursive analyst scored 0.3644 and the one-shot analyst scored 0.3673 on the same 32 trajectories with two repetitions.
+The public report treats that difference as a tie.
 
-### Did the recursive analyst do anything useful?
-
-It investigated the trace, executed Python, and returned findings backed by those checks.
-The benchmark does not score those actions, so the result cannot establish their value to a reviewer.
-
-### Why publish a result where the new system did not win?
-
-Because a tie at 5.57 times the cost prevents a false promotion.
-It also tells us exactly what the next measurement must include.
-
-### Can I reproduce the numbers?
+## Was the recursive investigation real?
 
 Yes.
-The public reports link the pinned inputs, result files, labels, and scorer information.
-Running the model calls yourself still requires the provider access described in the reports.
+The recursive analyst inspected traces, executed Python, and returned findings from those checks.
+The benchmark does not score that work, so the result cannot establish its value to a reviewer.
 
-The evidence supports one narrow claim: CodeTraceBench measured step localization, and it did not show a benefit from the recursive analyst at this cost.
+## Why publish a result where the new system did not win?
+
+The tie prevents a false promotion based on an unmeasured capability.
+It also identifies the next measurement: evidence, checks, repairs, unsupported claims, completion, and cost.
+
+## Can I reproduce the numbers?
+
+The public reports link the pinned corpus, labels, result files, scorer, and run configuration.
+Re-running model calls still requires the provider access described by the reports.
+
+## Is F1 enough for choosing an analyst?
+
+Use F1 when step overlap is the decision.
+For engineering review, add evidence quality, executed checks, repair acceptance, abstention, completion, and cost.

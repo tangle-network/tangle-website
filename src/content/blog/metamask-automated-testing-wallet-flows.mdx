@@ -2,7 +2,8 @@
 title: 'MetaMask Automated Testing For Wallet Flows'
 slug: metamask-automated-testing-wallet-flows
 summary: >-
-  MetaMask automated testing should prove connect, network switch, signing, rejection, and transaction flows with browser evidence a reviewer can inspect.
+  MetaMask automated testing should inspect account access, chain changes,
+  signature prompts, rejection recovery, and transaction state with browser evidence.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,109 +17,313 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-MetaMask automated testing has to cover more than "click connect." The risky moments are the wallet prompts: account access, chain switching, typed data, approvals, transaction previews, and user rejection. A useful test has to operate both the app page and the extension UI, then save the proof.
+A user clicks “Sign,” reads the wallet prompt, and sees an account or network that the application never mentioned.
+An automated test that checks only the page can report success while the actual approval flow is wrong.
 
-Tangle Browser Agent targets those wallet-heavy flows through the same `bad` browser automation path used for normal product tests.
+MetaMask automated testing has to inspect the boundary between the dapp and the wallet extension.
+MetaMask is a browser and mobile wallet documented in the [official developer documentation](https://docs.metamask.io/).
+A dapp is a web application that asks a wallet to expose account state, sign messages, switch networks, or submit transactions.
+DeFi means finance applications that use blockchain accounts and smart contracts, or programs deployed on a blockchain, for actions such as swaps, lending, borrowing, and liquidity provision.
+An allowance is a token-spending limit that a user grants to a contract.
+A spender is the contract that receives that allowance.
+A provider is the page-facing interface through which the dapp requests wallet and chain actions.
+The page requests the action, the wallet presents the security decision, and the chain records the result.
 
-## Test The Wallet Contract With The User
+Tangle Browser Agent is Tangle’s browser driver for goal-based browser sessions.
+Its `bad` command is the command-line interface (CLI) for starting those sessions from a terminal.
+The public driver repository documents a wallet and DeFi testing path built around the same browser automation surface used for ordinary pages.
+Each case records the page screenshot, wallet prompt screenshot, provider result, and final application state so the user’s approval remains visible.
+For the wider state model, read [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent).
+For the evidence record, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
 
-| User action | What the test should verify |
-| --- | --- |
-| connect | selected account appears in the app |
-| reject connect | app shows a recoverable error |
-| switch network | app and wallet agree on chain |
-| sign message | prompt text matches expected intent |
-| sign typed data | structured data matches the transaction context |
-| submit transaction | app shows pending, success, or failure truthfully |
+## Test the wallet boundary a user sees
 
-MetaMask's public docs describe the connection model in [MetaMask Connect](https://docs.metamask.io/metamask-connect/). Ethereum provider behavior is specified by [EIP-1193](https://eips.ethereum.org/EIPS/eip-1193). Structured signing is specified by [EIP-712](https://eips.ethereum.org/EIPS/eip-712). Your automated test should save evidence at the user prompt, alongside the response the dapp receives.
+The word “connect” hides several separate promises.
+The application must request the right account access.
+The wallet must show the request.
+The page must reflect the selected account.
+The account can change later.
+The chain can change later.
 
-## Run Shape
+| User-visible action | Application condition | Wallet evidence |
+| --- | --- | --- |
+| connect | the page shows the selected test account or a clear connected state | requested account access and selected account |
+| reject connection | the page stays usable and explains the rejection | wallet rejection and provider error |
+| switch network | the page and wallet agree on the chain | requested and selected chain |
+| sign a message | the page describes the message purpose | exact message or typed-data prompt |
+| approve an allowance | the page names the token and spender | allowance amount, token, and spender |
+| submit a transaction | pending, success, and failure states are distinct | transaction details and outcome |
+| change account | account-specific data refreshes or the session closes | accountsChanged event and new page state |
 
-Drive the wallet flow through the browser test runner and save the prompt, rejection, retry, and final state. A reader can adapt that sequence to their own environment without a local setup transcript.
+The test should save the page screenshot immediately before the prompt and the wallet screenshot at the decision.
+The first shows the context the user had.
+The second shows the context the wallet rendered.
+The final page shows whether the application reported the result honestly.
 
-```bash
-bad run \
-  --url https://app.example.com \
-  --goal "Connect MetaMask, reject the first signature, retry, sign the typed data, and verify the app records the signed session"
-```
+## Use the public provider interface
 
-Open the recorded run:
+An EIP, or Ethereum Improvement Proposal, is a public specification for an Ethereum interface or protocol change.
+[EIP-1193](https://eips.ethereum.org/EIPS/eip-1193) defines a common JavaScript provider API, or application programming interface, for Ethereum applications and wallets.
+The provider exposes a request method for wallet and chain calls.
+RPC means remote procedure call, the request-and-response interface used to ask the wallet or chain client for state and actions.
+EIP-1193 also defines events for connection, disconnection, chain changes, and account changes.
 
-```bash
-bad view ./runs/latest
-```
+Those events are part of the test surface.
+An app that never handles accountsChanged can keep showing balances for the previous account.
+An app that ignores chainChanged can display a quote for one chain while the wallet signs on another.
+An app that treats a rejected request as success can leave a false “Connected” or “Submitted” state behind.
 
-## What Breaks Most Often
+EIP-1193 recommends provider error code 4001 for user rejection.
+It recommends 4100 for unauthorized requests, 4200 for unsupported methods, 4900 for a disconnected provider, and 4901 when the requested chain is unavailable while another chain remains connected.
+Record the code when the app’s recovery behavior matters.
 
-| Failure | Evidence you want |
-| --- | --- |
-| popup not detected | screenshot of app waiting and extension state |
-| wrong network | requested chain and wallet selected chain |
-| stale account | account shown in wallet and app |
-| confusing signature | exact typed data prompt |
-| rejected transaction | wallet rejection and app recovery state |
+An illustrative browser-side observer looks like this:
 
-For broader wallet QA strategy, read [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent). For general browser run artifacts, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
+~~~typescript
+type ProviderError = Error & { code?: number; data?: unknown }
 
-## Fixture Setup
+const provider = window.ethereum
 
-MetaMask tests need repeatable fixture state.
+if (!provider) {
+  throw new Error('MetaMask or another injected provider is unavailable')
+}
+
+provider.on('accountsChanged', (accounts: string[]) => {
+  console.log({ event: 'accountsChanged', accounts })
+})
+
+provider.on('chainChanged', (chainId: string) => {
+  console.log({ event: 'chainChanged', chainId })
+})
+
+try {
+  const accounts = await provider.request({ method: 'eth_accounts' })
+  const chainId = await provider.request({ method: 'eth_chainId' })
+  console.log({ accounts, chainId })
+} catch (error) {
+  const providerError = error as ProviderError
+  console.error({
+    message: providerError.message,
+    code: providerError.code,
+    data: providerError.data,
+  })
+}
+~~~
+
+This is an illustrative EIP-1193 example.
+MetaMask Connect is MetaMask’s current connection software development kit, or SDK, for connecting supported wallet environments to applications.
+An application that uses MetaMask Connect may use that SDK rather than reading an injected provider directly.
+The [MetaMask Connect documentation](https://docs.metamask.io/metamask-connect/) says the product can select a desktop extension, QR-code, or mobile-app connection method based on the user’s environment.
+The test should assert the connection behavior that the application supports instead of assuming the extension is always present.
+
+## Make signing a data test
+
+A signing test should inspect the exact message, typed-data domain, spender, value, destination, and chain shown in the prompt.
+Personal signing presents a message.
+Typed signing presents structured fields.
+Transaction signing presents a destination, value, data, and gas-related context according to the wallet and network.
+
+[EIP-712](https://eips.ethereum.org/EIPS/eip-712) defines a standard for hashing and signing typed structured data.
+It includes typed fields and a domain separator so a wallet can present more meaningful context than an opaque byte string.
+The standard does not provide replay protection.
+In this context, a nonce is a number used once to prevent a signed operation from being reused or applied out of order.
+An application still needs a nonce, expiry, chain binding, or another policy appropriate to its operation.
+
+An illustrative typed-data fixture can make the intended prompt reviewable:
+
+~~~json
+{
+  "domain": {
+    "name": "Example Exchange",
+    "version": "1",
+    "chainId": 11155111,
+    "verifyingContract": "0x0000000000000000000000000000000000000001"
+  },
+  "types": {
+    "EIP712Domain": [
+      { "name": "name", "type": "string" },
+      { "name": "version", "type": "string" },
+      { "name": "chainId", "type": "uint256" },
+      { "name": "verifyingContract", "type": "address" }
+    ],
+    "Permit": [
+      { "name": "owner", "type": "address" },
+      { "name": "spender", "type": "address" },
+      { "name": "value", "type": "uint256" },
+      { "name": "nonce", "type": "uint256" },
+      { "name": "deadline", "type": "uint256" }
+    ]
+  },
+  "primaryType": "Permit",
+  "message": {
+    "owner": "0x0000000000000000000000000000000000000002",
+    "spender": "0x0000000000000000000000000000000000000003",
+    "value": "1000000",
+    "nonce": "0",
+    "deadline": "2000000000"
+  }
+}
+~~~
+
+The addresses and numbers above are illustrative placeholders.
+The test should compare the prompt to the expected fixture before a controlled test wallet approves it.
+It should run the rejection path as well.
+The application must not record a session, allowance, or completed action when the user rejects the request.
+
+## Build a repeatable MetaMask fixture
+
+The fixture is the state prepared before the browser opens.
+Record wallet and browser versions, permissions, balances, nonce state, and application data so a rerun can isolate fixture drift.
 
 | Fixture | Required control |
 | --- | --- |
-| extension | installed and enableed before run |
-| account | known address with seeded balance |
-| network | expected chain configured before action |
-| permissions | clean permissions between tests |
-| nonce and balances | reset through local chain when possible |
-| app data | predictable user and session state |
+| extension | known MetaMask version installed and enabled before the run |
+| account | disposable address with test funds and no production authority |
+| network | expected chain configured before the dapp opens |
+| permissions | clean connection permissions between cases where needed |
+| balances | reset token and native-currency balances |
+| nonce | deterministic or isolated chain state |
+| app data | predictable account, quote, and session records |
+| browser | recorded browser version, viewport, locale, and extension set |
 
-Local chains are useful because they reset cheaply and avoid live-network noise. Live-network smoke tests are still useful, but they should be few, explicit, and treated as higher-cost checks.
+Local chains are useful for repeatable transaction results.
+A local Ethereum development chain can provide repeatable transaction results, but the exact chain tooling belongs to the application’s test setup.
+Live-network checks can reveal integration issues that a local chain hides.
+Keep those checks few, explicit, and funded only with disposable value.
 
-## Signature Tests
+The test should record the extension version with the browser version.
+A wallet UI can change independently of the dapp.
+When prompt identification fails, the team needs to know whether the page changed, the extension changed, or the fixture did not reach the expected state.
 
-Signing flows deserve separate cases.
+## Stop at the signing prompt
 
-| Signature flow | What to assert |
-| --- | --- |
-| personal sign | visible message and app recovery on reject |
-| typed data | domain, chain, verifying contract, and fields |
-| permit or approval | spender and allowance are visible |
-| session key | scope, expiry, and revocation path |
+The public [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) names the scoped package, bad binary, and safe discovery commands.
+The public [driver README](https://github.com/tangle-network/browser-agent-driver) documents the wallet and DeFi section as well as the general CLI and SDK surfaces.
 
-Typed data is especially important because users rely on wallet presentation. The test should capture the prompt before approval and verify the app behavior after both accept and reject paths.
+~~~bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
+bad run \
+  --url https://app.example.com \
+  --goal "Connect the disposable MetaMask account, verify the configured test chain, open the swap preview, capture the wallet prompt, and stop before signing"
+~~~
 
-## CI Policy
+The example deliberately stops before an irreversible action.
+A controlled transaction case needs a separate goal, a test wallet, a test chain, and an explicit approval policy.
+Do not place seed phrases or private keys in the goal text.
 
-Run MetaMask tests on a schedule or before releases that touch wallet code. Do not make every PR depend on a long wallet suite. Keep a fast smoke case for connect and sign, and a deeper suite for release candidates.
+The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
+The driver’s README documents the run’s observation modes, including DOM, vision, and hybrid approaches.
+Vision means taking rendered screenshots as model input.
+Hybrid combines the two.
+Wallet prompts and visual chain details often need screenshots even when page controls are easy to find in the DOM.
 
-The suite should also save the extension version and browser version. Wallet UI can change independently from the dapp. When a run fails, engineers need to know whether the product regressed, the extension changed, or the fixture setup drifted.
+## Give rejection its own test case
 
-For release-critical wallet paths, pair MetaMask runs with [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents) so the wallet check sits inside the broader user journey.
+A suite that covers only successful approvals misses an important product path: the user’s rejection.
 
-## What This Does Not Prove
+| Case | Expected result | Evidence |
+| --- | --- | --- |
+| reject account access | page remains disconnected and offers retry | prompt rejection, provider error, page state |
+| reject chain switch | page explains the required chain and does not submit | requested chain, selected chain, error state |
+| reject personal message | no session or authorization is recorded | message prompt, 4001 error, app state |
+| reject typed data | no allowance or permission is claimed | typed-data prompt, rejection, app state |
+| reject transaction | pending state is cleared or marked rejected | transaction prompt, error, retry state |
+| close prompt | page does not assume approval | prompt closed, timeout, stop reason |
 
-MetaMask automated testing does not prove the smart contract is safe or the transaction economics are correct. It proves the browser and wallet path a user would see.
+A false pass often comes from stale state.
+The application displays a connected account from its own memory after the wallet has disconnected.
+The UI shows “Submitted” after a request was sent but before a receipt or chain confirmation exists.
+The test should preserve the boundary between requested, signed, broadcast, pending, confirmed, and failed.
 
-## Decision Rule
+## Split fast wallet smoke checks from deep runs
 
-Automate MetaMask flows when connection, signing, or transaction approval can block revenue, onboarding, or user trust. Do not accept a pass unless the wallet prompts and app final state are visible in artifacts.
+Wallet suites are expensive to debug because they depend on browser, extension, account, network, and data state.
+Use a small smoke case for every change that touches connection code.
+Reserve the deeper matrix for releases or changes that affect signing, allowances, transaction construction, or chain handling.
 
-## FAQ
+| Suite | Example cases | Required reset |
+| --- | --- | --- |
+| connection smoke | connect, reject, account change | clean permissions and disposable account |
+| network smoke | wrong chain, switch, chain change | known chain configuration |
+| signing suite | personal message, typed data, reject | fresh nonce and expected domain |
+| transaction suite | approval, submit, pending, revert | isolated balances and local or test chain |
+| release replay | full dapp journey with prompt screenshots | versioned browser, extension, and fixture |
 
-### What is MetaMask automated testing?
+Keep the smoke case short enough to diagnose from one trace.
+Run the deeper suite when a release changes the parts of the flow that the smoke case cannot reach.
+Run the connection smoke case on each relevant change, and reserve the deeper matrix for changes to signing, allowances, or transaction submission.
 
-It is browser automation that controls a dapp and MetaMask extension flow to verify wallet connect, signing, network, and transaction behavior.
+## Diagnose the first wrong boundary
 
-### Can this run against a local chain?
+A trace is the ordered record of the browser, wallet, provider, and chain observations for one run.
+Compare account, chain, prompt fields, provider errors, transaction hash, and receipt in timestamp order.
 
-Yes. Use a local chain for deterministic tests and separate runs for live network smoke checks.
+| First divergence | Likely owner | Evidence to inspect |
+| --- | --- | --- |
+| app account differs from wallet account | dapp state or connection layer | accountsChanged event and both screenshots |
+| requested chain differs from selected chain | network configuration | chainChanged event and wallet network |
+| prompt spender differs from expected contract | transaction builder or route | typed data or transaction request |
+| rejection leaves success state | error handling | provider code and app transition |
+| pending never resolves | RPC, indexer, or receipt handling | request error, transaction hash (identifier), and timing |
+| prompt cannot be reached | extension fixture or browser version | extension state, permissions, and screenshot |
 
-### What should a failed run include?
+The evaluation compares the expected account, chain, action, and outcome with that trace.
+Keep a failed run failed when the evidence contradicts the goal.
+Keep it inconclusive when the prompt or final chain result was never observable.
 
-It should include screenshots, actions, observed wallet state, app state, and the first actionable reason for failure.
+## Keep the fixture separate from the verdict
 
-### How does Tangle help?
+Browser Agent drives the page and records the wallet boundary.
+MetaMask remains the wallet that presents account, chain, message, allowance, and transaction details.
+The driver can make those states easier to inspect, but it cannot decide whether a contract or an economic outcome is safe.
 
-Tangle Browser Agent provides an agent-driven browser runner that records evidence for wallet-heavy flows.
+If a team packages the check as a service, return the page evidence, wallet evidence, and chain result separately.
+Report browser state, wallet evidence, transaction hash, and receipt as separate verdict fields.
+
+## The limit of MetaMask automated testing
+
+MetaMask automated testing can provide evidence that a dapp and a particular extension fixture presented a defined wallet flow.
+It does not prove the smart contract is safe.
+It does not prove the quoted exchange rate will remain available.
+It does not prove a transaction’s economic outcome is correct.
+It does not cover every MetaMask platform, mobile path, browser version, network, account, or wallet setting.
+It does not make a production wallet appropriate for unattended automation.
+
+Use simulation to inspect calldata, a receipt to establish settlement, contract tests for invariants, and manual review for high-value signing.
+Treat a wallet prompt screenshot as evidence of what the user was asked to approve.
+Treat a chain receipt or application-owned confirmation as evidence of what happened afterward.
+
+
+## What is MetaMask automated testing?
+
+It is browser automation that drives a dapp and a controlled MetaMask flow to check account access, network changes, signing, rejection, and transaction states.
+
+## Can MetaMask tests run on a local chain?
+
+Yes.
+Local chains make account, balance, nonce, and transaction state easier to reset.
+Keep live-network smoke checks separate because they have different failure and cost boundaries.
+
+## What should a failed MetaMask run include?
+
+It should include the page screenshot, wallet prompt or blocked state, actions, account and chain context, provider error, final page state, extension and browser versions, and stop reason.
+
+## Should the test accept a transaction automatically?
+
+Only with a disposable wallet and test chain under an explicit policy.
+The default for exploratory or production-adjacent checks should be to stop at the signing prompt.
+
+## Does Tangle Browser Agent replace MetaMask’s SDK?
+
+No.
+MetaMask Connect defines MetaMask’s supported connection product and integration paths.
+Browser Agent drives a browser workflow and records evidence around the application’s chosen wallet integration.
+
+## Make the prompt reviewable
+
+Automate MetaMask flows when connection, signing, or transaction approval can change onboarding, revenue, or user trust.
+Keep the account, chain, prompt contents, rejection behavior, and final state visible in the trace.
+Do not accept a pass that proves only that a button was clicked.
+For screenshots, action events, stop reasons, and bounded recovery around those wallet states, read [browser automation and the AI evidence loop](/blog/browser-automation-ai-evidence-loop).

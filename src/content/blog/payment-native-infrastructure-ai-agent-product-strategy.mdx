@@ -2,10 +2,9 @@
 title: 'Payment-Native Infrastructure for AI Agent Products'
 slug: payment-native-infrastructure-ai-agent-product-strategy
 summary: >-
-  Payment-native infrastructure changes which AI agent products are worth
-  building: small callable services, request-level pricing, operator-run
-  execution, and evidence attached to paid results.
-description: 'Payment-native AI infrastructure changes which agent products are worth building when agents can pay per request without accounts or API keys.'
+  Payment-native infrastructure for AI agents: how request-level payment,
+  operator-run execution, evidence, and clear job contracts change what is worth building.
+description: 'Payment-native infrastructure changes which agent products are worth building when software can discover, pay for, and verify one capability at a time.'
 date: '2026-03-31'
 author: Drew Stone
 tags:
@@ -21,180 +20,385 @@ heroImage: /images/covers/editorial/x402-production-runway-v2.webp
 imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-A TEE is a hardware-isolated environment that can report which code ran. An operator is the person or service responsible for running a job. x402 is a payment protocol for machine-to-machine requests. Most AI agent products still inherit a human billing model. A human signs up, enters a card, creates an API key, sets a budget, and hopes the agent uses the capability correctly later. That is fine when the agent is a feature inside a SaaS product. It breaks when the agent is the buyer.
+The product problem is immediate: an agent needs one browser task completed before it can finish a larger job.
+The service has a callable endpoint, a runtime, and a result artifact, but its checkout asks for an account, an API key, a monthly plan, and a human to approve the purchase.
+Account creation and manual approval can block an otherwise callable request.
 
-An agent wants a smaller loop: discover a capability, inspect the price, decide whether it is worth buying, pay for one request, run the job, and verify the result. Payment-native infrastructure is the stack that makes that loop native instead of bolted on.
+Payment-native infrastructure treats a bounded task, not an account, as the unit a program buys.
+The buyer is software, and payment belongs inside the request flow.
 
-In Tangle, the pieces are [Blueprints](/blog/blueprint-protocol-operator-services), [x402 payments](/blog/x402-payments-for-ai-agents), operator-run services, health checks, receipts, traces, and verification paths. The product strategy changes because the unit of value changes. You are no longer always building a platform. Often you are building one narrow service that agents can buy safely.
+Payment-native infrastructure is the set of service, payment, execution, and evidence layers that let a program discover a capability, inspect its terms, pay for one request, receive the work, and reconcile the result.
+x402 is an HTTP payment protocol for this flow.
+It uses the HTTP **402 Payment Required** response to return payment requirements, then accepts a signed payment payload on a retry.
+A **facilitator** is the service that verifies the signed payment and can help settle it on the payment network.
 
-## Quick Answer
+Tangle is a protocol for registering and coordinating services run by independent operators.
+Tangle gives that request a concrete execution boundary.
+A **Blueprint** is a packaged service definition with typed jobs.
+An **operator** is the person or service that runs the job on infrastructure.
+The **runtime** is the process and environment that executes the job.
+The **Blueprint Runner** is the runtime component that receives and dispatches typed job calls.
+The current [Blueprint x402 gateway](https://docs.tangle.tools/developers/blueprint-runner/x402) verifies a paid request and injects a **JobCall** into the Blueprint Runner.
 
-Payment-native AI infrastructure is best for products where the commercial unit is a task:
+Typed inputs and bounded outputs let teams test one paid job first.
+A team can test one narrow, callable service with typed inputs, bounded outputs, and measurable completion states before building a dashboard around it.
 
-| Product | Paid unit |
+## Expose payment, execution, and evidence in one request contract
+
+Billing says who the product expects to buy.
+
+Traditional SaaS assumes a human can evaluate a plan, create an account, enter payment details, create credentials, and return later to manage usage.
+That flow is valuable for teams that need procurement, invoices, roles, support, and predictable budgets.
+
+An agent often needs a shorter loop:
+
+~~~text
+discover capability
+  -> read input and output contract
+  -> inspect price and payment rules
+  -> apply a spending policy
+  -> pay for one request
+  -> receive a result and evidence
+  -> decide whether to continue
+~~~
+
+The product must expose capability, input, price, authorization, execution, evidence, and failure state alongside the endpoint.
+It must expose enough information for the buyer to decide safely without opening a browser.
+
+| Surface | The buyer needs to know |
 | --- | --- |
-| code audit agent | one repo or diff review |
-| browser testing agent | one scenario with screenshots |
-| TEE attestation verifier | one attestation check |
-| data extraction service | one document conversion |
-| inference endpoint | one request or batch |
-| sandbox service | one workspace session |
-| RFQ oracle | one quote set |
+| Capability | What job will run, and what will it return? |
+| Input | Which fields, files, identities, and limits are required? |
+| Price | What amount, asset, network, and expiry apply? |
+| Authorization | Is payment enough, or is caller permission also required? |
+| Execution | Will the request run synchronously, or return a job identifier? |
+| Evidence | Which artifacts show what happened? |
+| Failure | What happens after payment succeeds but execution fails? |
 
-If the product needs a human dashboard and long-term seat management, normal SaaS still works. If the buyer is software, request-level payment becomes the more natural default.
+This is a service contract, not a marketing page.
+A **job router** dispatches a typed job call to the handler inside a Blueprint Runner.
+A **model or provider router** chooses where an inference request runs.
+They can appear in the same product, but they answer different questions and should not share one undocumented contract.
+The service contract should give the relevant chooser typed inputs, outputs, price rules, authorization, limits, and evidence to compare.
 
-## Why Billing Location Matters
+## Changed-file security review as the first paid job
 
-Billing is a product boundary. It encodes who the system thinks the customer is.
+Consider a coding agent that needs a changed-file security review.
+It does not need “AI security” as an abstract category.
+It needs a bounded operation:
 
-Traditional SaaS assumes:
+~~~json
+{
+  "service": "changed-file-security-review",
+  "input": {
+    "repository": "tangle-network/tnt-core",
+    "revision": "main",
+    "policy": "owasp-web"
+  },
+  "output": [
+    "findings",
+    "reproduction-steps",
+    "test-results",
+    "artifact-digest"
+  ],
+  "price": "per review",
+  "authorization": "public paid",
+  "failure": "no charge for an unstarted job; investigate settled execution failures"
+}
+~~~
 
-1. a human evaluates tiers,
-2. a human enters payment information,
-3. a human creates an API key,
-4. a human monitors usage,
-5. a human resolves billing disputes.
+The exact repository and revision above are illustrative.
+The price, authorization, and failure policy are also example product choices, not Tangle guarantees.
+The important design choice is the boundary around one review.
+The agent can compare the price with the expected value, cap the number of attempts, and decide what evidence is sufficient before it spends again.
 
-Agent-native services assume:
+An **agent profile** is the configuration that gives an agent its model, tools, budget, identity, approval rules, and output requirements.
+The profile should contain a spending policy for this service, such as a per-request limit, an allowed recipient, and a daily cap.
+The service should not infer those permissions from payment alone.
 
-1. a program discovers the service,
-2. the service returns a machine-readable price,
-3. the program pays or asks for approval,
-4. the service executes,
-5. the program receives result evidence.
+An **evaluation** is a test or judgment procedure that decides whether an output meets a stated requirement.
+Payment does not perform that evaluation.
+For the security review, an evaluation might require a reproducible command, a valid finding schema, and a test result attached to every high-severity claim.
 
-That is why x402 matters. A `402 Payment Required` response can be part of the API contract, not a redirect to a sales funnel.
+## What Tangle contributes to the call
 
-The external direction is visible in the primary payment and commerce sources too: [x402.org](https://www.x402.org/), [Coinbase's x402 docs](https://docs.cdp.coinbase.com/x402/welcome), [Cloudflare's x402 writeup](https://blog.cloudflare.com/x402/), and Stripe's [agentic commerce docs](https://docs.stripe.com/agentic-commerce). The common theme is that programs are becoming buyers, even if each stack implements the payment path differently.
+The Tangle implementation separates the paid HTTP edge from the job handler.
+A **JobCall** is the typed work record that carries an accepted request into the Blueprint Runner.
+The **X402Gateway** receives the request, and the **X402Producer** converts a verified payment into a job call for the runner.
+The handler can focus on the service contract rather than reimplementing payment verification.
 
-```http
-POST /v1/services/attestation/verify
+The current public documentation exposes three useful decisions:
 
-HTTP/1.1 402 Payment Required
-Content-Type: application/json
+| Invocation mode | Meaning |
+| --- | --- |
+| **disabled** | The job cannot be called through the x402 gateway. |
+| **public_paid** | A valid payment is enough to invoke the job. |
+| **restricted_paid** | Payment is required, and the caller must also pass the configured identity check. |
+
+Restricted access separates payment from identity checks for agent products that touch private data.
+A payer should not automatically become an administrator, a member of a private service, or the owner of another customer’s files.
+The current gateway can compare the caller with an on-chain **isPermittedCaller** check, or accept a delegated caller signature according to its policy.
+
+The public gateway also gives the product a discoverable sequence:
+
+~~~http
+GET /x402/health
+200 OK
+
+ok
+
+GET /x402/jobs/42/0/price
+200 OK
 
 {
-  "amount": "50000",
-  "asset": "USDC",
-  "network": "base",
-  "expiresAt": "2026-06-17T10:30:00Z",
-  "idempotencyKey": "verify-attestation-001"
+  "price_wei": "1000000000000000"
 }
-```
 
-For the full request/retry shape, read [x402 Payments for AI Agents](/blog/x402-payments-for-ai-agents).
+POST /x402/jobs/42/0
+402 Payment Required
 
-## What Tangle Adds
+POST /x402/jobs/42/0
+202 Accepted
 
-Tangle is more than a payment edge. Payment has to attach to work. A Blueprint defines the service, operators run it, x402 or quote logic prices it, and verification tells the caller whether to trust the result.
-
-| Layer | Product question |
-| --- | --- |
-| Blueprint | what service exists? |
-| operator | who runs it and under what requirements? |
-| payment | what does this job cost right now? |
-| execution | what ran and where? |
-| evidence | what artifact came back? |
-| verification | should the result be accepted? |
-
-That stack makes narrow services viable. A developer does not need to build a whole SaaS platform to sell one useful capability. They need a well-specified job, a payment path, and evidence that makes the result usable.
-
-## Product Shapes Worth Building
-
-The best payment-native agent products are not vague "AI platforms." They are services with precise boundaries.
-
-### Verified Code Audit
-
-Input: repository, commit range, policy, language constraints. Output: findings, patches, test evidence, trace ID. Payment: per diff or per repo. Verification: reproduced test output and reviewer-readable artifacts.
-
-This pairs naturally with [AI code audit with sandboxed agents](/blog/ai-code-audit-sandboxed-agents) and [AI security audit reproducible findings](/blog/ai-security-audit-reproducible-findings).
-
-### Browser Evidence Runner
-
-Input: URL, goal, auth state, browser constraints. Output: screenshots, DOM snippets, action log, stop reason. Payment: per scenario. Verification: evidence bundle rather than a pass/fail string.
-
-This connects to [browser automation for AI agents](/blog/browser-automation-for-ai-agents) and [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use).
-
-### TEE Attestation Verifier
-
-Input: attestation report, expected measurement, service policy. Output: accept/reject, verifier policy, trace ID. Payment: per verification. Verification: the result is the verification, but it still needs auditability.
-
-Read [TEE Attestation for AI Services](/blog/tee-attestation-ai-services).
-
-### Agent Sandbox Session
-
-Input: template, repo, command policy, credentials policy. Output: workspace artifact, logs, snapshot, preview, trace. Payment: per session or duration. Verification: logs, snapshot integrity, browser evidence when needed.
-
-Read [AI agent sandbox](/blog/ai-agent-sandbox) and [Tangle Sandbox vs E2B](/blog/tangle-sandbox-vs-e2b).
-
-## The Strategy Shift
-
-When distribution is human-led, platforms win by bundling features and creating switching costs. When distribution is agent-led, services win by being the best answer to a narrow request at the moment the agent needs it.
-
-That changes founder strategy:
-
-| Human SaaS instinct | Agent-service instinct |
-| --- | --- |
-| build a dashboard | expose a callable contract |
-| sell seats | price requests |
-| hide internals | return evidence |
-| lock in users | be easy to route to |
-| upsell bundles | specialize sharply |
-
-The agent does not care about your navigation. It cares whether your service is discoverable, priced, callable, and trustworthy.
-
-## What Still Needs Work
-
-Payment-native infrastructure does not remove hard problems. It makes them explicit.
-
-| Open problem | Why it matters |
-| --- | --- |
-| idempotency | agents retry aggressively |
-| refunds | paid jobs can fail |
-| result verification | payment does not imply correctness |
-| service discovery | agents need machine-readable contracts |
-| reputation | operators and services need history |
-| policy approvals | some payments need human consent |
-
-Those are product opportunities. The services that solve them cleanly become infrastructure other agents can buy.
-
-## What This Does Not Prove
-
-Payment-native infrastructure does not mean every product should abandon subscriptions. It does not mean every service should be public or permissionless. It does not mean x402 replaces auth, policy, or compliance.
-
-The claim is narrower: when agents buy capabilities from other services, request-level payment plus verifiable execution creates product shapes that normal SaaS billing makes awkward.
-
-## Start
-
-If you are building an agent product, write the callable service contract before the homepage:
-
-```json
 {
-  "service": "verified-code-audit",
-  "input": "repo + diff + policy",
-  "price": "per audit",
-  "payment": "x402",
-  "evidence": ["patch", "test-log", "trace-id"],
-  "verification": "reproducible findings"
+  "service_id": 42,
+  "call_id": 17,
+  "status": "queued"
 }
-```
+~~~
 
-If that contract is sharp, a Blueprint service may be a better product than a dashboard.
+The payload is a simplified shape for explanation.
+Use the [current gateway reference](https://docs.tangle.tools/developers/blueprint-runner/x402) and the [public Blueprint x402 crate](https://github.com/tangle-network/blueprint/tree/main/crates/x402) for the exact fields and header version your integration supports.
 
-## FAQ
+The **202 Accepted** response confirms queue entry, not completion.
 
-### What is payment-native AI infrastructure?
+The service must therefore expose a completion contract, such as a polling identifier, callback, durable result store, or a separate result retrieval job.
+An agent cannot safely decide whether to retry if it cannot distinguish “payment not accepted” from “payment accepted and execution still running.”
 
-It is infrastructure where payment is part of the service call: a program can discover a capability, receive a price, pay for a request, execute the job, and verify the result.
+## Do not confuse generic x402 with one SDK integration
 
-### Why does x402 matter for AI agents?
+The current general x402 documentation recommends version 2 headers named **PAYMENT-REQUIRED**, **PAYMENT-SIGNATURE**, and **PAYMENT-RESPONSE**.
+The current Blueprint crate README documents its x402 route using the **X-PAYMENT** and **X-Payment-Response** headers from its selected library.
 
-x402 lets HTTP services return a machine-readable payment requirement through `402 Payment Required`, so agents can pay per request without a human subscription checkout.
+Those surfaces may converge over time, but an implementation should not guess.
+The client, gateway, facilitator, and payment scheme must agree on the protocol version and payload shape.
+The [x402 migration guide](https://docs.cdp.coinbase.com/x402/migration-guide) explains the generic v1-to-v2 change, while the [Blueprint source](https://github.com/tangle-network/blueprint/tree/main/crates/x402) explains the Tangle integration.
 
-### What products fit payment-native infrastructure?
+Publish protocol version, headers, asset, network, and expiry.
+“Supports x402” is not a sufficient capability description.
+Publish the supported version, network, asset, headers, recipient policy, expiry behavior, and settlement response.
 
-Narrow callable services fit best: audits, browser tests, sandbox sessions, attestation checks, inference calls, document conversion, data retrieval, and quote generation.
+## Product shapes that fit the request unit
 
-### Does payment-native infrastructure replace verification?
+A payment-native service is easiest to route when the customer can name a bounded unit with an input contract, output evidence, and completion state.
 
-No. Payment proves a request was paid for. Verification proves whether the result should be trusted. Production agent services need both.
+### Browser evidence runner
+
+The input is a URL, goal, authentication policy, and browser constraints.
+The output is a screenshot set, final URL, action record, and stop reason.
+The unit is one scenario with a time or action limit.
+
+The service should return evidence rather than a bare “passed” string.
+The [browser automation guide](/blog/browser-automation-for-ai-agents) explains why an agent needs the page state and action history to recover from a failed step.
+
+### Attestation checker
+
+An **attestation** is a signed statement from protected hardware about the environment or code measurement it observed.
+An attestation checker can accept a report, compare it with a policy, and return the decision plus the policy version used.
+
+Payment buys the verification operation.
+It does not make the underlying workload trustworthy if the expected measurement or policy is wrong.
+The [TEE attestation guide](/blog/tee-attestation-ai-services) covers that boundary.
+
+### Sandbox session
+
+A sandbox is an isolated workspace where an agent can run commands, manipulate files, or use a browser under defined limits.
+The unit can be one session, one bounded execution, or a duration with a maximum.
+The result should include logs, changed artifacts, resource limits, and a stop reason.
+
+The [Tangle Sandbox comparison](/blog/tangle-sandbox-vs-e2b) compares managed workspace controls with protocol-connected execution and evidence.
+
+### Quote service
+
+A quote service accepts workload requirements and returns a price, expiry, operator identity, and execution requirements.
+An RFQ, or request for quote, is the negotiation path for a variable job.
+The [RFQ job quote guide](/blog/rfq-job-quotes-tangle-operator-accountability) explains why a signed price and an execution consequence are separate concerns.
+
+## Per-request pricing exposes margin, failure, retry, and support costs
+
+Suppose one review costs an operator an illustrative $0.08 in model calls, storage, and compute.
+The service charges $0.20 for a successful request.
+At 10,000 monthly requests, the gross contribution before support, failed jobs, and payment costs is:
+
+~~~text
+10,000 × ($0.20 - $0.08) = $1,200
+~~~
+
+That number is not a benchmark or a Tangle price.
+It shows the decision surface.
+If 8% of paid jobs fail after settlement and every failure costs $0.08 to investigate or refund, the expected failure cost adds:
+
+~~~text
+10,000 × 0.08 × $0.08 = $64
+~~~
+
+Retries, support, fraud review, and idle capacity still need to be added.
+Request-level pricing makes those costs attach to the unit that created them.
+Those records give a founder the inputs to choose a minimum charge, a prepaid balance, a subscription, or a human approval step: contribution margin, settled-job failure rate, retry cost, and support cost.
+
+## A request ledger makes the product testable
+
+Take one illustrative browser-evidence request priced at $0.20.
+The agent discovers the job, receives a 402 payment challenge, signs the payment, and receives a 202 response with a job identifier.
+The result is still pending, so the product needs a ledger that keeps the commercial and execution states together without collapsing them:
+
+| Event | Record | Decision it supports |
+| --- | --- | --- |
+| Payment required | Quote digest, asset, network, expiry | Is this request inside the agent's spending policy? |
+| Payment settled | Payment identifier and amount | Can the seller accept the request under its payment rules? |
+| Job accepted | Service, job, idempotency key, and call identifier | Is this the first accepted attempt or a retry? |
+| Worker finished | Result identifier, timestamp, and execution evidence | Is the result ready to retrieve and evaluate? |
+| Evaluation completed | Requirement checks and outcome | Should the buyer accept, retry, refund, or dispute? |
+
+This is an illustrative product ledger, not a Tangle schema.
+It shows the minimum evidence needed for a failure branch.
+If payment settles but no job is accepted, the seller needs a reconciliation path before the client retries.
+If the job is accepted and the worker fails, the remedy can be a retry, credit, refund, or review according to the published contract.
+If the job finishes but the evaluation rejects the result, the payment record remains valid while the quality decision stays open.
+An agent can branch safely when each state has a stable identifier and a published remedy.
+
+## Payment does not solve the hard product problems
+
+The payment loop is narrow by design.
+The product still needs answers for:
+
+| Failure | Required product decision |
+| --- | --- |
+| Client retries after losing the response | How are idempotency and duplicate work handled? |
+| Payment settles but the job fails | Is the remedy a refund, credit, retry, or manual review? |
+| Price is stale | How long is the offer valid, and who updates it? |
+| Caller is paid but unauthorized | Which identity check runs before enqueueing? |
+| Output is wrong | Which evidence or evaluation supports a refund or dispute? |
+| Service is overloaded | Does the gateway reject new work before taking payment? |
+| Agent overspends | Which wallet, budget, and approval policy stops it? |
+
+An **evaluation** can assess correctness.
+A **trace** is the connected record of request, payment, execution, and result events.
+An evaluation without a trace cannot explain which paid execution it judged.
+A trace without an evaluation only proves that events occurred.
+
+The service should return or retain both where the task needs them.
+The [x402 payment guide](/blog/x402-payments-for-ai-agents) describes the distinction between payment evidence and result evidence in more detail.
+
+## When a dashboard is still the right product
+
+Payment-native does not mean account-free in every situation.
+A subscription or account system is usually better when:
+
+* a team needs shared budgets, roles, and approval history;
+* procurement needs invoices, tax records, purchase orders, or a contract;
+* usage is predictable enough to reserve capacity;
+* the service has a long-lived workspace whose value is not one request;
+* support and refunds require a customer relationship;
+* the buyer cannot safely hold or delegate a wallet.
+
+The product can expose both paths.
+The billing layer should convert either a settled payment or an active plan into one entitlement record before execution dispatch sees it.
+
+The job router selects a handler from a typed job call.
+It should consume a common authorization shape:
+The following text is illustrative application pseudocode, not a public Tangle schema.
+
+~~~text
+authorize(request) ->
+  customer_or_wallet
+  service_and_job
+  limits
+  payment_or_plan_reference
+  idempotency_key
+~~~
+
+The downstream runner should not have one code path for card customers and another for wallet customers.
+Different payment methods can create the same permission to run one bounded job.
+
+## Make the payment contract legible to a route chooser
+
+An autonomous buyer needs more than a payment URL.
+It needs a machine-readable description of the job, the unit being charged, the maximum spend, the expected completion state, and the evidence returned with the result.
+That description can be small, but it must be stable enough for a provider or service chooser to compare routes without scraping marketing copy.
+
+An illustrative request contract might look like this.
+This JSON is a product-design example, not a public Tangle schema.
+
+~~~json
+{
+  "service": "document-extraction",
+  "job": "extract-invoices",
+  "input_limits": {
+    "max_bytes": 10000000,
+    "accepted_types": ["application/pdf"]
+  },
+  "pricing": {
+    "unit": "accepted_job",
+    "currency": "USDC",
+    "maximum": "0.25"
+  },
+  "completion": {
+    "state_endpoint": true,
+    "result_deadline_seconds": 120
+  },
+  "evidence": ["result_hash", "execution_trace"]
+}
+~~~
+
+The value is in making a request comparable.
+An agent profile can allow this job, the router can reject it when the price exceeds its budget, and the evaluation can check the returned result against the declared evidence.
+
+The contract should also say what happens when a request is accepted but cannot finish.
+If the seller issues a credit, the trace needs a credit reference.
+If it retries on another operator, the trace needs the original and replacement job identifiers.
+If it keeps the payment and opens a dispute, the buyer needs the evidence and deadline.
+Payment-native infrastructure becomes inspectable when those branches are part of the public behavior rather than hidden support procedures.
+
+For a concrete HTTP payment flow, compare this contract with [x402 payments for AI agents](/blog/x402-payments-for-ai-agents).
+For recurring entitlements and break-even math, see [subscription versus pay-per-request API pricing](/blog/subscription-vs-pay-per-request-api-pricing).
+
+## Choose the payment boundary after the job contract
+
+Choose payment-native infrastructure when an agent can name the capability, inspect its price, afford one request, and validate the result with evidence.
+Choose a subscription or account system when the product’s value depends on identity, history, shared budgets, or a continuing relationship.
+Support both only after the entitlement and job-dispatch rules are shared.
+
+Before building a marketplace or dashboard, publish one callable contract with a real input schema, a real result shape, a budget rule, and a failure remedy.
+Run it through the current Blueprint x402 flow.
+Measure paid, queued, completed, failed, and reconciled requests separately.
+
+If those states cannot be separated, the product is not ready for autonomous buyers regardless of how easy the payment header looks.
+
+
+## What is payment-native infrastructure?
+
+It is a service stack where payment is part of the machine-readable request flow.
+A program can discover a capability, inspect the terms, pay, receive work, and reconcile the result without a human checkout.
+
+## Why does x402 matter for AI agents?
+
+x402 turns the HTTP 402 response into a payment challenge that software can process.
+It can remove account and API-key setup for public paid access, while restricted jobs may still require identity and permission checks.
+
+## What does a Tangle Blueprint add?
+
+A Blueprint defines typed jobs, operators run those jobs, and the Blueprint x402 gateway can convert a verified paid request into a runner job call.
+The gateway does not decide whether the output is correct.
+
+## Does a paid request prove that an agent result is good?
+
+No.
+Payment proves that the payment conditions were met.
+Task-specific evidence and an evaluation are still required to judge quality.
+
+## Should every AI agent product use pay-per-request pricing?
+
+No.
+Use it for discrete, valuable, irregular work that software can buy safely.
+Use subscriptions or accounts when teams need predictable spend, administration, or support.
