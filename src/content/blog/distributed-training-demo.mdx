@@ -1,10 +1,8 @@
 ---
-title: 'Distributed Training with 10,000x Communication Reduction'
+title: 'DeMo Distributed Training: Communication Reduction and Service Boundaries'
 slug: distributed-training-demo
 summary: >-
-  DeMo makes internet-scale distributed training less bandwidth-bound by
-  synchronizing compressed momentum instead of full gradients. Tangle's Training
-  Blueprint turns that research direction into an operator-run service surface.
+  DeMo reports up to 85x less communication per GPU in its paper experiments, but an operator-run Training Blueprint still needs checkpoints, evidence, recovery, and evaluation before it becomes a service.
 date: '2026-04-15'
 author: Drew Stone
 tags:
@@ -16,57 +14,305 @@ heroImage: /images/covers/editorial/distributed-training-v2.webp
 imageAlt: 'An editorial still life about compressing distributed training updates'
 ---
 
-Distributed training over the open internet usually dies at the sync step. The model can fit on GPUs, the data can be sharded, and the operators can be paid, but the network still has to move training state between machines that do not sit inside one data center. That is the pressure behind DeMo, Decoupled Momentum Optimization: reduce the communication payload enough that permissionless operators can coordinate without pretending they are one tightly coupled cluster.
+You can place a model on eight GPUs and still fail to train it.
+The workers finish local batches, then wait for the network to exchange updates.
+If those machines sit in different regions, the synchronization traffic can dominate the useful computation.
 
-Tangle's [Training Blueprint](https://github.com/tangle-network/training-blueprint) is the protocol version of that idea. It turns the research direction into a service surface where operators join training jobs, synchronize state, submit checkpoints, and get paid or penalized under network rules.
+That is the practical meaning of **distributed training communication reduction**.
+The question is not whether a model fits on the available hardware.
+The question is whether the workers can exchange enough training state, often enough, without turning every step into a wide-area data transfer.
 
-## The Claim
+**DeMo**, or Decoupled Momentum Optimization, is a research method that reduces the amount of information exchanged between accelerators by synchronizing a compressed representation of momentum instead of moving full optimizer state in the usual way.
+The Tangle [Training Blueprint](https://github.com/tangle-network/training-blueprint), a reusable service definition, packages this research direction for an operator, the provider that supplies the training machine.
 
-The reported 10,000x claim is about communication volume, not magic training quality. A naive distributed optimizer can require gigabytes of gradient synchronization per step for a large model. DeMo compresses the communication path by synchronizing sparse transformed momentum. The common shorthand is roughly 10GB down to roughly 100KB per synchronization, depending on model, optimizer state, sparsity, and implementation.
+An **operator** is a provider that supplies a machine and joins a training Job.
+A **Blueprint** is the reusable service template that defines that Job, its artifacts, requirements, payment, and evidence.
+A **Job** is one submitted training run, and a **Service** is the live instance that accepts those runs.
+Tangle is the protocol network that can coordinate the Blueprint, operators, Jobs, payments, lifecycle records, and checkpoint evidence around the training method.
+The protocol can coordinate the workers.
+It does not make a model converge or prove that a checkpoint is useful.
 
-That distinction matters. If someone reads "the reported 10,000x figure" as "training is 10,000x cheaper" or "models are 10,000x better," they are reading the wrong claim.
+## The paper's reported result reaches up to 85x less communication
 
-| Claim | Supported by the DeMo framing? |
+The current [DeMo paper](https://arxiv.org/abs/2411.19870) reports a result of up to 85x less data per GPU than AdamW-DDP (AdamW with distributed data parallelism) in its reported experiments on 300M- and 1B-parameter models, with comparable loss and accuracy.
+The public [Training Blueprint README](https://github.com/tangle-network/training-blueprint) advertises a sample 10,000x implementation target using a roughly 100 KB versus 10 GB comparison.
+Those are different claims.
+Treat the sample 10,000x as a configuration-specific implementation claim that needs a like-for-like benchmark, not as the paper’s measured result.
+The paper’s evidence depends on its models, data, optimizer settings, hardware, and measurements.
+Neither number means training becomes that many times cheaper, finishes that many times sooner, or produces a model that many times better.
+The Tangle service question is one step later.
+Can a method with a small synchronization payload become a repeatable Job with operators, checkpoints, payment, failure recovery, and a quality check?
+
+A simple calculation shows why the boundary matters.
+Suppose a training step would exchange a full one-billion-parameter vector in 16-bit precision.
+In this sample calculation, the raw vector is about 2 GB.
+If a compressed update keeps 0.01 percent of the coefficients and stores each kept value with a four-byte index, the payload is about 600 KB before headers and protocol overhead.
+
+~~~text
+full payload = 1,000,000,000 × 2 bytes = 2,000,000,000 bytes
+kept coefficients = 1,000,000,000 × 0.0001 = 100,000
+compressed payload = 100,000 × (2 value bytes + 4 index bytes) = 600,000 bytes
+sample raw ratio ≈ 2,000,000,000 ÷ 600,000 ≈ 3,333x
+~~~
+
+That is an illustrative ratio, not a DeMo measurement.
+This toy ratio is neither the paper’s reported 85x result nor the repository’s sample 10,000x implementation claim.
+Real communication includes metadata, transforms, retransmission, error handling, checkpoint traffic, and synchronization barriers.
+The ratio must be measured for the actual model and configuration.
+
+## What DeMo changes
+
+Distributed training usually keeps model parameters, gradients, and optimizer state aligned across workers.
+**Momentum** is the running update direction that an optimizer uses to smooth noisy gradients and continue moving toward a lower training loss.
+Synchronizing every value preserves alignment but creates a large network cost.
+
+DeMo changes the information exchanged:
+
+1. Each worker trains locally on its data shard.
+2. The worker maintains a local momentum state.
+3. A transform moves that state into a representation where much of the signal can be compressed.
+4. The worker keeps a sparse set of important coefficients.
+5. Workers exchange the compressed update.
+6. Each worker reconstructs the shared update and continues local training.
+
+The method allows controlled divergence in local optimizer states rather than requiring every worker to share every state value at every step.
+The paper’s experiments are the evidence for its optimization behavior.
+They do not remove the need to measure worker churn, network loss, checkpoint recovery, or data quality in a service deployment.
+
+Related work makes the same system pressure visible from other angles.
+[OpenDiLoCo](https://arxiv.org/abs/2407.07852) presents an open-source implementation of low-communication training across countries and continents.
+[INTELLECT-2](https://arxiv.org/abs/2505.07291) explores training with heterogeneous contributors.
+These papers are research evidence, not interchangeable production components.
+
+## A Training Blueprint has to describe the whole Job
+
+Research code can demonstrate an optimizer.
+A service Blueprint must describe what an operator is accepting and what the caller receives.
+
+An illustrative training request might look like this:
+
+~~~json
+{
+  "model": "public-model-v1",
+  "dataset": "dataset-manifest-v3",
+  "workers": 8,
+  "localSteps": 100,
+  "syncEverySteps": 100,
+  "compression": {
+    "method": "transformed_sparse_momentum",
+    "keepFraction": 0.0001
+  },
+  "checkpoint": {
+    "format": "safetensors",
+    "everySteps": 1000
+  },
+  "evaluation": {
+    "suite": "heldout-v1",
+    "requiredMetrics": ["loss", "task_accuracy"]
+  }
+}
+~~~
+
+The request must also state who can see the dataset, what hardware the operator needs, how worker dropout is handled, how payment is calculated, and what makes a checkpoint eligible for serving.
+
+A **checkpoint** is a saved copy of model weights and associated metadata at a particular training point.
+It is an artifact that can be resumed, evaluated, or passed to an inference service.
+The checkpoint should carry a hash, training configuration, data-manifest version, worker set, and evaluation result.
+
+An evaluation is a check of the trained artifact against a stated task or dataset.
+It can report loss, accuracy, safety tests, latency, or another metric appropriate to the model.
+An evaluation result is evidence about the tested cases.
+It is not proof that the model will behave correctly on every future request.
+
+## Tangle supplies coordination, not convergence
+
+The public Training Blueprint repository is where a builder should inspect the current implementation and operator requirements.
+The Tangle protocol layer can coordinate Blueprint registration, operator participation, service lifecycle, payment, stake-backed accountability, checkpoint evidence, and downstream service use.
+The [Blueprint catalog guide](/blog/30-blueprints) shows how to inspect an operator-run service before choosing it.
+The [operator staking guide](/blog/operator-staking-ai-blueprints) explains why collateral, liveness, and checkpoint quality need separate records.
+
+The service path looks like:
+
+~~~text
+caller defines training Job
+  -> eligible operators join with stated requirements
+  -> workers train and exchange compressed updates
+  -> checkpoints and run records are submitted
+  -> evaluation checks the checkpoint
+  -> an accepted artifact can feed an inference Blueprint or Router
+  -> payment and operator records settle under the published policy
+~~~
+
+The word **Router** has a different meaning here than the training worker.
+Tangle Router is a model-serving gateway that can route inference requests and apply request-time strategies.
+It can serve a checkpoint after an evaluation decision.
+It does not replace the training protocol.
+
+An **attestation** is a signed report accepted about the code or environment that ran.
+It can help establish that an approved training binary or evaluator ran in a stated boundary.
+It cannot prove that the dataset was good or that the learned model is useful.
+
+A **trace** is a structured record of one training run.
+It can join worker membership, synchronization rounds, communication volume, checkpoint hashes, evaluation results, failures, and payment records.
+Without that record, a final checkpoint is difficult to distinguish from a file that appeared in storage.
+
+## A checkpoint needs a promotion decision
+
+Training output should not move directly from “worker finished” to “model is serving.”
+The service needs named states that tell operators and callers what they can do with the artifact.
+
+| State | Meaning | Allowed next action |
+| --- | --- | --- |
+| Candidate | A worker or round produced a checkpoint | Validate hash, metadata, and resumability |
+| Evaluated | The checkpoint passed the stated test suite | Compare with the current serving artifact |
+| Accepted | An authorized owner approved the measured result | Publish it for the intended downstream job |
+| Serving | An inference service is using the checkpoint | Monitor quality, latency, and rollback signals |
+| Revoked | A later check found a defect or policy violation | Stop new requests and restore a known artifact |
+
+An illustrative promotion record could be:
+
+~~~json
+{
+  "checkpoint": "sha256:example",
+  "blueprint": "training-v1",
+  "dataset_manifest": "dataset-v3",
+  "workers": 8,
+  "evaluation": {
+    "suite": "heldout-v1",
+    "loss": 1.42,
+    "task_accuracy": 0.81,
+    "status": "passed"
+  },
+  "state": "accepted",
+  "rollback": "sha256:previous"
+}
+~~~
+
+The record is illustrative.
+It shows the minimum reasoning a serving decision needs: which bytes were approved, which data and workers produced them, what was measured, and which artifact can restore service if the result regresses.
+
+This state machine keeps accounting separate from promotion.
+Payment for a training Job can settle while the resulting checkpoint remains unevaluated.
+An inference payment can also settle before its answer passes a quality check.
+
+## The service must make bad workers and bad data visible
+
+Communication reduction does not solve adversarial or unreliable participation.
+The Blueprint needs a response for each failure class.
+
+| Failure | What it threatens | Evidence or response |
+| --- | --- | --- |
+| Worker disappears | Progress and synchronization | Heartbeat, missed-round record, replacement policy |
+| Worker sends stale state | Convergence and checkpoint quality | Round identifier, update hash, consistency check |
+| Worker sends malformed update | Job integrity | Schema validation and rejection record |
+| Dataset shard is corrupted | Training signal | Dataset manifest, checksums, and sampling report |
+| Checkpoint cannot resume | Artifact ownership and cost | Load test, format check, and hash |
+| Evaluation set leaks into training | Reported quality | Dataset separation and provenance |
+| Model quality regresses | Downstream users | Promotion rule, rollback checkpoint, and evaluation record |
+| Payment settles before failure | Economic fairness | Quote, timeout, refund, or partial-work policy |
+
+The operator should know which failures are recoverable.
+The caller should know whether a worker can be replaced without restarting the whole Job.
+The service owner should know whether a result is a valid checkpoint, a failed attempt, or an artifact awaiting review.
+
+## Communication is not the same as total cost
+
+Reducing synchronization bytes can lower network cost and make wider geographic placement possible.
+It may also increase local computation, memory use, synchronization complexity, or time spent reconstructing updates.
+
+The relevant production measurement is not one ratio.
+Record at least:
+
+| Measurement | Why it matters |
 | --- | --- |
-| lower synchronization payload | yes |
-| easier coordination over commodity networks | yes, if the implementation preserves convergence |
-| lower total training cost | workload-dependent |
-| better model quality | not by itself |
-| no need for verification | no |
+| Bytes sent per synchronization | Tests the communication claim |
+| Synchronizations per training hour | Shows how often the network is used |
+| Wall time per training step | Exposes barrier and straggler cost |
+| Local compute per step | Captures transform and reconstruction overhead |
+| Checkpoint size and frequency | Measures storage and recovery cost |
+| Worker replacement time | Shows resilience to churn |
+| Evaluation result | Checks whether the artifact improved the target task |
+| Total payment and operator cost | Decides whether the service is economical |
 
-Start with the research: [DeMo](https://arxiv.org/abs/2411.19870), [OpenDiLoCo](https://arxiv.org/abs/2407.07852), and [INTELLECT-2](https://arxiv.org/abs/2505.07291).
+If the communication ratio improves while convergence slows or evaluation quality falls, the method did not improve the product.
+If the model quality holds while operator replacement becomes impossible, the service still has an operational failure.
 
-## What DeMo Changes
+## What this research direction does not prove
 
-The normal failure mode is that every worker needs to synchronize too much state too often. DeMo changes the object being synchronized:
+DeMo does not prove that every model converges over a permissionless network.
+It does not prove that every sparse update is safe to accept.
+It does not prove that a checkpoint is private, reproducible, or useful because a worker signed it.
+It does not prove that the Training Blueprint’s reported 10,000x communication claim transfers to a different model, data distribution, precision, or synchronization schedule.
 
-1. each operator trains locally on a shard,
-2. momentum buffers capture update direction,
-3. a transform such as DCT moves momentum into a compressible representation,
-4. top-k sparsification keeps a tiny fraction of coefficients,
-5. operators gossip compressed momentum,
-6. the system aggregates and reconstructs the shared update.
+Tangle does not prove the trained model is good by recording a payment or an operator identity.
+The network can carry checkpoint hashes, run metadata, attestations, traces, and evaluation records.
+The service still has to define and run the evaluation that makes the quality claim meaningful.
 
-The shape is easier to reason about as an artifact pipeline:
+## When an operator-run training service fits
 
-The maintained training repositories linked above contain the runnable examples. Before treating the result as a product, record the model, dataset, compression settings, checkpoint, and evaluation result.
+Use a distributed training Blueprint when the workload can tolerate synchronization rounds, the data and checkpoint boundaries are explicit, and independent hardware provides enough value to offset coordination.
+Open models, research runs, and workloads that can resume from checkpoints are easier starting points than training tasks that require continuous low-latency shared memory.
 
-Before running or calling a training job, identify the model size, dataset, sync interval, compression settings, operator requirements, checkpoint format, eval gate, and payment policy.
+Use a managed cluster when the job needs tightly coupled accelerators, private data cannot leave one administrative boundary, or the cost of worker coordination exceeds the value of operator choice.
+Compression does not make a wide-area network behave like an on-package interconnect.
 
-## FAQ
+## A pilot needs a stop condition
 
-### What does the reported 10,000x communication reduction mean?
+The first distributed Job should not begin with a full training run.
+Start with a small model, a bounded dataset, a short checkpoint interval, and one known evaluation suite.
+The pilot should stop when communication falls below the target but evaluation regresses, when a worker cannot be replaced within the recovery budget, or when the total cost exceeds the managed-cluster comparison.
 
-It refers to reducing synchronization payloads, for example from full-gradient-scale transfers to sparse compressed momentum updates. It is a bandwidth claim, not a universal cost or quality claim.
+Write those conditions before the run.
+Otherwise a team can keep increasing local steps to defend a bandwidth result while silently accepting slower convergence or an artifact that cannot be served.
 
-### What is DeMo?
+A useful pilot report connects one measurement to one decision:
 
-DeMo, Decoupled Momentum Optimization, is a distributed optimization method that synchronizes compressed momentum information instead of synchronizing full gradients in the usual way.
+| Observation | Decision it supports |
+| --- | --- |
+| Fewer bytes with equal held-out quality | Test a longer run or wider operator set |
+| Fewer bytes but lower quality | Change compression or stop the method |
+| Equal quality but poor recovery | Keep the optimizer for a managed cluster, not a multi-operator service |
+| Better quality but higher total cost | Compare against a stronger baseline before expanding |
 
-### Why use Tangle for distributed training?
+This keeps the research result and the service decision in the same document without pretending that either one proves the other.
 
-Tangle adds the service layer around training: operator registration, job coordination, payment, stake-backed accountability, checkpoint evidence, and downstream serving through other Blueprints.
+The pilot should also record who owns each artifact.
+The dataset manifest may belong to the caller, worker updates may be transient, checkpoints may be jointly produced, and the evaluated model may be published under a separate license.
+Payment cannot resolve those ownership questions after the run has started.
+The Job contract should state who can download a checkpoint, who can revoke it, and which metadata must remain available for reproducibility.
 
-### Does Tangle prove the trained model is good?
+Those rules matter more as operators become independent.
+A managed cluster can often settle an artifact dispute inside one organization.
+A multi-operator run needs a public reference, a retention period, and a decision-maker before the first worker receives data.
 
-Not by itself. Model quality needs evaluation gates. Tangle can carry checkpoint hashes, run metadata, attestations, operator evidence, and payment records, but quality still has to be measured.
+## Decision rule
+
+Treat distributed training communication reduction as an engineering hypothesis.
+Measure bytes, time, compute, recovery, cost, and evaluation on the actual Job.
+Only then decide whether a Training Blueprint should accept more operators or feed a serving system.
+
+
+## What communication reduction does DeMo report?
+
+The current DeMo paper's reported result is up to 85x less data per GPU than AdamW-DDP in its 300M- and 1B-parameter experiments.
+The Training Blueprint README advertises a reported 10,000x target based on a different implementation comparison.
+Both are bandwidth claims, not universal cost, latency, or model-quality claims.
+
+## What is DeMo?
+
+DeMo, or Decoupled Momentum Optimization, is a distributed optimization method that reduces inter-accelerator communication by allowing controlled local momentum differences and synchronizing a compressed representation.
+
+## What is a Training Blueprint?
+
+It is a reusable service definition for a training Job.
+It specifies the training artifact, worker requirements, synchronization behavior, checkpoints, payment, evidence, and evaluation policy.
+
+## Why use Tangle for distributed training?
+
+Tangle can provide the operator and service layer around training, including registration, job coordination, payment, lifecycle records, checkpoint evidence, and downstream serving paths.
+
+## Does Tangle prove the trained model is good?
+
+No.
+Model quality needs an evaluation tied to a stated task and dataset.
+Protocol records can make the training history easier to inspect without replacing that evaluation.

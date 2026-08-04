@@ -1,8 +1,9 @@
 ---
-title: 'Browser Automation AI Needs An Evidence Loop'
+title: 'AI Browser Automation Needs An Evidence Loop'
 slug: browser-automation-ai-evidence-loop
 summary: >-
-  Browser automation AI is useful only when planning, browser actions, recovery, and final verification are tied to screenshots and replayable evidence.
+  AI browser automation needs an observe, act, verify, and bounded-recovery loop
+  that records page state, screenshots, actions, and the reason the run stopped.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,114 +17,303 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-Browser automation AI has one job: turn a user goal into browser actions that can be inspected. The hard part is not clicking. [WebDriver](https://www.w3.org/TR/webdriver2/) and [Playwright](https://playwright.dev/docs/intro) already made browser control programmable. The hard part is deciding what to do when the UI shifts, a modal appears, a wallet popup opens, or the final state is ambiguous.
+A browser agent sees a checkout button under a cookie banner and clicks once.
+The page moves, but the total is still loading.
+The model assumes the action worked and starts filling the next field.
 
-Tangle Browser Agent uses an observe, act, verify, recover loop so browser automation AI leaves evidence instead of a vague pass/fail.
+AI browser automation needs a loop that makes each transition inspectable.
+The agent should observe the page, take one allowed action, verify the expected local change, recover only inside a stated boundary, and check the final goal before it stops.
+The record of those steps lets a reviewer assess whether the run supports its claim.
 
-## The Loop
+Tangle Browser Agent packages this style of work behind its `bad` command-line interface (CLI) and a public software development kit (SDK) that drives Playwright pages.
+This article treats the loop as a control problem, shows a worked failure, and explains what the run does and does not establish.
+For a testing-focused view of the artifacts, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
 
-```text
+## The browser must confirm each transition
+
+Treat the loop as a small state machine: a sequence of named page states connected by actions and checks.
+The agent should never treat an action as proof of its own effect.
+The browser must be observed again after the action.
+
+~~~text
 goal
--> observe page through DOM, accessibility tree, and screenshot
--> choose action
--> execute browser step
--> verify local progress
--> recover if the page changed
--> verify final goal
--> save run evidence
-```
+  -> observe page, accessibility tree, screenshot, and relevant errors
+  -> choose one allowed action
+  -> execute the browser action
+  -> observe the resulting state
+  -> verify the local expected effect
+      -> continue when it holds
+      -> recover once within policy when the page changed safely
+      -> stop with evidence when the state is ambiguous or unsafe
+  -> verify the final goal
+  -> save the trace and terminal status
+~~~
 
-That loop is what separates a browser agent from a script generator. The agent must see the page after each action and decide whether the next step still makes sense.
+The local check and the final check are different.
+After clicking “Apply coupon,” the local check might be “the coupon field shows Applied.”
+The final check might be “the order review shows the expected total and no payment was submitted.”
+A run that satisfies the local check can still fail the product goal.
 
-## Observation Modes
+## Observe what each channel can prove
 
-| Mode | Use it when |
+A browser exposes several views of its state.
+The DOM, or Document Object Model, is the structured tree of elements and attributes available to browser code.
+The accessibility tree represents controls with roles and accessible names.
+A screenshot shows the rendered page at one viewport.
+Network and console records show requests and errors outside the visible page.
+
+| Observation mode | Strong evidence for | Common blind spot |
+| --- | --- | --- |
+| DOM | labels, text, attributes, and enabled state | overlap, clipping, and visual hierarchy |
+| accessibility tree | keyboard-facing names and roles | pixels, animation, and hidden visual context |
+| screenshot | rendered layout, wallet prompts, and visual state | exact element identity and off-screen content |
+| network and console | request failures, response status, and browser errors | business acceptance and human interpretation |
+| hybrid | tasks that need structure and visual confirmation | more model input and a conflict-resolution policy |
+
+The [WebDriver specification](https://www.w3.org/TR/webdriver2/) defines a remote-control interface for inspecting and manipulating web browsers.
+[Playwright](https://playwright.dev/docs/intro) supplies browser control, isolation, assertions, and reports.
+An AI layer can choose how to inspect and what to do next.
+The browser tools still provide the observable surface.
+
+If the DOM says a button is enabled while the screenshot shows it covered by a modal, the run needs a rule for resolving the conflict.
+The safe rule is to capture both views, close only a related modal if policy permits, and observe again.
+Guessing which channel is correct without recording the disagreement weakens the trace.
+
+## Resolve disagreement with a named priority
+
+Different observations can be correct at the same time.
+The DOM can expose a button while a page style layer covers it.
+The screenshot can show a label that the accessibility tree does not expose.
+The network can return a successful response while the page keeps stale state.
+
+Give the case a priority for the claim it is making.
+
+| Claim | Primary evidence | Supporting evidence |
+| --- | --- | --- |
+| a person can see the control | screenshot at the recorded viewport | accessibility name and DOM state |
+| the page exposes a usable control | accessibility tree and keyboard path | screenshot |
+| the request reached the service | network status and response | page loading or error state |
+| the product reports completion | page-owned status or receipt | network response and screenshot |
+| the wallet asked for a specific approval | wallet prompt | page context and wallet request |
+
+The priority is not permission to ignore contradictions.
+A mismatch should be saved as evidence and resolved or reported as inconclusive.
+This is especially important for visual checks, where a model can mistake a hidden element for a visible one.
+The case should say whether the reviewer is judging user-visible layout, semantic accessibility, service response, or a combination.
+
+## Act one step at a time
+
+An action should have a target and an intended effect.
+“Click the page until checkout appears” is too broad.
+“Click the visible Continue button and expect the review heading to appear” gives the loop a local condition.
+
+| Action record | Example |
 | --- | --- |
-| DOM | selectors and accessible labels are reliable |
-| vision | visual layout or screenshots carry the signal |
-| hybrid | the app mixes normal controls, custom UI, and visual state |
+| target | accessible button named Continue |
+| input | no value, or a redacted test value |
+| allowed effect | navigate from details to review |
+| local check | review heading is visible within the timeout |
+| forbidden effect | submit payment or save a production address |
 
-Most production apps need hybrid observation. The DOM gives precision. Screenshots catch what the DOM does not express, including visual regressions and wallet popups.
+The action log should preserve the target representation the agent used.
+That might be an accessible name, DOM reference, coordinate, or page label.
+The record helps a reviewer distinguish “the wrong control was selected” from “the right control had no effect.”
 
-## Evidence Requirements
+An agent profile is the named configuration that shapes a run.
+It can include the model, DOM or vision mode, planning setting, permissions, turn limit, and recovery policy.
+The profile is part of the evidence because changing it can change both the selected action and the amount of observation.
 
-| Evidence | Required for |
+## Verify the local effect
+
+Verification belongs immediately after an action.
+Waiting for a fixed duration is weaker than checking the state the action should cause.
+
+| Action | Local effect to check |
 | --- | --- |
-| screenshots | UI state, visual defects, wallet prompts |
-| action log | exact click/type/wait sequence |
-| reasoning notes | why the agent chose the next action |
-| selected element | whether the right control was used |
-| final verifier | whether the user goal in practice completed |
+| open menu | menu is visible and the expected item is exposed |
+| fill field | value appears in the intended field and validation state is known |
+| submit form | page shows a loading, success, or error state owned by the form |
+| switch tab | selected tab and content heading agree |
+| dismiss modal | related modal is gone without changing the requested page |
+| open wallet prompt | prompt is visible and account and chain are recorded |
 
-For the QA stack view, read [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents). For natural-language case writing, read [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents).
+The local check should be narrow.
+If a form submits, do not call the whole business workflow complete until the final page or service-owned status confirms it.
+If a wallet prompt opens, do not call a transaction successful until the permitted signing and chain result have been observed.
 
-## Where It Fits
+## Recover only inside the user’s intent
 
-Browser automation AI fits best where hand-written tests are underbuilt:
+Recovery is a bounded response to a page difference.
+It does not give the agent permission to invent a new task.
 
-| Product area | Why it helps |
+| Situation | Safe response | Stop condition |
+| --- | --- | --- |
+| cookie banner covers a related control | dismiss it once and record the screenshot | banner returns or dismissal changes the task |
+| expected text has a harmless copy change | use the semantic target if the goal remains identical | multiple controls could match |
+| page is still loading | wait within the recorded timeout | timeout or repeated failure |
+| form lost input after a recoverable error | refill the disposable value once | repeated reset or changed user intent |
+| login is required | use approved storage state or stop as blocked | no approved session |
+| unresolved human-verification challenge appears | stop and save the blocked state | continue only if the case explicitly allows supported recovery |
+| destructive action is next | stop at the named checkpoint | only continue with explicit test permission |
+
+An explicit recovery policy keeps browser automation from becoming uncontrolled clicking.
+The run should record the failed assumption, the recovery action, and the new observation.
+If the checkpoint still does not hold, the evidence is more useful than another unbounded retry.
+
+A configured recovery is a driver capability, not a test verdict.
+If the case requires a human or account boundary to be verified, stop or mark the run blocked unless the configured recovery is explicitly allowed and the evidence records what happened.
+
+## A worked trace: the coupon that never applied
+
+Suppose the goal is to verify a discounted order without submitting payment.
+The expected final state is a review page with the test coupon and a lower total.
+
+| Turn | Observation | Action | New state | Decision |
+| --- | --- | --- | --- | --- |
+| 1 | Cart has one test item and a visible coupon field | Fill SAVE10 | Field contains SAVE10 | continue |
+| 2 | Apply button is visible but a consent banner overlaps it | Dismiss related consent banner | Apply button is visible | continue |
+| 3 | Apply button is visible and enabled | Click Apply | Spinner appears | observe again |
+| 4 | Spinner ends and an error says coupon expired | Retry once | Same error appears | stop |
+| 5 | Review page has the original total and no applied coupon | Final check | Expected condition absent | fail |
+
+The failure is useful because the trace contains the page state, action, error, retry limit, and final mismatch.
+The test owner can inspect coupon data or expiration rules.
+The product owner can decide whether the error is expected in this environment.
+The agent did not silently substitute another coupon or submit payment.
+
+The terminal status should be one of four ordinary outcomes:
+
+| Status | Meaning |
 | --- | --- |
-| onboarding | changing copy and layouts |
-| partner apps | many similar but not identical flows |
-| wallet products | extension and popup state |
-| dashboards | data-driven views |
-| release review | fast smoke coverage before deploy |
+| pass | The stated final condition was observed. |
+| fail | The observed application result contradicted the condition. |
+| blocked | A required permission, login, human-verification challenge, or dependency prevented a safe run. |
+| inconclusive | The evidence did not support either pass or fail. |
 
-It should not replace deterministic tests for stable business rules. It should cover the messy product flows teams avoid testing.
+## Keep the trace separate from the evaluation
 
-## Recovery Rules
+A trace is the ordered record of the goal, observations, actions, results, recoveries, and stop reason.
+An evaluation compares that record with the acceptance condition.
+The trace answers “what happened?”
+The evaluation answers “does what happened satisfy the case?”
 
-The agent should recover only within a clear boundary.
+This separation matters when a model provides a natural-language explanation.
+The explanation can point to a screenshot or summarize a step.
+It should not replace the expected condition, the captured state, or the terminal status.
 
-| Situation | Allowed recovery |
-| --- | --- |
-| modal appears | close or act on it if related to the goal |
-| slow page | wait within timeout and record delay |
-| text changed | use semantic target if the goal is unchanged |
-| login required | use provided credentials or mark blocked |
-| captcha appears | mark blocked, do not invent a workaround |
-| destructive action | stop unless the case explicitly permits it |
+For a visual requirement, the evaluation may be model-assisted.
+For a stable text or URL (web address) requirement, a deterministic check may be stronger.
+For a wallet or payment boundary, a human approval may be required.
+Name the evaluator and evidence type in the case so the result’s authority is clear.
 
-This keeps browser automation AI from turning into uncontrolled clicking. Adaptation is useful when the UI shifts. It is dangerous when the agent starts changing the user's intended task.
+## Start with the public Browser Agent surface
 
-## Review Surface
+Tangle’s [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) publishes the scoped package, bad binary, safe help commands, SDK exports, and example goal.
+The [public repository](https://github.com/tangle-network/browser-agent-driver) documents the CLI, SDK, observation modes, output, and wallet section.
 
-A run viewer should make review fast.
+~~~bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
+bad run --help
+bad snapshot --help
+bad run \
+  --url https://example.com \
+  --goal "Read the page title, confirm the page is public, and capture the final state"
+~~~
 
-| View | Reviewer question |
-| --- | --- |
-| timeline | what happened in order? |
-| screenshot strip | where did the UI change? |
-| action list | what did the agent click or type? |
-| element highlight | did it choose the right target? |
-| final verifier | why did it pass or fail? |
+The snapshot command is useful for a deterministic page-state check without asking a model to choose actions.
+The run command adds the agent loop.
+Start with a public read-only page, then add a disposable authenticated fixture after the evidence and stop policy are working.
 
-For E2E gate design, read [AI E2E Testing For Browser Flows](/blog/ai-e2e-testing-browser-agents). For evidence details, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
+The public SDK uses a Playwright page:
 
-The review surface should make the first wrong step obvious. If the trace only shows the final answer, the team cannot tell whether the model misunderstood the goal, clicked the wrong control, or reached a broken page.
+~~~typescript
+import { chromium } from 'playwright'
+import {
+  BrowserAgent,
+  PlaywrightDriver,
+} from '@tangle-network/browser-agent-driver'
 
-## What This Does Not Prove
+const browser = await chromium.launch()
+const page = await browser.newPage()
+const driver = new PlaywrightDriver(page)
+const agent = new BrowserAgent({
+  driver,
+  config: {
+    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    observationMode: 'hybrid',
+    plannerEnabled: true,
+  },
+})
 
-Browser automation AI does not prove the app is correct. It proves a user-visible goal succeeded or failed under recorded conditions. Treat the run as evidence, not as authority.
+try {
+  const result = await agent.run({
+    goal: 'Read the page title and confirm that the page is public',
+    startUrl: 'https://example.com',
+  })
+  console.log({ success: result.success, reason: result.reason })
+} finally {
+  await browser.close()
+}
+~~~
 
-## Decision Rule
+This code follows the public repository’s documented exports.
+The package version and README should be checked before relying on optional fields or output paths.
 
-Use browser automation AI when a real browser flow matters and scripted selectors are slowing coverage. Require observe-act-verify artifacts before using the result to block or approve a release.
+## Decide what a hosted service returns
 
-## FAQ
+The browser loop can remain a local package.
+If a team exposes it as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) is the reusable definition of its jobs and runtime requirements, while an operator is the provider that runs a live instance.
+A hosted job should return the trace, evaluation, and terminal status as separate fields.
+Execution metadata can explain where the run happened, but it is not evidence that the page reached the requested business state.
 
-### What is browser automation AI?
+## Where the loop stops being enough
 
-It is an AI agent controlling a browser to complete a user goal, observe the page, recover from changes, and verify the final state.
+Browser automation AI does not prove that an application is correct in every environment.
+It proves the observed result for the supplied goal, fixture, browser, model profile, and runtime.
+It does not prove hidden backend invariants.
+It does not prove transaction settlement unless the owning system confirms it.
+It does not replace contract tests, application programming interface (API) tests, accessibility checks, or manual review of high-risk actions.
+It does not make credentials safe to expose.
 
-### How is it different from a recorded macro?
+A visual screenshot can show a wallet prompt.
+It cannot prove that a contract will execute as intended.
 
-A macro replays fixed steps. A browser agent observes the page after each step and can adjust when the UI changes.
+These boundaries are useful because they tell the team which evidence to add next.
+When the claim concerns layout, add screenshots.
+When it concerns page semantics, add DOM or accessibility evidence.
+When it concerns a transaction, add wallet request and chain evidence.
+When it concerns code identity or secret handling, add the appropriate execution evidence.
 
-### Does it use Playwright?
 
-Tangle Browser Agent builds on real browser automation primitives and records artifacts around the AI decision loop.
+## What is browser automation AI?
 
-### What should I automate first?
+Browser automation AI is a browser-control loop in which an agent interprets a goal, observes the page, chooses allowed actions, checks the result, and records the run.
 
-Start with signup, checkout, wallet, onboarding, and release-blocking flows where manual testing is slow.
+## Why does it need an evidence loop?
+
+An action can succeed, fail, or affect a different control than the agent intended.
+Observing and checking after each action gives a reviewer the context needed to distinguish those cases.
+
+## What should the loop capture?
+
+Capture the goal, starting state, observations, action targets, results, recoveries, screenshots or page state, final condition, terminal status, and stop reason.
+
+## When should recovery stop?
+
+Stop when the page is ambiguous, a required permission is missing, an unresolved human-verification challenge appears, the retry limit is reached, or the next action is destructive without explicit permission.
+
+## Does Browser Agent replace Playwright?
+
+No.
+Playwright provides browser automation primitives and test tooling.
+Browser Agent adds a goal-driven loop, observation choices, recovery, and evidence around those primitives.
+
+## Choose the boundary before the action
+
+Use Browser Agent when a real user-facing flow needs page interpretation, flexible navigation, or evidence capture.
+Use deterministic browser tests when the state and page queries are stable.
+Use both when the agent should find the path but a fixed assertion must decide the outcome.
+
+The safe default is an observed checkpoint before every meaningful or irreversible action.

@@ -29,6 +29,7 @@ if (!existsSync(ROOT)) {
 const SKIP_PATTERNS = [
   '^https?://(twitter|x)\\.com',
   '^https?://(www\\.)?linkedin\\.com',
+  '^https?://www\\.npmjs\\.com/package/',
   '^https?://github\\.com/.*#',
   '^https?://fonts\\.googleapis\\.com',
   '^https?://discord\\.gg',

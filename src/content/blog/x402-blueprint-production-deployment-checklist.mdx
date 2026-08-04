@@ -13,277 +13,359 @@ heroImage: /images/covers/editorial/x402-production-runway-v2.webp
 imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-A TEE is a hardware-isolated environment that can report which code ran. An operator is the person or service responsible for running a job. Imagine you've built a small API service. It accepts requests, does computation, returns results. Now you want to charge for each call. The problem is that this isn't a normal web API with a billing dashboard. Payment happens on-chain, in stablecoins, before your compute even runs. The payment configuration you deploy with is the payment configuration that executes. There's no refund process, no dispute resolution, no "oops" button. A misconfigured operator wallet address doesn't generate a startup error; it silently routes every settled payment to the wrong address forever.
+Your paid API works on a laptop.
+The payment request appears, a test wallet signs it, and the job returns a result.
+Then the production rollout settles a payment on the wrong network, or accepts a payment while the worker is offline, or exposes a private job without the authorization rule you thought you deployed.
 
-A rollout sequence is the discipline of promoting that configuration through environments in the right order, changing only what needs to change at each stage, so you catch misconfigurations before they touch real money. For most web services, a wrong environment variable causes 500 errors. For an x402-enabled Blueprint, the wrong token address means payments fail at settlement. The wrong chain ID means the facilitator can't clear. The wrong operator address means every successful payment is a donation to a burn wallet.
+A paid service deployment has separate payment, queue, worker, and result states.
+The HTTP server, payment network, facilitator, service registry, provider runtime, execution queue, and result path can all report different states.
+The launch test is concrete: a known payer must discover the right price, receive the right payment request, settle on the intended network, enqueue exactly one job, and observe a separately verified result.
 
-This article walks through three environments: dev (local, loopback), staging (remote, testnet), and production (mainnet, TEE enforced). At each stage, a small set of fields changes. Knowing which fields those are, and why they change, is the difference between a smooth launch and an expensive config mistake.
+This production deployment checklist follows that launch test through dev, staging, and mainnet.
+It covers the health, stats, price, authorization dry-run, and paid-job routes documented by the current Tangle runner for x402, an HTTP payment protocol, plus accepted-token, quote-TTL, and job-policy fields from the public configuration.
 
-If you need the gateway wiring first, start with [Blueprint SDK x402 payments](/blog/blueprint-sdk-x402-payments-runnable-jobs). If you are enabling confidential execution, pair this checklist with [x402 and TEE production gating](/blog/blueprint-tee-x402-production-gating).
+Start with [x402 payments](/blog/x402-payments-for-ai-agents) for the request flow and [confidential execution](/blog/blueprint-tee-x402-production-gating) for the confidential-execution boundary.
 
----
+## The protocol, runner, and payment gateway roles
 
-## Production deployment checklist
+Tangle is a protocol for registering and coordinating services run by independent operators.
+A Blueprint is the deployable definition of a service, including its jobs and operating rules.
+An operator is the person or service that runs a Blueprint instance.
+A runtime is the process that loads the Blueprint, exposes its interfaces, receives jobs, and produces results.
+The Blueprint Runner is the runtime component that receives and dispatches typed job calls.
+A TEE, a trusted execution environment, isolates code and data from parts of the host; an attestation is the signed evidence used to check the deployed measurement.
 
-Before flipping to mainnet, verify each of these. The validator catches some of them at load time; the rest fail silently at runtime or settlement.
+x402 is an HTTP payment protocol.
+When a client requests a paid resource without a valid payment, the server returns HTTP 402 with the amount, asset, recipient, and network needed for payment.
+The client signs a payment and retries.
+A facilitator verifies payment payloads and returns the payment scheme's settlement result before the gateway enqueues work.
+The Tangle gateway's current behavior enqueues the job after settlement.
+The [current x402 seller flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) describes the 402, signed retry, verification, settlement, and response sequence.
 
-| Readiness area | Caught at config load | Silent failure if wrong | Promotion proof |
-|---|---|---|---|
-| Payment destination | Address parses as EVM-shaped | Funds settle to the wrong wallet | Staging receipt pays the intended operator address |
-| Network and token | CAIP-2 and address strings parse | Facilitator or token contract rejects settlement | Sepolia payment succeeds, then mainnet addresses are changed in one review |
-| Pricing | TOML value parses | ETH/USDC drift makes jobs underpriced or overpriced | Deployment log records the rate source and review date |
-| Job policy | Missing required fields reject | New job inherits the wrong default mode | Every job index has an explicit policy row |
-| TEE gate | Some invalid combinations reject | `preferred` or local-only attestation allows downgrade | Provisioned attestation hash exists before `on_chain_verification = true` |
+Tangle's x402 gateway is an optional payment ingress for Blueprint jobs.
+It exposes health and price discovery, checks payment through a facilitator, and enqueues a job call after settlement.
+A **JobCall** is the typed runner record created for an accepted invocation.
+The current [Tangle x402 runner documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) documents these endpoints:
 
-1. **`pay_to`** is your production operator wallet on Base mainnet, not the dev placeholder `0x0000000000000000000000000000000000000001`. The validator accepts `0x1` without error; payments sent there are unrecoverable.
-2. **`network`** is `eip155:8453` (Base mainnet), not `eip155:84532` (Base Sepolia). One digit difference. The validator checks format, not whether your `pay_to` address is on that chain.
-3. **`asset`** is the mainnet USDC contract address (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`), not the Sepolia address. A testnet asset address on a mainnet network config loads cleanly but fails at settlement.
-4. **`rate_per_native_unit`** reflects the current ETH/USDC market rate at deploy time. The example value `"3200.00"` decays in accuracy immediately. Check the rate, document it in your deployment log, and schedule a weekly review. If ETH moves 20% and you haven't updated this field, your prices are 20% wrong.
-5. **TEE `requirement`** is set to `"required"`, not `"preferred"`. `"preferred"` degrades gracefully without a TEE. Production payment services should fail closed.
-6. **`on_chain_verification`** is `true` in your TEE key exchange config. The default is `false`. Leaving it `false` in production means the key exchange only does local attestation checks; it does not verify the attestation matches the on-chain hash submitted at provision time.
-7. **All `job_policies` are explicitly defined**. Any job not listed falls back to `default_invocation_mode`. If that's `"disabled"`, unlisted jobs are unreachable. If you add a new job in production and forget to add a policy, it silently does nothing.
-8. **`restricted_paid` jobs have both `tangle_rpc_url` and `tangle_contract`** set. The validator rejects their absence at load time, but better to catch this in your checklist than in a production deploy gate.
-9. **`transfer_method = "eip3009"` with `eip3009_name` and `eip3009_version`** is set for USDC. The generic `"permit2"` default fails for USDC. These strings are part of the EIP-712 domain separator; a mismatch fails at the facilitator.
-10. **TEE is provisioned and the on-chain attestation hash is submitted** before enabling `on_chain_verification = true`. If you flip this flag before provisioning, key exchange will fail immediately.
-11. **Your operator wallet is funded on Base mainnet** for any gas costs associated with on-chain operations.
-12. **Staging end-to-end payment flow succeeded** on Base Sepolia before promoting to mainnet. Do not skip this step.
+| Endpoint | Meaning |
+| --- | --- |
+| GET /x402/health | The gateway can answer a health request |
+| GET /x402/stats | Gateway counters and operating statistics |
+| `GET /x402/jobs/{service_id}/{job_index}/price` | Discover the configured price for one job |
+| `POST /x402/jobs/{service_id}/{job_index}` | Pay for and enqueue one job invocation |
+| `POST /x402/jobs/{service_id}/{job_index}/auth-dry-run` | Test authorization without mutating job state |
 
----
+The POST route returns HTTP 402 when payment is missing or invalid.
+After a valid payment is settled, it returns HTTP 202 Accepted and enqueues a JobCall.
+202 means accepted for processing, not completed.
+Your client needs a polling endpoint, callback, or result retrieval job after the payment response.
 
-## What does the dev config do?
+The payment network is not automatically the same network that runs the Tangle service.
+For example, a Blueprint can use Base for USDC settlement while its service registration and operator coordination use another network.
+Treat the payment chain, asset contract, recipient address, service ID, job index, and runtime endpoint as separate configuration values.
+CAIP-2, short for Chain Agnostic Improvement Proposal 2, is the standard notation that combines a namespace and chain reference into one network identifier.
+An RPC (remote procedure call) endpoint is the network node interface used to read or submit chain requests.
 
-The example config that ships with the x402 Blueprint is designed to be safe by construction. It cannot receive real payments, cannot be reached from the internet, and won't accidentally forward money anywhere meaningful. The full [`x402.toml`](https://github.com/tangle-network/blueprint/blob/main/examples/x402-blueprint/config/x402.toml):
+## Dev, staging, and production configuration differences
 
-```toml
-bind_address = "127.0.0.1:0"
-facilitator_url = "https://facilitator.x402.org"
-quote_ttl_secs = 300
-default_invocation_mode = "disabled"
+Diff environment manifests and require approval for each changed field before promotion.
+Keep the typed job schema invariant across environments, and make the build check reject environment-specific schema changes.
+Require an approved diff for network, token, recipient, policy, and worker-capacity fields:
 
-[[job_policies]]
-service_id = 1
-job_index = 0
-invocation_mode = "public_paid"
+| Concern | Dev | Staging | Production |
+| --- | --- | --- | --- |
+| Payment network | Local or disabled | Testnet with test assets | Intended mainnet |
+| Token contract | Test deployment or none | Testnet token address | Mainnet token address |
+| Recipient | Non-custodial test account | Staging operator account | Independently verified production account |
+| Facilitator | Local or test facilitator | Trusted testnet endpoint | Trusted HTTPS production endpoint |
+| Invocation policy | Disabled by default | Explicit test job policies | Explicit public or restricted policies |
+| Rate and markup | Small, obvious test values | Recorded test values | Approved rate and markup with a refresh policy |
+| Worker capacity | One disposable worker | Isolated worker pool | Monitored, restartable pool |
+| Confidential jobs | No secrets | Synthetic secrets only | TEE and attestation policy if required |
+| Recovery | Resettable state | Repeatable test data | Documented rollback and customer response |
 
-[[job_policies]]
-service_id = 1
-job_index = 1
-invocation_mode = "public_paid"
+Do not promote a configuration by changing every field at once.
+First prove the route with payment disabled.
+Then prove testnet settlement with one inexpensive job.
+Then enable the smallest production job set and expand only after the complete payment-to-result path has been observed.
 
-[[accepted_tokens]]
-network = "eip155:8453"
-asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-symbol = "USDC"
-decimals = 6
-pay_to = "0x0000000000000000000000000000000000000001"
-rate_per_native_unit = "3200.00"
-markup_bps = 200
-```
+## The configuration facts that need proof
 
-Walk through each field:
+The current Tangle x402 configuration includes a bind address, facilitator URL, accepted token definitions, a conversion rate, a markup in basis points, an invocation mode, and per-job policies.
+Basis points are hundredths of a percent, so 200 basis points means a 2 percent markup.
+The public Blueprint source defines a quote TTL with a current default of 300 seconds, but a deployment should make its chosen value visible and test it.
 
-**`bind_address = "127.0.0.1:0"`** -- loopback only, port zero. Port zero tells the OS to assign an ephemeral port at startup. This binding cannot be reached from outside your machine. The [code default](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L337) is `"0.0.0.0:8402"`, but the example overrides it deliberately. You want to catch bind-address mistakes before staging, not after.
+An illustrative configuration fragment shows the shape without pretending that an example wallet or facilitator is yours.
+This fragment omits deployment-specific `facilitator_url` and `pay_to` values.
+Validate every value against the release's public source and inject sensitive values outside the file.
 
-**`facilitator_url`** -- there is no separate dev facilitator. The example points at the production facilitator URL. This is fine for local testing because your `bind_address` is loopback: the facilitator can generate quotes but has no path back to your service to settle payments.
-
-**`default_invocation_mode = "disabled"`** -- any job not listed in `job_policies` is blocked from x402 access. This is the [struct default](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L21) and the right choice in every environment. Explicit allowlisting prevents accidental exposure of jobs you haven't priced.
-
-**`pay_to = "0x0000000000000000000000000000000000000001"`** -- the field that will burn you. Address `0x1` is a placeholder. It's a valid EVM address so it passes validation, but any payment that in practice settles against this config goes nowhere recoverable. The validator checks that `pay_to` is a parseable EVM address; it does not check that you own it.
-
-**`network = "eip155:8453"` and `asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"`** -- Base mainnet chain ID and USDC on Base mainnet, even in the dev config. The validator checks CAIP-2 format and EVM address parseability; it does not check that the contract exists or that you have access to the chain. For dev testing, this is acceptable because no real settlement occurs.
-
-**`rate_per_native_unit = "3200.00"`** -- a hardcoded ETH/USDC exchange rate. In production this number decays in accuracy the moment ETH price moves. There is no oracle integration in the config system; updating this value is an operational responsibility. At deploy time: check the current rate, write it in your deployment log with a timestamp, and set a calendar reminder to review it weekly. If the delta between the config value and market rate exceeds your acceptable pricing error, redeploy with the updated value.
-
-The job pricing lives in a separate file, [`job_pricing.toml`](https://github.com/tangle-network/blueprint/blob/main/examples/x402-blueprint/config/job_pricing.toml):
-
-```toml
-[1]
-0 = "1000000000000000"   # echo: 0.001 ETH
-1 = "10000000000000000"  # keccak256: 0.01 ETH
-```
-
-Prices are denominated in wei, where the reported conversion is 1 ETH = 10^18 wei. The gateway converts these to stablecoin amounts using your `rate_per_native_unit` and `markup_bps`. The reported math is: `0.001 ETH * 3200 USDC/ETH * 1.02 markup = 3.264 USDC = 3,264,000 smallest units`. This conversion runs in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179). Wei as the denomination is deliberate: operators set prices once in native units, and the stablecoin conversion is a runtime concern that varies by token and market rate.
-
-## What changes in staging?
-
-Staging is the first environment where your Blueprint is reachable from the internet. The bind address becomes public, and you switch to testnet token addresses.
-
-```toml
-# staging/x402.toml
+~~~toml
 bind_address = "0.0.0.0:8402"
-facilitator_url = "https://facilitator.x402.org"
 quote_ttl_secs = 300
 default_invocation_mode = "disabled"
 
-[[job_policies]]
-service_id = 1
-job_index = 0
-invocation_mode = "public_paid"
-
-[[job_policies]]
-service_id = 1
-job_index = 1
-invocation_mode = "public_paid"
-
 [[accepted_tokens]]
-network = "eip155:84532"           # Base Sepolia
-asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"  # USDC on Base Sepolia
+network = "eip155:84532"
+asset = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
 symbol = "USDC"
 decimals = 6
-pay_to = "0xYourOperatorAddressOnBaseSepolia"
 rate_per_native_unit = "3200.00"
 markup_bps = 200
 transfer_method = "eip3009"
 eip3009_name = "USD Coin"
 eip3009_version = "2"
-```
-
-The key changes:
-
-**`bind_address = "0.0.0.0:8402"`** -- public binding on port 8402. This is the [code default](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L337) you were overriding in dev.
-
-**`network = "eip155:84532"`** -- Base Sepolia, not Base mainnet. Chain ID 84532 vs. 8453. These are one digit apart. If your `network` says `eip155:8453` but your `pay_to` is a Sepolia address, the facilitator will attempt mainnet settlement against a Sepolia address, fail, and your test payments will never clear. The validator checks that `84532` is a valid `u64`; it does not check that the chain ID matches your `pay_to` address's actual network.
-
-**`asset`** -- testnet USDC address. The USDC contract on Base Sepolia is a different address from mainnet. Verify this address against official Circle documentation before deploying; token contract addresses are not in the Blueprint SDK source.
-
-**`pay_to`** -- your actual operator address on Base Sepolia. Replace the placeholder. This is the first environment where settlement can occur, even though it's test tokens.
-
-**`transfer_method = "eip3009"`** -- USDC uses EIP-3009 (transferWithAuthorization) for gasless permit-style transfers, not the generic permit2 default. The [config default](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs) is `"permit2"`, which works for most ERC-20 tokens but not USDC. For USDC, set `eip3009_name = "USD Coin"` and `eip3009_version = "2"` exactly. These strings are part of the EIP-712 domain separator; a mismatch causes signature verification failure at the facilitator.
-
-At staging, run a complete end-to-end payment flow: submit a request, receive a 402 with a quote, sign and resubmit with payment proof, verify the job executes and funds settle to your Sepolia address. Do not move to production until this succeeds.
-
-## What changes in production?
-
-Production introduces two security completions on top of staging: the TEE requirement flips from preferred to required, and on-chain attestation verification is enabled. The token addresses flip to mainnet.
-
-```toml
-# production/x402.toml
-bind_address = "0.0.0.0:8402"
-facilitator_url = "https://facilitator.x402.org"
-quote_ttl_secs = 300
-default_invocation_mode = "disabled"
 
 [[job_policies]]
 service_id = 1
 job_index = 0
 invocation_mode = "public_paid"
+~~~
 
-[[job_policies]]
-service_id = 1
-job_index = 1
-invocation_mode = "restricted_paid"
-auth_mode = "payer_is_caller"
-tangle_rpc_url = "https://your-tangle-rpc-endpoint"
-tangle_contract = "0xYourTangleContractAddress"
+The example uses the current public array shapes for `accepted_tokens` and `job_policies`; the network, rate, service, and job values are illustrative.
+Use the [current public x402 configuration source](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs) and the matching release documentation when constructing the complete file.
+Do not infer that a field is accepted merely because an older example contains it.
 
-[[accepted_tokens]]
-network = "eip155:8453"
-asset = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-symbol = "USDC"
-decimals = 6
-pay_to = "0xYourOperatorAddressOnBase"
-rate_per_native_unit = "3200.00"  # update to current market rate at deploy time
-markup_bps = 200
-transfer_method = "eip3009"
-eip3009_name = "USD Coin"
-eip3009_version = "2"
-```
+Before enabling a token, verify all of these as one record:
 
-The TEE configuration is separate from `x402.toml`. Based on the [`TeeConfig` struct](https://github.com/tangle-network/blueprint/blob/main/crates/tee/src/config.rs#L308), a production TEE config looks like:
+1. The network identifier uses the intended CAIP-2 form, such as eip155:8453 for Base or eip155:84532 for Base Sepolia.
+2. The token contract is the official contract for that network.
+3. The token decimals match the contract.
+4. The recipient address is controlled by the intended operator or treasury.
+5. The conversion rate has a source, timestamp, and refresh policy.
+6. The markup is expressed in basis points and has an approved maximum.
+7. The transfer method is supported by the deployed facilitator and token.
 
-```toml
-# production/tee.toml
-requirement = "required"
-mode = "remote"
+For USDC (USD Coin), Circle's [official contract address list](https://developers.circle.com/stablecoins/usdc-contract-addresses) currently identifies Base mainnet as 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 and Base Sepolia as 0x036CbD53842c5426634e7929541eC2318f3dCF7e.
+Verify the address again at release time and in the target chain explorer.
+An address copied from a different network can be syntactically valid and still be the wrong asset.
 
-[key_exchange]
-on_chain_verification = true
-session_ttl_secs = 300
-max_sessions = 64
-```
+## Payment-disabled development loop
 
-The critical production changes:
+Dev should answer whether the Blueprint can load, expose its routes, validate a job body, and produce a result without involving real money.
+Set the default invocation mode to disabled and allow only the local path needed for development.
+Use synthetic inputs and a disposable operator account.
 
-**`requirement = "required"`** -- staging used `"preferred"`, which degrades gracefully if TEE is unavailable. `"required"` fails closed: if a TEE cannot be provisioned, the service does not start. A production payment service with weakened execution integrity should not silently fall back to unattested execution.
+The first check is the health endpoint:
 
-**`on_chain_verification = true`** -- the [default is explicitly `false`](https://github.com/tangle-network/blueprint/blob/main/crates/tee/src/config.rs#L272). At staging you don't have an on-chain attestation hash yet, so `false` is correct there. In production, the key exchange needs to do both checks: (1) is this a real TEE with the right measurement? and (2) does this attestation match the `keccak256(attestationJsonBytes)` hash submitted to the contract at provision time? Without the second check, a compromised operator could substitute a different TEE's attestation during key exchange. The `false` default does not cause a startup failure; it's a silent security gap that you must explicitly close.
+~~~bash
+curl -fsS "$X402_BASE_URL/x402/health"
+curl -fsS "$X402_BASE_URL/x402/stats"
+~~~
 
-**`invocation_mode = "restricted_paid"`** -- production commonly graduates jobs from `public_paid` to `restricted_paid` to enforce caller access control. `restricted_paid` requires both `tangle_rpc_url` (for `eth_call` permission checks) and `tangle_contract` (the contract implementing `isPermittedCaller`). The validator rejects their absence. Note that `restricted_paid` with `auth_mode = "payment_only"` is also rejected at load time; `payment_only` provides no caller identity to check against.
+The X402_BASE_URL environment variable should point to the process under test.
+The health response proves that the gateway answered.
+It does not prove that the worker is healthy, the facilitator is reachable, the token is correct, or the job can finish.
 
-One reported production-specific operational consideration: the `AttestationFreshnessPolicy` is currently [only `provision_time_only`](https://github.com/tangle-network/blueprint/blob/main/crates/tee/src/config.rs#L218). Attestation is captured once at provision and the hash stored on-chain. If the enclave reboots, the stored hash becomes stale, and key exchange with `on_chain_verification = true` will fail until you re-provision. Periodic re-attestation is planned but not yet implemented. Factor this into your incident runbook.
+Next, call one known job through the normal runtime path.
+Record the service ID, job index, request identifier, queue acceptance, worker start, worker completion, and result retrieval.
+If the job is asynchronous, the client should never treat an HTTP response from the gateway as the result unless the API explicitly says it is synchronous.
 
-## Which config fields cost you money?
+Dev is also where you test malformed input.
+Send an unknown service and job pair, an invalid body, an oversized body, a missing caller, and a repeated idempotency key.
+The desired behavior is an explicit rejection with no payment attempt and no duplicate queue item.
 
-Three fields deserve extra attention because mistakes in them don't cause startup errors; they cause lost funds or silent settlement failures.
+## Testnet payment cell
 
-**`pay_to`** is the operator wallet that receives settlements. The validator confirms it's a parseable EVM address. It does not confirm you own it, that it exists on the right chain, or that it isn't the dev placeholder `0x1`. If you forget to replace `pay_to` before production, every settled payment goes to address `0x1`. The service runs. No alarm. The payments go somewhere else permanently.
+Staging should use a real remote path and a test asset.
+A testnet payment has no production value, but it verifies the selected chain and token, the facilitator response, the settlement record, and the single enqueue record before mainnet.
 
-**`network` and `asset` together** define which chain and token contract the facilitator uses for settlement. The validator checks that `network` is in CAIP-2 format (`eip155:<chain_id>`) with a valid `u64` chain ID, and that `asset` is a parseable EVM address. It does not check that the contract at `asset` exists on `network`. Carrying a Sepolia USDC address into a production config with `network = "eip155:8453"` loads cleanly, then fails at settlement time, not at config load time.
+Begin with discovery:
 
-**`rate_per_native_unit`** is a hardcoded exchange rate. In production, `"3200.00"` decays the moment ETH price moves. At deploy time: record the current market rate and timestamp in your deployment log. Set a weekly ops task to compare the configured rate against the current market rate; if the delta exceeds your acceptable pricing error (5-10% is common), update and redeploy. The config system provides no tooling for this; it's an operational cadence you establish.
+~~~bash
+curl -fsS "$X402_BASE_URL/x402/jobs/$SERVICE_ID/$JOB_INDEX/price"
+curl -fsS -X POST "$X402_BASE_URL/x402/jobs/$SERVICE_ID/$JOB_INDEX/auth-dry-run" \
+  -H "content-type: application/json" \
+  --data "$AUTH_DRY_RUN_BODY"
+~~~
 
-## What does the validator catch at load time?
+The environment variables in this block should be populated with the staging gateway URL, a real test service ID, a real job index, and a test authorization body.
+The commands are useful because they separate route discovery and authorization from payment settlement.
+Do not use a production wallet to make the first testnet call.
 
-`X402Config::from_toml` calls `validate()` immediately after parsing. The error messages are precise enough to act on directly:
+Then exercise the payment state machine:
 
-```
-restricted_paid policy for service_id=1 job_index=0 requires tangle_rpc_url
-restricted_paid policy for service_id=1 job_index=0 requires tangle_contract
-restricted_paid policy for service_id=1 job_index=0 cannot use auth_mode=payment_only
-duplicate job policy for service_id=1 job_index=0
-token USDC: network must start with 'eip155:', got 'solana:mainnet'
-token USDC on eip155:8453: rate_per_native_unit must be positive, got 0
-```
+~~~http
+POST /x402/jobs/{service_id}/{job_index}
 
-The `TeeConfig` uses `#[serde(try_from = "TeeConfigRaw")]`, which means TOML deserialization itself is the validation gate. You cannot parse a `TeeConfig` from TOML without triggering validation. Two rules it enforces automatically:
+HTTP/1.1 402 Payment Required
+PAYMENT-REQUIRED: value omitted from this state diagram
 
-```
-TEE requirement is Required but mode is Disabled
-TEE-enabled configs must use SealedOnly secret injection
-```
+POST /x402/jobs/{service_id}/{job_index}
 
-The second rule is enforced automatically: any non-`Disabled` TEE mode forces `SecretInjectionPolicy::SealedOnly`. This isn't a warning; the deserialization fails. You cannot accidentally ship a TEE config that uses env-var injection, because env-var injection via container recreation invalidates the attestation, breaks sealed secrets, and loses the on-chain deployment ID.
+HTTP/1.1 202 Accepted
+PAYMENT-RESPONSE: value omitted from this state diagram
+~~~
 
-## What is the correct rollout order?
+Header names depend on the x402 integration version.
+The current generic x402 documentation recommends the v2 payment headers, including PAYMENT-SIGNATURE and PAYMENT-RESPONSE.
+The current Tangle Blueprint x402 crate README documents its Axum integration with X-PAYMENT and X-Payment-Response.
+Do not mix a client from one header version with a server from the other.
+Use the headers documented by the exact Tangle crate and facilitator versions deployed together.
+The [x402 migration guide](https://docs.cdp.coinbase.com/x402/migration-guide) explains the v1 and v2 difference, and the [public Tangle x402 crate](https://github.com/tangle-network/blueprint/tree/main/crates/x402) shows the current Blueprint integration.
 
-1. **Dev**: `bind_address = "127.0.0.1:0"`, `pay_to = 0x1` placeholder, any chain ID. Verify the x402 gateway starts, generates valid quotes, and the job execution path is correct. No real money at risk.
+The staging proof has four independent observations:
 
-2. **Staging on Base Sepolia** (`eip155:84532`): Public bind address, your real operator address on Sepolia, testnet USDC contract, TEE `preferred`. Run a complete payment flow end-to-end. Verify funds appear in your Sepolia wallet. Do not proceed to step 3 until you have observed successful settlement on Sepolia.
+| Observation | What it proves | What it does not prove |
+| --- | --- | --- |
+| Price response | The service and job are discoverable | The price is economically correct |
+| 402 response | The route requires payment | The facilitator can settle |
+| Settlement response | The payment was accepted by the payment path | The worker completed the job |
+| Result record | The runtime produced a result for the accepted job | The result is semantically correct |
 
-3. **Production on Base mainnet** (`eip155:8453`): Flip `network` to mainnet, update `asset` to mainnet USDC, replace `pay_to` with your production wallet, set TEE `required` and `on_chain_verification = true`. Update `rate_per_native_unit` to current market rate with a timestamp in your deployment log. Define all `job_policies` explicitly.
+A correctness check must validate the output schema, required invariants, or a fixture comparison separately.
+Save the transaction or payment identifier with the job identifier.
+Map an idempotency key to the payment identifier and assert one JobCall per key.
+A timeout can then recover the existing payment and job state instead of creating a second invocation.
 
-Never mix testnet and mainnet values in the same config. There is no validation that catches `network = "eip155:84532"` paired with a mainnet token address, or vice versa. The chain ID and asset address must match; the validator checks each field individually, not their consistency with each other.
+## The mainnet promotion: narrow the blast radius
 
-## How do you verify the deployment succeeded?
+Production should begin with one job policy and one operator account.
+Enable only jobs with an explicit price, input validation, queue capacity, result path, and customer-facing failure policy.
 
-After promoting to production, run these checks before declaring the deployment done:
+Set the default invocation mode to disabled or to the least permissive mode that matches the product.
+Use public-paid only for jobs that are safe for any payer to invoke.
+Use restricted-paid when the caller must be authorized.
+The current Tangle gateway documents caller binding through payer-is-caller or delegated caller signatures, with a contract-side permitted-caller check for the restricted path.
 
-1. **Submit a test request** to the service and confirm you receive a 402 response with a valid quote. The quote TTL is `quote_ttl_secs` (reported default 300 seconds); complete the verification within that window.
-2. **Complete a real payment flow**: sign and resubmit with payment proof. Verify the job executes and returns the expected result.
-3. **Verify settlement to your operator wallet**: check your production operator wallet on Base mainnet for the incoming transfer. The amount should match `rate_per_native_unit * price_in_eth * (1 + markup_bps / 10000)` minus facilitator fees.
-4. **Confirm TEE attestation**: check the on-chain attestation hash matches the hash submitted at provision time. A mismatch here means `on_chain_verification = true` will fail key exchange for all clients.
-5. **Check startup logs** for any validation warnings. A clean config load with no errors and successful TEE provisioning is a prerequisite, not a success criterion by itself.
-6. **Test a `restricted_paid` job** if you have one in production: verify the caller permission check runs and that an unauthorized caller receives the expected rejection.
+The distinction between payment authorization and job authorization should be visible in the trace.
+A payer may be allowed to settle while the requested caller is not allowed to invoke the job.
+The auth-dry-run endpoint exists to test that decision without creating a job.
+Use it in deployment checks and in regression tests for every restricted job.
 
----
+Production should also use a trusted HTTPS facilitator and a documented rate source.
+The Tangle documentation recommends fresh conversion rates, input validation, pinned RPC and contract settings, and a facilitator that the operator trusts.
+If the rate is stale, the quote can be economically wrong even when every signature and address is valid.
+If the RPC or contract is unpinned, a deployment can appear healthy while reading a different chain state than the client expects.
 
-## FAQ
+## Confidential jobs need a separate proof
 
-### Does the validator catch a wrong `pay_to` address?
-No. The validator confirms `pay_to` is a parseable EVM address, nothing more. It does not verify ownership, network match, or that the address isn't the dev placeholder `0x1`. Replace `pay_to` before staging, not before production, so you have a full test cycle to verify it.
+An attestation is signed evidence about the environment and the software measurement that ran.
+The evidence can help a buyer decide whether to release sensitive input, but it must be checked against an explicit policy.
 
-### What happens if my enclave reboots in production with `on_chain_verification = true`?
-Re-provision is required. The on-chain attestation hash is captured once at provision time (the current `AttestationFreshnessPolicy` is `provision_time_only`). When the enclave reboots, the stored hash becomes stale, and key exchange fails until you submit a new attestation hash on-chain. Periodic re-attestation is planned but not yet implemented; add enclave restarts to your incident runbook as requiring a re-provision cycle.
+Payment success does not prove attestation.
+An HTTP 202 does not prove attestation.
+An operator's claim that it uses a TEE does not prove attestation.
+If confidentiality is part of the job contract, verify the attestation before sending the secret and record which measurement and provider policy passed.
 
-### Can I use `restricted_paid` without deploying a Tangle contract?
-No. The validator rejects `restricted_paid` without both `tangle_rpc_url` and `tangle_contract` at load time. The service will not start. Deploy the contract before enabling this mode.
+The current public Tangle TEE support covers providers such as AWS Nitro, Azure SNP, Google Confidential Space, TDX, and SEV-SNP, and exposes a required TEE mode in the Blueprint library.
+Provider availability and measurement policy vary by deployment.
+Read the [current Tangle TEE implementation](https://github.com/tangle-network/blueprint/tree/main/crates/tee) for the provider and runtime mode you use.
+A production measurement policy must name the image, code, and configuration it authorizes; re-check it instead of carrying staging values forward.
 
-### Why are job prices in wei instead of USDC amounts?
-Wei prices are token-agnostic. An operator sets a price once in native units; the gateway converts to whatever stablecoin the client presents at settlement time, using `rate_per_native_unit` and `markup_bps`. Adding a second accepted token (DAI, for example) requires no changes to `job_pricing.toml`, only a new `[[accepted_tokens]]` entry in `x402.toml`.
+## A deployment evidence record
 
-### What does `markup_bps = 200` mean in practice?
-The reported setting `markup_bps = 200` means 200 basis points, or a 2% markup, on top of the converted stablecoin price. For a reported job priced at 0.001 ETH at 3200 USDC/ETH: 3.20 USDC base + 2% = 3.264 USDC. The markup is applied in [`convert_wei_to_amount`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs#L179) before the quote is returned to the client. It covers settlement risk and operator margin; it is not a fee paid to the facilitator.
+Before promotion, create one short record for each environment.
+It should be sufficient for another operator to answer what was paid, where it settled, what job was accepted, and whether the result was produced.
 
----
+| Evidence field | Proof to capture |
+| --- | --- |
+| Environment | Staging or production label and release identifier |
+| Payment network | CAIP-2 identifier for the settlement chain |
+| Asset and contract | Token symbol, decimals, official contract address, and explorer link |
+| Payment recipient | Ownership or authorization evidence for the operator account |
+| Service and job | Registered service ID and job index |
+| Price source | Rate source, value, timestamp, and markup policy |
+| Facilitator | HTTPS endpoint and the version supported by the gateway |
+| Invocation mode | The tested public-paid or restricted-paid policy |
+| Payment, job, and result IDs | The identifiers that let another person reconcile the full path |
+| Attestation | Required, passed with measurement and policy, or not part of this job |
 
-**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)
+The deployment owner should capture each field from the target environment and link the public contract or transaction where appropriate.
+The point of the record is reconciliation, not paperwork.
+
+The runtime should expose enough events to build a trace:
+price discovered, payment required, payment verified, settlement accepted, job enqueued, worker started, worker finished, result available, and failure or refund decision.
+An evaluation is a repeatable check of whether the result meets the job’s stated requirement.
+An evaluation should replay the trace with missing, duplicated, delayed, and malformed events.
+This catches errors that a health check cannot see.
+
+## Rollback is a payment decision
+
+Rolling back code is not the same as rolling back a settled payment.
+If a payment has settled and the worker is then disabled, the product still needs a result, refund, retry, or dispute policy.
+Write that policy before the first mainnet payment.
+
+| Failure | Immediate action | Customer-facing state |
+| --- | --- | --- |
+| Gateway starts with wrong network | Disable paid invocation and fix configuration | Payment unavailable |
+| Token contract is wrong | Reject all payment and rotate the configuration | Payment unavailable, no job accepted |
+| Facilitator is unreachable | Fail closed or pause paid jobs | Payment pending or unavailable |
+| Payment settles but enqueue fails | Preserve payment and request identifiers, then reconcile | Payment received, job pending investigation |
+| Worker dies after 202 | Keep the job pending until timeout policy fires | Accepted, not completed |
+| Result is wrong | Preserve evidence and invoke the service's quality or dispute path | Completed technically, under review |
+| TEE attestation fails | Do not release confidential input | Confidential execution unavailable |
+
+Fail closed at the money boundary.
+A process that cannot verify the network, asset, recipient, or payment status should not accept a request because it hopes the missing check will resolve later.
+Queueing after confirmed settlement is safer than queueing before settlement, but it still needs idempotency and reconciliation.
+
+## The final launch sequence
+
+The production checklist is short when expressed as a sequence:
+
+1. Load the Blueprint with paid invocation disabled.
+2. Confirm health, stats, and one local job result.
+3. Confirm the target network, asset contract, decimals, recipient, rate source, and facilitator independently.
+4. Run authorization dry-runs for every job policy.
+5. Use one testnet payment to observe 402, settlement, 202, queue, worker, and result.
+6. Confirm the client uses the header version supported by the deployed Tangle integration.
+7. Enable one mainnet job for one operator account.
+8. Inspect the first payment, job, result, and trace as separate records.
+9. Expand the job set only after the first production path is reconciled.
+
+The order matters because each step makes a smaller claim than the next.
+A health response is cheaper to obtain than a settlement.
+A testnet settlement is cheaper to investigate than a mainnet payment.
+A single production job is easier to reconcile than an entire public catalog.
+
+## Promote one reconciled path
+
+An x402 Blueprint is ready for production when its payment state and execution state can be observed separately and reconciled together.
+The deployment must know which network and asset it accepts, where money goes, which callers may invoke which jobs, what 202 means, and how a failed or confidential job is handled.
+
+The checklist is not a promise that every job will succeed.
+It is a way to make the remaining failures visible before they become silent money or trust failures.
+Promote one known path, keep the policy narrow, and expand only when the evidence record says the complete path works.
+
+
+## Does an x402 payment mean the job is complete?
+
+No.
+In Tangle's current gateway, a valid payment can produce HTTP 202 and enqueue a JobCall.
+The client still needs the result or status path.
+
+## Can I use any USDC address on Base?
+
+No.
+The token contract is network-specific.
+Verify the address against the issuer's official documentation and the target chain before enabling payment.
+
+## Should paid invocation be public by default?
+
+No.
+Start disabled, then enable only tested job policies.
+Use restricted-paid when the caller or delegated identity needs authorization.
+
+## Does x402 provide TEE attestation?
+
+No.
+x402 handles payment communication and settlement.
+TEE attestation is a separate execution and evidence policy.
+
+## What should be pinned in production?
+
+Pin the payment network, token contract, recipient, facilitator, RPC or contract addresses, Blueprint and gateway versions, rate source, and job policy.
+Record those values with the first production payment.
+
+For the product-level decision about making those payments native to an agent workflow, see [payment-native AI agent infrastructure](/blog/payment-native-infrastructure-ai-agent-product-strategy).
+
+## Sources
+
+- [Tangle x402 runner](https://docs.tangle.tools/developers/blueprint-runner/x402)
+- [Tangle x402 configuration](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/config.rs)
+- [Tangle x402 Blueprint crate](https://github.com/tangle-network/blueprint/tree/main/crates/x402)
+- [Tangle TEE support](https://github.com/tangle-network/blueprint/tree/main/crates/tee)
+- [x402 payment flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works)
+- [x402 migration guide](https://docs.cdp.coinbase.com/x402/migration-guide)
+- [Circle USDC contract addresses](https://developers.circle.com/stablecoins/usdc-contract-addresses)
+- [CAIP-2 chain identifiers](https://standards.chainagnostic.org/CAIPs/caip-2)

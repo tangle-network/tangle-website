@@ -1,13 +1,13 @@
 ---
 name: tangle-blog-proof
-description: "Validate Tangle blog MDX before publishing. Use to check frontmatter, FAQ extraction, answer capsule, internal/external links, proof commands, CTAs, image references, AEO/SEO gates, and repeated AI-writing patterns."
+description: "Validate Tangle blog MDX before publishing. Use to check frontmatter, answer quality, internal/external links, proof, decisions, image references, AEO/SEO gates, and repeated AI-writing patterns."
 ---
 
 # Tangle Blog Proof
 
 Use this skill before claiming a Tangle blog post is publication-ready, or when auditing an existing post for SEO/AEO quality.
 
-The goal is to fail noisy. A post that lacks proof, FAQ, links, CTA, or query fit should be marked incomplete rather than polished around the gap.
+The goal is to fail noisy. A post that lacks proof, useful links, a practical decision, or query fit should be marked incomplete rather than polished around the gap.
 
 ## Required References
 
@@ -35,7 +35,8 @@ pnpm build
 
 The script catches structure, not judgment. Also check:
 
-- The primary query is obvious from title, summary, intro, headings, and FAQ.
+- The primary query is obvious from the title, summary, introduction, and descriptive headings.
+- Direct reader questions are answered where they naturally arise; a generic FAQ wrapper is not required.
 - The opening has a concrete reader problem, not a generic explainer setup.
 - Technical claims have proof or source links.
 - Tangle's distinction appears before the halfway point.

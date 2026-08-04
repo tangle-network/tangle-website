@@ -2,7 +2,9 @@
 title: 'OpenAI Compatible Routers for Agents'
 slug: openai-compatible-routers-for-agents
 summary: >-
-  OpenAI-compatible routers help agents discover models, route calls, attribute usage, and change providers without rewriting every call site.
+  OpenAI-compatible routers for agents keep one request shape while exposing
+  model discovery, routing policy, usage records, and provider changes without
+  hiding capability or cost differences.
 date: '2026-06-20'
 author: Drew Stone
 tags:
@@ -16,78 +18,343 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-An OpenAI-compatible router lets agents keep one chat-completions shape while the platform handles model discovery, provider routing, usage attribution, health, and fallback policy. Tangle Router exposes OpenAI-compatible discovery through `/v1/models`, plus health, status, OpenAPI, and a machine-readable manifest. Use a router when the agent estate needs model choice, billing headers, fallback, or anonymous provider abstraction. Do not add a router if one fixed model and one fixed bill are enough.
+At 10:03, a coding agent reaches the part of a task that calls a language model.
+The code contains `model: "anthropic/claude-sonnet-4-6"`, the billing account is wired to one provider, and the fallback logic is scattered across three workers.
+At 10:04, that model is unavailable in the region where the process runs.
+The agent does not need a better prompt at that moment.
+It needs a controlled way to discover a usable model, choose a route, record what happened, and decide whether a fallback is safe.
 
-The point is not to hide every provider detail. The point is to keep agents from hardcoding model IDs, pricing assumptions, and fallback behavior throughout the codebase.
+An OpenAI-compatible router for agents provides that management layer behind a familiar HTTP shape.
+Tangle Router exposes an OpenAI-style `/v1/chat/completions` endpoint, a live `/v1/models` catalog, routing controls, and generation and routing traces, records of those decisions.
+That lets an existing client change its base URL while the platform owns provider selection.
+It does not make every model interchangeable, and it does not turn a fallback into a correct answer.
 
-## Safe Discovery
+The practical decision is simple.
+Use a router when model choice, provider failure, usage attribution, or policy needs to change independently of every agent call site.
+Keep a direct provider connection when one model, one account, and one failure policy are genuinely enough.
 
-Start with the Router manifest, API description, health result, and model list linked below. Those public surfaces are enough to decide whether the router fits before writing integration code.
+## The model ID is a hidden dependency
 
-The Router manifest names `@tangle-network/tcloud`, `TANGLE_API_KEY`, health checks, status checks, and `/v1/models`. The OpenAPI file describes the public request shape. The model list is intentionally discoverable before an agent hardcodes a target.
+A model identifier looks like data, but in an agent it controls behavior, cost, latency, context length, tool support, and sometimes safety policy.
+Hard-coding that identifier in every workflow makes those decisions difficult to review and expensive to change.
 
-## When A Router Helps
+An agent profile is the configuration for one kind of agent.
+It can include the model, tools, permissions, budget, retry rules, and other policies that shape a run.
+The [Tangle terminology guide](https://docs.tangle.tools/vision/core-concepts) defines an agent profile as a configuration of models, tools, budgets, and policies.
 
-| Need | Router value |
+A router should therefore sit between the profile and the provider.
+The profile can say “use a model that supports tool calls and stays below this per-task budget.”
+The router can translate that requirement into a current model and provider route.
+The task code can keep its normal request shape.
+The related guide on [how AI agents discover products](/blog/how-ai-agents-discover-products) explains why those machine-readable discovery surfaces matter.
+The [AI agent sandbox](/blog/ai-agent-sandbox) article follows the same model-call boundary inside a longer tool workflow.
+
+That separation only helps if the router exposes the information needed to make the choice.
+A single opaque endpoint hides the dependency rather than removing it.
+
+## What OpenAI compatibility means
+
+OpenAI compatibility usually means that a service accepts the same broad request and response shape as the OpenAI Chat Completions API.
+The [OpenAI API reference](https://developers.openai.com/api/reference/resources/chat) documents the canonical chat-completion objects, message roles, tool definitions, finish reasons, and usage fields.
+An OpenAI-compatible gateway can preserve those shapes while changing the backend that fulfills the request.
+
+Compatibility is a contract shape, not a guarantee of equal behavior.
+A provider may support tools but not the same tool schema.
+A model may have a different context limit, tokenizer, refusal pattern, image capability, or structured-output behavior.
+The gateway may also add headers or request fields that the original provider never sees.
+
+Tangle’s public API reference documents a `POST https://router.tangle.tools/v1/chat/completions` route with standard parameters such as `tools`, `tool_choice`, and `response_format`.
+It also documents gateway-specific routing options and headers in the same request contract.
+Read the [Tangle request reference](https://docs.tangle.tools/gateway/api-chat) beside the [OpenAI reference](https://developers.openai.com/api/reference/resources/chat) before assuming a feature is portable.
+
+The smallest public integration looks like this:
+
+```
+npm install openai
+```
+
+```typescript
+import OpenAI from 'openai'
+
+const client = new OpenAI({
+  baseURL: 'https://router.tangle.tools/v1',
+  apiKey: process.env.TANGLE_API_KEY,
+})
+
+const response = await client.chat.completions.create({
+  model: 'anthropic/claude-sonnet-4-6',
+  messages: [
+    { role: 'user', content: 'List the risks in this deployment plan.' },
+  ],
+})
+
+console.log(response.choices[0]?.message.content)
+```
+
+This example uses the public base URL and model format shown in [Tangle Router’s live quickstart](https://router.tangle.tools/).
+The model name is a current example, not a promise that it will remain available.
+Production code should discover a routeable model and check its supported features before it sends an agent task.
+
+## Discover before you choose
+
+A model catalog is the first useful router surface.
+It lets an agent or deployment tool ask what exists now instead of assuming that yesterday’s model list still applies.
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $TANGLE_API_KEY" \
+  https://router.tangle.tools/v1/models
+```
+
+Tangle’s [model documentation](https://docs.tangle.tools/gateway/models) says the live catalog is available at `/v1/models` and recommends filtering for models whose `routeability.routeable` flag is true, meaning the gateway can use them now.
+The catalog also exposes provider and model metadata through the Router’s public models page.
+Treat the catalog as a discovery input, not as an evaluation result.
+
+A small discovery step can keep an agent from selecting a model that is listed but not currently routeable:
+
+```typescript
+type CatalogModel = {
+  id: string
+  routeability?: { routeable?: boolean }
+}
+
+const catalogResponse = await fetch(
+  'https://router.tangle.tools/v1/models',
+  {
+    headers: {
+      Authorization: 'Bearer ' + process.env.TANGLE_API_KEY,
+    },
+  },
+)
+
+if (!catalogResponse.ok) {
+  throw new Error('Model discovery failed with ' + catalogResponse.status)
+}
+
+const catalog = await catalogResponse.json() as { data: CatalogModel[] }
+const candidates = catalog.data.filter(
+  (model) => model.routeability?.routeable === true,
+)
+
+if (candidates.length === 0) {
+  throw new Error('No routeable model matched the profile')
+}
+
+console.log(candidates.map((model) => model.id))
+```
+
+This is an illustrative caller-side filter.
+The exact catalog fields and supported parameters belong to the live API contract.
+An agent should also check whether a candidate supports the features its task needs, such as tools or structured output.
+
+Discovery is especially important for long-running workers.
+A worker that retries a stale model ID can burn its budget while never reaching a model.
+A worker that silently changes model families can complete the task with different behavior.
+The profile should record whether a change is allowed and which alternatives are acceptable.
+
+## A router is a policy boundary
+
+Routing is more than “try another provider.”
+It decides which provider may see the request, which models may be selected, how much the call may cost, and whether a failed request can be repeated safely.
+
+The policy should be explicit:
+
+| Decision | Example policy | Failure if it is missing |
+| --- | --- | --- |
+| Capability | Require tool calls and JSON output | The agent receives text where code expects a schema |
+| Data handling | Allow only providers with the required retention policy | Sensitive prompts reach an unapproved route |
+| Budget | Cap one task at $0.20 | A retry loop spends without a hard stop |
+| Reliability | Retry one transient route error | A provider outage becomes a user-visible failure |
+| Semantics | Never downgrade a legal review task | A cheap fallback produces an answer the workflow cannot accept |
+| Attribution | Attach task and profile identifiers | Usage cannot be tied back to a customer or run |
+
+Tangle Router’s request reference documents routing headers for selecting automatic routing, an operator path, a Blueprint, a service, or a specific operator.
+Those controls are useful when the caller knows which deployment or policy it needs.
+They are not a substitute for checking the response and recording the route.
+
+In Tangle terminology, an operator is an independent infrastructure provider that runs a Tangle Blueprint.
+A Blueprint is a reusable service definition that specifies the software, jobs, inputs, outputs, and execution requirements.
+A service instance is one live deployment of that Blueprint.
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) explains those boundaries and the difference between a template and a running service.
+
+This matters when a router sends an agent call to a Blueprint-backed model service.
+The model string identifies a capability.
+The operator and service instance identify where and under which deployment policy the capability was served.
+
+A router can rank routes using price, latency, availability, or a provider policy.
+It still needs a rule for what to do when the lowest-cost route lacks a required feature.
+“Cheapest” is not a complete agent policy.
+
+## Make the route decision explicit
+
+A catalog response and a fallback header do not define a safe route by themselves.
+The application still needs a small decision record before it sends a request.
+
+```typescript
+const routeDecision = {
+  profile: 'support-triage-v3',
+  requiredFeatures: ['tool-calls', 'structured-output'],
+  allowedProviders: ['approved-provider-a', 'approved-provider-b'],
+  maxCostUsd: 0.2,
+  allowModelFamilyChange: false,
+}
+```
+
+First filter the live catalog for routeability and the features in `requiredFeatures`.
+Then remove providers that the profile does not allow.
+Rank what remains by the policy’s priority, such as availability first and price second.
+If no candidate satisfies the feature or provider rules, return a policy failure instead of silently choosing the nearest model.
+
+After the call, compare the requested policy with the served model and route.
+If the served model changed families while `allowModelFamilyChange` was false, mark the task as a routing violation even if the HTTP request succeeded.
+If the request failed after the provider accepted it, keep the route decision and transport state together so a retry can query the original job or charge record before sending work again.
+
+This record is not a Router response schema.
+It is the caller’s explanation for why a route was allowed.
+Keeping it beside the evaluation result makes a later cost or quality regression attributable to a policy change rather than to an unexplained model swap.
+
+Consider a support profile that requires tool calls, accepts two providers, and allows a model-family change only for a low-risk summarization step.
+The catalog returns one routeable model with tool support from the preferred provider and one cheaper model without tool support.
+The first model is the only valid candidate for the tool call.
+The cheaper model is not an acceptable fallback when it lacks the required tool support.
+
+If the preferred provider returns a transport error before accepting the request, the router may try the second approved candidate when its capabilities match.
+If the provider accepts the request and the client loses the response, the runtime should query the generation or job record before sending a second tool call.
+If the model returns valid JSON with the wrong business decision, the failure belongs to evaluation, not route availability.
+
+That example separates three decisions that are often collapsed into “fallback”: capability selection, transport recovery, and task quality.
+Each one has a different safe action and a different record to retain.
+
+## Keep the route visible
+
+Agents run in a runtime.
+A runtime is the software that starts the agent, provides its tools, controls its budget, and records what it did.
+The router is one component of that runtime, not the entire runtime.
+
+A trace is a structured record of a run’s important events.
+For a routed model call, that may include the selected model, route, timing, usage, and error state.
+Tangle’s docs expose [generation lookup](https://docs.tangle.tools/gateway/api-generation) and a [routing-trace view](https://docs.tangle.tools/gateway/routing-trace) so a team can inspect the path after a request.
+
+Do not log only the final answer.
+For an agent task, retain enough information to answer these questions:
+
+| Question | Useful record |
 | --- | --- |
-| model discovery | list routeable models before integration |
-| fallback | move policy out of app code |
-| attribution | attach usage and billing metadata |
-| provider changes | keep OpenAI-compatible call sites stable |
-| agent services | route calls from agents, sandboxes, and paid services |
+| Which profile ran? | Profile name and version |
+| Which model answered? | Requested and served model IDs |
+| Which route handled it? | Provider, operator, Blueprint, or service when available |
+| What did it cost? | Prompt tokens, output tokens, and billed amount |
+| Did the request change shape? | Tool, structured-output, streaming, and fallback flags |
+| Why did the run stop? | Finish reason, timeout, refusal, or policy rejection |
 
-This pairs with [AI agent sandbox](/blog/ai-agent-sandbox) because sandboxed agents still need model calls. It also pairs with [deploying paid AI agent services](/blog/deploy-paid-ai-agent-service), where auth, payment, and model routing meet at the service boundary.
+A route trace does not prove the answer is correct.
+It proves that the team can investigate the path that produced the answer.
 
-## Router Readiness Checklist
+## The evaluation that catches a bad fallback
 
-Do not ship a router integration after only one successful chat call. Check the runtime contract:
+An evaluation is a structured assessment of task results, cost, and policy compliance.
+The [Tangle evaluation terminology](https://docs.tangle.tools/vision/core-concepts) uses that meaning.
+A single successful completion is a smoke check.
+An evaluation runs a repeatable task set and records whether the workflow met its expected conditions.
 
-| Check | Why |
-| --- | --- |
-| `/v1/models` | avoid hardcoded unavailable model IDs |
-| health and status | distinguish provider outage from app bug |
-| usage metadata | attribute cost back to job, user, or agent |
-| supported parameters | avoid assuming tools or structured output exists |
-| fallback policy | know whether failure should retry, downgrade, or stop |
+Use an evaluation to test the router and the model:
 
-Those checks matter more for agents than chat UIs because agents call models repeatedly inside longer workflows.
+| Task | Expected check | Failure worth surfacing |
+| --- | --- | --- |
+| Extract a purchase order | Valid JSON with all required keys | Fallback loses structured output |
+| Call a repository tool | Tool call validates against its schema | Provider accepts text but ignores the tool |
+| Summarize a policy | Required clauses appear | A cheaper model omits a safety condition |
+| Recover from a timeout | One retry, one charge, one trace | Retry duplicates work or hides the first failure |
 
-## OpenAI Compatibility Is A Contract Shape
+Run the same task set with the direct provider and the router.
+Keep the agent profile fixed except for the route.
+Compare success, tool-call validity, cost, latency, and failure category.
+If the router changes the model family, label that as a deliberate comparison rather than calling it a transparent substitution.
 
-OpenAI compatibility means the request and response pattern follows the common chat-completions interface. The source of truth is still the actual API contract. Compare Tangle Router's OpenAPI with the [OpenAI API reference](https://platform.openai.com/docs/api-reference/chat), [OpenRouter's model routing docs](https://openrouter.ai/docs), and the [OpenAPI specification](https://spec.openapis.org/oas/latest.html). Compatibility should reduce call-site churn; it should not remove health checks, auth checks, or cost controls.
+A useful candidate record is small:
 
-## What To Measure After Integration
+```json
+{
+  "profile": "support-triage-v3",
+  "requestedModel": "auto",
+  "servedModel": "anthropic/claude-sonnet-4-6",
+  "route": "operator-or-provider-record",
+  "toolCalls": 2,
+  "validOutput": true,
+  "costUsd": 0.07,
+  "failure": null
+}
+```
 
-Router quality shows up over time, not in a single response:
+The field names above are an application record, not a Tangle response schema.
+The point is to keep route choice and task outcome in the same row.
 
-| Metric | Bad signal |
-| --- | --- |
-| model-not-found rate | agents are choosing stale model IDs |
-| fallback frequency | primary route is unhealthy or under-provisioned |
-| cost per task | model choice is drifting without attribution |
-| unsupported parameter errors | agent code assumes provider features blindly |
-| latency by route | fallback or provider mix is hurting user flow |
+## Where routers fail
 
-The first dashboard can be simple. Log model ID, routeability, provider, token usage, cost, latency, and task ID. Without that, a router becomes another opaque dependency.
+A router can introduce failure modes that a direct provider call does not have.
 
-## What This Does Not Prove
+A fallback can change semantics.
+A model that completes a task with free-form text may be a poor fallback for a tool-driven workflow.
+A provider can return an error after the request has already been accepted, leaving the caller unsure whether repeating it will duplicate side effects.
+A provider policy can reject a prompt that another provider would accept.
+A catalog can be briefly out of date.
+A route can be healthy while the model itself is overloaded.
 
-A router does not make every model interchangeable. Tools, structured outputs, context windows, latency, refusals, and multimodal support vary. Agents should discover supported parameters and routeability before generating code that assumes a capability exists.
+The safe response is not to retry everything.
+Classify the failure as discovery, authentication, capability mismatch, provider availability, transport uncertainty, or task-quality failure.
+Discovery, capability mismatch, and provider availability may be candidates for an automatic route change.
+Authentication failure usually needs credential or policy repair, transport uncertainty needs a query before another request, and a task-quality failure needs evaluation evidence before a new model is promoted.
 
-## Start
+A router also has a privacy boundary.
+Changing providers changes who processes the prompt.
+A profile that permits automatic routing should state which data may cross that boundary.
+For sensitive work, use provider filters, a bring-your-own-key policy, or a protected execution path when the current product supports it.
+Do not describe a route as private merely because the client uses one API key.
 
-Call `/v1/models` before hardcoding model IDs. Then use the Router manifest and OpenAPI as the source for integration code. For agent-facing discovery patterns, read [how AI agents discover products](/blog/how-ai-agents-discover-products).
+## When not to add a router
 
-## FAQ
+A direct provider client is often the better design when:
 
-### What is an OpenAI-compatible router?
+- one model is required by the product contract;
+- one provider account already supplies the needed availability;
+- the task has no fallback that preserves semantics;
+- the team does not need provider-level attribution;
+- the extra network hop would dominate a short request;
+- the provider’s native API is required for a feature the compatibility layer does not expose.
 
-It is an API layer that preserves a familiar OpenAI-style request shape while routing calls across model providers or model policies.
+A router becomes useful when the cost of changing providers inside every agent is higher than the cost of operating the routing policy in one place.
+That is an architectural decision, not a badge of maturity.
 
-### When should agents use a model router?
 
-Use a router when agents need model discovery, fallback, usage attribution, billing separation, or provider abstraction.
+## What is an OpenAI-compatible router for agents?
 
-### When should I avoid a router?
+It is an API layer that keeps a familiar OpenAI-style request and response shape while selecting among models, providers, or service policies for agent calls.
 
-Avoid a router when one known model, one account, and one simple call path are enough.
+## Does OpenAI compatibility mean every model behaves the same?
+
+No.
+It describes the transport and object shape.
+Tool support, context limits, latency, refusals, structured output, and cost can still differ.
+
+## Why should an agent call `/v1/models`?
+
+The model catalog lets the agent discover current IDs and routeability before it hard-codes a choice.
+The caller should still check the candidate’s supported features.
+
+## What does a Tangle operator do?
+
+An operator runs a Tangle Blueprint service and supplies the infrastructure that handles jobs.
+The Router can use operator and service information when the request selects that path.
+
+## What should I record for a routed agent call?
+
+Record the agent profile, requested and served model, route or provider when available, usage, cost, latency, fallback state, and task result.
+A trace makes the failure inspectable; it does not certify answer quality.
+
+## The decision
+
+Start by listing the freedoms your agent requires.
+If it needs one fixed model, a direct client is simpler.
+If it needs discovery, controlled fallbacks, provider policy, and route-level records, test an OpenAI-compatible router against the direct path on a fixed evaluation set.
+Keep the route visible in the trace and reject fallback behavior that changes the task contract.
+Once a route is chosen, [x402 payments for AI agents](/blog/x402-payments-for-ai-agents) covers the request-level authorization and settlement boundary.

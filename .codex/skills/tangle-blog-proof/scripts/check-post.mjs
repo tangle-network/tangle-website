@@ -77,9 +77,7 @@ if (externalLinks.length < 3) {
   warn(`Only ${externalLinks.length} external link(s); standards/competitor posts usually need at least 3 primary sources`)
 }
 
-if (!/^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body)) {
-  warn('Missing FAQ section')
-} else if (!/^### .+\?\s*$/m.test(body)) {
+if (/^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body) && !/^### .+\?\s*$/m.test(body)) {
   warn('FAQ exists but no ### question headings were found')
 }
 

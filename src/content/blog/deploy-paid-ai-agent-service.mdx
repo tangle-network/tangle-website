@@ -16,163 +16,345 @@ heroImage: /images/covers/editorial/agent-intent-v2.webp
 imageAlt: 'An editorial still life about describing and running an agent task'
 ---
 
-A paid AI service has two promises to keep.
-It must accept a payment correctly, and it must do work that the buyer can understand and review.
+A buyer sends a paid request to an AI service.
+The network connection times out after the wallet signs the payment, so the buyer cannot tell whether the service received the request, settled the payment, started the job, or returned a result.
+Retrying blindly could charge twice.
+Waiting forever could hide a failed job.
 
-An **agent service** is an API that lets software delegate a task to an AI system.
-An **operator** is the person or team running that service.
-On Tangle, a **Blueprint** is the public service definition that describes the jobs an operator can run.
-A **trace** is the record of what happened during one invocation.
+Deploying a paid AI agent service means designing those states before publishing the endpoint.
+The buyer should be able to discover one job, learn its price and authorization rules, receive a payment challenge, retry with payment proof, follow execution, and inspect the result or failure record.
 
-The launch question is not “does the endpoint answer?”
-It is “can a buyer discover the job, pay for it, retry safely, understand what happened, and challenge a bad result?”
+This guide uses Tangle’s service-definition and payment surfaces because they make the boundary visible.
+For account billing or a subscription, map the same boundaries to invoice status, account authorization, Job admission, and result delivery.
 
-This guide starts with one narrow paid job.
-It treats discovery, payment, execution, health, and result evidence as separate decisions so a failure in one area does not disappear inside a generic API error.
+## Define an inspectable Job first
 
-## The first service should be small
+An **agent service** is an API that accepts a task for an AI system and returns a result or artifact.
+Choose a first task whose input and output can be described without a conversation.
+For example, a service might accept a public document URL and return a classification, extracted fields, citations, and a list of unresolved questions.
 
-Choose one input schema, one job, one price, and one output that a reviewer can inspect.
+The job should have one clear acceptance check.
+The buyer should not have to trust the service’s prose to know whether it completed.
 
 | Boundary | First version |
 | --- | --- |
-| Input | One documented request shape |
-| Price | One fixed amount or a short price table |
-| Execution | One agent or Blueprint job |
-| Output | One result or artifact with a clear check |
-| Retry | An idempotent request identifier, so a duplicate cannot run twice by accident |
-| Support | A trace identifier returned with every response |
+| Input | One documented JSON shape with size and content limits |
+| Price | One fixed price or one short, explicit price table |
+| Authorization | Public paid access or one named caller rule |
+| Execution | One agent workflow or deterministic service function |
+| Output | One result or artifact with a check a buyer can run or inspect |
+| Retry | A caller-owned request ID and documented replay behavior |
+| Support | A job ID, payment record, and trace ID returned or recoverable |
 
-An **idempotent** request produces the same effect when the client retries it.
-Payment retries need this property because a network timeout does not tell the client whether the first request reached the service.
+Tangle uses a few names for these boundaries.
+A **Blueprint** is a reusable service template that defines executable artifacts, jobs, inputs, outputs, metadata, and optional protocol rules.
+A **Service** is a live instance created from that Blueprint.
+A **Job** is one callable unit inside the Service.
+An **operator** is the person or team running the Service and returning Job results.
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) describes those objects and the roles around them.
 
-Do not launch a marketplace before one paid job survives a failed payment, failed execution, duplicate retry, and bad-result review.
+Start with one Job because each added dependency or option creates states that need explicit retry, timeout, and failure handling.
+One paid job is enough to test the payment-to-result contract.
 
-## Five questions a buyer should answer
+## Separate the buyer’s states
 
-Before sending money, a buyer should be able to find:
+Payment and work are different state machines.
+Put them in one trace, but do not collapse them into one boolean called `success`.
 
-1. What does this job accept and return?
-2. What does it cost, and how long is the price valid?
-3. Who may call it?
-4. What happens when payment or execution fails?
-5. Which record proves what happened?
+| State | Meaning | Evidence the service should retain |
+| --- | --- | --- |
+| `discovered` | The buyer found the product and job contract | Manifest, docs, package or endpoint, and schema |
+| `priced` | The service returned current payment requirements | Price response, currency or token, network, expiry, and job identity |
+| `challenged` | The service refused an unpaid request with payment requirements | HTTP status, payment header or body, and request ID |
+| `verified` | The payment payload passed the configured checks | Verification response and quote or payment digest |
+| `settled` | The payment was submitted or confirmed according to the payment path | Settlement identifier and network result |
+| `accepted` | The paid request was admitted to the job queue | Job ID, call ID, and queue status |
+| `running` | The service has started execution | Start time, operator, model or tool route, and trace ID |
+| `completed` or `failed` | The job returned a result or an execution error | Artifact, result status, error category, and end time |
+| `reviewed` or `disputed` | The buyer or an automated check accepted or challenged the result | Acceptance check, evidence links, and support decision |
 
-Discovery metadata, an API description, and a health surface answer the first two questions.
-Authorization and payment policy answer the third.
-The incident paths and trace answer the last two.
+The distinction protects both sides.
+A buyer can receive a settlement receipt and still need a refund when the job fails.
+An operator can show that a job completed and still need to investigate a quality dispute.
 
-The public [Blueprint Agent repository](https://github.com/tangle-network/blueprint-agent) is one implementation surface.
-The [x402 payment explanation](/blog/blueprint-sdk-x402-payments-runnable-jobs) describes the pay-per-request flow.
+## How x402 turns an HTTP request into a paid job
 
-## Payment is a state machine, not a button
+**x402** is an open protocol that uses the reserved HTTP `402 Payment Required` status to communicate payment requirements over a normal request-response flow.
+The client sends a request, the server returns the requirements, the client creates a signed payment payload, and the client retries the same request with payment proof.
+The [official x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) describes verification, settlement, and resource delivery as separate steps.
 
-For an x402-based service, the buyer sees this sequence:
+A **facilitator** is a service that verifies a payment payload and can submit the settlement transaction for the server.
+The [facilitator documentation](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator) explains that the facilitator can reduce the server’s blockchain integration work while leaving the signed payment tied to the buyer’s wallet.
+The operator still needs a policy for what happens when verification succeeds but settlement or execution fails.
 
-1. Request the job.
-2. Receive a 402 response with price and settlement options.
-3. Sign and settle the payment.
-4. Retry with payment proof.
-5. Receive either a dispatched job or an explicit rejection.
+Tangle’s Blueprint SDK exposes x402 as an operator-run HTTP ingress path.
+The gateway advertises payment requirements per job, verifies and settles through a facilitator, and injects a paid request into the Blueprint Runner, the process that dispatches Blueprint Jobs to their handlers.
+A `JobCall` is the runner’s record of one request to a Blueprint Job; it identifies the queued call but not its eventual result.
+The [Tangle x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) documents the gateway and its job producer.
+This gateway is an optional off-chain payment path around the Blueprint runner; the HTTP exchange coordinates payment and job admission but does not make the job result an on-chain fact.
 
-The service should record which state it reached.
-“Payment accepted” is not the same as “job completed,” and “job completed” is not the same as “result accepted.”
+The public Tangle endpoints include:
 
-The [x402 protocol](https://www.x402.org/) defines the payment format.
-The [Coinbase x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) and [Cloudflare’s overview](https://blog.cloudflare.com/x402/) describe related deployment concerns.
+```text
+GET  /x402/health
+GET  /x402/stats
+GET  /x402/jobs/{service_id}/{job_index}/price
+POST /x402/jobs/{service_id}/{job_index}
+POST /x402/jobs/{service_id}/{job_index}/auth-dry-run
+```
 
-## Health should precede payment
+The price endpoint is discovery and does not require payment.
+The paid job endpoint returns `402` when the request lacks valid payment proof.
+After verification and settlement, Tangle documents a `202 Accepted` response that means the paid request was enqueued and a `JobCall` was injected into the runner.
+`202 Accepted` does not mean that the Job has completed.
 
-Do not accept a payment for work that the operator already knows cannot run.
-Check the service and its dependencies before presenting a price whenever the product can do so safely.
+The headers and body details depend on the x402 version and integration.
+For an x402 v2 flow, payment requirements use `PAYMENT-REQUIRED`, the client retry carries `PAYMENT-SIGNATURE`, and a successful response can carry `PAYMENT-RESPONSE` settlement information.
+Use the [x402 migration guide](https://docs.cdp.coinbase.com/x402/migration-guide) and the Tangle gateway documentation together when implementing the boundary.
 
-Health information should answer:
+An illustrative exchange looks like this:
 
-- can the service accept a new job?
-- is the selected model or tool available?
-- is the operator within its resource policy?
-- is the payment path reachable?
-- where will the request record appear?
+```http
+GET /x402/jobs/1/0/price HTTP/1.1
+Host: service.example
 
-Health is a capacity signal.
-It is not proof that the eventual result will be correct.
+HTTP/1.1 200 OK
+Content-Type: application/json
 
-## Incident paths must be designed first
+{
+  "service_id": 1,
+  "job_index": 0,
+  "price_wei": "1000000000000",
+  "settlement_options": [{"network": "eip155:84532", "token": "USDC"}]
+}
 
-Paid services need an answer for each failure that changes what the buyer believes.
+POST /x402/jobs/1/0 HTTP/1.1
+Host: service.example
+Content-Type: application/json
 
-| Incident | Required policy |
+{"documentUrl":"https://example.com/report.pdf"}
+
+HTTP/1.1 402 Payment Required
+PAYMENT-REQUIRED: <encoded payment requirements>
+
+POST /x402/jobs/1/0 HTTP/1.1
+Host: service.example
+Content-Type: application/json
+PAYMENT-SIGNATURE: <signed payment payload>
+
+{"documentUrl":"https://example.com/report.pdf"}
+
+HTTP/1.1 202 Accepted
+PAYMENT-RESPONSE: <settlement details>
+
+{
+  "status": "accepted",
+  "receipt": "<quote digest>",
+  "service_id": 1,
+  "job_index": 0,
+  "call_id": 1
+}
+```
+
+The values and encoding in this block are illustrative.
+The protocol and service version determine the exact fields.
+The durable lesson is that price discovery, payment proof, queue admission, and result delivery are separate observations.
+
+## Health comes before a payment challenge
+
+A service should avoid presenting a price for work it already knows it cannot accept.
+The operator can check its own runtime, model route, queue capacity, facilitator reachability, and credential policy before exposing a paid job.
+
+The Tangle x402 gateway documents `/x402/health` and `/x402/stats` for gateway health and lightweight counters.
+Those endpoints help an operator identify accepted, denied, replay-denied, or enqueue-failed requests.
+They do not establish that the model will return a correct answer.
+
+If the job calls a **model router**, the router is the service that accepts a stable model-request format and chooses a provider or model route.
+The [Tangle Router manifest](https://router.tangle.tools/.well-known/tangle-agent.json) exposes public health and model discovery calls.
+Record the selected route in the job trace because “the Router was healthy” and “this model call completed” are different facts.
+
+Do not hide a dependency failure behind a generic payment error.
+Return a clear unavailable state or refuse new work before a buyer signs a payment when the product can know that the job cannot start.
+
+## Retries need a business rule
+
+HTTP clients retry when a connection drops.
+The server cannot infer from a timeout whether the first request was never received, was paid and queued, or completed before the response was lost.
+
+The application needs a caller-owned request ID or idempotency key.
+An **idempotent** request can be repeated without creating a second business effect for the same logical operation.
+For an asynchronous AI job, the service can return the original job and result when the same request ID reappears.
+If the service cannot safely replay or return the original state, it should reject the ambiguous retry and give the buyer a support path.
+
+Payment protocol replay protection and business idempotency are related but different.
+x402 implementations validate payment payloads and nonces according to their scheme.
+The service still owns the rule that decides whether two equal application requests create one Job or two.
+
+Test these cases before inviting buyers:
+
+| Test | Expected behavior |
 | --- | --- |
-| Payment accepted, job failed | Refund, retry, or support path |
-| Job succeeded, result is wrong | Quality dispute and trace review |
-| Model or tool route degraded | Fallback or stop policy |
-| Operator unhealthy | Refuse new payment or mark the service unavailable |
-| Duplicate retry | Return the original result or a clear idempotency error |
-| Price expired | Ask for a new quote without running the job |
+| No payment proof | `402` with requirements and no execution |
+| Invalid or expired payment | Rejection with no Job admission |
+| Valid payment, queue available | Settlement record plus `202` and a Job or call ID |
+| Valid payment, queue unavailable | Clear failure and documented refund or retry policy |
+| Response lost after acceptance | Same request ID returns the original Job state |
+| Job fails after payment | Result trace identifies the failure and the buyer receives the stated remedy |
+| Result is disputed | Evidence can be reviewed without treating payment as a quality verdict |
 
-If those policies are not written down, the first paying customer becomes the incident test.
+## What the client does after a timeout
 
-## The evidence a buyer receives
+The client needs a rule for the moment when its connection fails and the server’s state is unknown.
+The first request should carry a caller-owned request ID that the service records before payment or execution changes state.
+The client can then reconcile the request through the service’s documented job or result lookup path.
 
-A useful response includes more than the final text.
-It can include:
-
-- a request and job identifier
-- the payment identifier and quote fingerprint
-- the model or tool route used
-- start and completion state
-- the result or artifact
-- the checks that ran
-- fields the service could not observe
-
-This record lets a buyer distinguish a model failure, a payment failure, a capacity failure, and a bad result.
-It also gives the operator a reproducible support path.
-
-The [Tangle verification overview](/blog/how-tangle-verifies-work) explains why result checks need to match the job.
-Payment alone does not prove quality.
-
-## Keep the product boundary honest
-
-Separate these claims:
-
-| Claim | Evidence needed |
+| What the client knows | Safe next action |
 | --- | --- |
-| The service is discoverable | Public metadata and working documentation |
-| The request was paid | Settlement record and payment proof |
-| The job ran | Execution record and completion state |
-| The claimed model or environment ran | Model identity or protected-execution evidence |
-| The result is correct | Task-specific check, replay, or review |
+| No payment challenge was received | Check the request log or retry only if the service says the request was not admitted |
+| `402` was received and no payment was sent | Fix the request or obtain approval; no job should exist yet |
+| Payment was signed but no `202` was received | Query the original request ID or contact the documented support path before paying again |
+| `202` and a call ID were received | Follow the call or Job state; do not treat queue admission as completion |
+| A completion was returned but the artifact is missing | Keep the execution record and open a result-integrity failure rather than replaying payment blindly |
 
-No single receipt proves all five.
-The service should show which claim each field supports.
+The exact status endpoint and retention period belong to the service contract.
+They cannot be inferred from x402 alone.
+What x402 gives the client is a payment exchange; the paid service must add correlation, result retrieval, and remedy rules around it.
+Document those rules beside the price so a caller can recover from a lost response without guessing.
 
-## The practical decision
+## A buyer needs a trace with the receipt
 
-Publish one narrow paid job when you can trace every invocation from discovery through payment, execution, and result review.
+A **trace** is the record of one invocation from request through result.
+It should connect the payment, job, operator, model or tool route, artifacts, checks, and failure state.
+The buyer may not need every internal token or prompt, but the service should identify what it can prove and what it cannot observe.
 
-Keep the service private while any of those states are ambiguous, especially when a payment can settle before a job fails.
-Add more jobs, models, tools, or pricing options only after the first job’s failure paths are visible.
+An illustrative response envelope for a long-running job might look like this:
 
-The next useful action is a single paid smoke run with one intentional payment failure, one execution failure, one duplicate retry, and one successful result review.
+```json
+{
+  "requestId": "buyer-request-42",
+  "serviceId": "service-17",
+  "jobIndex": 0,
+  "callId": "call-8f2d",
+  "status": "completed",
+  "payment": {
+    "network": "eip155:84532",
+    "token": "USDC",
+    "quoteDigest": "sha256:...",
+    "settlementId": "0x..."
+  },
+  "execution": {
+    "operator": "0xOperator",
+    "route": "router-model-id",
+    "startedAt": "2026-06-27T10:00:00Z",
+    "finishedAt": "2026-06-27T10:00:08Z"
+  },
+  "result": {
+    "artifactUrl": "https://service.example/results/call-8f2d",
+    "checks": ["schema-valid", "citation-present"]
+  },
+  "traceId": "trace-91c0"
+}
+```
 
-## Questions readers usually ask
+The envelope is illustrative.
+Do not publish a field unless the service can populate it and explain its provenance.
+An operator address says who ran the Service according to the service record.
+It does not prove that the output was good.
 
-### Is x402 required?
+## Attestation narrows one trust question
+
+Some services need to protect inputs or prove which software ran.
+A **TEE**, or Trusted Execution Environment, is a hardware-backed execution boundary.
+An **attestation** is signed evidence about that boundary, often including a code measurement and the policy used to check it.
+
+Attestation can support a claim such as “the expected image ran in the expected confidential environment.”
+It cannot prove that an AI classification is correct, that the output deserves payment, or that the job followed a business rule unless the result is bound to the attested execution and checked separately.
+The [Tangle TEE attestation guide](/blog/tee-attestation-ai-services) describes those boundaries.
+
+If a paid service advertises attestation, publish the measurement, the verification service and policy, input and output binding, timestamp, and failure behavior.
+If that verification process cannot establish those links, return an untrusted or unavailable result rather than a vague “verified” badge.
+
+## Result quality needs its own evaluation
+
+An **evaluation**, or eval, is a repeatable run over a defined set of cases with a scoring rule.
+For a document service, the cases might include a normal file, an unreadable scan, a missing field, a misleading document, and a request that violates the input policy.
+
+Use deterministic checks for schema validity, required artifact presence, citations, calculations, and policy constraints.
+Use a model judge for qualities that require interpretation only when the judge version and rubric are recorded.
+Keep the buyer’s result and the evaluation record linked to the same Job or trace ID.
+
+The [Tangle verification guide](/blog/how-tangle-verifies-work) explains why verification must match the work being claimed.
+The [agent-eval repository](https://github.com/tangle-network/agent-eval) documents cases, run records, judges, and comparisons for teams that need a larger evaluation surface.
+
+Payment and evaluation answer separate questions:
+
+| Question | Evidence |
+| --- | --- |
+| Did the caller satisfy the price? | Payment requirements, signed payload, verification, and settlement record |
+| Did a Service accept the Job? | `202` response, Job or call ID, and queue state |
+| Did an operator run the Job? | Execution record, operator identity, and trace |
+| Did the claimed environment run? | Attestation or other environment evidence, when offered |
+| Is the result acceptable? | Task-specific check, evaluation, replay, or human review |
+
+No single receipt answers all five questions.
+Make the boundary visible in the API and support documentation.
+
+## The first deployment test
+
+Before opening a paid endpoint, run one testnet or otherwise disposable job through the full path.
+Use a fixed input and collect these records:
+
+1. Discovery response and job schema.
+2. Price response, supported network, token, and expiry.
+3. Unpaid `402` response.
+4. Invalid-payment rejection.
+5. Valid payment verification and settlement result.
+6. `202` queue admission with a call or Job ID.
+7. Successful result and task-specific check.
+8. Deliberate execution failure and its remedy.
+9. Duplicate request with the same request ID.
+10. Trace and artifact retrieval after the client disconnects.
+
+Keep payment test funds and credentials separate from production.
+Publish an [agent-facing discovery contract](/blog/how-ai-agents-discover-products) containing the endpoint, JSON schema, price, network, and authorization rules so programmatic buyers do not have to scrape a marketing page.
+Use the [Blueprint deployment guide](/blog/blueprint-sdk-x402-payments-runnable-jobs) for the payment-specific implementation path.
+
+## The decision for an operator
+
+Publish one paid AI job when a buyer can trace it from discovery to payment, queue admission, execution, and result review.
+Keep it private while a settled payment can disappear into an unknown queue state, while a retry can create duplicate work, or while the result has no check beyond the model’s prose.
+
+Add more jobs, models, operators, or pricing options after the first job’s failure policies are visible and tested.
+The first production milestone is a buyer who can tell whether the service owes a result, a refund, a retry, or a review without opening a support ticket to learn what happened.
+
+
+## Is x402 required for a paid AI agent service?
 
 No.
-It is a good fit for programmatic pay-per-request buyers, while account or subscription billing may fit customers who need invoices, refunds, or long-running contracts.
+x402 fits programmatic pay-per-request access over HTTP, while subscriptions, accounts, invoices, or enterprise contracts may fit longer-lived relationships better.
 
-### What should the service verify before launch?
+## What does a `402 Payment Required` response mean?
 
-Verify discovery, authorization, the payment challenge and retry, operator health, execution, records, and the result check.
+It means the server is asking the client to satisfy published payment requirements before it fulfills the protected request.
+With x402, the client reads those requirements, creates a signed payment payload, and retries the request.
 
-### Does a healthy operator guarantee a good result?
+## Does a `202 Accepted` response mean the AI job succeeded?
 
 No.
-Health says the service can accept work.
-Result quality needs a separate check.
+For Tangle’s x402 gateway, `202 Accepted` means the paid request was accepted and enqueued.
+The Service must provide a later completion or failure state.
 
-### Why start with one job?
+## What should an operator verify before launch?
 
-One job makes the payment, retry, and evidence state machine small enough to inspect.
-That is the fastest way to find a missing failure policy before more customers depend on it.
+Verify the discovery contract, price and expiry, authorization, unpaid and invalid-payment paths, health, queue admission, execution, retry behavior, result checks, trace retention, and the remedy for a paid failure.
+
+## Does a healthy operator guarantee a good result?
+
+No.
+Health indicates that the service can answer its health probe or accept work according to its current checks.
+Result quality requires a separate task-specific evaluation or review.
+
+## Why begin with a focused Job?
+
+One job keeps the payment, retry, execution, and evidence states small enough to inspect.
+It exposes missing failure policies before multiple buyers and operators depend on them.

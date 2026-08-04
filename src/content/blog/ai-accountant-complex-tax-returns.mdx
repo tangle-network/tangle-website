@@ -1,8 +1,8 @@
 ---
-title: 'AI Accountant for Complex Tax Returns: From Documents to Review'
+title: 'AI Accountant For Complex Tax Returns: Source-Linked Workpapers Before Filing'
 slug: ai-accountant-complex-tax-returns
 summary: >-
-  An AI accountant for complex tax returns should build source-linked workpapers, reconcile missing facts, and prepare review questions before anyone files.
+  An AI accountant for complex tax returns should build source-linked workpapers, reconcile conflicting facts, and prepare review questions before filing.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,249 +16,353 @@ heroImage: /images/covers/editorial/ai-tax-v2.webp
 imageAlt: 'An editorial still life about preparing a complex tax return with software'
 ---
 
-Suppose Maya is a software founder with a salary, stock sales, a small partnership, crypto transactions, and a move between two states.
-She gives an assistant a folder of PDFs, spreadsheets, and wallet exports and asks, “Can you get my return ready?”
-The problem is that the folder can be incomplete, the facts can conflict, and a polished answer can hide both failures.
+Maya needs more than another assistant summarizing her tax folder.
+She needs someone to answer why a number appears in the draft, which document supports it, what changed since last year, and what must be resolved before a return can be approved.
 
-An **AI accountant for complex tax returns** should turn that request into an inspectable preparation packet, not a confident summary.
-It should build a source index, extract facts with page references, reconcile contradictions, run repeatable calculations, and produce a packet that Maya and her advisor can inspect.
+An AI accountant for complex tax returns should therefore produce workpapers, records that show how reported values were assembled, and an exception queue.
+It can reduce the time spent opening PDFs, copying values, matching transactions, and finding missing records.
+Uncertain tax positions must remain visibly unresolved.
 
-This article describes preparation software, not tax advice.
-The taxpayer and a qualified professional must make the final decisions and approve anything submitted to a tax authority.
+This article uses “AI accountant” as a product label for an evidence-handling preparation system.
+It is not tax advice, and a taxpayer or qualified professional must make the final filing decisions.
 
-## What makes a return complex
+## The useful unit is a claim with a citation
 
-“Complex” does not mean that a model needs a longer prompt.
-It means that the return combines records with different owners, dates, currencies, entities, or filing obligations.
+For an AI accountant, the smallest useful unit is a claim with its source, status, calculation impact, and history.
 
-Maya’s folder might contain these files:
+Maya’s folder might contain:
 
-| Document | Plain-language meaning | What the software can prepare |
+| Record | Candidate claim | Question left open |
 | --- | --- | --- |
-| W-2 | An employer’s report of wages and withholding | A wage record tied to the employer and tax year |
-| 1099 | A report from a bank, broker, platform, or payer | Interest, dividends, proceeds, or other income candidates |
-| K-1 | A partner’s or shareholder’s share of an entity’s reported items | A list of pass-through items and ownership facts to review |
-| Brokerage statement | A report of trades and account activity | Candidate sales, proceeds, and basis fields with source pages |
-| Wallet export | A record of crypto addresses and transactions | Transfer matches, unknown cost basis, and unresolved events |
-| Entity document | An agreement or registration describing ownership or structure | Facts that may affect which forms need professional review |
+| Form W-2 (wage and withholding statement) | wages and withholding for the tax year | does it cover every employer? |
+| brokerage statement | proceeds and reported basis, the tax cost used to measure gain or loss | which acquisition lot is connected? |
+| partnership agreement | 20% ownership | did the percentage change before year end? |
+| Schedule K-1 (pass-through tax statement) | 15% ownership and pass-through items | which source controls the draft? |
+| wallet export | transfers and digital-asset dispositions | which addresses belong to Maya? |
+| prior return | carryovers and prior positions | did a later correction change the starting value? |
 
-The software can organize these records without deciding that a disputed fact is true.
-That distinction prevents an unverified fact from entering a calculation or draft form.
+The AI can read, classify, and compare these records.
+The application must retain the source page and the unresolved question.
 
-## Start with a source index
+The Internal Revenue Service (IRS) [digital-asset guidance](https://www.irs.gov/filing/digital-assets) says taxpayers need records that establish positions taken on a federal return.
+The IRS page for [Form 8949](https://www.irs.gov/forms-pubs/about-form-8949), the form used to reconcile many sales and exchanges, describes reconciling reported amounts with the amounts reported on the return.
+Those sources justify preserving source links; they do not authorize an AI model to decide every digital-asset event.
 
-The first output should be an inventory of what arrived, not a draft form.
-For each file, record its name, type, tax year, owner, page count, and whether the file opened successfully.
+## A claim ledger makes uncertainty inspectable
 
-Then give every extracted fact a source reference.
-“Maya owns 20% of the partnership” is not a useful fact unless the workpaper points to the agreement or statement that says so.
+The claim ledger should use separate fields for extracted text, normalized values, review state, and source evidence.
+An empty field should never become a confirmed zero without an explicit decision.
 
-Here is a small TypeScript model for that rule.
-It is ordinary application code, not a tax calculation and not a private Tangle implementation.
+The following is illustrative TypeScript for an application model, not a Tangle SDK type.
 
 ```typescript
-type SourceRef = {
-  document: string
-  page?: number
-  excerpt: string
-}
+type ReviewState =
+  | 'candidate'
+  | 'needs-review'
+  | 'accepted'
+  | 'rejected'
+  | 'superseded'
 
-type ReviewFact = {
-  key: string
-  value: string | number
-  source: SourceRef
-  reviewRequired: boolean
-}
-
-function fact(
-  key: string,
-  value: ReviewFact['value'],
-  source: SourceRef,
-): ReviewFact {
-  return {
-    key,
-    value,
-    source,
-    reviewRequired: false,
+type Claim = {
+  id: string
+  field: string
+  originalValue: string
+  normalizedValue?: string | number
+  source?: {
+    document: string
+    page?: number
+    excerpt: string
   }
+  state: ReviewState
+  affects: string[]
 }
 
-const ownership = fact('partnership-ownership', 0.2, {
-  document: 'partnership-agreement.pdf',
-  page: 4,
-  excerpt: 'Maya Stone: twenty percent interest',
-})
+const claim: Claim = {
+  id: 'claim-ownership-001',
+  field: 'partnership.ownership',
+  originalValue: 'Maya Stone: twenty percent interest',
+  normalizedValue: 0.2,
+  source: {
+    document: 'partnership-agreement.pdf',
+    page: 4,
+    excerpt: 'Maya Stone: twenty percent interest',
+  },
+  state: 'needs-review',
+  affects: ['K-1 allocation', 'state allocation'],
+}
 
-console.log(ownership)
+console.log(claim)
 ```
 
-The model may suggest the excerpt, but the application still stores the document and page.
-If a fact has no source reference, the application should keep it in a review queue instead of passing it to a downstream form.
+The example keeps the claim in `needs-review` even though it has a page reference.
+A citation proves where the text came from.
+It does not prove that the document is current, controlling, or interpreted correctly.
 
-## Extract facts without hiding uncertainty
+That distinction is the difference between a workpaper and a confidence score.
 
-Document extraction turns pages into structured candidates.
-It does not turn every sentence into a verified fact.
+## Reconciliation is a product feature
 
-For each candidate, keep the original value, a normalized value, the source reference, and a status such as `needs-review` or `accepted-by-reviewer`.
-Keep the original because a reviewer needs to see whether “1,000” meant dollars, shares, or units.
+Reconciliation compares records that describe the same field or transaction.
+It should happen before the system calculates totals or drafts schedules.
 
-The agent should also preserve uncertainty.
-If a scan is blurry, two documents disagree, or a wallet transfer cannot be matched, the result should say so in plain language.
-An empty field is not the same as a confirmed zero.
+Consider Maya’s 20% agreement and 15% K-1.
+An ordinary data-entry tool may import the K-1 and move on.
+An AI accountant should put both records in front of a reviewer:
 
-## Reconcile before calculating
+| Field | Source A | Source B | Downstream effect |
+| --- | --- | --- | --- |
+| ownership | 20% in agreement, page 4 | 15% on K-1, page 2 | pass-through and state amounts may change |
+| effective date | March 3, 2025 | January 31, 2026 | determine which period each source describes |
+| source type | governing document candidate | entity-issued tax statement | ask taxpayer or advisor which controls |
+| status | needs review | needs review | block dependent draft lines |
 
-Reconciliation is the step that compares records and asks what does not agree.
-It is often more valuable than generating a polished summary.
+The same screen can handle duplicate uploads.
+It can show a transfer that appears in two wallet exports.
+It can flag an amount whose currency and conversion date were never recorded.
 
-Imagine these two facts:
+The system should preserve a conflict rather than collapse it.
+This JSON (JavaScript Object Notation) example keeps both source values:
 
-| Source | Extracted fact | What the agent should do |
-| --- | --- | --- |
-| Partnership agreement | Maya owns 20% | Keep the source and date |
-| K-1 statement | Maya owns 15% | Flag a conflict and request review |
-
-The agent must not silently choose 20% because it saw that number first.
-It should preserve both values, show the source pages, and ask which document governs the return.
-
-The same rule applies to duplicate brokerage transactions, a crypto transfer that appears in two wallets, or a foreign account whose currency conversion date is unclear.
-The system’s job is to surface the disagreement while the facts are still visible.
-
-One simple conflict record can make that decision explicit.
-
-```typescript
-const ownershipConflict = {
-  field: 'partnership-ownership',
-  values: [
-    { value: 0.2, document: 'partnership-agreement.pdf', page: 4 },
-    { value: 0.15, document: 'k1-statement.pdf', page: 2 },
+```json
+{
+  "field": "partnership.ownership",
+  "values": [
+    {
+      "value": 0.2,
+      "document": "partnership-agreement.pdf",
+      "page": 4
+    },
+    {
+      "value": 0.15,
+      "document": "k1-statement.pdf",
+      "page": 2
+    }
   ],
-  status: 'needs-review',
+  "state": "needs-review",
+  "question": "Which ownership record governs the return period?"
 }
-
-console.log(JSON.stringify(ownershipConflict, null, 2))
 ```
 
-The review queue can show both excerpts beside this record without selecting a winner.
+The wording of the question matters.
+“Resolve conflict” sends the reviewer back into the system.
+“Which ownership record governs the return period?” tells the reviewer what decision is required.
 
-## Calculate from structured inputs
+## Calculate from structured facts
 
-After review facts are structured, deterministic code can calculate totals.
-The calculator should receive fields such as wages, interest, proceeds, basis, and ownership rather than a paragraph written by the model.
+After review, deterministic code should calculate narrow quantities from typed inputs.
+The model may help extract a number, but it should not be the only place where the number’s meaning exists.
+
+Maya has $180,000 of wages, $2,400 of interest, and $25,000 of proceeds from a digital-asset disposition.
+Her acquisition record is missing, so the system can report $182,400 of ordinary-income candidates while leaving the gain candidate unresolved.
+Here, “ordinary-income candidates” is a preparation label for amounts routed to ordinary-income review, not a completed tax classification.
 
 ```typescript
-type CalculationInput = {
+type ReturnInputs = {
   wages: number
   interest: number
-  reportedProceeds: number
-  reportedBasis: number | null
+  proceeds: number
+  basis: number | null
 }
 
-function summarize(input: CalculationInput) {
-  const gainCandidate = input.reportedBasis === null
-    ? null
-    : input.reportedProceeds - input.reportedBasis
+type ReturnSummary = {
+  ordinaryIncomeCandidates: number
+  gainCandidate: number | null
+  questions: string[]
+}
+
+function summarize(input: ReturnInputs): ReturnSummary {
+  const questions = input.basis === null
+    ? ['Provide acquisition records before calculating gain or loss.']
+    : []
 
   return {
     ordinaryIncomeCandidates: input.wages + input.interest,
-    gainCandidate,
-    needsBasisReview: input.reportedBasis === null,
+    gainCandidate: input.basis === null
+      ? null
+      : input.proceeds - input.basis,
+    questions,
   }
 }
 
-console.log(summarize({
+const summary = summarize({
   wages: 180_000,
   interest: 2_400,
-  reportedProceeds: 25_000,
-  reportedBasis: null,
-}))
-
-const example = summarize({
-  wages: 180_000,
-  interest: 2_400,
-  reportedProceeds: 25_000,
-  reportedBasis: null,
+  proceeds: 25_000,
+  basis: null,
 })
-console.assert(example.gainCandidate === null)
-console.assert(example.needsBasisReview)
+
+console.assert(summary.ordinaryIncomeCandidates === 182_400)
+console.assert(summary.gainCandidate === null)
+console.assert(summary.questions.length === 1)
 ```
 
-This example deliberately stops short of a tax liability.
-A missing basis value is a review question, not permission to invent a number.
-Production software must pin a named rule set and tax year, such as the 2025 IRS instructions for Form 8949 plus an internal rule ID, record which rule produced each value, and run regression tests against reviewed fixtures.
+This is a workpaper calculation, not a tax-liability estimate.
+The IRS [Form 1099-DA guidance](https://www.irs.gov/businesses/understanding-your-form-1099-da), covering a broker's digital-asset proceeds statement, explains that broker statements may report proceeds and in some cases basis, while the taxpayer remains responsible for reporting income, gains, and losses.
+An AI accountant should show whether a statement supplied basis or whether the value came from a separate acquisition record.
 
-## Build a review packet, not a final answer
+## Use Tangle to coordinate the work session
 
-The useful deliverable is a packet with enough context for another person to work through the decisions.
-For Maya, that packet could contain:
+Tangle coordinates reusable service packages and the operators that run them.
+Tangle’s Sandbox product provides an isolated runtime for agent jobs.
+The product described here is an illustrative Tangle Tax Agent architecture, not a claim that Tangle currently offers accounting or tax advice.
 
-- **Source index:** file status, tax year, owner, and page count.
-- **Fact model:** a source reference for every important field.
-- **Calculations:** inputs, units, assumptions, and the rule version used.
-- **Reconciliation report:** duplicate transactions and conflicting ownership percentages.
-- **Missing-document list:** what each missing document would resolve.
-- **Issue list:** high-impact questions such as missing cost basis or undefined ownership.
-- **Draft schedules:** marked `unapproved` until a reviewer accepts them.
-- **Correction log:** each change and the reviewer who made it.
+The public [Tangle Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) defines a Blueprint as a reusable service template.
+For this workflow, a Blueprint could describe a `prepare-workpapers` job, its accepted input package, its review-package output, and its storage requirements.
+The broader preparation flow is described in [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns), while [Automated Tax Filing With Review Before Submit](/blog/automated-tax-filing-review-before-submit) covers the boundary after the workpapers are ready.
 
-The packet should make the human decision visible.
-An item can be `needs-review`, `accepted`, `rejected`, or `superseded` without erasing the earlier value.
+A **service instance** is one live deployment of that Blueprint.
+An **operator** is the party that runs the service instance.
+A **runtime** is the isolated environment where the parser, model calls, calculators, and document store operate.
+An **agent profile** pins the model, tools, budget, and policies for Maya’s run.
+A [Tangle Router](https://docs.tangle.tools/gateway/operator-routing) selects an operator or provider route for a model request; it does not choose a tax position.
 
-## Keep filing behind explicit approval
+For this application, a **trace** records the files opened, tools called, outputs produced, reviewer decisions, and failures.
+An **evaluation** is a repeatable test that runs known cases and checks the result, cost, and policy behavior.
+For this product, the test set should include conflicting ownership, missing basis, duplicate uploads, unreadable scans, and an amended K-1.
 
-Preparation and submission are different actions.
-The preparation workflow can create a draft package, but submitting it should require an explicit approval event tied to a person, timestamp, version, and list of reviewed artifacts.
+If the workflow uses a hardware-isolated runtime, **attestation** is a signed report about the measured code and hardware-backed execution environment.
+It can support a privacy or code-identity claim.
+It cannot prove that the accountant’s conclusion is legally or mathematically correct.
 
-That boundary matters when the return includes questions about foreign companies or passive foreign investment companies.
-The IRS pages for [Form 5471](https://www.irs.gov/forms-pubs/about-form-5471), [Form 8621](https://www.irs.gov/forms-pubs/about-form-8621), and [Form 8949](https://www.irs.gov/forms-pubs/about-form-8949) describe the forms themselves.
-The [foreign tax credit guidance](https://www.irs.gov/individuals/international-taxpayers/foreign-tax-credit) explains why source facts and professional review matter.
+If the service is sold per preparation job, **x402** is an HTTP payment flow that returns `402 Payment Required` and accepts payment proof on retry.
+For Tangle's asynchronous Blueprint gateway, settlement admits the job and returns `202 Accepted`; the runner delivers the result separately.
+Payment proves the request was paid.
+It does not prove the workpaper is accurate or complete.
 
-The software can identify that a document mentions a foreign corporation or a potential investment fund.
-It should not turn that signal into a filing decision without the facts and approval required for the taxpayer’s situation.
+The Tangle [core concepts](https://docs.tangle.tools/vision/core-concepts) define agent profiles, runtimes, evaluations, service instances, and operators.
+The [x402 standard documentation](https://docs.x402.org/introduction) describes payment over HTTP.
 
-## Where Tangle fits
+Tangle’s [Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) shows the public SDK and health check for an isolated runtime.
+The health check can run before synthetic documents are uploaded:
 
-The Tangle pieces map to the preparation workflow rather than replacing tax judgment.
+```bash
+npm install @tangle-network/sandbox
+curl -fsS https://sandbox.tangle.tools/health
+```
 
-| Workflow need | Useful surface | Example responsibility |
+That command tests reachability only.
+It does not establish retention, isolation, tax-rule coverage, or the quality of a generated workpaper.
+
+## The packet should survive a handoff
+
+An advisor should receive a packet that can be reviewed without replaying the AI conversation.
+Its source index lists every input file, page reference, processing result, and missing record.
+For Maya, that packet might contain:
+
+| Packet section | Contents | Reviewer action |
 | --- | --- | --- |
-| Keep documents and scripts isolated | [Tangle Sandbox](/blog/ai-agent-sandbox) | Copy source files into a disposable workspace and run a parser with captured output |
-| Coordinate model requests and tool calls | [Agent runtime guide](/blog/agent-runtime-environments) | Keep one run record across extraction, reconciliation, and calculation |
-| Operate a tax portal later | [Browser Agent](https://github.com/tangle-network/browser-agent-driver) | Run a separately approved, evidence-producing browser flow |
+| source index | every file, page count, year, owner, and processing result | confirm the input set |
+| fact ledger | original value, normalized value, source, state, and history | accept, reject, or correct facts |
+| calculation workpapers | inputs, units, rule version, and outputs | reproduce or challenge calculations |
+| reconciliation report | conflicts, duplicates, unmatched transfers, and late records | resolve or escalate issues |
+| missing-fact list | requested document and the decision it would unblock | collect the right evidence |
+| draft forms | forms and schedules marked unapproved | review the proposed filing |
+| correction log | old value, new value, reviewer, and timestamp | understand version changes |
 
-The public Sandbox package shows how to create a workspace, execute a command, inspect its result, and delete temporary resources.
-The tax workflow still owns the source index, fact statuses, calculations, and approval record.
+The packet should use version identifiers.
+If Maya supplies a corrected K-1, the product should show which calculations and draft lines changed.
+It should not overwrite the old result and leave the reviewer guessing why the refund moved.
 
-## What an AI accountant does not prove
+## The change trail should explain a revision
 
-An AI accountant can reduce document handling and make review questions easier to find.
-It cannot prove that a tax position is correct, that a source document is authentic, or that an untested edge case is safe.
+A reviewer should be able to understand a correction without comparing every page of two exported returns.
+The product should show the old fact, the new fact, the source for the change, and the outputs that were recalculated.
 
-The system should be judged by the quality of its workpapers and the clarity of its unresolved questions.
-Confidence in the final prose is not a substitute for a source reference.
+Suppose the first draft uses the 15% K-1 allocation because the partnership agreement is still marked `needs-review`.
+Maya later uploads an amended K-1 and confirms that the new allocation applies to the full tax year.
+That confirmation changes a tax fact and requires dependent outputs to be recalculated.
 
-## The decision rule
+| Event | Fact state | Required product response |
+| --- | --- | --- |
+| first K-1 received | 15% candidate, source page 2 | keep dependent lines provisional |
+| agreement conflict found | 20% and 15% both need review | ask which record controls the period |
+| amended K-1 received | 20% accepted by reviewer | create a new draft version and recalculate |
+| reviewer opens the packet | old and new values visible | show which forms and totals changed |
 
-Use an AI accountant for complex tax returns only when it can show the source, assumption, calculation input, and review state for each important output.
-If it cannot produce those artifacts, treat it as a chatbot that may be useful for explanations but is not ready to prepare a complex return.
+The model can suggest that the amended document supersedes the earlier value.
+The application should still require a reviewer decision and deterministic recalculation before it marks the new lines accepted.
+The old packet remains part of the history because it explains what the reviewer saw before the correction arrived.
 
-## Questions readers usually ask
+This is also how the product should handle a late brokerage statement, a duplicate wallet export, or a corrected state allocation.
+The user does not need a longer explanation from the model.
+The user needs a narrow answer to three questions: what changed, why did it change, and which result must be reviewed again.
 
-### What is an AI accountant?
+## Privacy needs a retention story
 
-It is software that organizes financial records, extracts facts, performs controlled calculations, drafts preparation artifacts, and surfaces questions for a human reviewer.
+An AI accountant may receive identity documents, bank records, wallets, entity agreements, and prior tax returns.
+The product should tell the reviewer which artifacts are temporary and which must survive the filing lifecycle.
 
-### Can an AI accountant replace a CPA?
+At minimum, define:
+
+- who can access the source files and derived claims;
+- which model endpoints can receive document text;
+- whether tools can make network requests;
+- how traces are redacted or exported;
+- how deletion handles backups and generated workpapers;
+- which approved packet remains available for the taxpayer and advisor.
+
+Tangle’s [AI Agent Sandbox documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes the separation between the hosted application, on-chain lifecycle records, and the operator API for live runtime state.
+That public architecture is useful as a design reference.
+It does not remove the tax product’s obligation to define its own retention and access policy.
+
+## Where an AI accountant should stop
+
+An AI accountant should stop, ask, or escalate when:
+
+| Trigger | Required behavior |
+| --- | --- |
+| source is missing | name the document and the calculation it blocks |
+| source is unreadable | preserve the file and request a better copy |
+| sources conflict | show both values and their pages |
+| rule version is unclear | hold the draft until a supported rule set is selected |
+| a foreign corporation appears | route the ownership and filing questions for review |
+| basis cannot be established | keep the gain or loss unresolved |
+| a reviewer changes a fact | create a new version and rerun affected calculations |
+| a model or tool fails | preserve the partial trace and retry state |
+
+The failure message should help a human recover.
+“Foreign corporation mentioned in `subscription-agreement.pdf`, page 8; ownership percentage and officer status are unconfirmed” is useful.
+The message “International issue detected” gives the reviewer no next step.
+
+The same principle applies to [Form 8621](https://www.irs.gov/forms-pubs/about-form-8621), the information return used for certain passive foreign investment company shareholders, and to foreign tax credits.
+The IRS describes conditions that can require Form 8621, and it publishes separate [foreign tax credit guidance](https://www.irs.gov/individuals/international-taxpayers/foreign-tax-credit).
+The product can identify the questions and attach the sources.
+It should not infer an election, classification, or credit from a document label.
+
+## Keep final authority with the reviewer
+
+The label is useful only if the product is precise about its role.
+It can organize records, create workpapers, calculate controlled subproblems, find conflicts, and prepare a handoff.
+It cannot prove that the source records are authentic, that the taxpayer’s facts are complete, or that a judgment-heavy position is correct.
+
+The advisor handoff should be a first-class output.
+The advisor should see the source index, claim ledger, calculations, unresolved questions, and correction history rather than a transcript of every model message.
+
+## Pick the product by the packet it leaves behind
+
+Choose an AI accountant for complex tax returns when it leaves an inspectable packet with source pages, calculation inputs, unresolved exceptions, correction history, and approval state.
+Keep a simpler bookkeeping or filing tool when those source joins do not exist.
+If the product cannot show that packet, keep its output as an unapproved draft for a qualified reviewer.
+
+
+## What is an AI accountant?
+
+An AI accountant is software that organizes financial records, extracts and links facts, performs controlled calculations, drafts preparation artifacts, and surfaces questions for human review.
+
+## Can an AI accountant replace a CPA?
 
 No.
-It can reduce preparation work and create review materials, but complex tax decisions still belong with the taxpayer and qualified professionals.
+It can reduce document and reconciliation work, but taxpayers and qualified professionals still make the final decisions for complex or uncertain positions.
 
-### What is the difference between an AI accountant and a chatbot?
+## What should an AI accountant produce?
 
-An AI accountant keeps source-linked workpapers, structured calculations, missing-fact lists, and review states.
-A chatbot can explain a concept but may not preserve the evidence behind an answer.
+It should produce a source index, claim ledger, calculations, reconciliation report, missing-fact list, draft forms or schedules, and correction history.
 
-### How should I review AI accountant output?
+## How should I review AI accountant output?
 
-Open the source document for every high-impact fact, check the assumptions and units, inspect unresolved conflicts, and review the correction log before relying on the draft.
+Open the source for every high-impact claim, check units and tax year, inspect conflicts and missing records, review changed versions, and confirm the approval state before relying on the draft.
+
+## Can Tangle provide the tax answer?
+
+Tangle can provide public infrastructure patterns for a runtime, service definition, operator, payment edge, and recorded run.
+The tax product still needs its own rules, sources, review controls, and professional escalation.

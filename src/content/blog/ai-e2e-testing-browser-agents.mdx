@@ -2,7 +2,8 @@
 title: 'AI E2E Testing For Browser Flows'
 slug: ai-e2e-testing-browser-agents
 summary: >-
-  AI E2E testing works when the agent runs full browser flows, proves the final state, and records enough artifacts for failures to be fixed.
+  AI E2E testing covers full browser journeys with explicit fixtures, final
+  conditions, screenshots, actions, and failure reasons that a team can review.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,117 +17,287 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-AI E2E testing is most useful at the product boundary: signup, checkout, app setup, wallet connection, claim flow, dashboard load, and any workflow where the user's path crosses several systems. A coded test can be better for a stable button. An agent is better when the team needs to say the outcome in English and still get browser evidence.
+A customer does not experience a unit test, an application programming interface (API) response, and a browser page as separate systems.
+They see a signup form, an invitation, a dashboard, and an email or status message that tells them whether the job finished.
 
-The important distinction is end-to-end. The agent has to start from a real URL, drive the browser, handle intermediate states, and verify the final user-visible result.
+AI E2E testing targets that complete journey.
+E2E means end-to-end: the test begins at a user-facing entry point, crosses the boundaries the user crosses, and checks the final state the user can see.
+An AI E2E test adds a natural-language goal and page interpretation to browser controls, while preserving enough evidence for a failure to be fixed.
+The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
 
-## E2E Bar
+Tangle Browser Agent is Tangle’s browser driver for these goal-based sessions with screenshots and DOM evidence.
+Its `bad` command is the command-line interface (CLI) for starting a run from a terminal.
+This article shows where the approach belongs in a test stack, how to write one release-worthy case, and why a green model summary cannot serve as the result by itself.
+For prompt design, read [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents).
 
-| Requirement | Bad version | Useful version |
-| --- | --- | --- |
-| input | "test the app" | one concrete user goal |
-| browser | mocked page | real browser session |
-| state | hidden fixtures | visible account, wallet, or dataset |
-| proof | model says pass | screenshots, actions, and verifier result |
-| failure | vague summary | exact step, screenshot, and reason |
+## A full journey has more than one assertion
 
-Tangle Browser Agent keeps this close to browser automation standards such as [WebDriver](https://www.w3.org/TR/webdriver2/) and [Playwright](https://playwright.dev/docs/intro), then adds a goal loop for flows that are hard to encode as selectors.
+Consider a workspace invitation.
+The product promise is that an owner can create a workspace, invite a teammate, and see the invitation in the workspace settings.
 
-## Example Run
+An incomplete browser case clicks “Invite” and stops when a toast appears.
+A useful E2E case follows the user-visible journey:
 
-```bash
+1. Open the application’s sign-in page with a disposable account.
+2. Create a workspace named “Smoke”.
+3. Open the members screen.
+4. Invite a test address.
+5. Confirm the members screen shows the pending invitation.
+6. Stop before sending mail to a real person.
+
+The browser has to see the route changes, form validation, loading states, and final list.
+The backend has to accept the request.
+The final page has to represent the result accurately.
+The test should capture the boundary where each of those claims becomes visible.
+
+The goal can stay in ordinary language:
+
+~~~bash
 bad run \
   --url https://app.example.com \
-  --goal "Sign in, create a project named Smoke, invite qa@example.com, and verify the invite appears"
-```
+  --goal "Sign in with the disposable account, create a project named Smoke, invite the test address, and verify the invitation appears in the members list"
+~~~
 
-For suites:
+This command follows the public bad run shape documented in the [Browser Agent driver repository](https://github.com/tangle-network/browser-agent-driver).
+The web address, account, and test address are illustrative.
+Replace them with a disposable environment that your team controls.
 
-```bash
+## The E2E bar
+
+The test case has to make five things visible.
+
+| Requirement | Weak case | Reviewable case |
+| --- | --- | --- |
+| input | “Test the app” | One named journey and start URL (web address) |
+| starting state | Hidden account and mutable data | Disposable account, known data, and documented permissions |
+| browser | Mocked page or a single isolated component | Real browser session crossing the user path |
+| final condition | Model says the flow looks complete | Visible list, URL, state, or response that satisfies the goal |
+| evidence | One summary sentence | Screenshots, page observations, actions, and stop reason |
+
+The final condition must be observable.
+“The invite worked” is weaker than “the members screen shows qa@example.test with a Pending status.”
+The latter gives the test a string, a location, and a state to check.
+
+An evaluation is the step that compares this expected condition with the observed result.
+The evaluation can use a selector, an API response, a screenshot, or several pieces of evidence.
+The agent’s explanation can help a reviewer, but it should not replace the condition being checked.
+
+## Put AI E2E testing in the right layer
+
+A healthy test stack gives each layer a narrow job.
+
+| Layer | What it establishes | Typical owner |
+| --- | --- | --- |
+| unit test | A function or component obeys a local invariant | Developer |
+| API or contract test | A request, permission, and response shape agree | Service team |
+| deterministic browser test | A stable UI path behaves under known selectors | QA or developer |
+| AI E2E test | A changing user journey reaches a visible outcome | Product and QA |
+| manual review | A new or high-risk experience deserves human judgment | Release owner |
+
+Playwright is a good fit for deterministic browser cases.
+Its [current documentation](https://playwright.dev/docs/intro) describes isolation, assertions, parallelization, and reports for modern web apps.
+The [WebDriver standard](https://www.w3.org/TR/webdriver2/) defines the broader remote-control interface used by browser automation tools.
+
+An AI case earns its place when page structure, copy, extensions, or conditional state make a fixed selector path expensive to maintain.
+A selector is a page query that identifies an element by its text, role, attributes, or position.
+It should still hand its result to deterministic checks where a known invariant matters.
+For example, an agent can navigate a billing page while a typed assertion checks that the displayed plan identifier matches the expected test plan.
+
+## Write a case a reviewer can rerun
+
+A case needs more than a goal sentence.
+It needs enough context to explain whether a failure came from the application, the fixture, the browser, the network, or the agent.
+
+~~~json
+{
+  "name": "workspace-invite-smoke",
+  "startUrl": "https://app.example.com",
+  "startingState": {
+    "account": "disposable owner account",
+    "workspace": "new workspace",
+    "invitedAddress": "qa@example.test"
+  },
+  "goal": "Create Smoke, invite the test address, and verify the pending invitation appears",
+  "allowedActions": [
+    "navigate",
+    "fill forms",
+    "submit the workspace and invitation forms"
+  ],
+  "stopBefore": [
+    "sending mail to a real address",
+    "changing a paid plan",
+    "deleting a workspace"
+  ],
+  "evidence": [
+    "workspace form",
+    "members list",
+    "invitation status",
+    "first failure or stop reason"
+  ]
+}
+~~~
+
+This object is an illustrative case definition.
+The public driver accepts a cases file through bad run --cases, but the exact case schema belongs to the installed version and should be checked with its documentation.
+
+The case should also record the browser version, viewport, observation mode, model or agent profile, and fixture reset method.
+An agent profile is a named bundle of model choice, page-observation mode, permissions, time limits, and recovery rules.
+Two runs with different profiles may take different paths even when the goal is identical.
+
+## Keep fixtures from becoming the bug
+
+End-to-end tests cross enough services that setup failures can dominate the result.
+Make the starting state deliberate.
+
+| Fixture | Control to establish before the browser opens |
+| --- | --- |
+| account | disposable identity with the required role and no sensitive data |
+| data | stable names, known empty states, and an explicit reset |
+| browser | fixed browser family, viewport, locale, and extension list |
+| network | reachable application and dependency health |
+| time | deterministic clock or a tolerance for asynchronous states |
+| credentials | least privilege, short-lived secrets, and no production access |
+
+A health check can show that the application is reachable.
+It cannot prove the journey will succeed.
+A seeded database can make the run repeatable.
+It cannot prove the product handles a real empty state.
+Keep both the fixture description and the observed setup in the trace.
+
+The runtime is the place where the test process, browser, files, and model calls execute.
+For a local run it may be a developer machine or continuous-integration worker.
+Continuous integration, or CI, is the automated process that runs checks for a change.
+[Tangle Sandbox](https://docs.tangle.tools/sandbox) is Tangle’s isolated workspace for files, processes, and artifacts around an agent session.
+The runtime boundary affects network access, browser version, secret exposure, and reproducibility.
+
+## Turn a run into a release decision
+
+A release rule blocks or permits a change based on a test result.
+An AI E2E rule should be small enough to inspect and important enough to matter.
+
+| Rule | Final condition | Safe failure response |
+| --- | --- | --- |
+| signup | new account reaches the dashboard | keep the account disposable and attach the final screenshot |
+| activation | first project or integration is visible | record the first missing state and the preceding click |
+| billing | test plan and billing state agree | stop before real payment and record the review page |
+| wallet | selected account and chain appear in the application | stop at signing unless test-wallet permission is explicit |
+| support path | the reported customer journey reaches the expected page | preserve the input class and redact sensitive values |
+
+A few narrow cases are easier to own than many goals whose final conditions all mean “looks okay.”
+Choose the smallest set that covers the release risk and review every case’s evidence.
+
+A passing rule means the specified condition was observed under the specified fixture and runtime.
+It does not mean every path through the product is healthy.
+It does not mean the model will follow the same route after a copy change.
+
+## Trace the first wrong step
+
+A trace is the ordered record of goal, observation, action, result, recovery, final check, and stop reason.
+The first wrong step matters more than the final error because later actions may be consequences of the earlier mistake.
+
+| Turn | Observation | Action | Result | Classification |
+| --- | --- | --- | --- | --- |
+| 1 | Sign-in form is visible | Fill disposable credentials | Dashboard loads | expected |
+| 2 | Empty workspace list is visible | Click “Create project” | Creation form loads | expected |
+| 3 | Name field accepts “Smoke” | Submit form | Spinner remains for 30 seconds in this sample | environment or product |
+| 4 | Error banner says service unavailable | Retry once within policy | Same error remains | failed |
+| 5 | Final condition absent | Stop and save screenshot | fail with service error | actionable |
+
+The last row is the evaluation result.
+The earlier rows explain whether engineering should inspect the page, the backend, the fixture, or the test environment.
+If the run only returns “project creation failed,” someone has to rerun it to recover that context.
+
+Useful terminal states are:
+
+| Status | Meaning |
+| --- | --- |
+| pass | The stated final condition was observed. |
+| fail | The application or integration produced an observed result that violates the condition. |
+| blocked | A required permission, login, human-verification challenge, dependency, or human approval prevented the case. |
+| inconclusive | The evidence is insufficient to decide safely. |
+
+Do not turn blocked or inconclusive into pass because the agent used all available steps.
+Do not turn a fixture outage into an application defect.
+The status vocabulary should make those distinctions visible to the release owner.
+
+## Parallel cases need separate worlds
+
+Running several browser cases at once can shorten a suite, but concurrency does not make shared state safe.
+Each case needs its own account, browser context, wallet fixture, and data namespace unless the application explicitly supports isolation.
+
+The public driver README documents a cases-file entry point and a concurrency option:
+
+~~~bash
 bad run --cases ./browser-cases.json --concurrency 4
-```
+~~~
 
-A useful case file is not a vague checklist. It should name the URL, starting state, goal, and required evidence.
+The command is useful when the four cases cannot affect one another.
+It is dangerous when two cases share a wallet nonce, mutate the same workspace, or rely on one email inbox.
+A parallel run should record the case identifier and fixture identifier with every artifact.
+Otherwise a screenshot from one account can be mistaken for a result from another.
 
-## Where To Put It In The Test Stack
+Use serial execution for stateful wallet flows, shared test accounts, and cases that intentionally verify ordering.
+Use parallel execution for independent read-only pages or isolated disposable accounts.
+The right choice follows the state boundary, not the number of available browser slots.
 
-AI E2E testing should sit above deterministic tests, not replace them.
+## Keep the execution owner visible
 
-| Layer | Tooling style |
-| --- | --- |
-| unit | fast local assertions |
-| API | contract and auth checks |
-| deterministic browser | stable Playwright flows |
-| AI E2E | high-value product paths, flaky UI state, wallet or extension flows |
-| manual QA | release judgment and new exploratory areas |
+Browser Agent can run as a package or CLI without the rest of Tangle.
+If a team turns these cases into a service, a [Blueprint](/blog/blueprint-protocol-operator-services) is the reusable service definition and an operator is the provider that runs it.
+That packaging can describe who executes a job, which inputs it accepts, and which artifacts it returns.
+It cannot validate a browser result on its own.
 
-For English-first case authoring, read [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents). For wallet flows, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows).
+Keep the final condition and its evidence in the test record, even when another service schedules or pays for the run.
 
-## What To Save
+## Failure modes worth designing first
 
-Every run should save:
+The hardest failures are often ordinary product states.
 
-| File | Purpose |
-| --- | --- |
-| goal | what the test was asked to prove |
-| screenshots | page state before and after key actions |
-| actions | click/type/wait/assert records |
-| observations | DOM and visual context |
-| final verdict | pass, fail, blocked, or inconclusive |
-| failure note | first actionable reason someone can fix |
+An invitation can be created twice because the page retried after the request succeeded.
+A wallet can show one account while the application keeps another account in memory.
+A dashboard can render cached data that looks complete while the API request failed.
+A login screen can send the agent into a loop that consumes steps without testing the product.
 
-This is how AI E2E testing becomes engineering signal instead of another flaky bot.
+A test policy can still classify a challenge as blocked when the required human or account boundary was not safely verified.
+Do not treat a recovery attempt or a model summary as proof of identity.
 
-## Release Gate Pattern
+The case should name the recovery policy.
+One bounded retry can be useful for a transient page load.
+Repeated clicks, changing user intent, bypassing a human-verification challenge, and submitting an unapproved payment are outside a safe recovery policy.
+When the boundary is reached, save the current evidence and stop.
 
-Use AI E2E tests as a release gate only when the suite is small and tied to user value.
+## What AI E2E testing cannot establish
 
-| Gate | Example |
-| --- | --- |
-| signup | create account and reach dashboard |
-| activation | complete first project or integration |
-| payment | start checkout and verify plan state |
-| wallet | connect, sign, and verify app state |
-| support-critical flow | reproduce the path customers break most often |
+One end-to-end run establishes one goal under one fixture, browser, model profile, and runtime.
+It does not prove every edge case, device, locale, account role, or network condition.
+It does not replace unit tests, API contracts, transaction simulations, or deterministic browser assertions.
+It does not make a production credential appropriate for an agent.
 
-Do not gate on twenty vague goals. Gate on five flows whose failure would block a release. Each failure should produce a trace that the owning engineer can inspect without asking the test author what happened.
+The strongest use is a product-boundary check that complements lower-level tests.
+The weakest use is a vague release ritual whose only output is a model saying “looks good.”
 
-## Fixture Rules
 
-E2E failures are often fixture failures. The agent should know the initial state.
+## What is AI E2E testing?
 
-| Fixture | Rule |
-| --- | --- |
-| account | seeded, disposable, and reset between runs |
-| wallet | known network, account, and balance |
-| data | stable object names and expected empty states |
-| browser | consistent viewport and extension set |
-| backend | health check before test starts |
+AI E2E testing is end-to-end browser testing in which an agent follows a stated user goal, handles visible intermediate states, and checks the final user-visible condition.
 
-For English case authoring, read [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents). For wallet fixtures, read [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent).
+## Is AI E2E testing the same as Playwright?
 
-## What This Does Not Prove
+No.
+Playwright is a browser automation framework.
+AI E2E testing adds goal interpretation and bounded recovery while still depending on browser controls and explicit assertions.
 
-AI E2E testing does not prove every edge case. It proves one goal on one run with captured evidence. Treat it like a high-context integration check, then combine it with deterministic tests for known invariants.
+## Is AI E2E testing reliable enough for CI?
 
-## Decision Rule
+It can be used in CI when fixtures are disposable, the final condition is explicit, the runtime is recorded, and every terminal result includes inspectable artifacts.
 
-Use AI E2E testing for product flows where user-visible completion matters more than selector stability. Do not accept results that lack screenshots, action logs, and a final verifier.
+## What should a first AI E2E case cover?
 
-## FAQ
+Choose one signup, activation, billing, wallet, or support journey whose failure would change a release decision.
+Keep the first case read-only or disposable until its stop policy is proven.
 
-### What is AI E2E testing?
+## Make the release rule concrete
 
-It is end-to-end browser testing where an agent follows a user goal, operates the app, and verifies the final state.
-
-### Is AI E2E testing flaky?
-
-It can be if the agent has no evidence loop or retry discipline. Artifacts make failures debuggable and keep the result honest.
-
-### Can it replace Playwright tests?
-
-No. It should complement stable Playwright tests by covering flows that are harder to script by hand.
-
-### What should I test first?
-
-Start with revenue, signup, onboarding, wallet, and release-blocking flows where manual QA is slow or inconsistent.
+Use AI E2E testing when the user’s path crosses changing pages, conditional state, extensions, or visual decisions.
+Keep deterministic tests for stable invariants.
+Require a final condition, a saved trace, and a terminal status before the result can block or approve a release.

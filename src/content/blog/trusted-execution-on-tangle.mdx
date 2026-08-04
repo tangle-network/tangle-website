@@ -1,8 +1,10 @@
 ---
-title: 'Secure Container for AI Agents: What Hardware Isolation Can Prove'
+title: 'TEE for AI Agents: What Hardware Isolation Can Prove'
 slug: trusted-execution-on-tangle
 summary: >-
-  A plain-language explanation of trusted execution environments in the Blueprint SDK, including isolation, attestation, sealed secrets, provider modes, and their limits.
+  A trusted execution environment (TEE) for AI agents needs a clear data boundary
+  and evidence of the workload that ran. This guide explains Tangle’s TEE policy,
+  attestation, secret release, and the limits of hardware isolation.
 date: '2026-03-02'
 author: Drew Stone
 tags:
@@ -16,160 +18,370 @@ imageAlt: 'An editorial still life about building a service on Tangle'
 heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
 ---
 
-A secure container for AI agents should limit what the process can touch and provide evidence about where it ran. Hardware isolation helps with the second part, but it does not prove the answer is correct. Suppose you send private data or model weights to a service run by someone else.
-You may be able to verify the result after the job finishes, but that does not answer a different question: could the person running the machine read or change the work while it was running?
+A trusted execution environment (TEE) for AI agents is useful only if the customer can answer two different questions.
+Can the machine administrator read or change the private work while it runs?
+Did the approved program run inside the protected boundary?
 
-A **trusted execution environment**, or **TEE**, is a protected area of a computer that uses hardware to isolate a workload from the machine’s ordinary operating system.
-The protection is useful only when the workload can also show what code is running inside that area.
+Suppose an agent must inspect a private contract with a model hosted by another team.
+An **agent profile** is the versioned bundle of model choice, tools, instructions, and output schema that the workflow expects.
+The runtime is the process and machine environment that carries out that profile.
+An ordinary container can package the code, but the host administrator may still control the kernel, memory, storage, logs, and network around it.
 
-On Tangle, a **Blueprint** is a public service definition that another team can run.
-An **operator** is the person or team that runs that service.
-The Blueprint SDK can ask for TEE execution, collect an **attestation report**, and use that report when a user needs evidence about the running workload.
-An attestation report is a signed statement from the protected environment about the code and hardware that produced it.
+A TEE changes that boundary with hardware-backed isolation.
+An **attestation report** is signed evidence about the protected environment and selected measurements of the code and configuration that started there.
+A **measurement** is a cryptographic fingerprint of a relevant image, binary, boot component, or configuration.
+The client can use the report before releasing a secret or private input.
 
-This post explains what that arrangement can prove, how the SDK moves the evidence, and where the promise ends.
-It is one part of the [Tangle Re-Introduction series](/blog/series/tangle-re-introduction/).
+The evidence has a precise scope.
+A TEE can support a claim about where approved code ran and which workload identity the hardware reported.
+It cannot prove that the code is correct, that the model is safe, that the result is useful, or that data is protected after it leaves the workload.
 
-## Isolation changes the question
+Tangle is a coordination network for services that independent parties run.
+Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
+Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
+Tangle represents that choice as an execution policy on a **Blueprint**, a reusable service template.
+An **operator** is the party that runs the Blueprint and its Services.
+A **Service** is one configured instance with an owner, operator set, payment terms, and lifecycle state.
+A **Blueprint Manager** is the operator-facing process that selects an eligible runtime and keeps the Service aligned with protocol state.
+The current [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) documents the policy and its runtime behavior.
 
-Ordinary verification asks whether a result looks correct after execution.
-TEE execution adds a before-and-during question: was the code running in an environment that blocked the operator from inspecting or changing it?
+## A TEE protects a boundary, not a promise
 
-That distinction matters for private inference, proprietary model weights, and jobs whose inputs must remain confidential.
-Hardware isolation can restrict the operator’s access to the workload.
-It cannot make a bad program correct, and it cannot prove that the user asked for the right code.
+An ordinary container is a packaging and process-isolation mechanism.
+It can make dependencies reproducible and limit some operating-system access.
+The host usually retains administrative control over the machine that runs it.
 
-The useful claim is narrower: a user can check that a particular approved program started inside a particular protected environment.
+A TEE adds a hardware-enforced boundary around a workload.
+The exact boundary depends on the hardware and provider.
+Amazon Web Services (AWS) Nitro Enclaves, Google Confidential Space, AMD SEV-SNP, Intel TDX, and other systems expose different interfaces and threat models.
 
-## Three ways to place the protected workload
+The customer should phrase the desired claim like this:
 
-The SDK describes three deployment modes.
+```text
+Approved claim:
+  The workload identified by measurement M ran on an accepted TEE platform.
 
-| Mode | What runs inside the protected area | When it is useful |
+Still separate:
+  The workload implements the intended function.
+  The output is correct for the task.
+  The network and output path reveal no sensitive data.
+  The provider will keep the service available.
+```
+
+That wording prevents the common mistake of treating “confidential” as a complete service guarantee.
+
+The [AWS Nitro Enclaves security documentation](https://docs.aws.amazon.com/enclaves/latest/user/security.html) describes isolation from the parent instance, no external networking, no persistent storage, and an attestation feature for enclave identity.
+Those are properties of that provider’s system, not a universal description of every TEE.
+
+## Tangle makes confidentiality a service policy
+
+The current Tangle model keeps artifact sources and confidentiality intent separate.
+A source says how an operator fetches and executes an artifact.
+Confidentiality says whether the service accepts ordinary execution, prefers a TEE, or requires one.
+
+The documented policy values are:
+
+| Policy | Meaning | Failure behavior |
 | --- | --- | --- |
-| Direct | The Blueprint runner itself | When the whole service needs the strongest isolation boundary |
-| Remote | A cloud workload started by the runner | When the runner manages a separate protected cloud instance |
-| Hybrid | Only selected jobs or components | When ordinary work and sensitive work have different requirements |
+| `any` | Standard and TEE execution are acceptable | The manager may choose an eligible path |
+| `tee_preferred` | Prefer a TEE when the operator can provide one | Standard execution remains an explicit fallback |
+| `tee_required` | Only a TEE execution path is acceptable | Fail closed when requirements cannot be satisfied |
+| `standard_required` | Use ordinary non-TEE execution | A TEE path is not selected |
 
-Direct mode can use hardware devices exposed by a host that supports Intel TDX or AMD SEV-SNP.
-Remote mode can provision protected workloads through AWS Nitro Enclaves, Google Confidential Space, or Azure Confidential VMs.
-Hybrid mode can keep a pricing step in an ordinary container while sending private model inference to a protected workload.
+“Fail closed” means the service refuses to start or accept the protected path rather than silently downgrading to a weaker environment.
+That behavior matters when the customer’s privacy requirement is mandatory.
 
-The mode is an operational choice, not a security grade.
-The right choice depends on which data, code, and keys must stay inside the boundary.
+The policy belongs in the public Blueprint definition.
+If it lives only in an operator’s local setting, the customer cannot inspect the promise before creating a Service.
 
-## How an attestation becomes evidence
+The current public manifest shape is shown below; the names and values are illustrative:
 
-The SDK moves evidence through five steps:
+```json
+{
+  "metadata_uri": "ipfs://your-blueprint-metadata",
+  "metadata": {
+    "name": "confidential-prover",
+    "execution_profile": {
+      "confidentiality": "tee_required"
+    }
+  },
+  "sources": [
+    {
+      "kind": "container",
+      "registry": "ghcr.io",
+      "image": "acme/confidential-prover",
+      "tag": "1.2.0"
+    }
+  ]
+}
+```
 
-1. A provider starts the protected workload.
-2. A component inside that workload asks the hardware for an attestation report.
-3. The report includes a **measurement**, a fingerprint of the code or image that started.
-4. The deployment keeps the report so it can be submitted again without creating a new workload.
-5. Tangle stores a fingerprint of the report in an on-chain record that others can inspect.
+The fields and policy value match the public documentation.
+The complete deployment definition also needs the fields required by the target network and SDK release.
+Do not add a fictional “TEE source” beside the container source.
+The policy is layered on top of the source.
 
-The provider formats differ, but the question stays the same: does this report describe genuine protected hardware running the approved code?
-The SDK’s provider-specific checking code handles those format differences and applies common checks such as provider identity, debug mode, measurement, and freshness.
+The current Tangle documentation says that only container sources are eligible for TEE placement on the manager path.
+It also says that `tee_required` filters out non-container sources and fails when the operator lacks the required TEE runtime prerequisites.
+For local container execution, the documented requirement is a Kubernetes `kata` runtime class.
+For remote execution, the operator must configure a TEE-capable provider and an attestation policy.
 
-The on-chain record is a fingerprint of the report, not the report’s entire contents.
-Anyone who has the report can calculate the fingerprint and compare it with the recorded value.
+## Attestation is a handshake
 
-## Secrets cannot be handled like ordinary container settings
+Attestation works as a handshake between a workload and a relying party.
+A **relying party** is the client or service that decides whether to trust the report for a specific action, such as releasing a key.
 
-In a normal deployment, a secret may arrive as an environment variable when a container starts.
-Recreating that container is routine.
+The common sequence is:
 
-For a protected workload, recreation changes the measured code and can invalidate the evidence that users rely on.
-The SDK therefore uses **sealed secrets**, which are secrets encrypted for one attested workload rather than copied into a general-purpose container setting.
+1. The workload starts inside the protected environment.
+2. Hardware or a provider attestation service creates a signed report or token.
+3. The report includes measurements, provider identity, freshness data, and sometimes an ephemeral public key.
+4. The client verifies the signature chain and compares the claims with its policy.
+5. The client releases only the secret or input that the accepted workload should receive.
+6. The workload processes the data and returns an output through the defined application path.
 
-The exchange works like this:
+The measurement is usually a digest rather than a human-readable version name.
+The client should compare it with an approved value and decide how upgrades change that value.
 
-1. The protected workload creates a temporary public and private key pair.
-2. The public key is included in the attestation report.
-3. A client checks the report and encrypts the secret to that public key.
-4. Only the workload holding the private key can decrypt the secret.
+Freshness prevents an operator from presenting a valid report from an old workload as evidence for a new request.
+A **nonce** is a unique value included in a challenge so the resulting report is bound to that exchange.
+An expiry or issued-at value serves a related purpose when the provider’s protocol uses tokens with a defined lifetime.
 
-The SDK manages the temporary exchange session and removes it when its lifetime ends.
-The security claim depends on the client checking the report before sending the secret.
+The [AWS attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) says that Nitro Enclaves can request a signed attestation document from the Nitro Hypervisor and that an external service can compare its measurements with an access policy.
+The [Google Cloud attestation guide](https://docs.cloud.google.com/confidential-computing/docs/attestation) describes a similar policy flow in which claims about a confidential environment become signed tokens that services such as Secret Manager or identity and access management (IAM) can check.
 
-## Provider differences are real
+The report is evidence only after the relying party verifies it.
 
-The cloud providers expose different APIs and report formats.
+## Releasing secrets without handing them to the host
 
-- AWS Nitro Enclaves start an isolated enclave alongside an EC2 instance and use a local communication channel between the host and enclave.
-- Google Confidential Space starts a confidential virtual machine and exposes an attestation token for the workload.
-- Azure Confidential VMs use confidential-computing hardware and Azure’s attestation service.
+A protected workload often needs a key, model weight, or customer document after it starts.
+Putting that value in an ordinary environment variable gives the host a straightforward place to inspect it.
+Attestation can move the release decision to a key service or client that is willing to trust only an approved measurement.
 
-The SDK hides the provisioning details behind one Blueprint-facing choice, but it does not make the providers identical.
-Availability, startup time, supported hardware, report contents, and operational controls remain provider-specific.
+A common pattern uses an ephemeral key pair created inside the protected workload.
+The workload sends the public key as part of an attested handshake.
+The client validates the report and encrypts the secret to that public key.
+Only the workload holding the private key can decrypt it.
 
-The provider documentation is the authority for those boundaries: [AWS Nitro Enclaves](https://docs.aws.amazon.com/enclaves/latest/user/nitro-enclave.html), [Google Confidential Space](https://cloud.google.com/confidential-computing/confidential-space/docs), and [Azure Confidential VMs](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-vm-overview).
+The following TypeScript-like pseudocode is illustrative.
+It describes the policy decision rather than claiming a Tangle SDK function name:
 
-## What a Blueprint declares
+```ts
+const report = await workload.getAttestation({ nonce })
+const claims = await verifyProviderReport(report)
 
-A Blueprint can declare that protected execution is required or preferred.
-It can also restrict which providers are acceptable and how old an attestation may be.
+if (!policy.accepts({
+  measurement: claims.measurement,
+  provider: claims.provider,
+  fresh: claims.nonce === nonce,
+  debug: claims.debug === false,
+})) {
+  throw new Error('refusing to release the secret')
+}
 
-| Declaration | Meaning |
-| --- | --- |
-| Required | Refuse to start if an acceptable protected environment is unavailable |
-| Preferred | Use protected execution when available, with an explicitly chosen fallback |
-| Provider list | Accept only the listed provider families |
-| Maximum report age | Reject evidence older than the allowed interval |
+await workload.send(encryptFor(claims.ephemeralPublicKey, secret))
+```
 
-This decision belongs in the service definition because it changes where the job may run.
-It should not be hidden in a local operator preference that consumers cannot inspect.
+The policy must bind the secret to the exact workload and request.
+Accepting any valid report from the provider is too broad if the provider hosts many unrelated images.
+Accepting the right measurement without freshness is vulnerable to replay.
+Accepting a fresh report without checking debug status or configuration can weaken the intended boundary.
 
-## Shipped behavior and future work
+The provider’s key-release and report-validation documentation remains authoritative.
+Tangle can record the Blueprint policy and Service intent, but it does not replace the provider’s cryptographic verification library.
 
-The source snapshot used for the original post described direct, remote, and hybrid modes, three cloud integrations, attestation checks, and sealed-secret exchange.
-That dated snapshot reported 162 tests across attestation, configuration, exchange, middleware, and runtime behavior.
-It is a historical figure, not a current test count.
-The [public Blueprint repository](https://github.com/tangle-network/blueprint) is the source for the implementation and its current release state.
+## Provider reports are not interchangeable
 
-The same source listed several follow-up items:
+The words “TEE” and “attestation” hide provider-specific behavior.
 
-- refreshing attestation on a schedule rather than only at startup
-- deriving hybrid routing from the on-chain service declaration
-- using platform-specific hardware reports in the direct mode
+| Provider example | Protected workload model | Evidence and operational detail |
+| --- | --- | --- |
+| AWS Nitro Enclaves | An enclave receives dedicated virtual CPUs and memory from a parent Elastic Compute Cloud (EC2) instance | Nitro generates a signed attestation document; the enclave has no external network or persistent storage |
+| Google Confidential Space | A workload runs in a confidential virtual machine (VM) with an attestation service | Tokens can carry hardware, image, debug, nonce, and container claims under an attestation policy |
+| Azure confidential VMs | A confidential VM uses hardware-backed isolation and attestation services | Guest attestation can expose platform and boot-state claims for a relying party |
 
-Those are separate capabilities.
-The presence of a TEE integration does not mean every provider, hardware mode, or refresh policy is available in every release.
+The [Google Confidential Space token-claims reference](https://docs.cloud.google.com/confidential-computing/confidential-space/docs/reference/token-claims) shows how image digests, hardware models, debug status, nonce, issue time, and expiry can appear in an attestation token.
+The [Azure guest-attestation guide](https://learn.microsoft.com/en-us/azure/confidential-computing/guest-attestation-confidential-vms) explains that a guest can obtain a platform report and present an attestation token to a relying party before receiving sensitive resources.
 
-## The practical decision
+The Tangle software development kit (SDK) can present a common Blueprint-facing policy while the provider differences remain real.
+Startup time, available hardware, report format, image identity, network path, logging, storage, update procedure, and key-release behavior vary by provider.
+Document the provider and hardware family that the Service accepts.
 
-Use a TEE when the operator should not be able to inspect or alter sensitive work while it runs and when users can check the attestation before sending secrets.
+## What a TEE proves about an AI service
 
-Do not describe TEE execution as proof that the service is correct, that the provider is honest in every other respect, or that the result cannot be manipulated outside the protected workload.
-Those claims require separate evidence.
+Imagine an inference Blueprint that accepts a private prompt and returns a structured decision.
+An **evaluation** is a repeatable test of a model or agent on a defined task set.
+A **trace** is the time-ordered record of the execution path.
+The service can collect several kinds of evidence:
 
-Start with one job whose data boundary is clear, require an attestation report, and document what code fingerprint the client expects.
-Only then decide whether to add remote provisioning, sealed secrets, or hybrid routing.
+| Evidence | Supports | Does not support |
+| --- | --- | --- |
+| Approved container digest | Which image should run | That the image was launched successfully |
+| Attestation measurement | Which measured workload the provider reported | That the workload’s algorithm is good |
+| Model weight digest | Which model files the workload loaded, if included in the measured claim | That the model follows the task policy |
+| Input and output trace | What the application recorded during the run | That an unprotected process did not observe a value elsewhere |
+| Task evaluation | Whether selected examples satisfy the acceptance rule | That unseen prompts will behave the same |
 
-## Questions readers usually ask
+The combination is stronger than any line alone.
+It is still a set of bounded claims.
 
-### Does a TEE prove that the job produced the right answer?
+A **canary** is a known input chosen to catch a selected behavior change.
+The [AI service guide in this series](/blog/building-ai-services-on-tangle) explains how inference evidence, sandbox evidence, and task evaluations fit together.
+
+If the model’s output is wrong because the prompt was underspecified, the TEE has done its job and the application has still failed.
+If the model weights are correct but the output is altered after the protected process returns, the TEE claim ends at the output boundary.
+If a customer sends the secret to the wrong endpoint before the attestation check, the later report cannot undo that disclosure.
+
+## Confidentiality policies change availability
+
+`tee_required` can protect a high-value input from accidental downgrade.
+It also means an operator without the right hardware or runtime cannot serve the Job.
+The customer must accept the resulting availability and cost tradeoff.
+
+`tee_preferred` can keep more operators eligible.
+It also allows standard execution, so the customer needs a policy for when a fallback is acceptable.
+“Preferred” should never be presented as “protected.”
+
+`any` maximizes placement options.
+It is appropriate for a workload whose confidentiality requirement is optional or whose inputs are already public.
+
+`standard_required` can be useful when the application depends on ordinary runtime features that the TEE path cannot provide.
+The policy is a product decision about data and threat model, not a ranking from weak to strong.
+
+The service owner should surface the policy before a customer funds or invokes the Service.
+At the protocol layer, current Tangle documentation also describes confidentiality intent in service requests and operator quotes.
+That allows a customer’s requested mode to become part of the Service agreement instead of an undocumented operator preference.
+
+## Failure cases that break the easy story
+
+### The report is valid for the wrong image
+
+The provider can honestly attest to an image that the customer did not approve.
+Compare the exact measurement or image digest with a policy maintained by the customer or Blueprint.
+
+### The image is correct, but the code is wrong
+
+Attestation binds the identity of code, not its meaning.
+Review the code, test vectors, model configuration, and evaluation in a standard deployment.
+
+### The report is old
+
+Use a nonce, issued-at claim, expiry, or provider-specific freshness rule.
+The policy should reject a report that can be replayed for a different request.
+
+### Debug mode is enabled
+
+Debug configurations may weaken the protection or make the environment unsuitable for secrets.
+Check the provider’s debug claim and fail closed when the policy requires production configuration.
+
+### The model downloads weights after attestation
+
+If the measured workload can fetch arbitrary weights after the report is issued, the image measurement alone may not identify the model that served the answer.
+Bind model identity into the measured configuration, enforce an allow-list, or state that the model choice remains outside the attestation claim.
+
+### The output path leaks the input
+
+The host may not read protected memory while the Job runs, but the application can write sensitive data to logs, return it in an error, send it to an unrestricted network endpoint, or persist it to a shared store.
+TEE isolation does not replace output filtering and network policy.
+
+### The provider has a side channel
+
+Hardware isolation reduces a class of host inspection risks.
+Timing, cache, memory-access patterns, bugs in the workload, and provider implementation details can create other paths.
+Assess the provider and hardware against the data’s sensitivity.
+
+### An update changes the measurement
+
+Rebuilding a container, changing a boot component, or rotating a model can change the report.
+Plan the approval, rollout, and rollback process around the new measurement.
+Do not silently accept every new digest because the service needs to restart.
+
+### The TEE is unavailable
+
+With `tee_required`, a failed placement should be visible as an unavailable service rather than silently becoming ordinary execution.
+With `tee_preferred`, the Service must expose when it fell back and let the customer decide whether that result remains acceptable.
+
+## A TEE is one layer in an AI service
+
+For a private document-analysis agent, a defensible path can look like this:
+
+1. The agent profile names a model, tool set, output schema, and data-retention policy.
+2. The Blueprint publishes a versioned container and `tee_required` policy.
+3. The operator starts the container on a TEE-capable runtime.
+4. The client validates a fresh attestation against the approved measurement.
+5. The client releases the document or model key only after the check passes.
+6. The job runs with a restricted network, filesystem, and output policy.
+7. The service returns a trace reference, model identity, and evaluation result.
+8. The customer can reject the result if the attestation or task check fails.
+
+The TEE addresses the operator’s access to protected memory during execution.
+The Blueprint addresses service coordination and declared policy.
+The evaluation addresses task quality.
+The trace addresses inspection.
+The output policy addresses what leaves the boundary.
+
+The [Tangle verification guide](/blog/how-tangle-verifies-work) explains why those checks should not be collapsed into one “verified” label.
+
+## When to choose hardware isolation
+
+Use a TEE when the customer needs protection from the host operator during execution, can validate the attestation before releasing secrets, and accepts provider-specific hardware and availability constraints.
+
+Multi-party computation (MPC) keeps one operator from holding a complete input by splitting the computation across participants.
+The [NIST MPC definition](https://csrc.nist.gov/glossary/term/secure_multi_party_computation) describes that privacy boundary.
+Use an MPC protocol when no single operator should hold the complete input and the computation can tolerate a multi-party protocol.
+
+Use ordinary containers when the input is public or the provider is already inside the accepted trust boundary.
+
+Use a stronger result evaluation or proof when the main risk is an incorrect answer rather than host inspection.
+
+Many services need more than one.
+A private AI service can require a TEE, pin the model digest, record a trace, and run an evaluation set.
+The correct description is the intersection of those claims, with each assumption stated.
+
+
+## Does a TEE prove that an AI answer is correct?
 
 No.
-It provides evidence about the protected environment and the code that ran there.
-The job still needs its own correctness checks.
+It provides evidence about the protected environment and measured code.
+The answer needs a separate evaluation, proof, or application-specific correctness check.
 
-### Can the operator read the input while the job runs?
+## Can the operator see data inside a TEE?
 
-The hardware boundary is designed to prevent the ordinary host from reading protected memory.
-The exact guarantee depends on the provider, hardware, configuration, and the code inside the workload.
+The hardware boundary is designed to restrict the ordinary host from reading protected memory.
+The exact guarantee depends on the provider, hardware, configuration, workload, and output path.
+The operator may still observe metadata such as timing, traffic volume, or whether a job ran.
 
-### Why is the attestation report important?
+## Is a TEE the same as a software container?
 
-Isolation without identity is hard to trust.
-The report lets a client compare the running code and environment with the code it approved.
+No.
+A container packages and isolates processes through software controls.
+A TEE adds a hardware-backed boundary and an attestation mechanism.
+A confidential service may use both, but they support different claims.
 
-### Can I change configuration after the workload starts?
+## What should a client check in an attestation report?
 
-Changes that alter the measured workload can invalidate the report and any secret exchange tied to it.
-Treat configuration changes as a new deployment unless the provider and SDK document a safe update path.
+Check the signature chain, provider and hardware identity, expected measurement, debug status, freshness or nonce, audience, expiry, and any key-binding claim required by the protocol.
+Reject the report when the provider’s policy or the Blueprint’s approved values do not match.
+
+## What happens when the TEE cannot start on Tangle?
+
+With `tee_required`, the current Tangle policy is intended to fail closed when the required TEE runtime cannot be satisfied.
+With `tee_preferred`, standard execution may be used as a fallback, so the customer must decide whether the fallback is acceptable.
+
+## Does Tangle make cloud providers interchangeable?
+
+No.
+Tangle can expose a common execution policy, while provider report formats, hardware, startup time, networking, storage, and key-release behavior remain different.
+The Service should name the accepted provider and policy.
 
 ## Public sources
 
-The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) contains the implementation.
-The provider boundaries are documented by [AWS](https://docs.aws.amazon.com/enclaves/latest/user/nitro-enclave.html), [Google Cloud](https://cloud.google.com/confidential-computing/confidential-space/docs), and [Microsoft Azure](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-vm-overview).
+The [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) documents policy values and manager behavior.
+The [AWS Nitro Enclaves security guide](https://docs.aws.amazon.com/enclaves/latest/user/security.html) documents one provider’s isolation boundary.
+The [AWS attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) documents signed measurements.
+The [Google Cloud attestation documentation](https://docs.cloud.google.com/confidential-computing/docs/attestation) documents claims and relying-party policy.
+The [Azure guest-attestation guide](https://learn.microsoft.com/en-us/azure/confidential-computing/guest-attestation-confidential-vms) documents a confidential VM handshake.
+The [NIST MPC definition](https://csrc.nist.gov/glossary/term/secure_multi_party_computation) describes the privacy boundary of multi-party computation.
+
+Hardware isolation is worth adopting when it changes what data the customer is willing to send.
+It should be described as evidence about a boundary, followed by the separate tests that establish whether the work itself is correct.

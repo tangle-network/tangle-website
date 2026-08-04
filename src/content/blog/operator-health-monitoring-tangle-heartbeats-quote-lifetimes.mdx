@@ -1,11 +1,19 @@
 ---
-title: "Operator Health Monitoring: Heartbeats, Quotes, and Recovery"
+title: 'Operator Health Monitoring: Tangle Heartbeats, Quote Lifetimes, and Recovery'
 slug: operator-health-monitoring-tangle-heartbeats-quote-lifetimes
-summary: "How Tangle operator heartbeats, off-chain health checks, and quote TTLs surface service failure signals before slashing occurs."
-description: "How Tangle operator heartbeats, off-chain health checks, and quote TTLs surface service failure signals before slashing occurs."
+summary: >-
+  How to monitor a Tangle Blueprint operator across on-chain heartbeats,
+  remote-runtime health, x402 quote lifetimes, and recovery after a worker or
+  network failure.
 date: '2026-03-29'
 author: Drew Stone
-tags: ["tangle", "blueprint-sdk", "x402", "operator-monitoring", "blockchain-infrastructure", "health-checks"]
+tags:
+  - tangle
+  - blueprint-sdk
+  - x402
+  - operator-monitoring
+  - blockchain-infrastructure
+  - health-checks
 series: x402 Production Runway
 seriesOrder: 12
 coverImage: /images/covers/editorial/x402-production-runway-v2.webp
@@ -13,251 +21,331 @@ heroImage: /images/covers/editorial/x402-production-runway-v2.webp
 imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-Operator health monitoring answers whether a service is still able to accept work, report its state, and recover when a deployment stops responding. A blueprint is a packaged service definition with a typed job interface. x402 is a payment protocol for machine-to-machine requests. You built a service. It runs jobs, accepts x402 payments, returns results. It worked fine in testing. Now it's live and you need to know: how does the network know if you stop working? And what in practice happens to you when it finds out?
+At 12:00, a service operator, the provider running the job, has a healthy graphics processing unit (GPU), and a client receives a five-minute payment quote.
+At 12:04, the execution process crashes.
+At 12:05, the quote expires.
+At 12:15, the operator’s last on-chain heartbeat is still visible, even though no new job can finish.
 
-The answer involves three interlocking systems. The first is an on-chain registry that tracks whether operators are showing up at regular intervals, the way a building's security system requires a guard to swipe their badge every hour. The second is an off-chain monitor that watches your actual running software and can automatically restart it if it crashes. The third is a quote cache that holds the pricing promises you've made to clients, and which quietly expires them if jobs aren't completed in time. Together these three systems give the network enough signal to distinguish "operator is slightly slow" from "operator has vanished and clients are losing money."
+Which signal should remove the operator from new work?
+Which signal tells the operator how to recover?
+Why can a service look online on-chain while its paid HTTP (Hypertext Transfer Protocol) endpoint is already failing?
 
-Understanding how each system works, what it can recover from, and where it gives up is the difference between an operator that handles production incidents gracefully and one that loses stake because a process died at 2am and no one noticed for an hour.
+Operator health monitoring on Tangle is not one green light.
+It combines an on-chain liveness record, local runtime checks, payment-quote state, and a recovery process for settled payments without terminal Job results.
 
-## Why Do Operators Need to Send Heartbeats?
+## Heartbeats, health checks, quotes, and traces
 
-A heartbeat is a periodic proof of life. Every five minutes, a Blueprint operator submits a signed message to the [`OperatorStatusRegistry`](https://github.com/tangle-network/tnt-core/blob/main/src/staking/OperatorStatusRegistry.sol) contract on-chain. The message includes a service ID, a blueprint ID, a status code, and optional custom metrics. The registry records the timestamp.
+Use on-chain heartbeats to publish service status where the network can inspect it.
+Use local and remote health checks to catch process, deployment, queue, and dependency failures sooner.
+Use payment-quote lifetimes to prevent old prices from becoming new work.
+Use a trace, the record joining request and execution state, to reconcile payment, job, runtime, heartbeat, and result state.
 
-If three consecutive heartbeat windows pass without a submission, the registry considers the operator offline. At five minutes per window with three misses allowed, that's a 15-minute window before the on-chain status changes. After that, your service disappears from the set of online operators available to clients. Quotes you've issued start to look unreliable. And if the situation persists, your staked tokens become eligible for slashing.
+The current public `OperatorStatusRegistry`, Tangle’s on-chain operator-status contract, uses a five-minute default heartbeat interval and a default maximum of three missed heartbeats, while service configuration can change those values.
+It also rejects signed heartbeat submissions older than five minutes, which is a replay bound rather than the service’s liveness interval.
+The current public remote-provider monitor checks every 60 seconds by default; it reports a stopped or terminated instance as unhealthy immediately and attempts automatic recovery after three consecutive unhealthy results when that option is enabled.
+Heartbeats describe chain-visible status, remote checks describe deployment health, quotes describe payment freshness, and traces describe actual Job outcomes.
 
-The heartbeat is not a health check you pass or fail. It's a commitment you make continuously. Stopping is the failure.
+## Signals used to admit and recover work
 
-## How Does the Heartbeat Protocol Work?
+A **Blueprint** is a public Tangle service definition with named jobs and operator rules.
 
-The registry exposes two submission paths. The standard path requires an ECDSA signature over the heartbeat parameters:
+An **operator** runs a Blueprint service instance on machines it supplies or controls.
 
-```solidity
-// Standard path — requires ECDSA signature
-function submitHeartbeat(
-    uint64 serviceId,
-    uint64 blueprintId,
-    uint8 statusCode,
-    bytes calldata metrics,
-    bytes calldata signature
-) external;
+A **runtime** is the process and environment that executes a job.
+A **job router** maps a job type to its handler.
+
+An **x402 payment** is an HTTP (Hypertext Transfer Protocol) flow in which a service returns payment requirements and the client retries with payment authorization.
+A **quote lifetime** is the period in which that payment requirement may be used.
+
+An **attestation** is signed evidence about a protected runtime, such as a trusted execution environment (TEE) measurement.
+It can be another health or security signal, but a valid attestation does not prove that the process is available right now.
+
+An **agent profile** is the client’s policy for endpoint, token, budget, timeout, retry, and result checks.
+A **trace** is the timeline joining one request, payment, job, runtime attempt, and result.
+
+An **evaluation** is a check against an expected condition, such as “a sample known job returns the approved schema within 30 seconds.”
+It is stronger than a process ping and narrower than a claim that every future job will succeed.
+
+## Network, deployment, gateway, and Job health
+
+The same operator can be healthy in one layer and broken in another.
+
+| Layer | Signal | What it answers | Typical owner |
+| --- | --- | --- | --- |
+| Network | On-chain heartbeat | What status did the operator last publish? | Operator and network caller |
+| Deployment | Remote health monitor | Is the machine or deployment responding? | Operator |
+| Gateway | Quote registry and payment counters | Are paid requests being priced, verified, and consumed? | Gateway operator |
+| Job | Runtime trace and result evaluation | Did this specific job run and pass its checks? | Service developer and operator |
+
+An on-chain heartbeat is durable and externally inspectable.
+It is also slower and more expensive to update than a local process metric.
+
+A local health check can react in seconds.
+It can also be wrong if it checks only the process and not the chain, model, queue, storage, or result path.
+
+A quote registry can say that a quote is active.
+It cannot say that a GPU has capacity or that the answer will be correct.
+
+A job evaluation can show that one known request passed.
+It cannot replace liveness monitoring for the next request.
+
+## On-chain heartbeat behavior
+
+The public [Tangle `OperatorStatusRegistry`](https://github.com/tangle-network/tnt-core/blob/main/src/staking/OperatorStatusRegistry.sol) records heartbeats for an operator and service.
+A heartbeat includes the service and Blueprint identity, a status code, optional metrics, a timestamp, and a signature in the signed submission path.
+
+The current public defaults are:
+
+```text
+heartbeat interval:       5 minutes
+maximum missed heartbeats: 3
+    signed heartbeat max age:  5 minutes (replay bound)
 ```
 
-The signature is computed over `keccak256(abi.encodePacked(serviceId, blueprintId, statusCode, metrics))` using the Ethereum signed message prefix. One critical encoding detail: the Blueprint SDK must use big-endian (`to_be_bytes()`) not little-endian (`to_le_bytes()`) when constructing the hash input. The EVM operates big-endian natively; using LE produces a hash mismatch and a rejected heartbeat.
+Treat those as current contract defaults, not an immutable network promise.
+The contract allows service-specific heartbeat configuration within its allowed bounds.
 
-The status code is a raw `uint8`, but the registry maps it to five internal states:
+The registry distinguishes several concepts that are easy to confuse:
 
-| Code | Maps to | Behavior |
-|------|---------|----------|
-| 0 | `Healthy` | Normal operation |
-| 1–99 | `Degraded` | Online but degraded; clients can still reach you |
-| 200–255 | `Degraded` + `SlashingTriggered` event | Degraded state set; slashing oracle notified (1-hour cooldown per operator) |
+- `isHeartbeatCurrent` answers whether the latest heartbeat is recent enough.
+- `isOnline` reports whether the recorded status is considered usable by the registry’s online rule.
+- `checkOperatorStatus` lets an external caller evaluate missed time and update stored status.
 
-Codes in the 1–99 range mark you `Degraded` on-chain with no further consequences. Codes in the 200+ range do the same, but also emit a `SlashingTriggered` event that alerts the slashing oracle. Code 255 specifically signals that the operator is requesting exit because it cannot serve; it's treated identically to other 200+ codes mechanically, but the intent is documented for tooling that reads events.
+The third point matters.
+A view function can report stale state without changing it.
+An external keeper, operator, or authorized caller may need to call the status-checking function for the registry to record the transition.
+Do not describe the contract as if a background process automatically wakes up and marks every operator offline.
 
-A status code of 200 or above does not immediately slash you. The `SlashingTriggered` event is emitted (subject to a one-hour cooldown) and the oracle is notified. The actual `Slashed` state is only applied by `reportForSlashing()`, which is called by the slashing oracle after it has investigated the alert. Operators in a degraded state can still serve clients and continue submitting heartbeats. The oracle is a separate actor that decides whether the alert warrants a penalty.
+### Status codes need a policy
 
-## What Does "Offline" Mean On-Chain, and Who Triggers It?
+The registry stores a small status enum, while the heartbeat carries a numeric report code.
+Code `0` stores `Healthy`; a nonzero code below `100` stores `Degraded`; and codes `100` or higher also enter the contract’s critical-status handling.
+Codes `200` or higher can emit a `SlashingTriggered` event subject to the contract’s cooldown, but that event is not an executed slash.
+The current contract comments reserve `255` for an operator exit request, while the explicit `goOffline` function uses the `Exiting` status, so `255` is not a universal offline or exit code.
 
-This is where most operators get surprised. The offline transition is not automatic.
+The service should publish what its status codes mean.
+For example:
 
-The registry calculates missed beats on demand using this formula:
+| Example code range | Meaning to document | Suggested operator action |
+| ---: | --- | --- |
+| `0` | Healthy | Continue normal service |
+| `1–99` | Degraded but potentially usable | Investigate and reduce new load if needed |
+| `100–199` | Critical condition requiring policy review | Stop risky work and preserve evidence |
+| `200–254` | Protocol-violation alert candidate | Follow the service’s slashing process; do not treat the event as a slash |
+| `255` | Exit-request code mentioned in current contract comments | Check the service policy; do not confuse it with `goOffline` |
 
-```solidity
-uint256 elapsed = block.timestamp - state.lastHeartbeat;
-uint256 calculatedMissed = elapsed / config.interval;
-uint8 missedBeats = calculatedMissed > type(uint8).max
-    ? type(uint8).max
-    : uint8(calculatedMissed);
+The exact meaning is contract and service configuration, not a universal HTTP status code.
+Read the current registry before writing an alert that assumes “anything above zero means offline.”
 
-if (missedBeats >= config.maxMissed && state.status != StatusCode.Offline) {
-    state.status = StatusCode.Offline;
-    _onlineOperators[serviceId].remove(operator);
-    emit OperatorWentOffline(serviceId, operator, missedBeats);
-}
+## Metrics are evidence, not decoration
+
+The heartbeat path can carry custom metric key-value pairs.
+The current registry caps processing at 50 metric pairs and ignores payloads over 50,000 bytes; decoding and validation failures are caught so a malformed metric payload does not revert the heartbeat path.
+Those limits make a heartbeat suitable for small operational summaries, not a log transport.
+
+Useful metrics are compact and actionable:
+
+```text
+queue_depth=4
+gpu_utilization=71
+model_loaded=1
+last_success_age_seconds=18
+runtime_error_rate_bps=25
 ```
 
-But `checkOperatorStatus()` must be called explicitly by an external actor: a keeper bot, another contract, or the slashing oracle. The registry stores the `lastHeartbeat` timestamp and `config.interval`, but it does not run a scheduler. Until someone calls `checkOperatorStatus(serviceId, operatorAddress)`, the operator's on-chain status reflects the last submitted heartbeat, even if that was two hours ago.
+Do not put user prompts, model outputs, secrets, or high-cardinality request IDs in an on-chain heartbeat.
+Publish a digest or aggregate and keep detailed evidence in an access-controlled monitoring system.
 
-This is lazy evaluation: the data for detecting offline operators is always current (timestamps don't lie), but the status flag is only updated when someone asks. Operators watching their own `missedBeats` counter need to know they may be reading a stale view if no keeper has recently called the check function.
+The metric value does not become true merely because it was signed.
+The operator is attesting to what it measured, while the service or network decides whether that metric matters for eligibility or slashing.
 
-To read current state:
+## Remote deployment health
 
-```solidity
-// Full operator state: lastHeartbeat, consecutiveBeats, missedBeats, status, lastMetricsHash
-OperatorState memory state = registry.getOperatorState(serviceId, operatorAddress);
+The public [Blueprint remote-provider health monitor](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/monitoring/health.rs) operates on a different clock.
+Its current default check interval is 60 seconds, and its default recovery threshold is three consecutive unhealthy results with automatic recovery enabled.
 
-// Returns true for Healthy OR Degraded — degraded is still "online"
-bool online = registry.isOnline(serviceId, operatorAddress);
+That monitor can report deployment-level states such as healthy, degraded, unhealthy, or unknown.
+It can catch a dead process or unreachable instance before an on-chain heartbeat has aged out.
 
-// Returns true only if a heartbeat was submitted in the current interval window
-bool current = registry.isHeartbeatCurrent(serviceId, operatorAddress);
+The monitor should check more than a basic TCP (Transmission Control Protocol) connection.
+Use a layered probe:
+
+1. Process responds to a local liveness check.
+2. Runner can reach the configured chain or remote procedure call (RPC) endpoint.
+3. Model or worker dependencies are loaded.
+4. Queue accepts and persists a test job.
+5. A known safe job returns the expected result shape.
+6. Payment discovery and status reconciliation work without executing paid work.
+
+The fifth check is an evaluation.
+It should use synthetic input and a bounded output, not a customer’s private data.
+
+## Quote lifetimes are a separate clock
+
+An x402 quote says what payment terms the gateway will accept for a limited period.
+The public Tangle gateway exposes a configurable quote time-to-live (TTL), and the quote registry tracks creation, expiration, and consumption.
+The [quote registry source](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) also supports counting active entries and garbage collection.
+
+The quote clock protects price and capacity.
+It does not tell you whether the operator is healthy.
+The current quote registry is process-local memory, so it is not a substitute for durable records of settled payments and admitted jobs.
+
+A five-minute example works like this:
+
+```text
+12:00:00  quote created, expires at 12:05:00
+12:02:00  client signs and submits payment
+12:02:01  gateway verifies and settles
+12:02:02  job admitted
+12:05:01  same quote must be rejected if unused
 ```
 
-The `Slashed` state is terminal. A slashed operator cannot submit heartbeats, cannot call `goOnline()`, and cannot call `goOffline()`. All three functions check for `Slashed` first and revert if it's set. Once slashed, the only path forward is a governance process outside the scope of the registry.
+If the runtime fails at 12:02:03, the quote’s expiration does not resolve the already-settled job.
+The payment reference and job record must survive independently.
 
-One more subtle point: if you voluntarily call `goOffline()` and then `goOnline()` later, you come back as `Degraded`, not `Healthy`. The registry treats returning operators with suspicion until they prove liveness with a successful heartbeat submission, at which point they transition to `Healthy`.
+If the client has not paid by 12:05:00, rejecting the quote is safer than honoring an old price.
+The client can request a fresh quote.
 
-## How Does Off-Chain Health Monitoring Work?
+Do not describe a quote TTL as a protocol-wide maximum unless the current gateway and network documentation says so.
+The gateway’s configuration, token, network, price source, and service policy all matter.
 
-The on-chain heartbeat system tracks whether your process is sending messages. It does not track whether your HTTP endpoint is responding or whether your container is in practice executing jobs. That's the job of the [`HealthMonitor`](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/monitoring/health.rs) in blueprint-remote-providers.
+## A useful operator dashboard
 
-The source reports that the HealthMonitor runs a polling loop every reported 60 seconds against active deployments. It tracks consecutive failures per deployment internally and triggers auto-recovery when a threshold is reached:
+Map each dashboard panel to an alert, owner, and recovery action.
 
-```rust
-let monitor = HealthMonitor::new(provisioner, tracker)
-    .with_config(
-        Duration::from_secs(60),  // check every 60s
-        3,                         // recover after 3 consecutive failures
-        true,                      // enable auto-recover
-    );
+| Panel | Alert condition | First question |
+| --- | --- | --- |
+| Heartbeat freshness | Time since last heartbeat approaches interval | Can the signer reach the chain? |
+| Missed-heartbeat count | Count rises or status degrades | Is the process, RPC, wallet, or gas path broken? |
+| Deployment health | Three consecutive checks fail under current config | Is the remote instance reachable and ready? |
+| Quote expiry | Expired quote rate rises | Is the client slow, gateway overloaded, or price stale? |
+| Payment state | Unknown settlement count is nonzero | Which payments need reconciliation before work? |
+| Queue | Depth or age exceeds policy | Is capacity exhausted or a worker stuck? |
+| Job evaluation | Known-job failures rise | Did a release or model change break output? |
+| Recovery | Jobs settled without final outcome | What does the client see and who owns repair? |
 
-Arc::new(monitor).start_monitoring().await;
+The following is illustrative alert logic.
+Metric names are application-defined and should match the instrumentation you publish.
+
+```yaml
+alerts:
+  - name: HeartbeatNearExpiry
+    when: heartbeat_age_seconds > heartbeat_interval_seconds * 0.8
+    action: page_operator
+  - name: PaymentStateUnknown
+    when: payment_settlement_unknown_total > 0
+    action: stop_execution_and_reconcile
+  - name: PaidJobWithoutOutcome
+    when: settled_jobs_without_terminal_result > 0
+    action: page_operator_and_support
+  - name: QuoteExpirySpike
+    when: expired_quotes / issued_quotes > 0.05 for 10m
+    action: inspect_client_latency_and_gateway_capacity
 ```
 
-Health status maps from instance state:
+The values are examples.
+Calibrate them against the service’s real job duration and network latency rather than copying a threshold because it looks tidy.
 
-```rust
-InstanceStatus::Running    → HealthStatus::Healthy
-InstanceStatus::Starting   → HealthStatus::Degraded
-InstanceStatus::Stopping | InstanceStatus::Stopped → HealthStatus::Unhealthy
-InstanceStatus::Terminated → HealthStatus::Unhealthy
-InstanceStatus::Unknown    → HealthStatus::Unknown
-```
+## The incident timeline
 
-When a deployment reaches a reported threshold of three consecutive `Unhealthy` results, the monitor terminates the old instance, waits a reported 10 seconds, provisions a replacement at the same region and resource spec, and updates the deployment tracker with the new instance ID. The failure counter resets when a `Healthy` check comes through.
+Return to the opening incident.
 
-For application-level checks beyond instance state, `ApplicationHealthChecker` handles HTTP and TCP probes:
+At 12:00, the operator submits a healthy heartbeat and the runtime reports a loaded model.
+At 12:00:20, the gateway issues a quote with a five-minute lifetime.
+At 12:02, the client pays and the gateway admits one job.
+At 12:04, the GPU worker crashes.
+At 12:05, the quote expires, but that only affects unused quotes.
+At 12:10, the heartbeat is older than the configured interval.
+At 12:15, an external status check records enough misses to mark the operator offline under the default policy.
 
-```rust
-let checker = ApplicationHealthChecker::new();
+The recovery order should be:
 
-// HTTP: returns Healthy on 2xx, Degraded on 5xx, Unhealthy otherwise
-let status = checker.check_http("http://my-deployment:8080/health").await;
+1. Stop issuing new paid jobs from the unhealthy instance.
+2. Reconcile settled payment references and identify jobs without a terminal result.
+3. Preserve the trace, artifact digest, logs, and last heartbeat evidence.
+4. Restore the worker or move the durable jobs to an eligible replacement according to service policy.
+5. Run a synthetic evaluation and verify the chain path.
+6. Submit a healthy heartbeat and confirm the recorded status.
+7. Re-enable paid ingress only after a known job succeeds.
 
-// TCP: returns Healthy if connection succeeds
-let status = checker.check_tcp("my-deployment", 8080).await;
-```
+Do not restart the process and call the incident closed before checking the paid-job gap.
+The user-visible harm is a settled payment without a result, rather than the pod outage by itself.
 
-One implementation detail worth knowing: `HealthCheckResult` contains a `consecutive_failures` field, but in the current implementation it is always populated as `0`. The actual failure count lives in a local `HashMap<String, u32>` inside the `start_monitoring` loop and is never written back into the struct. If you're building alerting that reads `HealthCheckResult.consecutive_failures`, you'll always see zero. Track failure streaks in your own telemetry layer, or instrument the `start_monitoring` loop directly.
+## What monitoring does not prove
 
-### What Is the Difference Between On-Chain and Off-Chain Health?
+**A current heartbeat does not prove job correctness.**
+It is a recent status statement.
 
-These two systems serve different purposes and run on different clocks. The on-chain registry runs on a 5-minute heartbeat cycle and enforces SLA commitments with financial consequences. The off-chain monitor runs on a 60-second cycle and handles operational recovery without touching on-chain state.
+**An online status does not prove capacity.**
+An operator can be online while its GPU queue is full.
 
-An important implication: auto-recovering a crashed deployment does not reset your missed-beat counter or update your on-chain status. The new instance needs to resume submitting heartbeats. If the crash happened at minute 0 and recovery finishes at minute 12, you've potentially missed two heartbeat windows, and the on-chain state doesn't know the deployment recovered. You need both layers working for full observability.
+**A healthy remote probe does not prove on-chain liveness.**
+The process can be reachable while its signer, RPC, gas, or contract path is broken.
 
-## How Does the Quote Registry Signal Service Health?
+**An active quote does not reserve a worker forever.**
+The service still needs queue limits, admission policy, and expiration handling.
 
-The [`QuoteRegistry`](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) is an in-memory DashMap that holds pricing promises made to clients. When a client requests a quote, the operator inserts a `QuoteEntry` with a price, a TTL, and an expiry timestamp. When the client submits payment, `consume()` marks it as consumed. When neither happens before the TTL expires, the quote directly returns `None` on the next lookup.
+**A slashing-related event is not an automatic slash.**
+The configured authority, evidence, and dispute process determine what happens next.
 
-```rust
-pub struct QuoteEntry {
-    pub service_id: u64,
-    pub job_index: u32,
-    pub price_wei: U256,
-    pub created_at: Instant,
-    pub expires_at: Instant,
-    pub consumed: bool,
-}
-```
+**A passing synthetic evaluation does not prove every customer job will pass.**
+It is a controlled sample that catches some release and dependency failures.
 
-The TTL is injected at construction, not hardcoded. Test fixtures use 60-second and 300-second values, but production operators choose their own TTL based on their job execution time expectations.
+## Checks required before reopening paid traffic
 
-```rust
-let registry = QuoteRegistry::new(Duration::from_secs(300)); // 5-min TTL
+Monitor heartbeats for externally visible liveness, remote checks for deployment health, quote state for payment freshness, and job traces for actual outcomes.
+Keep their clocks and meanings separate.
 
-// Insert a dynamic quote, get back a digest for the client
-let digest = registry.insert_dynamic(service_id, job_index, price_wei);
+The operator is ready for paid traffic only when the service can answer all four questions:
 
-// Client submits payment — mark consumed (prevents double-spend)
-let consumed = registry.consume(&digest);
+- Is the operator’s recorded status current?
+- Can the runtime accept and execute a job now?
+- Will a new payment quote expire safely if the client is slow?
+- Can the team recover a settled job that has not returned a result?
 
-// How many live quotes exist right now
-let count = registry.active_count();
+The service should retain status, execution readiness, quote expiry, and Job outcome records for each admission and recovery decision.
 
-// Garbage collect expired and consumed entries (manual call)
-registry.gc();
-```
+The [paid Blueprint job guide](/blog/blueprint-sdk-x402-payments-runnable-jobs) explains the payment-to-job transition.
+The [deployment architecture guide](/blog/blueprint-deployment-architecture-remote-providers) explains how the runner and remote deployment boundary affect recovery.
 
-The `active_count()` method counts quotes that are neither expired nor consumed. It's an O(n) scan over the full map, not a cached counter, so call it on a monitoring interval rather than on every request path.
 
-### Why Is active_count() a Useful Health Signal?
+## How often should a Tangle operator send heartbeats?
 
-In a healthy system under consistent load, `active_count()` stays roughly proportional to your incoming quote rate times your TTL. If the count drops toward zero and your quote insertion rate hasn't changed, clients are failing to complete payments before the TTL expires. That's a signal worth investigating: it could mean your TTL is too short for the network conditions clients are on, or it could mean clients are hitting errors during the payment step and retrying with new quotes instead of reusing valid ones.
+The current registry default is five minutes, with three missed heartbeats as the default maximum, but service configuration can change the cadence.
+Read the active service configuration and alert before the contract threshold, not after it.
 
-The consumed-versus-expired distinction matters operationally. A consumed quote is a completed transaction. An expired quote is a missed one. If you're seeing high `active_count()` but low throughput, quotes are accumulating faster than they're being served, which can indicate a job execution bottleneck.
+## Does `isHeartbeatCurrent` mark an operator offline?
 
-The registry is in-memory and not persisted. A process restart clears all outstanding quotes. Clients holding valid quote digests will get `None` on lookup after a restart, and will need to request new quotes. Plan for this in your restart procedures.
+No.
+It reports whether the latest heartbeat is recent.
+An external status-check call may be needed to update stored status after enough time has passed.
 
-## What Failure Signals Should Operators Watch?
+## Is the x402 quote lifetime the same as heartbeat freshness?
 
-The monitoring surface across all three systems gives you five key signals:
+No.
+A heartbeat describes operator status.
+A quote lifetime describes how long a payment requirement may be used.
 
-**1. missedBeats approaching maxMissed (default: 3)**
+## What should happen to paid jobs when the operator goes offline?
 
-Query `getOperatorState()` periodically and alert when `missedBeats >= 2`. At that point you have one interval window to resume heartbeats before the on-chain offline transition. Don't wait for the transition to happen, because fixing the deployment does not automatically reset the counter, and a keeper may trigger `checkOperatorStatus()` against you at any time.
+Stop admitting new work, reconcile already-settled payments, and follow the service’s retry, replacement, refund, or dispute policy for jobs without a result.
 
-**2. Consecutive failures in the HealthMonitor**
+## Do heartbeat metrics automatically trigger slashing?
 
-The HealthMonitor tracks consecutive failures internally in a `HashMap<String, u32>` keyed by deployment ID. It auto-recovers at 3. Since that count isn't exposed through `HealthCheckResult`, instrument the recovery path directly: log or emit a metric when `attempt_recovery()` is called so you know the automated recovery loop is running. Repeated recovery attempts in the same deployment are a sign of a deeper problem that restart-and-retry won't fix.
+A metric outside an expected range alone does not establish a slashable violation.
+The service and contract configuration must define the evidence and enforcement path.
 
-**3. active_count() trending toward zero**
+## Can I use a health endpoint as proof of Tangle availability?
 
-If your quote insertion rate is healthy but `active_count()` is dropping, clients aren't completing payments. If both are dropping, demand has fallen or your service has become unreachable to clients before they request quotes.
+No.
+Combine the endpoint with a chain/RPC check, heartbeat observation, a bounded known-job evaluation, and payment-state reconciliation.
 
-**4. SlashingTriggered events**
+For the final pre-release payment and execution checks, continue with the [x402 Blueprint production deployment checklist](/blog/x402-blueprint-production-deployment-checklist).
 
-These are emitted on-chain whenever a heartbeat carries a status code of 200 or above. The `_checkSlashingCondition` function gates on `if (statusCode >= 200)` before emitting the event. Subscribe to `OperatorStatusRegistry` logs for your service ID. A `SlashingTriggered` event doesn't mean you're slashed; it means the slashing oracle has been notified and is evaluating the alert. You have time to recover and submit clean heartbeats, but you should not ignore these events.
+## Public sources
 
-**5. Recovery strategy backoff state**
-
-The source reports a `RecoveryStrategy` default of 3 retries with exponential backoff starting at 2 seconds and capping at 30 seconds. If your deployment is cycling through recovery attempts, the 2s + 4s + 8s gap means roughly 14 seconds of unavailability per cycle. Repeated cycles in the same deployment point to a problem that restart-and-retry won't resolve.
-
-## What Metrics Should Operators Instrument?
-
-The [`observability.rs`](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/observability.rs) source provides a generic `MetricsCollector` that records arbitrary `f64` values by key. It does not ship named counters for gateway-level events. Operators who want to track metrics like rejected replays or enqueue failures need to instrument those at the gateway boundary and push them into the collector, or expose them via a separate metrics interface.
-
-What the sources do confirm: the registry calls `metricsRecorder.recordHeartbeat(operator, serviceId, timestamp)` on each successful heartbeat submission, wrapped in a try/catch so a failing recorder doesn't break heartbeats. If your service has a `metricsRecorder` configured, heartbeat data flows into it automatically and can be used downstream for reward distribution.
-
-The custom metrics payload in each heartbeat (up to 50 key-value pairs, 50KB max) is your channel for pushing operator-defined telemetry on-chain. It's processed only if `config.customMetrics` is enabled for your service. Malformed payloads are dropped, not rejected, so bad encoding fails silently at the metrics level but doesn't break the heartbeat itself.
-
-## What Happens When You Come Back Online?
-
-Recovery order matters. After a crash and restart:
-
-1. Resume heartbeat submissions immediately. Every missed window counts toward the offline threshold.
-2. Let the HealthMonitor confirm the new instance is `Running` before treating the deployment as healthy.
-3. Call `goOnline()` if you had previously called `goOffline()`. You'll return as `Degraded`. Submit a clean heartbeat to transition to `Healthy`.
-4. Clear and reinitialize the QuoteRegistry. Outstanding client digests from before the restart are no longer valid. Clients will need to request new quotes.
-
-If you were marked `Offline` by a keeper while you were down, resuming heartbeats will transition you back to `Healthy` on the next successful submission, assuming no slashing alert was raised.
-
-If a `SlashingTriggered` event was emitted while you were down, monitor for whether the oracle calls `reportForSlashing()`. If it does, you're in a terminal state and heartbeat recovery is no longer possible.
-
----
-
-## FAQ
-
-**What happens if I miss the heartbeat interval by a few seconds due to block time variance?**
-
-The registry calculates `missedBeats` as `elapsed / config.interval` using integer division. A heartbeat submitted at interval + 30 seconds counts as 1 missed beat, not 0. Submit heartbeats slightly before the interval deadline to absorb block time variance. Targeting a reported 90% of the interval (4.5 minutes for a 5-minute window) is a reasonable buffer.
-
-**Does auto-recovery in the HealthMonitor affect my on-chain status?**
-
-No. Off-chain recovery terminates the old instance and provisions a new one without touching the registry. The new instance must resume heartbeat submissions. If the recovery takes longer than one heartbeat interval, your on-chain missed-beat counter increments.
-
-**Can I submit a heartbeat with a status code between 100 and 199 without triggering a slashing review?**
-
-Yes. Codes in the 1–99 and 100–199 ranges both map to `Degraded` on-chain. The `SlashingTriggered` event is only emitted for codes of 200 or above, where `_checkSlashingCondition` contains the guard `if (statusCode >= 200)`. Use codes in the 1–199 range for degraded-but-not-critical conditions when you want to signal impaired health without notifying the slashing oracle.
-
-**Why does goOnline() return Degraded instead of Healthy?**
-
-The registry treats returning operators as unverified until they demonstrate active liveness. `Degraded` signals "present but not fully trusted." A successful heartbeat submission transitions you to `Healthy`. This prevents operators from gaming their online status by calling `goOnline()` without in practice being ready to serve.
-
-**The QuoteRegistry is in-memory. What happens to outstanding quotes after a deploy?**
-
-They're gone. Clients holding quote digests from before the restart will get `None` on lookup and need to request new quotes. Design your client SDK or proxy to handle quote-not-found gracefully by re-requesting rather than failing the payment flow.
-
----
-
-**Build with Tangle** | [Website](https://tangle.tools) | [GitHub](https://github.com/tangle-network) | [Discord](https://discord.gg/tangle) | [Telegram](https://t.me/tanglenet) | [X/Twitter](https://x.com/taborgroup)
+The public [`OperatorStatusRegistry`](https://github.com/tangle-network/tnt-core/blob/main/src/staking/OperatorStatusRegistry.sol) defines current heartbeat submission and status behavior.
+The [Blueprint remote-provider health monitor](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/src/monitoring/health.rs) documents deployment-level checks.
+The [Tangle x402 gateway](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) and [quote registry](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) document quote and payment integration points.
+The [Blueprint QoS guide](https://docs.tangle.tools/developers/blueprint-qos) explains custom metrics, status signals, and why metric observations do not automatically execute a slash.
+The [Tangle operator incentives guide](https://docs.tangle.tools/network/incentives-operators) explains why service participation and availability affect operator economics.

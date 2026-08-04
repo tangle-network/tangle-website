@@ -2,7 +2,7 @@
 title: 'LLM Sandbox Environment For Agent Runs'
 slug: llm-sandbox-environment-agent-runtime
 summary: >-
-  A real LLM sandbox environment isolates tools, records side effects, survives reconnects, and gives reviewers enough evidence to approve or reject an agent run.
+  An LLM sandbox environment isolates tools, records side effects, survives reconnects, and gives reviewers enough evidence to approve or reject an agent run.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,97 +16,370 @@ heroImage: /images/covers/editorial/agent-runtime-v2.webp
 imageAlt: 'An editorial still life about the software that runs an agent'
 ---
 
-An LLM sandbox environment is where a model is allowed to act. That permission changes the risk profile. A chat response can be wrong and still harmless. A tool-using model can delete files, leak tokens, spam an API, or ship a broken patch. The sandbox has to separate "the model proposed a plan" from "the model ran code and changed state."
+An LLM is a large language model that produces text or structured requests from an input.
+That output is harmless while it stays in a chat box.
+The risk changes when the model can run a shell command, install a package, edit a repository, or send a request to an outside service.
 
-Tangle Sandbox SDK is built for the second case: agents that execute commands, touch files, stream progress, and need reviewable traces.
+Consider a dependency update.
+The agent edits the manifest, runs the tests, sees a failure, changes an import, and runs the tests again.
+The product needs the second attempt to see the first attempt's files.
+It also needs to show a reviewer the failed test rather than only the agent's final claim that the update worked.
 
-## The Boundary
+An **LLM sandbox environment** is the isolated machine and policy boundary where that work runs.
+An **agent runtime** is the software that starts the agent, controls its tools, manages its session, and records the result.
+A **side effect** is a change outside the model's text, such as a file edit, process, network request, or database write.
+A **trace** is the record of the inputs, actions, tool events, outputs, and failures from the run.
 
-The sandbox boundary should answer five questions before the first tool call runs.
+Tangle Sandbox provides a public [software development kit (SDK)](https://docs.tangle.tools/sandbox/quickstart) for creating a machine, running commands, dispatching an agent prompt, reconnecting to a durable session, and deleting the machine.
+The SDK is the starting boundary.
+The application still has to decide which tools, files, credentials, network routes, and acceptance checks belong inside it.
 
-| Question | Required answer |
+> A sandbox limits where an agent can act and preserves what happened.
+> It does not decide whether the action was correct.
+
+## Put the side effect behind a boundary
+
+Before the first tool call, answer five questions.
+
+| Question | Example answer for a dependency update |
 | --- | --- |
-| what can run? | images, packages, tools, and shell access are explicit |
-| what can leave? | network, credentials, files, and artifacts are scoped |
-| what is recorded? | prompts, commands, outputs, files, and errors are captured |
-| what survives? | sessions can resume and snapshots can preserve state |
-| who reviews? | the output is packaged for a human or automated gate |
+| What can run? | Node commands from an approved image |
+| What can be changed? | Files under the disposable workspace |
+| What can leave? | Package registry traffic, without the repository token |
+| What is recorded? | Commands, exit codes, output, file changes, and session events |
+| What survives cleanup? | The review packet and optional snapshot, not the temporary machine |
 
-Transport security such as [TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446) protects connections. Runtime isolation such as [Firecracker](https://firecracker-microvm.github.io/) or container standards such as the [OCI runtime spec](https://github.com/opencontainers/runtime-spec) protect execution boundaries. The agent platform still needs to decide what the model may do.
+The answers should be enforced by the service that starts and controls the environment.
+A prompt can tell the model to stay inside a directory.
+The runtime must make another directory unavailable or reject a write outside the policy.
 
-## Minimal Run Pattern
+There are two boundaries to keep separate.
 
-An LLM sandbox environment should be easy to smoke-test:
+The first is machine isolation.
+[Firecracker](https://firecracker-microvm.github.io/) documents microVM isolation.
+The [Open Container Initiative runtime specification](https://github.com/opencontainers/runtime-spec) describes a standard container runtime interface.
 
-Use the public Sandbox documentation to create an isolated workspace, run one harmless command, inspect the result, and remove the workspace. The command is incidental; the recorded boundary and output are what matter.
+The second is application policy.
+It decides which image, command, network destination, credential, lifetime, and artifact rules apply to this run.
+Machine isolation without policy can still give an agent a broad network and a broadly scoped credential.
+Policy without machine isolation can still leave the host exposed to a bad command.
 
-The important part is not the command itself. It is that the command becomes evidence with a result, timestamp, and environment boundary.
+## Create, act, reconnect, delete
 
-## Why Session Streams Matter
+The current Tangle quickstart installs the public package and passes the API key explicitly to the client.
 
-LLM tasks are often longer than a request-response cycle. The browser closes. The model retries. The shell command keeps running. A useful sandbox keeps session state independent from the UI tab.
+~~~bash
+npm install @tangle-network/sandbox
+export TANGLE_API_KEY=sk-tan-...
+~~~
 
-| Event | What should happen |
+The following example uses the current public client methods for a short command run:
+
+~~~typescript
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
+})
+
+const box = await client.create({
+  name: 'dependency-review',
+  image: 'node:20',
+  backend: { type: 'opencode' },
+  resources: {
+    cpuCores: 2,
+    memoryMB: 4096,
+    diskGB: 20,
+  },
+  maxLifetimeSeconds: 1800,
+  idleTimeoutSeconds: 900,
+})
+
+try {
+  const before = await box.exec('node --version')
+  const tests = await box.exec('npm test', {
+    cwd: '/workspace',
+    timeoutMs: 60000,
+  })
+
+  console.log({
+    node: before.stdout,
+    testExitCode: tests.exitCode,
+    testOutput: tests.stdout,
+    testError: tests.stderr,
+  })
+} finally {
+  await box.delete()
+}
+~~~
+
+The Sandbox client and methods in this example are documented in the public [quickstart](https://docs.tangle.tools/sandbox/quickstart) and [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference).
+The example is a server-side call.
+Do not place the API key in browser JavaScript.
+
+The first command and the test command share the same machine.
+If the test fails, the process output and the files it changed can remain available for the next action before cleanup.
+The cleanup block makes deletion happen when the command throws as well as when it succeeds.
+
+That lifecycle is more useful than a generic success string.
+It gives the application an exit code, output, and a point at which it can choose to retry, ask for review, or stop.
+
+## A stream needs a durable identity
+
+A request-response call is enough for a short command.
+An agent task can outlive the client that started it.
+The browser can reload.
+The API worker can deploy.
+The laptop can lose its network.
+
+The [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) separates an ordinary prompt stream from a durable session.
+Dispatch the prompt with a server-derived session identifier, then reconnect to that session from another process.
+
+~~~typescript
+const { sessionId, alreadyExisted } = await box.dispatchPrompt(
+  'Inspect the failing test and explain the smallest safe fix.',
+  { sessionId: serverDerivedSessionId },
+)
+
+console.log({ sessionId, alreadyExisted })
+
+for await (const event of box.session(sessionId).events()) {
+  console.log(event)
+}
+
+const result = await box.session(sessionId).result()
+const status = await box.session(sessionId).status()
+console.log({ result, status })
+~~~
+
+The same session identifier is idempotent in the current SDK.
+If the caller repeats the dispatch, the service returns the in-flight or completed session instead of executing the prompt twice.
+That behavior matters for retries triggered by webhooks, payments, or browser reconnects.
+
+Idempotency does not mean the task is correct.
+It means the product can retry the request without silently duplicating the side effect.
+The trace must still say whether the command ran, whether the model changed files, and whether the final check passed.
+
+## Classify side effects before allowing tools
+
+Not every tool deserves the same approval path.
+Reading a file, changing a disposable workspace, publishing a package, and deleting a customer record are all side effects, but their recovery costs are different.
+
+| Side-effect class | Example | Default treatment |
+| --- | --- | --- |
+| Read-only | Inspect a file or run a version command | Allow inside the workspace and record the request |
+| Reversible workspace write | Edit a source file before review | Allow in an isolated workspace and retain the diff |
+| External reversible action | Open a draft pull request or create a staging object | Require a scoped credential and an explicit target |
+| Durable external action | Send an email or publish a package | Require a review or approval event before execution |
+| Irreversible action | Delete a record or move funds | Keep outside the default agent tool set or require a separate human-controlled operation |
+
+The classification is about the effect, not the command name.
+`npm install` may look like a local command, but a lifecycle script can execute code and a package download can leave the workspace.
+`curl` may read public metadata or send a credential to an external service.
+The runtime should inspect the destination, credential, and resulting artifact rather than trust a friendly tool label.
+
+This policy also affects the trace.
+A rejected durable action should be recorded as rejected, not omitted.
+A workspace edit should include the changed file or diff reference.
+An external request should include the target identity without leaking the credential used to authorize it.
+The reviewer needs to know whether the agent proposed an action, attempted it, or completed it.
+
+Start by listing the side effects the product truly needs.
+For every tool, name the resource it can touch, the credential it receives, the maximum lifetime of that authority, and the evidence produced when it runs.
+If a tool cannot answer those questions, it is not ready for an autonomous sandbox run.
+
+## Capture the run at the point of action
+
+A useful trace has enough detail to separate a proposal from an action.
+
+| Event | What it establishes |
 | --- | --- |
-| user refreshes | reconnect to the same session stream |
-| command hangs | timeout and record the partial output |
-| model edits files | diff stays tied to the session |
-| reviewer opens later | trace and final state are still available |
+| Prompt received | What task the agent was asked to perform |
+| Command requested | Which action the agent attempted |
+| Command result | Exit code, output, error, and timeout state |
+| File change | Which artifact changed and when |
+| Session reconnect | Which client resumed the same run |
+| Evaluation result | Whether a declared check passed |
+| Review decision | Whether a person or product accepted the result |
 
-That is why [AI Dev Container For Production Agents](/blog/ai-dev-container-production-agent-runtime) and [Secure Container For AI Agents](/blog/trusted-execution-on-tangle) are runtime concerns, not infrastructure alone.
+The record should not claim more than its source provides.
+A model message saying “tests passed” is not a test result.
+A command request is not a command completion.
+A file diff is not proof that the application works.
 
-## Safe Defaults
+An **evaluation** is a structured assessment against a criterion.
+For the dependency update, the criterion might be that the test command exits zero and the lockfile contains the intended version.
+A **baseline** is the current implementation or result used for comparison.
+A **candidate** is the proposed change being tested.
+Those terms become important when many sandbox runs compare prompts, models, tools, or code versions.
 
-Start with narrow tools. Add capability only when the product needs it.
+The [Tangle AI documentation](https://docs.tangle.tools/ai) describes Intelligence as the product that receives run traces and supports evaluation of agent behavior.
+The sandbox records what ran.
+The evaluator decides what the record means for the task.
 
-| Capability | Default stance |
+## Default to narrow authority
+
+Start with the smallest environment that can complete the task.
+
+| Capability | Starting policy |
 | --- | --- |
-| shell | allowed, logged, time-bounded |
-| filesystem | isolated per session |
-| network | explicit and observable |
-| credentials | short-lived and scoped |
-| long tasks | streamed and resumable |
-| cleanup | automatic by lifecycle policy |
+| Shell | Allow only the commands the workflow needs and enforce a timeout |
+| Filesystem | Give the run a separate workspace and exclude host directories |
+| Network | Allow required package or service destinations explicitly |
+| Credentials | Use short-lived, scoped secrets and keep them out of artifacts |
+| Packages | Pin or inspect dependencies before installation |
+| Long tasks | Stream events and store them under a stable session |
+| Cleanup | Delete the machine unless a reviewed snapshot or artifact is required |
 
-The platform should fail closed: no silent secret sharing, no invisible shell commands, no forgotten sandboxes.
+The policy should fail closed.
+If the service cannot determine whether a command is allowed, stop and ask for a policy decision.
+If a credential cannot be scoped, do not pass it to the agent.
+If a task loses its session identity, do not start a second copy to “see whether it works.”
 
-## Rollout Sequence
+These defaults do not prevent every attack.
+An allowed package registry can serve a malicious dependency.
+An allowed API token can still grant too much access.
+A model can use an allowed command for an unintended purpose.
+The policy reduces blast radius and makes the action inspectable.
 
-Treat sandbox rollout like production infrastructure.
+## Recovery is part of the product
 
-| Phase | Gate |
+A good sandbox workflow preserves the failed step rather than resetting it away.
+
+Suppose the dependency update produces this sequence:
+
+~~~text
+1. npm install -> package manifest changed
+2. npm test -> exit code 1, one import failed
+3. agent edits the import
+4. npm test -> exit code 0
+5. reviewer inspects diff and test output
+~~~
+
+The second test result is more useful because the first failure remains attached to the same session and workspace.
+The reviewer can see why the edit happened.
+If the agent starts a fresh machine at step three, the product loses evidence about the failed hypothesis.
+
+Snapshots can help when a task needs to resume from a known filesystem state.
+The current SDK reference documents restoring a sandbox from a snapshot and stopping or resuming a machine.
+Use those features deliberately.
+Do not assume that deleting a sandbox preserves its files.
+Copy the diff, logs, and review packet to durable storage before cleanup.
+
+## Model retries are not operational retries
+
+The same prompt can be safe to dispatch twice when the session identifier makes the dispatch idempotent.
+The same command can still be unsafe to run twice.
+Installing a package twice may be harmless in one project and invoke a different lifecycle script in another.
+Sending an email, creating a payment, or applying a migration can duplicate a real-world effect even when the model says it is retrying.
+
+The runtime should classify retries at the action boundary:
+
+| Retry target | Check before repeating |
 | --- | --- |
-| local smoke | create, exec, stream, delete |
-| fixture repo | agent edits a disposable project |
-| internal repo | scoped token, tests, and review packet |
-| customer workflow | policy, monitoring, billing, and support path |
+| Session dispatch | Does the server already know this session identifier? |
+| Read-only command | Is the workspace and target still the expected one? |
+| File edit | Does the current file match the base used for the proposed patch? |
+| Test command | Did the previous process finish, or is it still running? |
+| External write | Does the service expose an idempotency key or a lookup by request identity? |
+| Cleanup | Is the machine already deleted, or does the deletion need another attempt? |
 
-Each phase should prove that the previous artifacts are still available. If the UI can reconnect but the trace is gone, the runtime is not ready. If the agent can edit files but the reviewer cannot inspect the diff and commands, the system is not ready for customer work.
+This is why a reconnect flow should inspect state before creating a new worker.
+The product may have lost the response, not the work.
+Starting a second agent to recover a missing response can create two competing edits or two external requests.
 
-Keep the first customer workflow boring: one repo, one task type, one approval path, and one cleanup rule. Broader tool access can come after the evidence loop holds under real use.
+When an operation cannot be made idempotent, make the retry a review decision.
+Show the last known request, target, and result state to a person or a policy service.
+Unknown is safer than a second side effect whose first outcome was merely not observed.
 
-## What This Does Not Prove
+## When a sandbox becomes a service
 
-A sandbox does not make LLM output correct. It makes side effects bounded and visible. You still need tests, policy checks, code review, and product-specific acceptance criteria.
+An LLM sandbox can be a product boundary by itself.
+It can also sit inside a service offered to other applications.
+Tangle uses several terms for that larger path.
 
-## Decision Rule
+A **Blueprint** is a reusable service template with a job interface and execution requirements.
+A **service instance** is one live deployment of that template.
+An **operator** is the compute provider that runs a service instance.
+The [Tangle core concepts](https://docs.tangle.tools/vision/core-concepts) define those terms.
 
-Use a managed LLM sandbox environment when the model can run commands, use credentials, or modify files. Use plain chat when the model is only drafting text.
+A **router** is the model-access layer that selects or forwards an inference request.
+It can provide one request shape over several providers.
+It does not make a tool call safe or make a sandbox policy complete.
 
-## FAQ
+**x402** is an HTTP payment protocol for machine-to-machine requests.
+It can require payment before a service creates a sandbox or starts a job.
+Settlement proves the payment step, not the task result.
+The [x402 project](https://github.com/coinbase/x402) documents that payment boundary.
 
-### What is an LLM sandbox environment?
+**Attestation** is cryptographic evidence about a confidential execution environment.
+It can help a caller check that code ran inside an expected protected machine or image.
+It does not prove that the model's edit was correct.
+Tangle's [runtime documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox/runtime-and-harnesses) describes attestation as a prerequisite for confidential runtime activation.
 
-It is an isolated runtime where an LLM-powered agent can execute tools, run commands, edit files, and preserve the evidence from those actions.
+The terms describe different claims:
 
-### Why not run the agent directly on my server?
+| Claim | Evidence that can support it |
+| --- | --- |
+| The command ran in an isolated workspace | Sandbox lifecycle and runtime record |
+| The service was offered through a reusable interface | Blueprint definition and service instance |
+| A compute provider ran the instance | Operator record |
+| The protected machine matched an expected identity | Attestation evidence |
+| The HTTP request was paid | x402 settlement |
+| The result was correct | Task-specific tests, evaluation, and review |
 
-Direct execution mixes model behavior with production state. A sandbox gives each run its own boundary, log, and cleanup path.
+Keeping those claims separate prevents a payment receipt or machine identity report from being mistaken for a quality result.
 
-### Does a sandbox prevent every security issue?
+## What a sandbox does not prove
 
-No. It reduces blast radius and improves evidence. Security still depends on credential scope, network policy, review gates, and the application around the sandbox.
+A sandbox narrows the execution boundary.
+It does not make the model truthful.
+It does not prove that the command was the right command.
+It does not prove that the test suite covered the changed behavior.
+It does not prove that a credential could not leave through an allowed network path.
+It does not prove that the final diff is safe to merge.
 
-### How does Tangle fit?
+The reviewer needs a recovery path for each of those limits.
+That can be a rejected command, a redacted artifact, a failed evaluation, an approval step, or a request to rerun with narrower authority.
 
-Tangle Sandbox SDK provides the managed environment and session layer that agent products use to run code safely enough to review.
+The [AI dev container guide](/blog/ai-dev-container-production-agent-runtime) focuses on the production control plane around this boundary.
+The [AI agent sandbox guide](/blog/ai-agent-sandbox) shows the smaller create, execute, inspect, and delete workflow.
+
+## Choose the boundary that matches the side effect
+
+Use plain chat when the model only drafts text and cannot change external state.
+Use a one-shot code runner when the input and output are fixed and no workspace needs to survive.
+Use an LLM sandbox environment when the model can run commands, edit files, use credentials, or recover from an intermediate result.
+Use a larger service boundary when the task needs payments, operators, confidential execution, or a reusable job interface.
+
+Start with one disposable task.
+Create the workspace, run one safe command, force one failure, reconnect to the same session, inspect the trace and file state, and delete the machine.
+If the team cannot explain that sequence, more autonomy will make the system harder to review.
+
+
+## What is an LLM sandbox environment?
+
+It is an isolated runtime where an LLM-powered agent can execute tools, run commands, edit files, and preserve evidence about those actions.
+
+## Why not run the agent directly on my server?
+
+Direct execution mixes model behavior with production state.
+A sandbox gives the run a separate machine or container, explicit permissions, a lifecycle, and a record that can survive the client.
+
+## Does a sandbox prevent every security issue?
+
+No.
+It reduces the area a mistake can affect.
+Security still depends on image provenance, credential scope, network policy, command limits, artifact handling, and the application around the sandbox.
+
+## How does Tangle Sandbox fit?
+
+The public SDK supplies the machine and session boundary.
+Tangle's other products can add model routing, traces, evaluation, or paid service execution.
+Each added layer has its own proof and failure modes.
+
+## Should I keep the sandbox after a run?
+
+Keep it only when a reviewed snapshot or later step needs the same filesystem.
+Otherwise, copy the evidence you need and delete the temporary machine.

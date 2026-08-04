@@ -2,8 +2,8 @@
 title: How Decentralized AI Infrastructure Verifies Work
 slug: how-tangle-verifies-work
 summary: >-
-  Tangle supports multiple verification strategies - from optimistic challenges
-  to ZK proofs. Here's how the verification layer works.
+  How decentralized AI infrastructure verifies work with operator result
+  checks, thresholds, TEE attestation, proofs, and task evaluations, including what each method cannot prove.
 date: '2026-02-18'
 author: Drew Stone
 tags:
@@ -17,186 +17,429 @@ heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
 imageAlt: 'An editorial still life about building a service on Tangle'
 ---
 
-A blueprint is a packaged service definition with a typed job interface. *Day 3 of the Tangle Re-Introduction Series*
+How decentralized AI infrastructure verifies work starts with a common failure: a customer sees a `JobResultSubmitted` event and assumes the work is finished.
+The event proves that an operator, the party running the service, submitted bytes to the protocol.
+It does not, by itself, prove that the right program ran, that the input was private, or that a language model produced a useful answer.
 
----
+That gap is the verification problem this article addresses with result comparisons, attestation, proofs, and task evaluations.
 
-The hardest question in decentralized infrastructure isn't "how do we run computation" but "how do we know computation ran correctly."
+**Verification** is a procedure that checks a claim against a stated rule.
+A **task evaluation** is a test or judging procedure for a defined task.
+The claim might be “two operators returned the same deterministic result,” “this measured workload ran in protected hardware,” or “this answer passed the task’s evaluation set.”
+Each rule supports a different conclusion.
 
-This post covers what each verification mechanism in practice proves, where it breaks down, and how Tangle lets developers wire it all together.
+Tangle is a coordination network for services that independent parties run.
+Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
+Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
+Tangle gives a **Blueprint**, a reusable service template, a place to declare jobs, operators, result handling, payment, and optional protocol logic.
+A **Service** is a configured instance of that template.
+A **Job** is one callable unit of work.
+An **operator** runs the artifact and submits a result.
+A **Blueprint Service Manager** is the protocol-facing contract that can customize registration, service creation, authorization, payment, result checks, and slashing.
+**Slashing** is the protocol process that applies a defined economic consequence after an admissible violation and its dispute period.
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) describes those objects and the manager role.
 
-## Where Cloud Providers Stop
+The right verification stack starts by separating five questions.
 
-AWS, Google Cloud, and Azure have decades of production hardening, legal accountability, and compliance certifications. For most applications, they're the right choice.
+| Question | What a passing check would support |
+| --- | --- |
+| Did a result arrive? | The protocol received a submission for this Job call |
+| Did the approved code run? | The execution matched a pinned artifact or measured workload |
+| Was the input protected? | A defined privacy boundary held during execution |
+| Is the result mathematically valid? | The result satisfies a formal relation or proof |
+| Is the result useful for this task? | The output passes a task-specific evaluation |
 
-But traditional infrastructure has structural limitations:
+No single receipt answers all five.
 
-**Observation risk.** Cloud providers have root access to your workloads. Insider threats aren't hypothetical; they're a documented category of breach. For workloads where the data itself is enormously valuable (trading strategies, proprietary algorithms), the risk calculus changes.
+## Start with a deterministic job
 
-**Jurisdictional exposure.** Cloud providers must comply with legal demands from every government where they operate. Distributed infrastructure across jurisdictions provides options that concentration cannot.
+Consider a Job that accepts an integer and returns its square.
+The function is deterministic: the same input and approved implementation should produce the same output.
 
-**Verification gap.** Traditional providers give you audit logs *they* control. For high-stakes computation, you're trusting reputation rather than cryptography.
+If three operators receive `7` and return `49`, the Blueprint can accept two matching results under a 2-of-3 rule.
+That rule gives the customer redundancy and a way to detect disagreement.
+It does not prove that `49` is the square of `7` if every operator ran a common faulty implementation, or if the Blueprint encoded the wrong function.
 
-**Speed of recourse.** Contract enforcement takes months. For autonomous systems operating at machine speed, economic enforcement that settles in seconds is the only enforcement that matters.
+The example makes the assumption visible:
 
-## Where Tangle Fits
+```text
+Job call:       square(7)
+Operator A:     49
+Operator B:     49
+Operator C:     42
+Acceptance:     2 matching results are required
+What is known:  A and B agree under the configured rule
+What is open:   Whether the rule and implementation express the intended task
+```
 
-Tangle is the general-purpose layer where developers choose and configure verification for each blueprint and service they deploy. We don't prescribe a single verification mechanism. We give you the primitives and let you compose them.
+A **quorum** is the minimum number or weight of participants whose result counts for acceptance.
+Tangle’s public service-manager interface exposes a required result count and an aggregation threshold.
+The threshold can be count-based or stake-weighted, where basis points express a percentage and `6700` means 67%.
+The [public interface reference](https://docs.tangle.tools/developers/api/reference/IBlueprintServiceManager) documents `getRequiredResultCount`, `requiresAggregation`, and `getAggregationThreshold`.
 
-A [blueprint](/blog/how-blueprints-work) that manages signing keys needs MPC. A blueprint running private inference needs TEEs. A blueprint doing deterministic computation can use redundant execution with on-chain result comparison. Tangle supports all of these because different workloads have fundamentally different trust requirements.
+The operator count is a policy choice, not a source of truth.
+Operator agreement is a comparison rule; it becomes a correctness check only when its assumptions match the job.
 
-The SDK exposes this as a routing and aggregation model. You define job functions, wire them into a router, and configure how many operators need to agree before a result is accepted:
+## Where the Blueprint controls verification
 
-```rust
-use blueprint_sdk::tangle::TangleLayer;
-use blueprint_sdk::{Job, Router};
+A **runtime** is the process and environment that executes a job.
+The **Blueprint Runner** is the process that executes jobs off-chain.
+A **trace** is the ordered evidence of what the runtime did.
+A **job router** maps a Job identifier to its handler.
+A **producer** turns an external event into a job call.
+A **consumer** sends the handler’s result back to its destination.
+The [Runner guide](https://docs.tangle.tools/developers/blueprint-runner/building) describes those components.
 
-// Job constants control aggregation requirements
-pub const XSQUARE_JOB_ID: u8 = 0;        // Single operator
-pub const VERIFIED_JOB_ID: u8 = 1;        // 2 operators must agree
-pub const CONSENSUS_JOB_ID: u8 = 2;       // 3 operators (BFT quorum)
+The protocol-facing service manager sees lifecycle calls such as operator registration, service activation, Job submission, and result submission.
+Its `onJobResult` hook can validate the result format, check operator eligibility, and aggregate results.
+That hook is the place to express a service-specific result rule.
 
-pub fn router() -> Router {
-    Router::new()
-        .route(XSQUARE_JOB_ID, square.layer(TangleLayer))
-        .route(VERIFIED_JOB_ID, verified_square.layer(TangleLayer))
-        .route(CONSENSUS_JOB_ID, consensus_square.layer(TangleLayer))
+An illustrative result record might look like this:
+
+```json
+{
+  "serviceId": 42,
+  "job": 0,
+  "jobCallId": 17,
+  "artifactDigest": "sha256:approved-image",
+  "operatorResults": [
+    { "operator": "A", "outputHash": "0xabc", "status": "submitted" },
+    { "operator": "B", "outputHash": "0xabc", "status": "submitted" },
+    { "operator": "C", "outputHash": "0xdef", "status": "submitted" }
+  ],
+  "rule": "2 matching normalized outputs",
+  "status": "accepted",
+  "evaluation": { "name": "square_examples", "status": "passed" }
 }
 ```
 
-Each route maps a job ID to a handler function wrapped in `TangleLayer`, which handles ABI encoding/decoding and result submission automatically. The aggregation count (how many operators must submit matching results) is configured per job at the contract level. Same job logic, different verification guarantees.
+This is an illustrative evidence shape, not a claim that every Tangle result uses these JSON fields.
+The public contract interface receives encoded inputs and outputs, while a Blueprint decides what to store, compare, or emit.
 
-The runner itself is straightforward:
+The distinction matters for AI services.
+The protocol can record the operator submissions and the rule that accepted them.
+The developer still needs to define how to normalize text, how to score a response, and what evidence a caller receives.
 
-```rust
-BlueprintRunner::builder(tangle_config, env)
-    .router(router())
-    .producer(TangleProducer::new(client.clone(), service_id))
-    .consumer(TangleConsumer::new(client.clone()))
-    .run()
-    .await
+## Agreement is useful when the work is deterministic
+
+Redundant execution means sending the same Job to more than one operator and comparing their results.
+It is a natural fit for arithmetic, hashing, signature checks, fixed-format transformations, and other jobs with a stable output.
+
+The assumption is usually stated as “enough operators are independent and at least one is honest.”
+That assumption can fail in several ways:
+
+- Operators may download the same corrupted artifact.
+- Operators may share a cloud account, region, dependency, or administrator.
+- The input may be ambiguous or malformed.
+- A floating-point or time-dependent program may not be bit-for-bit reproducible.
+- A majority may collude.
+
+Independence is an operational property, not a count.
+Three wallet addresses do not create three independent executions if one company controls all three machines.
+
+For non-deterministic work, exact equality is often the wrong rule.
+A transcription service may differ in punctuation while preserving the words.
+A language model may sample two valid explanations.
+The Blueprint can define a normalized representation, a tolerance, or a separate evaluation, but it should not call exact string equality a universal truth test.
+
+The cost is visible.
+If one operator performs a job once, a three-operator comparison runs that work up to three times before coordination overhead.
+The extra cost buys a disagreement signal and availability tolerance.
+It does not buy a free answer key.
+
+## Thresholds can count people or stake
+
+Tangle’s service-manager interface supports two broad threshold types for aggregated results:
+
+| Threshold | What is counted | Example |
+| --- | --- | --- |
+| Count-based | Number or percentage of operators | Two of three operators sign the same output |
+| Stake-weighted | Percentage of committed stake | Operators representing at least 67% of the configured stake agree |
+
+The protocol can combine the matching result with Boneh–Lynn–Shacham (BLS) signatures.
+BLS is a signature scheme that allows signatures from several keys to be aggregated into one compact signature that a client checks against the participating public keys.
+The aggregated signature proves that the selected operators signed the output.
+It does not prove that the output is semantically correct.
+
+Stake-weighted thresholds change the influence of an operator with more committed stake.
+They do not make stake independent, and they do not solve the case where the largest operators share the same bug.
+The service description should tell customers which threshold is used and why that threshold matches the threat model.
+
+## Optimistic checks trade time for lower normal cost
+
+An optimistic scheme assumes the submitted result is correct and allows a challenge during a defined window.
+A **challenge window** is the period in which a participant can submit evidence that the result violates the rule.
+A **fraud proof** is evidence or a protocol interaction that demonstrates an incorrect deterministic execution.
+
+The common pattern is:
+
+1. An operator commits to a result.
+2. The result remains provisional during the challenge window.
+3. A challenger posts evidence and, where required, a bond.
+4. The protocol narrows the disagreement or verifies the fraud proof.
+5. The result is finalized or the proposal is rejected.
+
+This pattern can reduce duplicate work on the happy path.
+It adds delay before finality and requires someone to monitor the window.
+It also needs deterministic replay or another way to demonstrate the divergence.
+An open-ended language-model response is a poor fit for instruction-by-instruction fraud proofs because the protocol lacks a stable execution trace to replay.
+
+The [Arbitrum Nitro whitepaper](https://docs.arbitrum.io/nitro-whitepaper.pdf) is a useful primary source for the challenge-period model in optimistic rollups.
+The model is a design pattern, not a claim that every Tangle Blueprint has native fraud proofs enabled.
+
+## Protected execution answers a different question
+
+A **trusted execution environment**, or **TEE**, is a hardware-backed area that isolates a workload from the ordinary host software.
+An **attestation report** is signed evidence about the protected environment and the code or configuration measured when it started.
+A **measurement** is a cryptographic fingerprint of a relevant image, binary, boot component, or configuration.
+
+TEE evidence can support a claim such as “the approved container started inside the required confidential-computing boundary.”
+It can help a client decide whether to release a secret to the workload.
+It does not prove that the code implements the desired algorithm or that the output is useful.
+
+The [Amazon Web Services (AWS) Nitro Enclaves attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) explains that an enclave can request a signed document containing measurements.
+The external service must compare those measurements with its access policy.
+That last step is important.
+An unvalidated report is a statement from the workload, not a completed trust decision.
+
+TEE evidence also has boundaries:
+
+| TEE can help establish | TEE does not establish |
+| --- | --- |
+| The report came from the provider’s attestation root | The provider’s software outside the TEE is honest |
+| The measured workload matches an approved value | The measured workload is correct for the customer’s task |
+| Memory is protected under the provider and hardware model | Logs, outputs, network endpoints, or side channels are harmless |
+| A secret was released only after a policy check | The model’s answer passes a quality evaluation |
+
+The [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) treats confidentiality as a deployment policy.
+It documents `tee_required` as a fail-closed choice when the operator cannot satisfy the required runtime prerequisites.
+That is a useful availability tradeoff: a protected job can stop rather than silently run on an ordinary host.
+
+## ZK proofs verify a formal statement
+
+A **zero-knowledge proof**, or ZK proof, lets a prover demonstrate that a formal statement is true without revealing the private witness used to construct it.
+The proof is checked against a circuit or relation.
+
+For a data transformation, the statement might be “this output is the result of applying function F to input commitment H.”
+If the proof verifies and the circuit matches the intended function, the client has a strong correctness claim without seeing the input.
+
+The phrase “if the circuit matches” carries the weight.
+A proof can be perfectly valid for a circuit that omits a safety condition, rounds a value incorrectly, or encodes the wrong model.
+Proof generation can also be much more expensive than running the computation directly.
+
+The [Ethereum Foundation’s zero-knowledge overview](https://ethereum.org/zero-knowledge-proofs) explains completeness, soundness, and zero-knowledge as separate properties.
+Those properties describe the proof system.
+The Blueprint still chooses the statement the proof is about.
+
+## MPC protects inputs through a threshold assumption
+
+Multi-party computation (MPC) lets several parties compute from secret shares of an input without giving the complete input to one party.
+A [NIST definition of MPC](https://csrc.nist.gov/glossary/term/secure_multi_party_computation) describes the same privacy boundary.
+A threshold assumption says how many parties may be unavailable or malicious before the privacy or correctness claim fails.
+
+MPC can reduce the risk that one operator sees a customer’s complete document.
+It adds communication, key management, protocol complexity, and an availability dependency on enough participants.
+MPC alone does not tell the customer that the output answers the intended business question.
+Pair it with a correctness check, a proof, or an evaluation when the result matters.
+
+## AI quality needs an evaluation loop
+
+Neural-network inference can be reproducible under controlled conditions and still produce a poor answer.
+The failure is often semantic rather than a byte-level mismatch.
+
+An **AI evaluation** is a repeatable test of a model or agent on a defined task set.
+A **ground-truth label** is the expected answer or property used to judge one example.
+A **grader** is the code, model, or human process that assigns the judgment.
+A **canary** is a small known input selected to catch a particular regression, such as an unexpected model substitution.
+
+A useful evaluation record names all of them:
+
+```text
+Evaluation: invoice_fields_v3
+Inputs:     200 labeled invoices
+Checks:     vendor, invoice date, total, currency, required citations
+Grader:     schema checks plus human review for ambiguous fields
+Threshold: 100% schema validity, 95% field agreement on labeled cases
+Result:     pass, fail, or review-required
 ```
 
-Producer listens for on-chain job submissions. Consumer posts results back. Everything in between is your verification logic.
+The numbers in this block are illustrative acceptance criteria, not a Tangle benchmark.
+The important property is that the rule is visible before the result is accepted.
 
-## The Verification Problem
+A canary suite can detect a large behavior change while missing a subtle quality drop.
+A model fingerprint can show which files loaded while missing a prompt-policy regression.
+A human grader can catch ambiguity while introducing reviewer variance.
+The evaluation record should make those tradeoffs visible rather than reducing them to a green badge.
 
-When you pay someone to run computation, you're trusting that they ran the code you specified, on your inputs, and returned the real output. Each verification mechanism proves some of these properties under specific assumptions. None cover everything.
+Anthropic’s public [guide to evaluating AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) makes a related point: agent behavior spans many turns, tool calls, state changes, and intermediate results, so a final score without the path loses useful information.
+That is also why a trace belongs beside an evaluation.
 
-## Trusted Execution Environments (TEEs)
+## What a trace contributes
 
-TEEs are hardware enclaves that isolate code execution from the rest of the system, including the machine's operator. For details on how the Blueprint SDK integrates TEE across AWS, GCP, and Azure, see [Trusted Execution on Tangle](/blog/trusted-execution-on-tangle). Intel SGX, AMD SEV-SNP, and ARM TrustZone create isolated memory regions with hardware-enforced encryption. When a TEE boots, it generates an attestation: a cryptographic proof signed by the hardware manufacturer stating what code is running.
+For an AI Job, a trace may connect:
 
-**What TEEs prove:** Specific code is running (via attestation). The operator cannot observe computation (hardware-enforced memory encryption). Inputs and outputs have integrity.
+1. The caller and Service.
+2. The input fingerprint and access policy.
+3. The artifact digest and model identifier.
+4. Tool calls, retries, and resource limits.
+5. Operator submissions and aggregation state.
+6. The evaluation inputs, grader, and result.
 
-**What TEEs don't prove:** Code correctness (attestation proves "this code ran," not "this code does what you want"). Side-channel resistance (timing and cache attacks can leak information; practical key extraction from SGX has been demonstrated). Hardware trust (if Intel or AMD are compromised or coerced, attestations become unreliable). Replay resistance (attestations need nonce-based freshness to prevent operators presenting old valid attestations for new requests).
+The trace does not become proof merely by being detailed.
+It is an operational record unless an independent mechanism protects its origin and integrity.
+TEE attestation can protect a specific measurement claim.
+A cryptographic signature can protect authorship of an event.
+A chain record can make selected state transitions publicly inspectable.
+The service should say which protection applies to each field.
 
-TEEs are appropriate when confidentiality matters more than eliminating all trust, and when side-channel risk is acceptable for your threat model.
+## How slashing fits after detection
 
-## Redundant Execution
+Staking creates an economic commitment from an operator.
+Slashing is the protocol process that burns or redistributes part of that commitment after a defined violation.
 
-The simplest verification: have multiple independent parties run the same computation and compare results. N operators execute each job independently. If results match, the job succeeds. Disagreement triggers dispute resolution.
+The public [Tangle slashing guide](https://docs.tangle.tools/developers/slashing) describes a lifecycle with a proposal, a dispute window, and an executable or cancelled outcome.
+The dispute window gives the operator or authorized party a chance to contest the evidence.
 
-**What it proves:** At least one honest operator computed correctly (if results match). Collusion requires controlling multiple independent operators. Disagreement is always detectable.
+The expected-cost argument is simple:
 
-**What it doesn't prove:** Correctness for non-deterministic computation. Which party is correct during disputes. The reported cost model is simple: running computation 3x costs 3x.
+```text
+expected penalty = probability of detection × slash amount
+```
 
-## Optimistic Verification with Fraud Proofs
+If a rational operator expects the penalty to exceed the benefit of cheating, the incentive can deter the behavior.
+The calculation is a model, not a guarantee.
+It fails when detection is weak, the stake is too small, the benefit is immediate and hard to recover, or the attacker accepts losing the stake.
 
-Assume execution is correct, but allow challenges. One operator executes and commits to the result. During a challenge window, anyone can dispute by posting a bond. An interactive bisection protocol identifies the exact divergent instruction. The faulty party loses their bond. This is how Arbitrum and Optimism work.
+Slashing cannot retrieve a leaked document.
+It cannot make an ambiguous evaluation fair.
+It cannot compensate for a service that had no available operators when the customer needed it.
+Use it as recourse after a defined violation, not as a substitute for prevention or evaluation.
 
-**What it proves:** Incorrect execution is eventually detectable and punishable. A single honest verifier is sufficient. Happy path requires only one execution.
+## A decision table for Blueprint authors
 
-**What it doesn't prove:** Real-time correctness (challenge window delay). Liveness (if no one monitors, fraud goes undetected). Non-deterministic computation (requires deterministic replay).
+Choose the mechanism from the property the customer needs:
 
-## MPC and ZK Proofs
+| Customer need | First mechanism to consider | Add this check |
+| --- | --- | --- |
+| Same deterministic result from independent operators | Count-based or stake-weighted aggregation | A reference evaluation and artifact identity check |
+| Private input during execution | TEE policy or MPC | Attestation validation, secret-release policy, and output controls |
+| Proof of a formally specified computation | ZK proof | Circuit review and test vectors |
+| Low normal cost with delayed finality | Optimistic challenge | Monitoring, deterministic replay, and a dispute process |
+| Useful language-model output | Task evaluation and trace | Canaries, human review, and prompt/model identity evidence |
+| Consequence for a detected violation | Stake and slashing | Clear evidence format, authority, dispute window, and recovery |
 
-**MPC** splits data into shares distributed across parties so they can jointly compute without revealing inputs to each other. No single party learns the inputs (if the corruption threshold holds), but it adds significant overhead and is practical only for high-value computations like key management and threshold signatures.
+Layering is often appropriate.
+A private inference service might require TEE execution, record a model measurement, run a small canary suite, and ask two operators to agree on a structured result.
+Each layer answers a different question.
+The service should not claim that the stack has one larger guarantee than the intersection of its documented assumptions.
 
-**ZK proofs** let a prover demonstrate computation correctness without revealing inputs. Verification is trustless and cryptographically sound. The catch: proof generation is orders of magnitude slower than direct computation, and some ZK systems (Groth16, older PLONK variants) require a trusted setup ceremony. Transparent alternatives (STARKs) avoid trusted setup but produce larger proofs. For ML inference, the reported ZK overhead is currently 10,000-100,000x, though projects like EZKL are pushing this forward.
+## What the public Tangle surface establishes
 
-## AI Inference Verification
+The public interface exposes the places where a Blueprint can define its rules:
 
-Neural network inference is mathematically deterministic. The apparent non-determinism comes from temperature sampling, floating-point non-associativity across hardware, and library optimizations like cuDNN algorithm selection. With effort (temperature=0, fixed seeds, deterministic CUDA flags, identical hardware), you can achieve reproducible inference. The non-determinism is a practical constraint, not a fundamental one.
+- `onJobCall` can validate inputs and caller permissions.
+- `onJobResult` can validate result format, operator eligibility, and aggregation behavior.
+- `getRequiredResultCount` can set how many results are needed.
+- `requiresAggregation` can require aggregated signatures for a job.
+- `getAggregationThreshold` can set count-based or stake-weighted thresholds.
+- Slashing hooks and protocol contracts can process a defined violation through a proposal and dispute path.
 
-The primary attack vector for [AI services](/blog/building-ai-services-on-tangle) is model substitution: claiming to run an expensive model while in practice running a cheaper one. Detection techniques include:
+These are extension points and state transitions.
+They are not evidence that a particular Blueprint has chosen a good rule.
+Read the Blueprint’s job metadata, manager code, artifact release, operator policy, and evaluation definition before accepting its claims.
 
-**Weight hash verification.** Hash the model at load time, include the hash in TEE attestation. Verifies model identity at the hardware level.
+## Failure cases to test before launch
 
-**Challenge prompts (canaries).** Specific prompts with known expected outputs. Different models have distinct response patterns. Caveat: sophisticated operators could detect canary patterns and route only those to the real model.
+### One operator never responds
 
-**Latency fingerprinting.** Different models have characteristic timing profiles. Statistical analysis of response times can detect substitution.
+The service should distinguish an unavailable operator from a wrong result.
+Set the required result count and timeout so a customer can understand whether the Job can complete with fewer responses.
 
-**Token probability extraction.** For models that expose logprobs, the probability distribution over tokens is a fingerprint.
+### Operators return different outputs
 
-What remains unsolved: verifying output *quality* has no cryptographic solution. Detecting subtle degradation (aggressive quantization, caching) requires ongoing monitoring, not one-time verification.
+Preserve each result and the comparison rule.
+Do not overwrite the disagreement with a majority result without keeping the minority evidence and reason for acceptance.
 
-## Economics as Backstop
+### All operators share a faulty release
 
-Every verification mechanism has assumptions that can fail. Economics provides the backstop.
+Run known test vectors and a task evaluation against the exact artifact digest.
+Agreement is weak evidence when every execution shares the same bug.
 
-The security equation: **if P(detection) x slash_amount > profit_from_cheating, rational operators don't cheat.**
+### The attestation is old or replayed
 
-A reported sample: a service processes inference jobs worth $100 each. Operators stake $50,000. Detection mechanisms (TEE attestation, canary prompts, consistency checking) catch cheating 80% of the time within one week. Cheating on 100 reported jobs might net $5,000 in cost savings.
+Validate the signature, expected measurements, audience, nonce or freshness value, and expiry according to the provider’s report format.
+The client should refuse to release secrets when the report fails policy.
 
-The following figures are reported sample values.
+### A ZK proof verifies for the wrong statement
 
-- Reported expected value of cheating: $5,000 x 20% = $1,000 (if undetected)
-- Reported expected cost of cheating: $50,000 x 80% = $40,000 (if detected)
+Review the circuit, public inputs, witness binding, and test vectors.
+The proof system cannot repair a specification error.
 
-Rational operator: doesn't cheat.
+### A slash proposal is disputed
 
-This breaks down for irrational actors (nation-states, ideological attackers), correlated failures (volatile staked assets crashing when you need them most), and gray-area cheating (cutting corners in ways that are hard to detect). Economic security addresses catastrophic misbehavior better than subtle degradation.
+Preserve the evidence, bond, deadlines, and final state.
+An accusation is not a final slash, and a cancelled proposal is not evidence that the underlying job was correct.
 
-## What Tangle Supports Today vs. What's Coming
+## The practical decision
 
-| | Today | Coming |
-|---|---|---|
-| **Redundant execution** | Multi-operator aggregation with configurable quorum (2-of-N, 3-of-N) | Optimistic fraud proofs for deterministic jobs |
-| **TEE attestation** | Attestation verification in blueprint context | First-class TEE attestation hooks in the SDK |
-| **Economic security** | Operator staking and slashing via service contracts | Programmable slashing conditions per blueprint |
-| **MPC** | Threshold signature schemes via blueprint services | Generalized MPC protocol support |
-| **ZK verification** | ZK proof verification in custom job logic | Native ZK verifier integration, zkML support |
-| **AI-specific** | Canary prompts, consistency checking via custom logic | Model hash attestation, latency fingerprinting modules |
+Start by writing the sentence “This Job is accepted when…”
+Complete it with a rule that a machine or reviewer can execute.
+Then write “This rule does not prove…” and list the nearest failure case.
 
-## Choose the Verification Stack
+For deterministic computation, aggregation may be enough when the operator independence and shared-code assumptions are acceptable.
+For private computation, add TEE or MPC evidence before sending secrets.
+For formal arithmetic or state transitions, consider a proof.
+For language and agent behavior, use evaluations and traces because quality depends on the task specification.
+For recourse, define stake and a dispute process only after the violation can be observed.
 
-Every verification mechanism has trust assumptions. TEEs trust hardware manufacturers. ZK may trust setup ceremonies. MPC trusts honest thresholds. The job is matching the right mechanism to the value of what you're protecting, and being explicit about which assumptions you're making.
+The best verification design makes the boundary boring to read.
+The customer can see what was checked, what was accepted, which assumptions remain, and what happens when a check fails.
 
-Tangle gives you the building blocks. You compose them.
 
-## FAQ
+## Does Tangle verify every AI answer?
 
-### Which verification mechanism should I use for my blueprint?
-It depends on the workload. TEEs are best when confidentiality matters (private inference, sensitive data). Redundant execution works for deterministic computation where you can afford a reported 3x cost. ZK proofs provide the strongest cryptographic guarantees but have high proof-generation overhead. Economic security (staking and slashing) serves as a backstop for all approaches.
+No.
+Tangle provides protocol surfaces for Blueprint-specific input checks, result checks, aggregation, payment, and lifecycle rules.
+An AI Blueprint must define the evaluation and evidence that make its own answer claims meaningful.
 
-### Can an operator cheat if they control the TEE hardware?
-TEE attestations are signed by the hardware manufacturer (Intel or AMD), not the operator. Cheating requires breaking the hardware security or compromising the manufacturer. Known side-channel attacks exist but raise the cost of extraction dramatically. For most use cases, this risk is acceptable.
+## Does operator agreement prove correctness?
 
-### How does Tangle detect AI model substitution?
-Four techniques: weight hash verification via TEE attestation at load time, challenge prompts (canaries) with known expected outputs, latency fingerprinting based on characteristic timing profiles, and token probability distribution analysis for models exposing logprobs.
+Only under the assumptions behind the agreement rule.
+Matching results can show consistency among operators, while a common faulty artifact or shared input can make every result wrong in the same way.
 
-### What does "optimistic verification" mean?
-Execution is assumed correct, but anyone can challenge results during a window by posting a bond. An interactive bisection protocol identifies the exact divergent instruction, and the faulty party loses their bond. This is how Arbitrum and Optimism work. The tradeoff is a delay before finality.
+## What does a TEE attestation prove?
 
-### Is economic security enough on its own?
-For catastrophic misbehavior by rational actors, yes. The security equation is: if the probability of detection times the slash amount exceeds the profit from cheating, rational operators don't cheat. It breaks down against irrational attackers, correlated failures, and subtle gray-area degradation. That's why Tangle supports layering TEE, MPC, and ZK on top.
+It can provide signed evidence about a protected workload, its hardware-backed environment, and selected measurements.
+It does not prove that the code is correct or that its output is useful.
 
-## What's Next
+## What is the difference between an evaluation and a proof?
 
-The next post covers the developer experience: building blueprints, the SDK, deployment tooling, and the path from idea to production service.
+An evaluation checks behavior on selected examples or criteria.
+A proof checks a formally specified statement using cryptography.
+An evaluation can judge open-ended quality but has coverage and grader limits.
+A proof can have strong mathematical soundness while proving a specification that omits the property the customer wants.
 
-If you're evaluating verification requirements for a specific use case, [find us on Discord](https://discord.gg/cv8EfJu3Tn).
+## Does slashing happen immediately after a bad result?
 
----
+Not by default as a general statement.
+The public Tangle slashing path includes a proposal, a dispute period, and an executable or cancelled result.
+The Blueprint must define how a bad result becomes admissible evidence.
 
-**References:**
-- SGX side-channel attacks: [Foreshadow (L1TF)](https://foreshadowattack.eu/)
-- MPC protocols: [SPDZ paper](https://eprint.iacr.org/2011/535) (Damgård et al.)
-- zkML progress: [EZKL](https://ezkl.xyz/)
+## Where should a Blueprint put its verification rule?
 
-**Links:**
-- [Discord](https://discord.gg/cv8EfJu3Tn)
-- [Twitter](https://twitter.com/tangle_network)
-- [Docs](https://docs.tangle.tools)
-- [Blueprint SDK](https://github.com/tangle-network/blueprint)
+Put the rule in public job metadata and the Blueprint’s service-manager or application code that enforces it.
+The customer should be able to inspect the required result count, threshold type, artifact identity, evaluation, evidence fields, timeout, and dispute behavior before submitting a job.
+
+## Public sources and the next article
+
+The [Tangle Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) explains the developer and manager responsibilities.
+The [Blueprint Service Manager interface](https://docs.tangle.tools/developers/api/reference/IBlueprintServiceManager) documents result hooks and thresholds.
+The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runner/building) documents producers, routers, consumers, and the runner.
+The [Amazon Web Services (AWS) attestation documentation](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) explains signed measurements in one current TEE implementation.
+The [Ethereum zero-knowledge overview](https://ethereum.org/zero-knowledge-proofs) explains proof-system properties.
+The [NIST MPC definition](https://csrc.nist.gov/glossary/term/secure_multi_party_computation) explains the privacy boundary of MPC.
+
+The [Blueprint lifecycle article](/blog/how-blueprints-work) shows where result checks sit between the operator runtime and the customer’s Service.
+The [TEE article](/blog/trusted-execution-on-tangle) goes deeper on protected execution and attestation policy.
+
+The next article turns these choices into a build path: [How to Build a Tangle Blueprint: Test and Deploy](/blog/building-on-tangle-from-idea-to-production).

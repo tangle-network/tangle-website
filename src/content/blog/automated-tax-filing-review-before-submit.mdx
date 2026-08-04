@@ -1,8 +1,8 @@
 ---
-title: 'Automated Tax Filing With Review Control'
+title: 'Automated Tax Filing With Review Before Submit'
 slug: automated-tax-filing-review-before-submit
 summary: >-
-  Automated tax filing should mean agent-prepared evidence, draft forms, and taxpayer approval before submission, not blind one-click filing.
+  Automated tax filing should prepare an evidence-backed return, bind approval to a specific version, and pause before submission when facts change.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,83 +16,325 @@ heroImage: /images/covers/editorial/ai-tax-v2.webp
 imageAlt: 'An editorial still life about preparing a complex tax return with software'
 ---
 
-Automated tax filing should not mean blind filing. The safer model is review-before-submit: the agent prepares the return package, explains the evidence, flags open issues, and asks the taxpayer to approve before anything is signed or sent. That is the right bar for Tangle Tax Agent and for any AI tax system touching complex returns. Automation is useful when it reduces manual work. It is dangerous when it hides filing decisions.
+At 4:58 p.m. on filing day, an automated tax system reports that a return is ready.
+The taxpayer sees a refund, a green status, and a button labeled “submit,” but the system has not shown whether a late Schedule K-1, the pass-through tax statement, changed the draft after review.
 
-This is not tax advice. Filing obligations and signature rules depend on the taxpayer, preparer, form, and jurisdiction.
+Automated tax filing should model approval as a state transition that carries the exact package a person reviewed.
+The agent can collect documents, prepare calculations, fill a draft, and move through an authorized portal.
+Submission should happen only after a person approves the exact package that will be sent.
 
-## Why Blind Filing Is The Wrong Goal
+This article describes a product control for tax software, not tax advice.
+Filing obligations, signature rules, and transmission behavior vary by taxpayer, form, preparer, and jurisdiction.
 
-Tax returns are high-stakes documents. A small classification change can move income, deductions, credits, foreign reporting, state allocation, or penalties.
+## Approval belongs to a version
 
-| Filing risk | Review-before-submit control |
+A return is a changing document.
+New statements arrive, reviewers correct values, forms gain attachments, and an electronic filing (e-file) system can reject a package for a specific reason.
+
+The approval event should bind at least:
+
+| Approval field | Why it matters |
 | --- | --- |
-| wrong document used | source index before approval |
-| missing basis | exception list before Form 8949 is accepted |
-| foreign form uncertainty | escalation before filing |
-| e-file rejection | explain correction before resubmission |
-| changed refund or balance due | delta explanation before approval |
+| taxpayer and tax year | identifies whose return and which period was reviewed |
+| package version | prevents approval from floating to a later draft |
+| forms and attachments | defines what will be transmitted |
+| key totals | lets the taxpayer see the refund or balance due being approved |
+| open questions | shows which exceptions were resolved, accepted, or escalated |
+| reviewer identity | records who authorized the action |
+| timestamp | establishes when the decision occurred |
+| authorization method | distinguishes review from a legally required signature step |
 
-The goal is not to slow the taxpayer down. The goal is to show the filing consequence before the taxpayer owns it.
+The product should invalidate approval when any material field changes.
+A new Portable Document Format (PDF) file with the same filename is still a new input.
 
-## The Review-Before-Submit Flow
+## The workflow should show its states
+
+The simple state machine below is an artifact a product team can implement and test.
+The names are illustrative and do not describe a live IRS interface.
 
 ```text
-upload documents
-→ agent prepares draft return package
-→ agent lists evidence and open issues
-→ taxpayer corrects or approves
-→ filing package is finalized
-→ submission occurs only after approval
-→ rejection fixes require another approval if facts changed
+intake
+  → preparing
+  → needs-review
+  → approved
+  → submitting
+  → accepted
+
+needs-review
+  → corrected-draft
+  → needs-review
+
+submitting
+  → rejected
+  → correction-draft
+  → needs-review
+
+any state
+  → blocked
 ```
 
-For complex returns, this flow is a product feature, not a legal checkbox.
+`approved` means a person accepted a specific package.
+It does not mean the tax authority accepted the return.
+`submitting` means transmission is in progress.
+It does not mean the return was received or processed.
+`accepted` should be reserved for an explicit response from the relevant filing system.
 
-## What The Taxpayer Should See
+The distinction matters because a product can report success too early.
+An agent that clicks the submit control and stops has completed an action, not established the filing outcome.
 
-| Review screen | What it answers |
+## A review receipt should make the decision replayable
+
+A workpaper is a record showing how a reported value or form input was assembled.
+The approval record can be a small structured object.
+This JSON (JavaScript Object Notation) example is illustrative and does not model a live tax-portal API:
+
+```json
+{
+  "returnId": "return-2025-jordan",
+  "taxYear": 2025,
+  "packageVersion": "draft-12",
+  "packageHash": "sha256:example",
+  "forms": [
+    "Form 1040",
+    "Schedule D",
+    "Form 8949"
+  ],
+  "summary": {
+    "refundOrBalance": "$4,800 refund",
+    "openQuestions": 0
+  },
+  "review": {
+    "reviewer": "taxpayer",
+    "approvedAt": "2026-03-28T17:02:11Z",
+    "method": "explicit-confirmation"
+  },
+  "submission": null
+}
+```
+
+The sample refund is illustrative.
+The important fields are `packageVersion`, `packageHash`, `openQuestions`, and the empty `submission` field.
+
+Before submission, the interface should let the taxpayer open the forms, source mappings, calculations, and unresolved-item history.
+The final confirmation should state what will happen next and what event counts as acceptance.
+
+If a browser automation session later changes a field, the product should compute a new package version.
+The old approval must no longer authorize the changed package.
+
+## A stale approval should fail visibly
+
+Imagine that Jordan approves `draft-12` at 5:02 p.m.
+At 5:04 p.m., a corrected brokerage statement arrives and changes the basis used in one Form 8949 entry.
+The system now has two valid records of what happened, but only one may be submitted.
+
+| Time | Event | Safe state |
+| --- | --- | --- |
+| 5:02 | Jordan approves `draft-12` | approval is bound to `draft-12` |
+| 5:04 | corrected statement is accepted | `draft-13` is created and approval is invalidated |
+| 5:06 | browser session asks to submit | submission stops and shows the changed line |
+| 5:09 | Jordan reviews the new package | a new approval may authorize `draft-13` |
+
+The `packageHash` in the sample is a fingerprint of the exact package contents.
+It is useful only if the product calculates it from the forms and attachments that will be sent and stores the value with the approval event.
+It does not prove that the tax position is correct.
+It proves which bytes the reviewer approved.
+
+This distinction matters during a browser timeout.
+The product must first query whether the portal accepted the earlier submission, then compare that response with the approved package before trying again.
+A second click can create a duplicate filing or submit a package that Jordan never reviewed.
+
+## Review screens should answer five questions
+
+A review screen should help a taxpayer decide, not narrate the product’s internal steps.
+
+| Question | Evidence to show |
 | --- | --- |
-| documents used | did the agent include the right sources? |
-| forms generated | what is being filed? |
-| line changes | what changed refund or tax due? |
-| open issues | what is uncertain or missing? |
-| correction log | what did the taxpayer change after review? |
-| filing state | draft, approved, submitted, rejected, corrected |
+| What am I sending? | final forms, schedules, attachments, and filing type |
+| Where did the numbers come from? | source-to-line links and calculation inputs |
+| What changed? | comparison with the prior draft and a correction log |
+| What remains uncertain? | missing documents, conflicts, and escalation notes |
+| What happens after I approve? | submission state, response handling, and retry policy |
 
-Automated filing without those states is not automation with control. It is a black-box submission flow.
+For a digital-asset line, the taxpayer may need to inspect proceeds, acquisition records, transfer matching, and basis.
+Basis is the tax cost used to measure gain or loss.
+The Internal Revenue Service (IRS) [digital-asset guidance](https://www.irs.gov/filing/digital-assets) says taxpayers must report applicable digital-asset income, gains, and losses and keep records supporting their positions.
+For a foreign corporation, the product should show the ownership and role facts behind any [Form 5471](https://www.irs.gov/forms-pubs/about-form-5471) question.
 
-## E-File Rejections
+A green “ready” badge cannot answer those questions.
+An evidence-linked package can.
 
-If an e-file submission is rejected, software should diagnose the rejection, show the correction, and ask for approval before resubmitting when return facts changed. A rejection should not silently mutate the return. It also should not become a new paid engagement when the fix is part of the same scoped filing workflow.
+## A rejection is a new review event
 
-Official IRS resources such as [Form 8949](https://www.irs.gov/forms-pubs/about-form-8949), [Form 5471](https://www.irs.gov/forms-pubs/about-form-5471), and [Form 8621](https://www.irs.gov/forms-pubs/about-form-8621) show why review matters: complex filing can involve schedules and disclosures that taxpayers need to understand before submission.
+An e-file rejection is a response that requires the workflow to explain what happened.
+The [IRS guidance on rejected electronic returns](https://www.irs.gov/faqs/electronic-filing-e-file/age-name-or-ssn-rejects-errors-correction-procedures/age-name-ssn-rejects-errors-correction-procedures-3) says taxpayers should review the rejection explanation, correct eligible errors, and resubmit, while some problems require paper filing.
 
-## Where Tangle Fits
+The product should separate two cases:
 
-Tangle Tax Agent should center the review package: source index, draft forms, workpapers, open questions, and approval log. For preparation workflow, read [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns). For software evaluation, read [AI Tax Filing Software For Complex Returns](/blog/ai-tax-filing-software-complex-returns).
+1. A transmission correction that does not alter the tax facts or package contents.
+2. A substantive change that alters a form, amount, attachment, or filing position.
 
-## What This Does Not Prove
+Both cases need a visible result.
+The second case must create a new draft and require another approval.
 
-Review control does not make every tax position correct. It makes the system inspectable. Taxpayers still need to review, correct, and escalate uncertain facts before filing.
+```text
+approved draft-12
+  → submitted
+  → rejected: missing attachment
+  → corrected draft-13
+  → review required
+  → approved draft-13
+  → resubmitted
+```
 
-## Decision Rule
+The system should preserve the rejection code, original transmission receipt, correction, and new response.
+It should not silently edit the old approved package until the history is impossible to reconstruct.
 
-Do not use one-click filing for a complex return unless the software can show the full review packet first. A good filing system should make approval meaningful.
+## Tangle terms belong beside the control
 
-## FAQ
+Tangle is a coordination layer for services that run through operators.
+The tax filing workflow described here is an application design, not a claim that Tangle currently transmits tax returns.
 
-### What is automated tax filing?
+A **Blueprint** is a reusable service definition.
+It can describe a `prepare-return` job, the input and output schemas, the operator requirements, and the lifecycle states around that job.
 
-Automated tax filing is software-assisted preparation and submission of a tax return. For complex returns, the safer model includes review before signing or submission.
+A **service instance** is one live deployment of that Blueprint.
+An **operator** is the party that runs the service instance.
+A **runtime** is the environment where the agent, documents, browser, and calculations execute.
+An **agent profile** pins the model, tools, budget, and approval policy for a run.
 
-### Does automated filing mean no human review?
+A [Tangle Router](https://docs.tangle.tools/gateway/operator-routing) selects an operator or provider route for a model request.
+It can route extraction work to one model and document rendering work to another, but it cannot approve a return.
 
-No. For complex returns, human review should remain the default before submission.
+For this application, a **trace** records what the run saw, which tools it called, what it changed, and which response it received.
+An **evaluation** is a repeatable test of the task outcome, cost, and policy behavior.
+For automated filing, tests should include stale approval, changed totals, missing attachments, duplicate submission, rejection, timeout, and account mismatch.
 
-### What happens if an e-file is rejected?
+An **attestation** is a signed report about the measured code and hardware-backed execution environment.
+It can help establish where a workflow ran.
+It cannot prove that a form is accurate or that the taxpayer’s approval was informed.
 
-The software should diagnose the rejection, explain the correction, and request approval before resubmitting if the return changes.
+**x402** is an HTTP payment flow in which a service responds with `402 Payment Required`, the caller supplies payment proof, and the caller retries.
+It can charge for a preparation or review job.
+It does not make submission safe and does not prove the result is correct.
 
-### Why does Tangle emphasize review-before-submit?
+The [Tangle core concepts](https://docs.tangle.tools/vision/core-concepts), [Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction), [Router documentation](https://docs.tangle.tools/gateway/operator-routing), and [x402 standard](https://docs.x402.org/introduction) describe these public interfaces and their boundaries.
+For the source-backed preparation stage, read [AI Tax Filing Software For Complex Returns](/blog/ai-tax-filing-software-complex-returns), and for the workpaper handoff, read [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
 
-Because complex returns contain incomplete data and judgment calls. Review-before-submit keeps automation useful without removing taxpayer control.
+## Browser automation needs a hard stop
+
+Some products use a browser agent to enter an approved return into a tax portal.
+A browser agent is software that observes a page, chooses actions, and executes clicks or form fills.
+It can reduce repetitive entry, but it adds another place where the wrong version, account, or form can be selected.
+
+Tangle’s public [Browser Agent Driver repository](https://github.com/tangle-network/browser-agent-driver) documents a general-purpose browser automation command-line interface (CLI) and structured run output.
+Its public installation path is:
+
+```bash
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad --help
+```
+
+Run the first flow against a synthetic return and a test account.
+The acceptance test should check that the browser:
+
+- opens the expected taxpayer and tax year;
+- presents the approved package version;
+- records screenshots and page observations around material actions;
+- stops before the final submission control unless approval is present;
+- records a submitted or rejected response;
+- does not retry a timeout without a record that makes a repeated request safe or a duplicate-submission check.
+
+The public driver is a browser automation tool.
+Its repository does not establish that it can file a particular tax return or satisfy a jurisdiction’s signature requirements.
+
+## The runtime must preserve evidence
+
+The browser is only one part of the run.
+The system also needs the source documents, generated forms, approval object, browser observations, response messages, and correction history.
+
+Tangle’s [AI Agent Sandbox documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes a split between lifecycle records recorded on the blockchain layer and an operator API for live inputs and outputs.
+That is a useful design pattern for tax filing:
+
+| Record | Retain for review |
+| --- | --- |
+| preparation job | inputs, outputs, model profile, and failed steps |
+| review event | reviewer, package version, package hash, and timestamp |
+| browser run | URL, account context, observations, actions, screenshots, and response |
+| transmission | receipt, accepted or rejected response, and exact payload version |
+| correction | changed fields, new package, new approval, and new response |
+
+Tangle’s [Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) documents a public health check for the isolated runtime.
+Run it before a synthetic test:
+
+```bash
+npm install @tangle-network/sandbox
+curl -fsS https://sandbox.tangle.tools/health
+```
+
+This smoke test confirms reachability.
+It does not prove that a filing workflow has the required isolation, retention, browser permissions, or tax-form coverage.
+
+## Failure cases should be designed before launch
+
+| Failure | Required response |
+| --- | --- |
+| reviewer approves draft-12, agent submits draft-13 | reject the submission and request fresh approval |
+| a browser timeout occurs after the submit click | query the filing state before retrying |
+| the portal opens the wrong tax year | stop before any material action |
+| a late K-1 changes a form | create a new package version and reopen review |
+| the payment for a hosted job settles but the job fails | preserve the receipt and apply a stated retry or refund policy |
+| an e-file rejection arrives | show the reason and route through correction review |
+| the model endpoint changes | create a new agent profile and rerun required tests |
+| evidence capture fails | block completion instead of reporting a bare success |
+
+The system should block submission by default when required evidence is missing.
+An incomplete trace can still be a useful preparation result.
+It should not be treated as proof that the return was sent correctly.
+
+## Choose the level of automation deliberately
+
+The right product decision is often one of these:
+
+| Automation level | Appropriate when | Required control |
+| --- | --- | --- |
+| prepare only | facts are complex or a professional owns submission | source-backed packet and export |
+| prepare and assist | taxpayer wants guided review and entry | versioned approval and visible corrections |
+| submit after approval | the portal and signature path are supported | hard approval boundary, evidence, and response handling |
+| automatic resubmission | only narrow transmission fixes are permitted | explicit safe-retry rules and duplicate detection |
+
+Automatic resubmission should be rare.
+A system can know that an attachment is missing without knowing whether the attachment changes the tax position.
+
+## Keep the final decision human and specific
+
+Automated tax filing is ready for a complex return when the system can answer what will be sent, why each high-impact number is present, who approved the package, and what happened after transmission.
+If it cannot answer those questions, stop at preparation and export the packet for a taxpayer or advisor.
+For a foreign-ownership workflow with a different schedule boundary, continue with [CFC tax filing software for Form 5471](/blog/cfc-tax-filing-software-form-5471).
+
+Review-before-submit binds the agent’s changing workspace to an approved filing package.
+
+
+## What is automated tax filing?
+
+Automated tax filing is software-assisted preparation and transmission of a tax return.
+For complex returns, the workflow should pause for review before signature or submission.
+
+## Does automated filing remove human review?
+
+No.
+Automation can reduce document handling and form entry, but a taxpayer or authorized professional should review the exact package before it is sent.
+
+## What should happen after an e-file rejection?
+
+The software should preserve the rejection response, explain the correction, create a new version when facts or forms change, and require approval before resubmission.
+
+## Can a browser agent safely submit a tax return?
+
+Only within a tested, authorized workflow that binds the browser session to an approved package, records evidence, handles timeouts, and prevents duplicate submission.
+The browser tool itself does not supply tax judgment or signature authority.
+
+## Why pair an automated filing workflow with Tangle?
+
+Tangle can provide public patterns for a service definition, operator-run runtime, recorded trace, payment edge, and execution evidence.
+The filing product still owns tax rules, approval, portal authorization, and the decision to submit.

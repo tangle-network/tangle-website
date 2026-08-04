@@ -1,8 +1,9 @@
 ---
-title: 'Agent Profiles: Why Settings Need a Delivery Contract'
+title: 'AI Agent Profile: Make Settings Deliverable'
 slug: agent-profile-materialization-contracts
 summary: >-
-  An agent profile can ask for more than a chosen run path can deliver. Explicit contracts make unsupported settings fail before a worker starts.
+  An AI agent profile describes the model, tools, files, and policies a run should receive.
+  Delivery contracts make unsupported settings fail before a worker starts.
 date: '2026-08-01'
 author: Drew Stone
 tags:
@@ -17,152 +18,365 @@ heroImage: /images/covers/editorial/agent-runtime-v2.webp
 imageAlt: 'An editorial still life about the software that runs an agent'
 ---
 
-Imagine saving an agent profile that says, “Use this model, these tools, this prompt, and these files.”
-You start a run and it launches without one of those settings.
-The run may still produce an answer, so the missing setting can look like a weak model, a bad prompt, or a random failure.
+An AI agent profile can say, “Use this model, these tools, this prompt, and these files.”
+The run can still start when the selected execution path knows how to carry only the model and prompt.
+The answer may look plausible, so the missing tools are easy to blame on the model or the prompt.
 
-The real problem is simpler: the run path accepted a setting it could not deliver.
+The failure happened earlier.
+The runtime accepted a profile that the chosen path could not deliver.
 
-An **AgentProfile** is the saved set of choices for an agent.
-A **worker** is the process that carries out one run.
-An **execution path** is the particular route the runtime uses to start that worker.
-A **runtime** is the software that starts and manages the worker.
+This article explains how a delivery contract moves that failure to the point where it can still be fixed.
+The example comes from Tangle’s public agent-runtime source, but the rule applies to any system that saves agent settings and sends them through more than one execution path.
 
-MCP is a standard way for an agent to connect to external tools.
+> An AI agent profile is safe to launch only when the selected path can account for every requested setting.
 
-The runtime now treats those paths as explicit delivery contracts.
-A contract says which profile settings a path can carry and refuses unsupported changes before the worker starts.
+## The profile describes intent
 
-This is the first post in the repaired [runtime infrastructure series](/blog/ai-dev-container-production-agent-runtime).
+An **agent** is a program that uses a language model and tools to complete a task.
+An **agent profile** is the saved configuration that describes how that program should run.
+It can include instructions, model choices, tools, files, permissions, child agents, and lifecycle settings.
 
-## A profile is a promise, not a bag of settings
+A **worker** is one running copy of the agent.
+A **runtime** is the software that starts the worker, sends it inputs, observes its events, and records its result.
+An **execution path** is the particular route the runtime uses to create and control that worker.
 
-It is tempting to treat a profile as one object that every worker receives unchanged.
-That is not how a runtime works.
-Different workers understand different settings, and different routes expose different capabilities.
+Materializing a profile means turning the saved description into the concrete inputs that a worker receives.
+The materialized result might be a prompt, a model request, a mounted directory, a tool registry, and a set of process limits.
+It is no longer a description.
+It is the configuration that can affect the run.
 
-The profile-aware runtime breaks a profile into individual settings before it checks a path.
-That lets it reject one unsupported setting instead of accepting a large object and silently dropping a field inside it.
+That distinction matters because execution paths do not all have the same interface.
+A prompt-and-model worker may accept two kinds of input.
+A coding worker may also accept files, command permissions, external connections, and child-agent settings.
+A remote service may expose a model request but no per-worker environment channel.
 
-The main profile areas are:
+MCP, the Model Context Protocol, is an open protocol for connecting language-model applications to external data sources and tools.
+An MCP connection is therefore more than text in a prompt.
+It needs a path that can carry its server details, authorization boundary, and lifecycle.
+The [MCP specification](https://modelcontextprotocol.io/specification/latest) describes the protocol's tools, resources, prompts, and capability negotiation.
 
-| Area | What a reader can change |
+## A saved profile can outgrow its route
+
+Imagine a support agent profile with these settings:
+
+~~~json
+{
+  "model": "support-model",
+  "systemPrompt": "Answer from the approved support policy.",
+  "tools": ["ticket.read", "ticket.update"],
+  "resources": ["support-policy.md"],
+  "permissions": ["read-ticket", "write-ticket"]
+}
+~~~
+
+The product offers two routes.
+The first route sends a prompt and model name to a remote model service.
+The second route starts a worker with a workspace, tools, and permissions.
+
+If the product sends the profile unchanged to both routes, the first route has three possible behaviors.
+
+| Behavior | What the user sees | Observed system state |
+| --- | --- | --- |
+| Drop unsupported fields | The run starts without ticket tools | The profile was only partly delivered |
+| Reject the whole profile | The run fails before work begins | The route exposed its limit |
+| Pretend the fields worked | The model talks about tickets but cannot update one | The system created false capability |
+
+The first behavior is difficult to diagnose.
+The second is easy to correct.
+The third is dangerous because the user cannot tell that the worker lacks authority.
+
+The contract is the mechanism that makes the second behavior the default.
+It says which profile settings the path accepts and gives the runtime enough information to reject the rest before the worker starts.
+
+## Treat delivery as a set comparison
+
+The runtime does not need to compare two giant configuration objects as opaque blobs.
+It can compare the changed settings with the selected path's supported settings.
+
+The core operation is small:
+
+~~~typescript
+type DeliveryContract = {
+  path: string
+  supported: Set<string>
+}
+
+function unsupportedChanges(
+  changed: Set<string>,
+  contract: DeliveryContract,
+) {
+  return [...changed].filter((key) => !contract.supported.has(key))
+}
+
+function canLaunch(changed: Set<string>, contract: DeliveryContract) {
+  return unsupportedChanges(changed, contract).length === 0
+}
+~~~
+
+This is an illustrative model of the rule, not a copy of the public package API.
+The important property is that the check operates on individual settings.
+The runtime can report that tools.ticket.update is unsupported while still accepting systemPrompt.
+
+A real implementation also needs to distinguish “not supplied” from an explicit value.
+An empty tool list can mean “remove every tool.”
+false can mean “disable a permission.”
+0 can mean “set the limit to zero.”
+Treating all falsy values as absent silently changes the user's request.
+
+The check belongs before worker creation.
+Once a worker has started, it is too late to explain that a connection was discarded during setup.
+
+## Validate the effective profile
+
+The profile saved by a product is not always the profile that a worker should receive.
+Defaults may add a model, a workspace, or a tool that the saved record does not mention.
+Inheritance may add instructions from a team profile.
+An update may explicitly remove a tool by sending an empty list.
+
+The delivery check should therefore operate on the effective profile after defaults and inheritance have been resolved.
+It should still retain the original request so a caller can understand why a setting was present.
+Otherwise, a route can pass a check against a partial object while dropping a capability supplied by a default.
+
+A useful materialization record keeps the three states apart:
+
+~~~json
+{
+  "requested": {
+    "tools": ["ticket.read", "ticket.update"],
+    "resources": ["support-policy.md"]
+  },
+  "effective": {
+    "tools": ["ticket.read", "ticket.update"],
+    "resources": ["support-policy.md"]
+  },
+  "path": "prompt-and-model",
+  "status": "rejected",
+  "unsupported": ["tools", "resources"]
+}
+~~~
+
+This record is illustrative rather than a promised API shape.
+Its purpose is to show why a rejected request is better than a silently shortened one.
+The requested state is what the caller asked for.
+The effective state is what defaults and inheritance produced.
+The materialized state is the concrete setup passed to the worker.
+
+Test the boundary with values that look empty but are meaningful.
+An omitted tools field can mean “use the default tools.”
+An empty tools array can mean “run with no tools.”
+false can disable delegation.
+0 can disable a retry budget or set a resource limit to zero.
+The test should assert both the decision and the preserved value.
+
+| Input case | Required assertion |
 | --- | --- |
-| Identity | Name, description, version, and tags |
-| Instructions | System prompt and task instructions |
-| Model | Default model and model-specific options |
-| Agent program | Which agent program should run |
-| Permissions | What the worker may access |
-| Tools | Tools the agent may call |
-| External connections | Connections to outside tools, including MCP connections |
-| Child agents | Whether the worker may start other agents |
-| Resources | Files, skills, commands, and resource instructions |
-| Lifecycle | Hooks and run modes |
-| Records | Privacy settings, metadata, and extensions |
+| Field omitted | The route applies its documented default or records that no value was supplied |
+| Empty collection | The route preserves the explicit empty collection |
+| false | The route preserves the disabled state |
+| 0 | The route preserves the zero limit |
+| Unsupported nested field | The route rejects the candidate and names the nested setting |
+| Two settings with one unsupported | The route does not partially launch the worker |
 
-The name matters less here than the rule: a path must say whether it can carry those connections.
+The last case protects against a particularly confusing partial run.
+If the model and prompt were delivered but the tools were not, the first response may look healthy.
+The caller then discovers the missing capability only after the model asks for an action.
+Rejecting before creation makes the error synchronous with the configuration that caused it.
 
-The implementation expands compound areas such as `model` and `resources` into their individual settings before it checks them.
-That is why a change to one file or one model option can be rejected on its own.
+## Keep transport and authority separate
 
-## Three paths carry different settings
+A route can carry a tool definition without granting permission to use the tool.
+It can also grant a filesystem permission while failing to carry the tool that would use it.
+These are different contracts.
 
-The current source names eight delivery contracts.
-This article focuses on three of them because they cover the full-profile, prompt-and-model, and isolated-worktree cases.
-Their counts are not quality scores.
-They are inventories of what each path promises to carry.
+Transport asks whether the worker can receive a setting.
+Authority asks whether the worker may exercise that setting in this run.
+Execution asks whether the worker used it and whether the external action succeeded.
 
-| Path | Settings it carries | Intended use |
-| --- | ---: | --- |
-| Full-profile execution | 15 | A worker that accepts every canonical profile area |
-| Prompt-and-model execution | 6 | A deliberately narrow worker with prompt and model settings |
-| Isolated worktree command execution | 19 | A local coding agent in its own worktree |
+For the support example, the route may support the `ticket.update` tool while the profile's permission set denies writes.
+The correct result is not to delete the tool from the profile and pretend the route delivered everything.
+The runtime should record that the tool is available but the requested action is denied by policy.
 
-The narrow prompt-and-model path carries the worker's name, instructions, default model, agent program, and metadata.
-It does not claim to carry tools, permissions, external connections, child agents, or file-backed resources.
+This distinction also helps with audits.
+A materialization record can show that the tool registry was installed.
+A policy decision can show that the write operation was refused.
+A trace can show whether the worker requested the operation.
+An evaluation can check whether the ticket remained unchanged.
 
-The isolated worktree path adds native tools, permissions, external connections, child agents, files, skills, commands, hooks, and modes.
-It still leaves out hub connections, confidential execution, provider-specific extensions, unused model hints, and one resource failure option.
+One record should not collapse those facts into “tools: true.”
+The more consequential the side effect, the more important it is to preserve the boundary between capability, permission, request, and outcome.
 
-Those omissions are useful information.
-They tell a builder which path can deliver a proposed change before the runtime spends time creating a worker.
+## The public source names different contracts
 
-## The failure should happen before the run
+The public [profile-materialization module](https://github.com/tangle-network/agent-runtime/blob/main/src/agent/profile-materialization.ts) records named delivery contracts for different execution paths.
+It expands compound areas such as model and resources into the individual settings that a route must either carry or reject.
 
-Suppose a profile changes both its prompt and its tools.
-The selected path accepts prompt changes but has no way to deliver tools.
+The contract names are implementation details, not a score and not proof that the paths behave identically.
+Three representative shapes make the design easier to understand.
 
-Without a contract, the worker starts with half of the requested profile.
-The builder sees a result and has to guess why the tools never appeared.
+| Contract shape | What it is meant to carry | A reasonable use |
+| --- | --- | --- |
+| Full-profile execution | The canonical profile areas, including tools and resources | A worker designed to receive the complete profile |
+| Prompt-and-model execution | Instructions, model selection, agent program, and metadata | A deliberately narrow remote model route |
+| Isolated worktree command execution | Coding settings plus files, commands, permissions, and lifecycle controls | A local coding worker in its own worktree |
 
-With a contract, the runtime reports the unsupported setting before launch.
-The builder can choose a path that carries tools or remove that change from the profile.
+The supported fields are part of the public source contract.
+They can change as the runtime adds a new worker or removes an old route, so a builder should read the versioned source or package documentation rather than hard-code the list in a separate application.
 
-The error includes the unsupported setting and the settings the path does support.
-That makes the failure actionable instead of turning it into a mysterious model problem.
+The profile areas themselves are ordinary product concepts:
 
-The check also preserves explicit values.
-An empty list, `false`, and `0` can all be deliberate requests, so the runtime does not treat them as if the setting were absent.
+| Area | Example setting | Failure when the route cannot deliver it |
+| --- | --- | --- |
+| Instructions | System prompt or task instructions | The worker follows a generic instruction set |
+| Model | Model name or reasoning option | The worker uses a different model or default |
+| Agent program | Which program handles the task | The route starts a different worker |
+| Tools | Ticket, browser, or file tools | The model can request an action that no process can perform |
+| Permissions | Read, write, network, or process access | The worker has too much or too little authority |
+| External connections | MCP server or service connection | The connection never reaches the worker |
+| Child agents | Whether delegation is allowed | A supervisor cannot create the requested child |
+| Resources | Files, skills, commands, or instructions | The worker starts without the material it needs |
+| Lifecycle | Hooks, timeouts, or run mode | Cleanup or cancellation behaves differently |
+| Records | Metadata, privacy, and run extensions | The work cannot be joined to its review record |
 
-## Counts do not mean behavior is complete
+The table is a debugging map.
+It tells a builder what to inspect when a profile appears to work but one capability is absent.
 
-The number 15, 6, or 19 describes a declared input contract.
-It does not prove that every worker or model implements the behavior represented by each setting.
+## A mismatch should be actionable
 
-There are two boundaries to keep separate.
+Return to the support profile.
+The narrow route supports model, systemPrompt, and agentProgram.
+The profile also changes tools, resources, and permissions.
 
-Public source code can declare a contract.
-The worker must still implement the behavior.
-An installable package must also include that source before an application can use it.
+An actionable error can look like this:
 
-The source checked for this article was public, while the package version available on August 1, 2026 was still `@tangle-network/agent-runtime@0.117.0`.
-That means the source change and the installable release were not the same thing yet.
+~~~json
+{
+  "code": "unsupported_profile_settings",
+  "path": "prompt-and-model",
+  "unsupported": [
+    "tools",
+    "resources",
+    "permissions"
+  ],
+  "next": "choose a path that carries these settings or remove them"
+}
+~~~
 
-## The practical rule
+This response is illustrative.
+Its job is to show the information a caller needs, not to promise a particular error spelling.
 
-When a profile changes, compare the changed settings with the selected path before starting a worker.
+The error should identify the path and the unsupported settings.
+Listing every supported setting can help when the caller needs to choose a different route.
+Returning only “profile invalid” forces the caller to repeat the run with guesses.
 
-If a path cannot carry a setting, reject the candidate and name the missing capability.
+There is a second useful check: compare the profile before and after materialization.
+If a route claims to support resources, the resulting worker setup should contain the requested resource or a clear failure.
+A declaration is not evidence that the behavior occurred.
 
-If a path can carry the setting, the worker and provider still need to implement it and expose the resulting behavior.
+## A delivery contract is not an implementation guarantee
 
-This turns configuration loss into an explicit decision instead of a debugging session after the run has already happened.
+The contract answers one question.
+Can this route accept and attempt to deliver this setting?
 
-## Read the implementation
+It does not answer three others.
 
-The [public profile-materialization implementation](https://github.com/tangle-network/agent-runtime/blob/2cee3ae4328d5f1e77e65eb0d35e5293bc6c4d04/src/agent/profile-materialization.ts) lists the canonical settings and all eight delivery contracts.
+1. Does the worker implement the behavior represented by the setting?
+2. Does the model provider expose the requested capability?
+3. Did the run produce the result the user wanted?
 
-The [agent-runtime API reference](https://github.com/tangle-network/agent-runtime/blob/main/docs/api/agent.md) describes the surrounding public API.
+Keep those boundaries visible.
 
-The [LLM sandbox guide](/blog/llm-sandbox-environment-agent-runtime) explains the session boundary around command execution and state.
+| Evidence | Narrow claim it supports | Claim it does not support |
+| --- | --- | --- |
+| Contract check passed | The route accepted the requested profile surface | Every tool will work |
+| Worker setup record | The runtime sent particular inputs to the worker | The worker used them correctly |
+| Model response | The provider returned that response | The response is true or complete |
+| Tool trace | The worker requested or ran a tool, depending on the trace | The requested action achieved its goal |
+| Evaluation | A defined check scored the result | The check covers every production failure |
 
-The [CodeTraceBench article](/blog/codetracebench-benchmark-measured-wrong-capability) applies the same rule to a measurement: name exactly what the system records and what it leaves out.
+A **trace** is the record of a run's inputs, actions, tool events, outputs, and failures.
+It lets a reviewer see whether a setting was delivered and what happened afterward.
+An **evaluation** is a structured check of a result against a stated criterion.
+It can catch a missing ticket update, but it cannot retroactively make an unsupported tool available.
 
-## Questions readers usually ask
+## Do not confuse delivery with Tangle's service layers
 
-### What does “materializing” a profile mean?
+The profile contract sits below several other Tangle concepts.
+Those concepts solve different problems.
 
-It means turning saved profile settings into the concrete inputs that a worker receives.
+A **router** is a model-access layer that chooses or forwards an inference request to a provider.
+It can decide which model answers, but it does not automatically provide a filesystem or ticket tool.
 
-The runtime checks those inputs against the chosen path before the worker starts.
+A **Blueprint** is a reusable service template with a defined interface and execution requirements.
+A **service instance** is one live deployment of that template.
+An **operator** is the compute provider that runs a service instance.
+The [Tangle glossary](https://docs.tangle.tools/vision/core-concepts) defines those protocol terms.
 
-### Why are there several contracts?
+**x402** is an HTTP payment flow for machine-to-machine requests.
+Payment can authorize a job request, but settlement does not prove that the job received every profile setting or completed successfully.
+The [x402 project](https://github.com/coinbase/x402) documents the payment protocol.
 
-Different workers consume different settings.
-A prompt-only worker cannot promise the same behavior as a full-profile worker or a coding worker with files and tools.
+**Attestation** is cryptographic evidence about a confidential execution environment.
+It can help a caller verify which protected machine or image it is talking to.
+It does not prove that a model made a correct decision or that a tool changed the intended record.
+Tangle's [runtime documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox/runtime-and-harnesses) describes attestation as a prerequisite for its confidential runtime mode.
 
-### What happens when a profile asks for an unsupported setting?
+These layers can surround a profile-aware worker.
+They do not replace the delivery check.
 
-The runtime reports that setting and the path's supported settings before launch.
-The builder must choose another path or remove the unsupported change.
+## Source and package versions are separate evidence
 
-### Does the count prove that every setting reaches the model?
+The public repository is a source record.
+An installable package is the version an application installs.
+Those records can differ while a change is moving through release automation.
+
+The [published package](https://www.npmjs.com/package/@tangle-network/agent-runtime) and its release notes determine what an application can install.
+Check that package version and the source version your application pins before depending on a new contract.
+
+This distinction matters for debugging.
+If the public source contains a fix but the installed package predates it, the right action is to upgrade or pin the source version.
+Changing the prompt will not make an old runtime reject an unsupported setting.
+
+## Choose before launch
+
+Use a delivery contract when any profile can run through more than one path.
+Compare the changed settings with the selected path before starting a worker.
+Reject the candidate with the missing settings when the comparison fails.
+
+Then test the next boundary.
+If the route accepts the profile, record the materialized inputs and run a task that exercises the new capability.
+An accepted configuration is a prerequisite for a useful run, not a passing result.
+
+The [generic execution-path deletion](/blog/agent-runtime-generic-executor-deletion) shows what happens when a shared route gains enough profile fidelity to replace a specialized one.
+The [worker observability guide](/blog/agent-runtime-worker-observability) follows the next boundary, where the runtime must report what the worker did.
+For the workspace that carries files and commands, continue to the [LLM sandbox environment guide](/blog/llm-sandbox-environment-agent-runtime).
+
+
+## What is an AI agent profile?
+
+An AI agent profile is a saved description of the model, instructions, tools, permissions, resources, and lifecycle settings a worker should receive.
+
+## What does profile materialization mean?
+
+It means converting saved profile settings into concrete worker inputs such as a prompt, model request, tool registry, files, and process limits.
+
+## Why does a runtime need several delivery contracts?
+
+Different execution paths expose different inputs.
+A narrow model route cannot promise the same settings as a coding worker with a filesystem and tools.
+
+## What happens when a profile requests an unsupported setting?
+
+The runtime should reject the candidate before launch and identify the setting and path that cannot carry it.
+The caller can select another route or remove that change.
+
+## Does a passing contract prove the agent will use the setting correctly?
 
 No.
-The count describes what the execution path declares as input.
-The worker and provider must still implement the behavior represented by each setting.
+It proves only that the selected path accepts the requested profile surface.
+Worker behavior, provider support, tool outcomes, and task-specific evaluation remain separate checks.
 
-### Is the contract in the published package?
+## Does x402 payment or confidential-runtime attestation prove profile delivery?
 
-The source implementation is public, but the package check on August 1, 2026 returned version 0.117.0.
-Check the package version before depending on a newer source contract.
+No.
+x402 proves a payment flow settled, and attestation can prove facts about a protected environment.
+Neither one proves that a worker received every requested tool, file, or instruction.

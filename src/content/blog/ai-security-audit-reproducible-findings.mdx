@@ -1,8 +1,8 @@
 ---
-title: 'AI Security Audit With Reproducible Findings'
+title: 'AI Security Audit: Make Every Finding Reproducible'
 slug: ai-security-audit-reproducible-findings
 summary: >-
-  AI security audit should produce reproducible findings: file references, exploit path, command output, severity reasoning, and a concrete fix.
+  An AI security audit becomes useful when each finding carries its code location, exploit path, command output, severity reasoning, and fix.
 date: '2026-06-17'
 author: Drew Stone
 tags:
@@ -16,108 +16,266 @@ heroImage: /images/covers/editorial/code-auditor-v2.webp
 imageAlt: 'An editorial still life about reviewing code and producing evidence'
 ---
 
-An AI security audit should be judged by reproducibility. If the finding cannot point to code, show the exploit path, explain severity, and give a command or test that supports the claim, it is not ready for a security decision. Tangle Code Auditor is being shaped around that standard: agent-assisted review with sandboxed execution and proof-backed reports.
+The security lead receives a report that says, “Possible authorization bypass in the admin export route.”
+There is a line number, a confident paragraph, and no request that another engineer can send.
 
-The upcoming public surface is `audit.tangle.tools`. Until it is live, do not treat the URL as a working product page.
+The release risk is a report that sounds certain while leaving the second reviewer unable to reconstruct the claim.
+An **AI security audit** is ready for a release decision only when that second reviewer can reconstruct the claim from the report.
+That means the report identifies the exact code revision, the route an attacker would take, the inputs and permissions used, the observed result, the reason for the severity, and the change that should prevent it.
 
-## Finding Bar
+This is the standard behind the Code Auditor direction described by Tangle.
+The public product pages and service surface may change, so this article describes the evidence contract rather than promising a callable audit endpoint.
 
-| Field | Required content |
-| --- | --- |
-| title | specific vulnerability, not a category label |
-| affected code | file and function or contract path |
-| exploit path | how an attacker reaches the issue |
-| impact | what breaks and who loses value |
-| reproduction | command, test, or proof notes |
-| severity | why the level is justified |
-| fix | practical mitigation |
+## Reproducibility starts with one reviewer and one packet
 
-This is the difference between "possible reentrancy" and "this function can be reentered before balance update, here is a failing test."
+Reproducible does not mean that every reader can run every test on every machine.
+It means the report makes the important conditions explicit and separates a failed setup from a failed security claim.
 
-## Tools Are Inputs, Not The Report
+An illustrative finding packet might look like this:
 
-Static analyzers help, but their output needs triage. [OWASP WSTG](https://owasp.org/www-project-web-security-testing-guide/) is useful for web testing structure. [CodeQL](https://codeql.github.com/docs/) and [Semgrep](https://docs.semgrep.dev/) are useful for code search and static analysis. The audit agent should use those tools and then explain what is real in the target repository.
-
-| Tool output | Agent responsibility |
-| --- | --- |
-| warning | inspect reachability |
-| dataflow path | check exploitability |
-| failing test | explain root cause |
-| build failure | separate setup issue from vulnerability |
-| duplicate finding | merge or discard |
-
-## Severity Discipline
-
-High and critical findings need proof. A useful audit runtime should downgrade severe claims when no exploit or loss path is shown.
-
-```text
-claim
--> inspect reachable code path
--> create or run reproduction
--> estimate impact
--> assign severity
--> downgrade if proof is missing
+```json
+{
+  "id": "auth-001",
+  "status": "reproduced",
+  "title": "Signed-in user can read another account's records",
+  "source": {
+    "revision": "illustrative-release-digest",
+    "files": ["export/handler.ts", "auth/authorize.ts"]
+  },
+  "setup": {
+    "install": "npm ci",
+    "test": "npm test -- export-auth",
+    "runtime": "Node.js 22, test database fixture v3"
+  },
+  "request": {
+    "method": "GET",
+    "path": "/exports/account-b",
+    "identity": "account-a"
+  },
+  "expected": "403 Forbidden",
+  "observed": "200 OK with account-b records",
+  "impact": "A signed-in user can read another account's export",
+  "severity_reason": "The route exposes another tenant's data without a privileged role",
+  "fix": "Authorize the requested account before loading the export",
+  "rerun_after_fix": "pending"
+}
 ```
 
-For smart-contract-specific validation, read [Automated Smart Contract Audit With PoC Validation](/blog/automated-smart-contract-audit-poc-validation). For the difference between scanners and agent review, read [AI Vulnerability Scanner Vs Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit).
+The path names and values are illustrative, not a report from a private repository.
+The important property is the shape: a reviewer can see what was tested and what remains open without trusting the model’s prose.
 
-## Reproduction Packet
+The packet also makes uncertainty visible.
+If the test database was a fixture rather than production data, the report should say so.
+If the route was tested only with a normal user and not with a service token, that boundary belongs in the report.
 
-Every accepted finding should include a packet a reviewer can run or inspect.
+## A finding is a chain of claims
 
-| Packet item | Purpose |
+Security reports often compress several different claims into one severity label.
+An agent should keep them separate.
+
+| Claim | Evidence needed |
 | --- | --- |
-| repo ref | fixes the exact code version under review |
-| setup command | separates environment failure from security signal |
-| proof command | shows the finding can be triggered or reasoned about |
-| expected result | tells the reviewer what should happen |
-| observed result | shows the vulnerable behavior |
-| proposed patch | gives engineering a concrete next step |
+| The pattern exists | Tool output with rule, query, location, and version |
+| The code is reachable | Call path, configuration, caller identity, and prerequisites |
+| The behavior is exploitable | Request, test, simulation, or transaction that triggers it |
+| The impact is material | Asset, permission, data, or state change observed under the stated setup |
+| The fix works | The original proof fails after the change while intended behavior still passes |
 
-For web application issues, [OWASP WSTG](https://owasp.org/www-project-web-security-testing-guide/) gives a useful testing structure. For code search, [CodeQL code scanning](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-code-scanning) can surface paths worth reviewing. The audit report should turn those inputs into repo-specific evidence.
+[CodeQL](https://codeql.github.com/docs/codeql-overview/about-codeql/) describes its own analysis as database creation, query execution, and result interpretation.
+That sequence is a useful reminder that query output is an input to review, not the review itself.
 
-## What To Downgrade
+[Semgrep’s finding glossary](https://semgrep.dev/docs/writing-rules/glossary) distinguishes a rule match from the underlying truth of the code’s behavior.
+Its [triage documentation](https://semgrep.dev/docs/for-developers/resolve-findings-through-app) also treats open, reviewing, fixing, and ignored states as workflow decisions that need context.
 
-The auditor should downgrade:
+For web applications, the [OWASP Web Security Testing Guide (WSTG)](https://owasp.org/www-project-web-security-testing-guide/) provides a testing structure and scenario identifiers.
+Use the [WSTG versioned-reference guidance](https://github.com/OWASP/wstg#how-to-reference-wstg-scenarios) when a report relies on a particular scenario, because identifiers can change as the guide evolves.
 
-| Claim | Downgrade reason |
+A threat model states which attackers, assets, permissions, and execution paths the review covers.
+The report’s job is to connect those general tools to one repository and that threat model.
+
+## Severity must follow the demonstrated path
+
+Severity describes what can happen, who can cause it, and what the affected system controls.
+The label should be the last part of the argument.
+
+Use this downgrade table when proof stops short of the claim:
+
+| Initial claim | What is missing | Report state |
+| --- | --- | --- |
+| High authorization flaw | No reachable caller under the release configuration | Candidate or low-confidence review item |
+| Critical asset loss | No observed asset movement, state corruption, or permission change | Unconfirmed impact |
+| Confirmed injection | The input reaches a sensitive operation, or sink, in static analysis, but the runtime test never executes the path | Reachable candidate, reproduction pending |
+| Vulnerable dependency | The affected package is installed, but the vulnerable function is not used | Dependency exposure requires a reachability check |
+| Any severe issue | The build or fixture fails before the proof begins | Setup failure, not a reproduced vulnerability |
+
+This is not a universal scoring formula.
+It is a writing discipline that prevents a strong adjective from hiding a missing condition.
+
+The report should preserve the raw tool signal even when the severity changes.
+An engineer may need to tune the rule, add a test, or revisit the conclusion after a configuration change.
+
+## Read the report in the order a release decision happens
+
+A reviewer rarely starts by reading every model message.
+The first pass should answer whether the report has enough material to spend more time on it.
+
+Start with the source identity.
+If the report does not say which revision, dependency lockfile, or deployment configuration it examined, the location may describe code that is no longer shipping.
+
+Then read the expected and observed results.
+The difference between “the request reached the handler” and “the request returned another tenant’s record” is the difference between a path candidate and a demonstrated data disclosure.
+
+Next, inspect the caller and preconditions.
+An administrative route may be public at the HTTP layer while an edge service, role check, or service identity blocks the dangerous action before the handler runs.
+The report should name that boundary instead of summarizing the route as public or private.
+
+Finally, read the fix check and limits.
+If the patch was never tested, the report is a recommendation rather than a verified repair.
+If the test used a fixture, the report should state what the fixture omits.
+
+| Review question | If the answer is missing |
 | --- | --- |
-| high severity without reachable path | no demonstrated attacker route |
-| critical issue without asset loss | impact not proven |
-| scanner warning with safe wrapper | context reduces risk |
-| duplicate path | same root cause already reported |
-| setup failure | environment problem, not vulnerability |
+| Which exact source and dependencies ran? | Hold the finding until the code identity is pinned |
+| Which identity and input reached the path? | Treat exploitability as unresolved |
+| What did the command return? | Treat model explanation as unsupported |
+| What state, data, or permission changed? | Do not infer impact from a category label |
+| Did the same proof fail after the patch? | Keep the fix unverified |
 
-This keeps the report short enough for engineers to act on.
+This order keeps the review efficient without making it shallow.
+It directs attention to the claims that can change a release decision and leaves stylistic commentary for later.
 
-## Fix Verification
+## Setup failures are security-relevant evidence, but they are not exploits
 
-The audit should not end at "recommendation written." For important findings, the agent should rerun the reproduction against the patched code and record the result. A good fix note says what changed, which proof no longer works, and whether any residual risk remains. That turns the audit from a report generator into a release gate.
+Suppose the agent reports that it “validated” a missing authorization check, but the test command exited before loading the application.
+The report must say that no reproduction occurred.
 
-When the reproduction cannot be rerun, the report should say why. A dependency issue, missing fixture, or unavailable chain state is still useful context for the reviewer.
+The same distinction applies to missing dependencies, unavailable chain state, a failed database migration, a blocked network request, or a test that used the wrong identity.
+Each failure changes what the reader may conclude.
 
-## What This Does Not Prove
+An evidence table makes that boundary easy to inspect:
 
-An AI security audit does not guarantee absence of vulnerabilities. It produces findings under a scope and evidence bar. Use it to speed triage, catch obvious and non-obvious issues, and prepare for human review.
+| Captured result | What it tells the reviewer |
+| --- | --- |
+| Exit code `0` with a passing exploit assertion | The test ran and observed the asserted bad behavior |
+| Exit code `1` during dependency installation | The proof did not reach application behavior |
+| HTTP `403` for the unauthorized request | The tested authorization path rejected the caller |
+| Timeout before a response | The path is unresolved, not proven exploitable |
+| A model summary without tool output | No independent execution evidence is attached |
 
-## Decision Rule
+The audit runtime, the process that runs commands and tests, must preserve command output and exit status as separate fields.
+Otherwise a model can describe a test that never ran, and the report will make that mistake hard to notice.
 
-Accept an AI security audit finding only when it includes location, path, impact, reproduction, and fix guidance. Treat unsupported severe claims as hypotheses.
+## Verify the fix against the same proof
 
-## FAQ
+The first reproduction is only half of the release check.
+After the code change, rerun the same request or test against the patched revision.
 
-### What is an AI security audit?
+A useful fix note contains four lines of reasoning:
 
-It is a security review assisted by agents that inspect code, run tools, validate findings, and produce a report with evidence.
+1. The original code allowed a specific caller and input to reach a protected action.
+2. The patch changes the authorization or state transition that made the action possible.
+3. The original proof now fails for the attacker while the intended caller still succeeds.
+4. Any untested configuration, dependency, or cross-service path remains listed.
 
-### What makes a finding reproducible?
+For an authorization flaw, the regression test should cover both sides of the boundary.
+The unauthorized caller must receive the expected denial, and the authorized caller must retain the intended behavior.
+For a contract finding, the old exploit test should fail after the patch while balance and permission invariants continue to pass.
 
-The reviewer can follow the file references, commands, tests, or proof notes and see why the issue is real.
+Do not replace a failed rerun with a new prose explanation.
+If the proof cannot be repeated because a fixture disappeared or a chain state is unavailable, report the reason and leave the finding open.
 
-### Does this replace human auditors?
+## A missing proof needs a useful next step
 
-No. It can speed review and catch issues earlier, but humans should review high-risk systems and final release decisions.
+Some findings cannot be reproduced in the first run without becoming false or unsafe experiments.
+The production service may depend on a third-party identity provider, a queue race, a live block range, a private package, or a permission that the audit worker must not receive.
 
-### Where does Tangle Code Auditor fit?
+The report should turn that boundary into a request a reviewer can answer.
+“Could not reproduce” is a status, not an explanation.
 
-Tangle Code Auditor is the upcoming audit product for sandboxed, agent-assisted security review.
+| Missing condition | Better report detail | Next step |
+| --- | --- | --- |
+| Identity provider unavailable | Name the token claims and authorization branch that were not exercised | Supply a redacted fixture or run the check in an approved environment |
+| Race requires two concurrent requests | State the interleaving the test attempted and the scheduler it used | Add a deterministic concurrency test or request specialist review |
+| Chain state has moved | Pin the network, block, contracts, and state snapshot that were available | Re-run against a preserved fork or downgrade the claim to historical evidence |
+| Private dependency cannot be installed | Record the package boundary and the command that failed | Provide a trusted build artifact or mark the affected path unresolved |
+| Live data would expose users | Describe the redacted assertion and missing sample | Use synthetic records that preserve the authorization relationship |
+
+This format keeps the report honest while giving engineering a path to completion.
+It also protects the audit from silently widening permissions until a desired result appears.
+
+A reviewer can then distinguish three outcomes.
+The issue may be disproved by a safe fixture, confirmed in an approved environment, or left open because the missing condition is part of the risk itself.
+Each outcome deserves a different release decision.
+
+The [automated smart contract audit guide](/blog/automated-smart-contract-audit-poc-validation) shows how to turn a confirmed contract proof into a regression test.
+The [AI code audit guide](/blog/ai-code-audit-sandboxed-agents) covers the isolated execution workflow that makes this rerun safer.
+
+## Tangle can carry the evidence, but each layer proves something different
+
+Tangle’s public [Sandbox](https://docs.tangle.tools/sandbox) is an isolated machine for an agent.
+Its [quickstart](https://docs.tangle.tools/sandbox/quickstart) shows an SDK client creating a machine, running a command, capturing its output, and deleting the machine afterward.
+That makes it a possible execution boundary for the scan and rerun, not a substitute for the finding packet.
+
+If a future audit workflow is packaged for Tangle, a **Blueprint** would be the service package defining its jobs, metadata, contracts, and runtime rules.
+An **operator** would be the service provider that runs the live instance for a caller.
+A **service instance** would be that live registration and execution context, not the reusable Blueprint package.
+The **runtime** would be the container, microVM, or other environment that executes the scan and reproduction.
+The public [AI Agent Sandbox Blueprint overview](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes that split between protocol lifecycle and live machine I/O.
+
+An **agent profile** records the model, instructions, tools, permissions, and resource limits used by the run.
+Pinning that profile gives the reviewer a comparison point when two runs produce different hypotheses.
+
+A **trace** is the ordered record of the run’s actions, inputs, outputs, and results.
+It answers “what did the agent do?” and “what did the tools return?”
+It does not answer “was the threat model complete?” without a separate review of scope.
+
+An **evaluation** is a repeatable collection of audit tasks and expected outcomes used to compare runs under the same conditions.
+It makes the allocation measurable.
+For this workflow, the evaluation should include known true findings, known false positives, setup failures, duplicate alerts, and cases where the correct answer is “not enough evidence.”
+Score the system on reproducible accepted findings, correct rejections, missed issues, rerun success, and reviewer time.
+
+The product boundary is important.
+Protocol state can record that a service exists, an operator can run a runtime, and a trace can record actions.
+Those facts still need to be joined to the code revision and security evidence before an engineer accepts the finding.
+
+## What a reproducible audit cannot prove
+
+An AI security audit does not prove that a codebase has no vulnerabilities.
+It proves what the recorded tools, inputs, environment, threat model, and tests support.
+
+It can miss logic that no rule or task asks about.
+It can miss races across services, production-only settings, dependency behavior, economic attacks, and interactions that the test fixtures do not model.
+It can also reach a correct conclusion for the wrong reason, which is why raw tool output and repeatable tests matter.
+
+Human auditors remain responsible for high-value systems and final release decisions.
+Independent methods, monitoring, incident response, and a clear disclosure process cover risks that a repository run cannot see.
+
+## Use the packet as the release decision
+
+Accept an AI security audit finding when a second reviewer can locate the code, follow the stated path, inspect the captured action and result, understand the impact, and rerun the relevant proof.
+Downgrade or hold the claim when any of those pieces is missing.
+
+For the next step, use the [OWASP WSTG scenarios](https://owasp.org/www-project-web-security-testing-guide/) for web test coverage, [CodeQL’s analysis model](https://codeql.github.com/docs/codeql-overview/about-codeql/) for query provenance, and [Tangle’s Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) for the execution boundary.
+Then compare the workflow with [AI Vulnerability Scanner Vs Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit) before choosing where agent time belongs.
+
+
+## What is an AI security audit?
+
+It is a security review assisted by an agent that combines code analysis, context inspection, executable tests, and a report of evidence and limits.
+
+## What makes an audit finding reproducible?
+
+The report identifies the exact source revision, setup, caller, inputs, commands, observed result, impact reasoning, and fix check needed for another reviewer to repeat or inspect the claim.
+
+## Should a severe finding be accepted without an exploit proof?
+
+Treat it as a candidate unless the report has another strong proof path, such as a formal argument or a deterministic invariant failure, and explains why an exploit demonstration is unavailable.
+
+## Does this replace a human security auditor?
+
+No.
+It can reduce triage work and produce better review material, while humans still choose the threat model, inspect high-risk behavior, and approve the release.
+
+## What should happen when a test cannot run?
+
+Mark the reproduction incomplete, record the setup error, preserve the original candidate, and state what a reviewer must provide before the severity can increase.

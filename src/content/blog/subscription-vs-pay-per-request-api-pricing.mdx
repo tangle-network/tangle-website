@@ -1,10 +1,9 @@
 ---
-title: 'API Pricing: Subscription vs Pay Per Request'
+title: 'Subscription vs Pay-Per-Request API Pricing'
 slug: subscription-vs-pay-per-request-api-pricing
 summary: >-
   Compare subscription and pay-per-request API pricing across margins, billing
-  work, latency, customer needs, and a hybrid implementation for teams and
-  agents.
+  work, customer needs, latency, and a hybrid implementation for teams and agents.
 date: '2026-03-24'
 updated: '2026-08-01'
 author: Drew Stone
@@ -21,215 +20,297 @@ heroImage: /images/covers/editorial/x402-production-runway-v2.webp
 imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
-Choose pay-per-request API pricing when usage is irregular, the buyer is software, and each request has a clear value and cost.
-Choose a subscription when usage is predictable, the buyer needs invoices or team administration, and a recurring commitment creates value for both sides.
-Support both when individual agents and larger organizations use the same service.
+An API (application programming interface) may serve two buyers with opposite billing needs.
+One is a procurement team that wants an invoice, a spending limit, and a predictable monthly bill.
+The other is a software agent that may call your endpoint once today, twenty times tomorrow, and never again next week.
+The same subscription-versus-pay-per-request decision cannot serve those buyers equally well.
 
-The pricing label is not the decision by itself.
-Model request cost, support cost, payment fees, failure and refund rates, usage distribution, and the price a buyer will accept before selecting a billing path.
+Subscription vs pay-per-request API pricing is a product decision shaped by request variance, buyer controls, support cost, and unit economics.
+A subscription sells predictable access or capacity over a period.
+Pay-per-request pricing charges for each accepted unit of work.
+Choose from p50 and p95 usage, retry rate, support cost, buyer controls, and unit economics.
 
-## Quick Decision Table
+Choose pay per request when usage is irregular and each request has a clear value.
+Choose a subscription when usage is predictable and administration is part of the product.
+Support both when agent calls and organizational usage need separate budgets, entitlements, and routing rules.
+Use the buyer break-even formula and seller cost ledger before publishing the price, because a low-looking unit price can be expensive to operate and a cheap subscription can be unattractive to a buyer with sparse usage.
 
-| Dimension | Pay per request | Subscription | Hybrid |
+## The terms behind the pricing choice
+
+An API is a network interface that lets one program request a defined operation from another program.
+An API request is not always a completed result.
+It can be rejected, accepted for background processing, retried, or completed later, so the pricing rule needs to say which event creates a charge.
+
+A subscription is a recurring entitlement.
+The buyer pays for a period, quota, concurrency limit, or support level, and the seller decides what happens when the buyer exceeds it.
+The entitlement might be a monthly request allowance, priority execution, or access to a named model.
+
+Pay per request means the bill is tied to an accepted unit of work.
+The unit could be an HTTP call, a job submission, a token range, a minute of execution, or an output artifact.
+The contract needs to define the unit precisely enough that a retry does not become an accidental second purchase.
+
+x402 is an HTTP payment protocol.
+In the usual flow, a server returns HTTP 402 with payment requirements, a client signs a payment, and the server or a facilitator verifies the payment before the integration settles and fulfills the request.
+A facilitator is the service that checks a signed payment and can submit or complete settlement on the payment network.
+The [current x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) describes the 402, signed retry, verification, settlement, and response sequence.
+
+Tangle is a protocol for registering and coordinating services run by independent operators.
+A Blueprint is the deployable definition of one such service, including its jobs and operating rules.
+An operator is the service or organization that runs a Blueprint instance.
+A runtime is the process that loads the Blueprint, receives work, and produces results.
+
+An agent profile is the declared behavior and permissions for an agent, such as which tools it may call, which budget it can spend, and which data it can access.
+A router is the component that chooses which endpoint or provider should receive a request.
+A trace is the chronological record of the request, payment, tool calls, retries, and result.
+An evaluation is a repeatable test of whether the agent or service produced an acceptable outcome.
+These terms matter because pricing changes all four records: the profile needs a spending rule, the router needs a price-aware choice, the trace needs payment state, and the evaluation needs to distinguish paid from completed.
+
+An attestation is signed evidence from a trusted execution environment about the software or hardware that ran.
+A verified measurement can support a higher-priced confidentiality tier, but it does not turn a subscription into a quality guarantee.
+The [Tangle TEE documentation](https://github.com/tangle-network/blueprint/tree/main/crates/tee) describes attestation-backed execution as a separate capability.
+
+## Start with usage, not tiers
+
+Build the first table from monthly volume, p50 and p95 usage, retries, execution time, and support cost rather than plan names.
+Record requests per buyer per month, request size, execution time, failure rate, support contacts, and the percentage of requests that are retried.
+The average is not enough.
+A sample buyer with 100 requests in one month and zero in the next may have the same average as a sample buyer with 50 requests every month, while needing a completely different product.
+
+| Buyer pattern | Subscription pressure | Pay-per-request pressure | Main risk |
 | --- | --- | --- | --- |
-| Best buyer | Agent, script, occasional developer | Team, company, frequent user | Mixed customer base |
-| Best usage | Irregular or low-frequency | Predictable and repeated | Long tail plus high-volume accounts |
-| Cost certainty for buyer | Low unless the client sets budgets | High within plan limits | High for subscribers, exact for occasional calls |
-| Revenue predictability | Follows usage | Recurs until cancellation | Recurring base plus usage revenue |
-| Billing work | Metering and per-call payment or ledger | Accounts, plans, invoices, limits, and lifecycle events | Both systems plus one authorization model |
-| Request latency | May include a payment round trip or settlement | Usually checked against prepaid entitlement | Depends on buyer path |
-| Identity | Can be wallet- or request-based | Usually account and organization based | Supports both |
-| Main risk | Too little volume or too much payment friction | Heavy users exceed the price's cost assumptions | Duplicated rules and inconsistent entitlements |
+| Predictable daily batch | Strong | Moderate | The quota is too low during a seasonal spike |
+| Occasional agent calls | Weak | Strong | Minimum subscription makes the service uneconomic |
+| Large team with procurement | Strong | Weak | Finance needs invoices and account controls |
+| Multiple short-lived agents | Weak | Strong | Each agent needs its own budget and identity |
+| High-variance research workload | Mixed | Strong at first | A request price may be hard to predict |
+| Confidential or priority execution | Strong for a tier | Possible surcharge | The buyer needs proof that the extra value exists |
 
-## When Pay Per Request Wins
+Look at the tail as well as the center.
+If the sample p50 buyer sends 400 requests but the sample p95 buyer sends 30,000, a single included quota will either strand the light users or expose the seller to unlimited heavy usage.
+P50 means the median, or the middle observed buyer.
+P95 means the level that 95 percent of observed buyers do not exceed.
 
-Pay per request fits a service with a discrete unit of work: one model call, browser task, document conversion, code analysis, quote, image, or sandbox job.
+## A simple break-even calculation
 
-It is strongest when:
+For a sample plan, suppose a service offers a 100-dollar monthly subscription and charges 0.03 dollars per request for a usage-based plan.
+Ignoring discounts and overages, the arithmetic break-even is:
 
-- the buyer cannot predict monthly usage;
-- the client is an agent that can respond to price programmatically;
-- a request is valuable enough to absorb payment processing time and fees;
-- the operator can estimate or cap the cost of each request;
-- buyers do not need seats, invoices, negotiated terms, or a shared account;
-- the service can return a receipt tied to one result.
+~~~text
+sample subscription price / request price
+= 100 / 0.03
+= 3,333.33 requests per month
+~~~
 
-Per-request pricing still needs operations.
-The service must prevent duplicate charges, track payment state, handle a paid request that fails, support refunds or credits where promised, and reconcile the payment to the delivered job.
+A sample buyer below roughly 3,334 requests pays less with usage-based billing.
+A sample buyer above that level pays less with the subscription.
+That is only the buyer's arithmetic.
+The seller still needs to include compute, storage, payment fees, support, failed work, refunds, and the cost of keeping capacity available.
 
-## When Subscription Wins
+Now add a concrete workload.
+In this sample workload, 500 requests costs 15 dollars.
+In this sample workload, 5,000 requests costs 150 dollars.
+In this sample, the subscription saves the heavy user 50 dollars before any overage rule, while the light user avoids committing 100 dollars for capacity it did not use.
+The sample decision is concrete: 500 requests costs 15 dollars; 5,000 requests costs 150 dollars.
 
-A subscription fits repeated usage where the buyer values budget certainty and the seller can estimate the distribution of usage across accounts.
+The seller's calculation needs a different ledger:
 
-It is strongest when:
+~~~text
+gross contribution
+= collected revenue
+- execution cost
+- payment and settlement fees
+- support and account cost
+- expected refunds and failed work
+~~~
 
-- teams need shared access and permissions;
-- procurement needs card billing, invoices, tax records, or a contract;
-- the product has recurring value beyond raw request volume;
-- usage limits and overage rules can be explained before purchase;
-- customer support and retention justify maintaining account state;
-- the seller has enough usage history to avoid systematically underpricing heavy accounts.
+In this sample margin ledger, one request consumes 0.006 dollars of compute and the provider charges 0.03 dollars, so the sample raw request contribution is 0.024 dollars before fixed costs.
+If an x402 payment costs more to settle than the request itself, batching or a minimum charge may be necessary.
+If a subscription buyer sends a sudden burst, reserved capacity and queueing can erase the apparent margin.
 
-Subscriptions do not remove metering.
-Even an unlimited plan needs abuse controls, capacity planning, and a way to know whether a small group of accounts consumes most of the infrastructure.
+Do not hide those effects in a vague “fair use” clause.
+State the included quota, overage unit, concurrency limit, maximum input, and behavior when the quota is exhausted.
+The buyer is choosing how much capacity to reserve and how much usage uncertainty to carry.
 
-## Calculate the Break-Even Point
+## Tangle's protocol models have a narrower scope
 
-Start with contribution margin per account, not competitor plan names.
+Tangle's public pricing model distinguishes PayOnce, Subscription, and EventDriven service billing.
+PayOnce means a user pays up front when creating a service.
+Subscription means the service owner funds escrow and periodic billing.
+EventDriven means the job submitter pays per job.
+Those are protocol-level payment models.
+Invoices, seats, taxation, customer support, and cancellation screens remain application responsibilities.
 
-For pay per request:
+This distinction prevents a common category error.
+A Tangle service can use the Subscription model for operator or service-level billing while the product exposes monthly plans to customers through its own account system.
+Conversely, a product can use pay-per-request customer pricing while its underlying service uses a different protocol model.
+The [Tangle pricing and payments guide](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) explains the current protocol models and their funding responsibilities.
 
-```text
-monthly margin
-= request count × (price per request - variable cost per request)
-- payment fees
-- support and refund cost
-```
+An x402 route is another boundary.
+Tangle's current gateway supports a per-job price map and can be configured with public-paid or restricted-paid invocation.
+The route can return a price for discovery, return 402 when payment is missing, and return 202 Accepted after a valid payment is settled and the job is enqueued.
+202 means accepted for processing; it does not mean the result is ready.
+The [Tangle x402 runner guide](https://docs.tangle.tools/developers/blueprint-runner/x402) documents the health, price, payment, and authorization dry-run endpoints.
 
-For a subscription:
+The customer promise should separate acceptance from completion: charge for an accepted invocation, then poll or receive the result under a stated completion policy.
+Use synchronous “pay and receive a result immediately” wording only when the runtime completes the job before responding.
 
-```text
-monthly margin
-= plan price
-- included usage × variable cost per unit
-- payment fees
-- account support cost
-```
+## A hybrid model needs one entitlement path
 
-The break-even request count for a buyer is approximately:
+A hybrid product can give organizations a subscription and let software agents pay only for accepted invocations.
+Keep entitlement and payment decisions in one trace keyed by account and idempotency key while preserving their separate billing rules.
 
-```text
-subscription price / pay-per-request price
-```
+An illustrative authorization boundary might look like this.
+This TypeScript is application pseudocode, not a public Tangle SDK method.
 
-In this sample, if a plan costs `$100` and the same work costs `$0.02` per request, the simple buyer break-even is the reported `5,000` requests per month.
-That is a hypothetical example, not a Tangle price.
-The seller's break-even must also include compute, model tokens, storage, network calls, payment fees, retries, and support.
-
-Use percentiles rather than the average account.
-At minimum, calculate monthly requests and contribution margin for the median, 90th percentile, and maximum active account.
-Averages can hide a small number of accounts that make an apparently profitable subscription lose money.
-
-## Price the Unit Buyers Understand
-
-The best billing unit matches the result the buyer is trying to purchase.
-
-| Service | Clearer unit | Risky unit |
-| --- | --- | --- |
-| Model routing | input and output tokens, or completed response | internal routing attempts |
-| Browser automation | completed task with a defined time limit | every browser action |
-| Sandbox compute | second, minute, or reserved capacity | opaque credits with no conversion |
-| Code analysis | repository or bounded changed-file run | every internal model call |
-| Document processing | page, document, or extracted field set | background worker time |
-
-When internal cost and buyer value use different units, expose the buyer-facing unit and meter the internal cost separately.
-Do not force customers to understand your infrastructure architecture to predict a bill.
-
-## x402 for Per-Request Payments
-
-[x402](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) gives a paid HTTP endpoint a standard challenge and retry flow.
-The server returns `402 Payment Required`, the client signs a payment payload, and the server verifies and settles it before returning the resource.
-
-In x402 v2, the main headers are `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`.
-That path can reduce account and API-key work for wallet-based buyers, but it adds wallet policy, settlement, idempotency, receipt, and failure-state requirements.
-
-Use x402 when those tradeoffs fit the buyer.
-Do not add it to a human team product merely because HTTP 402 is available.
-
-## Tangle Blueprint Pricing Primitives
-
-Tangle's public Blueprint repository separates pricing from job execution.
-At commit [`00c3cae`](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866), the pricing engine defines three models:
-
-```protobuf
-PAY_ONCE = 0;
-SUBSCRIPTION = 1;
-EVENT_DRIVEN = 2;
-```
-
-The [pricing engine source](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/pricing-engine) calculates model-specific quotes.
-The separate [`blueprint-x402` crate](https://github.com/tangle-network/blueprint/tree/00c3cae14ade1bbaf8374934f7c5084cff0af866/crates/x402) exposes paid HTTP jobs and converts verified payments into the runner's job-call stream.
-
-This separation is useful because payment methods can converge on the same service handler:
-
-```text
-x402 payment ------\
-                    -> authorization -> job router -> job handler -> receipt
-subscription ------/
-```
-
-The handler should receive the same typed job whether the buyer paid for one request or used a subscription entitlement.
-Authentication, payment, and job execution remain separate decisions.
-
-Current implementation details to plan around include:
-
-- x402 jobs are disabled until an operator explicitly enables a paid access policy;
-- restricted paid jobs require both payment and the configured caller policy;
-- the x402 quote registry is in memory, so outstanding quotes do not survive a process restart;
-- operators configure accepted tokens, conversion rates, quote lifetime, and markup;
-- pricing configuration is not a full customer billing system with invoices, refunds, tax, and subscription lifecycle management.
-
-## How to Support Both Without Duplicating the Product
-
-Keep one entitlement result between billing and execution:
-
-```text
-authorize(request) -> {
-  customer_or_wallet,
-  service,
-  limits,
-  payment_or_plan_reference,
-  idempotency_key
+~~~ts
+type RequestContext = {
+  accountId: string
+  agentProfileId?: string
+  idempotencyKey: string
+  requestedUnits: number
 }
-```
 
-The pay-per-request path creates that result from a settled payment.
-The subscription path creates it from an active account, plan, and usage allowance.
-The downstream job router consumes the same shape.
+type ChargeDecision =
+  | { mode: 'subscription'; remainingUnits: number }
+  | { mode: 'pay-per-request'; amount: string; paymentId: string }
+  | { mode: 'reject'; reason: string }
 
-This avoids two common failures:
+function authorize(context: RequestContext): ChargeDecision {
+  if (hasRemainingEntitlement(context.accountId, context.requestedUnits)) {
+    return {
+      mode: 'subscription',
+      remainingUnits: remainingAfterReservation(context)
+    }
+  }
 
-1. Different customers receive different service behavior because each billing path has its own handler.
-2. A payment check accidentally becomes an authorization check for private data or administrative actions.
+  return createOrRecoverPayment(context)
+}
+~~~
 
-## Before You Publish Prices
+The important properties are the reservation and the idempotency key.
+An **idempotency key** is a stable request token that tells the service a retry belongs to an earlier attempt.
+Reserve subscription units before dispatching work, and make a repeated request with the same key return the original decision.
+Otherwise a network timeout can make one user pay twice or consume the same quota twice.
 
-Answer these questions with current measurements:
+The trace should record the decision alongside the final result:
 
-1. What is the variable cost distribution for one successful request?
-2. How much do retries, failures, and abandoned jobs add?
-3. What are monthly requests per active account at the median, 90th percentile, and maximum?
-4. Which buyers require invoices, refunds, purchase orders, or service commitments?
-5. How long does payment add to the request path on every supported network?
-6. Can the service prove which result belongs to each charge?
-7. What happens when payment succeeds but execution fails?
-8. What limit protects the seller from one heavy subscription account?
-9. What budget protects an autonomous buyer from repeated calls?
-10. Which price and policy changes require notice to existing customers?
+| Trace event | Example fact |
+| --- | --- |
+| Request received | Account, agent profile, request identifier |
+| Entitlement checked | 120 units available before reservation |
+| Charge selected | Subscription reservation or x402 payment |
+| Work accepted | Runtime queued job 7842 |
+| Work completed | Result hash and completion timestamp |
+| Usage settled | 1 unit consumed or payment reference attached |
 
-If these values are unknown, launch with a capped pilot and collect them before promising unlimited usage or permanent unit prices.
+An evaluation should test the whole sequence.
+One test can check that a subscription request consumes exactly one reserved unit.
+Another can send the same idempotency key after a simulated timeout.
+Another can verify that a 402 payment followed by an accepted 202 is not reported as a completed result.
+Pricing is part of observable behavior, not a wrapper around the API.
 
-## FAQ
+## How to choose the product boundary
 
-### Is pay per request cheaper than a subscription?
+Choose a subscription when the buyer values continuity.
+That includes stable access, team administration, invoice terms, reserved capacity, a support relationship, or predictable budgeting.
+The plan should name the entitlement that creates that value; a request-price discount alone is not enough.
 
-It depends on usage.
-Divide the subscription price by the per-request price to estimate the buyer's request-count break-even, then include overages, fees, and any minimum commitment.
+Choose pay per request when the buyer values optionality.
+That includes one-off automation, dynamic routing, short-lived agents, experimentation, or workloads whose volume cannot be forecast.
+x402 is particularly useful when the payer is software and an HTTP 402 response can carry the information needed for the next signed payment.
 
-### Which model is better for AI agents?
+Choose a hybrid when the customer populations are real and distinct.
+Do not create a second payment path merely because it sounds flexible.
+Each path adds retries, reconciliation, support cases, and tests.
+The hybrid is justified when the subscription solves organizational needs that a wallet cannot solve and the per-request path solves machine-to-machine usage that a monthly contract cannot.
 
-Pay per request often fits agents because software can inspect a price and buy one capability without a conventional account.
-Subscriptions fit long-running agents with predictable usage or teams that need centralized budgets and administration.
+## Failure cases to price explicitly
 
-### Can one API support both models?
+Retries are the first failure case.
+If the server completes work but the client misses the response, the retry must be able to find the original result.
+Charge on a stable acceptance event, use an idempotency key, and document whether a failed execution is refunded or retried at no charge.
+
+Quota exhaustion is the second.
+A subscription can reject new work, permit overages, or downgrade priority.
+Those behaviors change the product, so they belong in the plan description and in automated tests.
+
+Usage spikes are the third.
+A pay-per-request seller can exhaust one operator's capacity when a router sends a sudden burst.
+Set concurrency and rate limits, and ensure that the agent profile contains a budget and a maximum request size.
+The router should choose an allowed endpoint using current price and capacity, not choose the cheapest endpoint and discover its limits after payment.
+
+Refunds and settlement failures need their own records.
+An on-chain payment that settles is not automatically a successful computation.
+A subscription invoice that is paid is not evidence that every included request completed.
+Keep payment identifiers, job identifiers, result identifiers, and refund decisions linked in the trace.
+
+Finally, confidentiality can change the price.
+If a workload runs in a trusted execution environment and produces an attestation, that evidence may justify a separate tier.
+The attestation still needs an independent checker, a policy for acceptable measurements, and a response to missing or stale evidence.
+Do not charge for a security property that the buyer cannot inspect.
+
+## A practical launch sequence
+
+Start with one measurable unit of work.
+Publish its input limits, completion state, retry behavior, and price.
+Collect at least a small real usage sample before setting included quotas, and report the p50, p95, and maximum observed usage rather than only the average.
+
+Next, implement one payment ledger that can represent both entitlement reservations and per-request payments.
+Link every charge to an idempotency key and every result to a job identifier.
+Add an evaluation for duplicate requests, missing results, quota exhaustion, and payment acceptance without completion.
+
+Test the route an agent will use.
+For x402, verify the 402 response, signed retry, settlement response, and asynchronous status path.
+For subscriptions, verify quota reservation, invoice state, cancellation, and overage behavior.
+For both, inspect the trace after a timeout rather than assuming the client saw the last response.
+
+The [pay-per-request pricing guide](/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags) covers the wei-to-token calculation behind one request.
+The [x402 payment guide](/blog/x402-payments-for-ai-agents) covers the HTTP challenge and settlement boundary.
+
+## Choose commitment or optionality
+
+Subscription vs pay-per-request API pricing is a choice between commitment and optionality.
+The subscription earns its place by providing predictable capacity, administration, or support.
+Pay per request earns its place by making irregular usage easy to start and easy to stop.
+
+A durable implementation treats billing as part of the service state:
+the request has an identity, the charge has a clear trigger, the runtime reports acceptance separately from completion, and the trace makes reconciliation possible.
+Once those facts are explicit, offering both models is a manageable product choice rather than a pair of disconnected price pages.
+
+
+## Is a subscription always cheaper for heavy users?
+
+No.
+Compare the included quota, overage price, concurrency limit, support cost, and burst behavior.
+A low monthly price can become expensive if heavy usage is charged through punitive overages.
+
+## Is pay per request the same as x402?
+
+No.
+Pay per request is a pricing rule.
+x402 is one protocol for communicating and settling an HTTP payment.
+A service can charge per request through another billing system, and an x402 route can represent a job that completes asynchronously.
+
+## Should a subscription request still have an idempotency key?
 
 Yes.
-Convert a settled payment or an active subscription into the same entitlement record, then route both to the same job handler.
+The key prevents a timeout or retry from consuming the same entitlement twice and helps the client find the original result.
 
-### What should a subscription include?
+## Does Tangle's Subscription model create customer SaaS subscriptions?
 
-State the billing interval, included usage, overage price, concurrency, rate limit, support level, cancellation timing, refund policy, and what happens to unused allowance.
+Not by itself.
+It describes a protocol-level funding model for a service.
+Customer plans, seats, invoices, taxes, cancellation, and support remain application responsibilities.
 
-### What should a pay-per-request response include?
+## When should a machine agent use a subscription?
 
-Return or retain the amount, asset, recipient, network, settlement reference, idempotency key, job identifier, and result evidence needed to reconcile the charge with the work.
+Use one when the agent has predictable recurring volume, needs reserved capacity, or operates inside an account with a budget administrator.
+Use pay per request when its demand is sparse or it needs to select among providers dynamically.
+For the operator-selection and accountability boundary that follows pricing, continue with [on-chain RFQ job quotes](/blog/on-chain-rfq-job-quotes-verification-slashing).
+
+## Sources
+
+- [Tangle pricing and payments](https://docs.tangle.tools/developers/blueprints/pricing-and-payments)
+- [Tangle x402 runner](https://docs.tangle.tools/developers/blueprint-runner/x402)
+- [x402 payment flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works)
+- [Tangle Blueprint TEE support](https://github.com/tangle-network/blueprint/tree/main/crates/tee)
