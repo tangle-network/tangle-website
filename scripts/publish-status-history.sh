@@ -48,7 +48,7 @@ prepare_branch() {
 }
 
 find_open_pr() {
-  local count is_cross_repository
+  local count
   count="$(
     gh pr list \
       --repo "$REPOSITORY" \
@@ -56,31 +56,20 @@ find_open_pr() {
       --base "$BASE_BRANCH" \
       --head "$UPDATE_BRANCH" \
       --json number,isCrossRepository \
-      --jq 'length'
+      --jq '[.[] | select(.isCrossRepository == false)] | length'
   )"
 
   [[ "$count" =~ ^[0-9]+$ ]] || die 'GitHub returned an invalid pull request count'
   (( count <= 1 )) || die "found ${count} open pull requests for ${UPDATE_BRANCH}"
 
   if (( count == 1 )); then
-    is_cross_repository="$(
-      gh pr list \
-        --repo "$REPOSITORY" \
-        --state open \
-        --base "$BASE_BRANCH" \
-        --head "$UPDATE_BRANCH" \
-        --json isCrossRepository \
-        --jq '.[0].isCrossRepository'
-    )"
-    [[ "$is_cross_repository" == 'false' ]] || die "refusing cross-repository pull request for ${UPDATE_BRANCH}"
-
     gh pr list \
       --repo "$REPOSITORY" \
       --state open \
       --base "$BASE_BRANCH" \
       --head "$UPDATE_BRANCH" \
-      --json number \
-      --jq '.[0].number'
+      --json number,isCrossRepository \
+      --jq '[.[] | select(.isCrossRepository == false)][0].number'
   fi
 }
 

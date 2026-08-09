@@ -1,9 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
 const workflow = await readFile(new URL('../.github/workflows/collect-status.yml', import.meta.url), 'utf8');
+const deployWorkflow = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8');
 const publisher = await readFile(new URL('./publish-status-history.sh', import.meta.url), 'utf8');
 
 const requiredWorkflowText = [
+  'group: production-deploy',
   'cancel-in-progress: false',
   'contents: write',
   'pull-requests: write',
@@ -35,6 +37,7 @@ const requiredPublisherText = [
   'tangletools',
   '--match-head-commit "$expected_head"',
   'cmp --silent "$HISTORY_PATH" "$merged_history"',
+  'select(.isCrossRepository == false)',
 ];
 
 const forbiddenText = [
@@ -74,6 +77,10 @@ for (const text of requiredWorkflowText) {
 
 for (const text of requiredPublisherText) {
   if (!publisher.includes(text)) failures.push(`publisher is missing: ${text}`);
+}
+
+for (const text of ['group: production-deploy', 'cancel-in-progress: false']) {
+  if (!deployWorkflow.includes(text)) failures.push(`deploy workflow is missing: ${text}`);
 }
 
 for (const pattern of forbiddenText) {
