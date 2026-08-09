@@ -104,9 +104,9 @@ open_or_refresh_pr() {
   local is_draft
   is_draft="$(gh pr view "$pr_number" --repo "$REPOSITORY" --json isDraft --jq '.isDraft')"
   if [[ "$is_draft" == 'false' ]]; then
-    gh pr ready "$pr_number" --repo "$REPOSITORY" --undo
+    gh pr ready "$pr_number" --repo "$REPOSITORY" --undo >/dev/null
   fi
-  gh pr ready "$pr_number" --repo "$REPOSITORY"
+  gh pr ready "$pr_number" --repo "$REPOSITORY" >/dev/null
 
   printf '%s\n' "$pr_number"
 }
