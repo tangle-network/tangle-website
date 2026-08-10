@@ -38,7 +38,7 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
     description: 'A practical Rust guide to packaging, testing, deploying, monitoring, and rolling back operator-run Tangle services.',
     premise: 'Blueprint SDK is a Rust toolkit for packaging, testing, and operating Tangle services. A Blueprint declares the Jobs, inputs, outputs, and artifacts; a configured Service is run by an operator.',
     decision: 'For Rust teams moving from a local service to Tangle, this guide covers the deployment contract, first test-network run, monitoring, and rollback evidence.',
-    startHere: { title: 'Blueprint SDK Deployment: From a Local Service to an Operator-Run Job', slug: 'blueprint-sdk-deployment-guide' },
+    startHere: { title: 'Blueprint SDK Deployment: Run an Operator Job', slug: 'blueprint-sdk-deployment-guide' },
   },
   'browser-agent': {
     title: 'Browser Agent',
@@ -54,7 +54,7 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
     premise: 'This proposed preparation workflow turns source documents into linked facts, draft forms, and workpapers—the calculations and records supporting a return—inside a review packet that a person inspects before filing.',
     decision: 'For taxpayers, tax professionals, and software builders, the articles apply Tangle’s isolated-workspace and evidence pattern as a teaching design. They are not tax advice, do not claim Tangle files returns, and do not describe autonomous filing.',
     path: 'Begin with the general preparation workflow, then add electronic-filing controls, crypto reconciliation, source-linked workpapers, approval, foreign-corporation and S-corporation cases, founder records, and multiple K-1 forms.',
-    startHere: { title: 'AI Tax Preparation For Complex Returns: Evidence Before Forms', slug: 'ai-tax-preparation-complex-returns' },
+    startHere: { title: 'AI Tax Preparation for Complex Returns', slug: 'ai-tax-preparation-complex-returns' },
   },
   'code-auditor': {
     title: 'Code Auditor',
@@ -68,7 +68,7 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
     description: 'How Tangle coordinates operator-run services across provider selection, payment, privacy, staking, lifecycle, and result checks.',
     premise: 'Tangle coordinates services run by independent operators. A Blueprint is the service template, a Service is one configured instance, and a Job is one unit of work; the actual computation runs off-chain.',
     decision: 'For builders and buyers, this series separates provider selection, payment, privacy, staking, service lifecycle, and result checking so the protocol is not mistaken for proof of correctness.',
-    startHere: { title: 'Decentralized Compute Protocol: How Tangle Blueprints Run Services', slug: 'decentralized-compute-protocol-blueprints' },
+    startHere: { title: 'Decentralized Compute Protocol: How Tangle Runs Services', slug: 'decentralized-compute-protocol-blueprints' },
   },
   'tangle-re-introduction': {
     title: 'Tangle Re-Introduction',
@@ -97,7 +97,7 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
     premise: 'x402 turns an HTTP 402 payment challenge into signed payment terms and a retried request. On Tangle, a Blueprint is the typed service contract: each paid request becomes one Job declared by it, facilitators verify and settle payment, and operators execute the work.',
     decision: 'For pay-per-request service teams, this series covers pricing, quotes, monitoring, deployment, and safe recovery when payment, facilitator, operator, or result state is uncertain.',
     path: 'Follow the payment lifecycle: map an HTTP payment to a Job; choose a facilitator and price; design quotes, monitoring, distribution, and protected execution; then deploy, recover failures, and assess product fit.',
-    startHere: { title: 'x402 Payments Blueprint: How a Paid HTTP Request Becomes a Job', slug: 'blueprint-sdk-x402-payments-runnable-jobs' },
+    startHere: { title: 'x402 Payments Blueprint: Turn HTTP into a Job', slug: 'blueprint-sdk-x402-payments-runnable-jobs' },
   },
 }
 
