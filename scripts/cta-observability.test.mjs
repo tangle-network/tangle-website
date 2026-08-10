@@ -10,19 +10,20 @@ import {
 class FakeDocument {
   constructor(body) {
     this.body = body
-    this.listeners = new Set()
+    this.listeners = new Map()
   }
 
   addEventListener(type, listener) {
-    if (type === 'click') this.listeners.add(listener)
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set())
+    this.listeners.get(type).add(listener)
   }
 
   removeEventListener(type, listener) {
-    if (type === 'click') this.listeners.delete(listener)
+    this.listeners.get(type)?.delete(listener)
   }
 
-  dispatch(event) {
-    for (const listener of this.listeners) listener(event)
+  dispatch(event, type = 'click') {
+    for (const listener of this.listeners.get(type) || []) listener(event)
   }
 }
 
@@ -55,6 +56,10 @@ test('classifies only fixed Tangle product origins and drops query data', () => 
     classifyDestination('https://github.com/tangle-network/tangle?email=secret@example.test'),
     { product: 'github', origin: 'https://github.com' },
   )
+  assert.deepEqual(
+    classifyDestination('https://github.com/tangle-network'),
+    { product: 'github', origin: 'https://github.com' },
+  )
   assert.equal(classifyDestination('https://github.com/other-org/tangle'), undefined)
   assert.equal(classifyDestination('https://github.com/tangle-network.evil/tangle'), undefined)
   assert.equal(classifyDestination('https://user@github.com/tangle-network/tangle'), undefined)
@@ -63,7 +68,7 @@ test('classifies only fixed Tangle product origins and drops query data', () => 
 })
 
 test('homepage CTA emits one privacy-safe event with product dimensions', () => {
-  const section = node('section', { class: 'hero-section' })
+  const section = node('section', { class: 'flex hero-section', 'data-cta-placement': 'hero' })
   const anchor = node('a', { href: 'https://sandbox.tangle.tools/?user_id=42' }, section)
   const body = node('body', { 'data-content-type': 'page' })
   const calls = []
@@ -89,7 +94,7 @@ test('homepage CTA emits one privacy-safe event with product dimensions', () => 
       content_type: 'page',
       destination_product: 'sandbox',
       destination_origin: 'https://sandbox.tangle.tools',
-      placement: 'hero-section',
+      placement: 'hero',
     },
   ])
   assert.equal(JSON.stringify(calls).includes('user_id'), false)
@@ -138,4 +143,74 @@ test('installing twice on one document does not duplicate listeners', () => {
   first()
   second()
   assert.equal(calls.length, 1)
+})
+
+test('drops dynamic and encoded identifier paths before emission', () => {
+  const anchor = node('a', { href: 'https://docs.tangle.tools' })
+  const body = node('body', { 'data-content-type': 'page' })
+  for (const pathname of [
+    '/account/alice@example.com',
+    '/users/opaque-token-abc123',
+    '/blog/alice%2540example.com',
+    '/blog/reset-token-secret',
+  ]) {
+    assert.equal(buildCtaPayload({ anchor, location: { pathname }, body }), undefined)
+  }
+})
+
+test('uses only explicit or semantic placement values', () => {
+  const main = node('main', { class: 'flex-1 max-w-3xl' })
+  const anchor = node('a', { href: 'https://docs.tangle.tools' }, main)
+  const payload = buildCtaPayload({
+    anchor,
+    location: { pathname: '/' },
+    body: node('body', { 'data-content-type': 'page' }),
+  })
+  assert.deepEqual(payload, {
+    page_path: '/',
+    content_type: 'page',
+    destination_product: 'docs',
+    destination_origin: 'https://docs.tangle.tools',
+  })
+})
+
+test('classifies article links by structural reading position', () => {
+  const article = node('article')
+  const content = node('div', {}, article)
+  const blocks = Array.from({ length: 4 }, () => node('p', {}, content))
+  const anchor = node('a', { href: 'https://docs.tangle.tools' }, blocks[3])
+  article.children = [content]
+  content.children = blocks
+  const payload = buildCtaPayload({
+    anchor,
+    location: { pathname: '/blog/agent-runtime' },
+    body: node('body', { 'data-content-type': 'blog' }),
+  })
+  assert.equal(payload.placement, 'article-close')
+})
+
+test('captures nested targets and dataLayer-only middle clicks', () => {
+  const footer = node('footer')
+  const anchor = node('a', { href: 'https://github.com/tangle-network' }, footer)
+  const child = { tagName: 'span', parentElement: anchor, getAttribute: () => null }
+  const runtime = {
+    window: { location: { pathname: '/releases' }, dataLayer: [] },
+    document: new FakeDocument(node('body', { 'data-content-type': 'page' })),
+  }
+  const uninstall = installCtaCollector(runtime)
+  runtime.document.dispatch({ target: child, button: 1 }, 'auxclick')
+  runtime.document.dispatch({ target: child, button: 2 }, 'auxclick')
+  uninstall()
+
+  assert.deepEqual(runtime.window.dataLayer, [[
+    'event',
+    'tangle_cta_click',
+    {
+      page_path: '/releases',
+      content_type: 'page',
+      destination_product: 'github',
+      destination_origin: 'https://github.com',
+      placement: 'footer',
+    },
+  ]])
 })
