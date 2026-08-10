@@ -1,0 +1,417 @@
+---
+title: 'When Does Best-of-Five Sampling Pay for AI Code Generation?'
+slug: when-best-of-five-sampling-pays
+summary: >-
+  Best-of-five sampling improves AI code generation when every candidate faces the same deterministic check; learn the measured lift, cost, limits, and rule.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agents
+  - agent-eval
+  - benchmarks
+  - coding-agents
+  - sampling
+  - selection
+series: When Structure Pays
+seriesOrder: 1
+coverImage: /images/covers/editorial/when-structure-pays-v2.webp
+heroImage: /images/covers/editorial/when-structure-pays-v2.webp
+imageAlt: 'A precision balance weighs one blue glass token against five teal tokens beside a brass selection ring.'
+---
+
+If a coding agent can produce five plausible answers, run the same deterministic checker on all five, and keep the highest-scoring valid answer, the extra attempts can pay.
+The public Tangle measurements show gains from 8.5 to 21.3 percentage points across four model-and-benchmark pairs, with one pair moving from 51.8% to 73.1%.
+That result supports a narrow engineering rule: use five attempts when checks are cheap, comparable, and visible before generation; use one attempt when checking is expensive or no check can distinguish candidates.
+It does not say five samples make every agent better.
+
+A coding agent is software that gives a language model a task, lets it use tools, and returns a result.
+
+## The decision is five tries or one
+
+Imagine an agent asked to implement a small parser in a production repository.
+One answer may be correct, but the model can also return a plausible answer with an off-by-one error, a missing edge case, or an API call that does not exist.
+The team already has a test command that runs without a human reviewer.
+
+The first design sends one request and ships the answer if the tests pass.
+The second design sends five independent requests, runs the same tests on each answer, and keeps the strongest answer that passes.
+The second design spends more compute before it returns anything.
+The question is whether the extra compute buys a higher chance of returning a correct answer.
+
+This article calls the second design **best-of-five sampling**.
+Sampling means asking the model for several different completions rather than accepting its first completion.
+Best-of-five means that exactly five candidates enter the comparison, even when some fail before scoring.
+The word “best” has a strict meaning here: the candidate must first satisfy the validity rule, then win a deterministic comparison against the other valid candidates.
+
+The distinction matters because generating five answers alone is not a quality method.
+Without a common check, a system can only ask another model to choose a favorite, which adds another uncertain judgment.
+With a common check, the runtime has an observable signal that can be applied consistently.
+
+Here, Tangle refers to the public open-source project that publishes the runtime and benchmark evidence discussed in this article.
+The [Tangle agent runtime](https://github.com/tangle-network/agent-runtime) is a public TypeScript runtime for running agents, recording their work, and comparing changes against checks.
+Its public quickstart shows the same basic shape: a worker is a model-driven process that produces one answer, and a driver is the process that owns the top-level loop and makes the decision.
+The check returns pass or fail, and the driver decides whether to keep refining or pick a winner.
+The measurements discussed here use that shape as an inference-time structure around a model call.
+
+## Four jobs that should stay separate
+
+The most useful implementation discipline is to keep four jobs visible in the code and in the report.
+
+### 1. Generation creates candidates
+
+The generator calls the model five times with the same task and the same model configuration.
+It may vary the random seed or sampling state, but it should not silently change the task, the available evidence, or the budget for one slot.
+Each response receives an identifier such as `candidate-0` through `candidate-4`.
+
+The generator does not decide whether an answer is correct.
+It only creates alternatives.
+
+### 2. Validation runs one deterministic checker
+
+A **deterministic checker** returns the same result when it receives the same candidate and the same inputs.
+For code, the checker may format the file, compile it, run visible tests, or execute a fixed test suite.
+For a structured answer, it may parse a schema and check required fields.
+
+The checker must be independent of candidate order.
+If candidate three gets a more forgiving timeout than candidate one, the comparison is measuring scheduling luck.
+
+The checker also needs a clear boundary around what the model could know.
+The public structural-rollout report describes checks built from task-visible information, while final grading uses hidden tests that candidates never receive.
+That separation lets the runtime select with an exposed signal and measure generalization on tests the candidates did not see.
+
+### 3. Scoring turns checks into a comparable value
+
+Validation can produce a Boolean answer, but a score is useful when candidates pass different numbers of checks.
+A simple score is the number of passed checks out of the total.
+An implementation can add deterministic secondary terms such as a complexity penalty, provided the rule is fixed before the candidates run.
+
+Validity and score are different fields.
+A candidate that fails a required check is invalid even if it has a high partial score.
+The winner-picker, the routine that returns one candidate, must filter invalid candidates before comparing scores.
+
+### 4. Winner-picking handles ties and absence
+
+If two valid candidates have the same score, use a stable tie rule.
+Candidate identifier order is enough for a toy system, while a production system may prefer lower latency, smaller output, or a fixed earlier slot.
+The rule must be recorded so a rerun does not silently choose a different answer.
+
+If no candidate is valid, return an explicit failure.
+Returning candidate zero as a fallback would turn “none passed” into an unreported quality regression.
+The caller can then ask for another round, return a review-needed state, or use the one-attempt path according to policy.
+
+## A worked example: five parsers for the same input
+
+Suppose a support agent must parse a ticket identifier from text.
+The desired function returns the first run of digits after `TICKET-`, rejects missing identifiers, and preserves leading zeroes.
+The prompt contains examples for `TICKET-0042` and `TICKET-17`.
+
+Five candidates might differ in small ways.
+One uses a regular expression and preserves the capture as text.
+One converts the capture to a number and loses `0042`.
+One accepts any digits, including digits before the `TICKET-` prefix.
+One handles the examples but throws on a missing identifier.
+One is correct but adds unrelated formatting changes.
+
+The checker can run four fixed cases.
+It can require `0042` for the first case, `17` for the second, a rejection for a string without the prefix, and a rejection for a malformed suffix.
+All five candidates see the same four cases.
+
+The first candidate passes four checks and is valid.
+The second passes three and is invalid.
+The third passes two and is invalid.
+The fourth passes three and is invalid.
+The fifth passes four and is valid, but the stable tie rule prefers the shorter implementation.
+The returned answer is therefore candidate one or five according to an explicit secondary score, rather than whichever response happened to appear first in a log.
+
+This small example shows why the check must be written before the choice.
+If the team chooses the regular expression because it “looks right,” the method has not gained a repeatable selection rule.
+If the team runs the same cases on every candidate, it can explain why one candidate won and rerun the decision later.
+
+## What the public measurements show
+
+The public [structural rollout report](https://github.com/tangle-network/agent-runtime/blob/main/docs/design/structural-rollout-integration.md) describes best-of-five selection plus self-repair using checks built from task-visible information and final grading on hidden tests.
+Self-repair means asking the model for a revised candidate after a checker reports a failure.
+The report's full loop includes candidate generation, checking, winner-picking, and that optional repair step.
+Its measured table reports four positive cells.
+
+| Model and benchmark | One attempt | Full loop | Lift | Sign-test p-value | n | Public paired-count detail |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Llama-3-8B on MBPP | 51.8% | 73.1% | +21.3pp | 2.3e-51 | 427 | +226 / −13 |
+| Llama-3-8B on HumanEval | 43.9% | 62.2% | +18.3pp | 9.2e-11 | 164 | Not reported in the public row |
+| Qwen2.5-7B on HumanEval | 82.4% | 91.5% | +9.0pp | 1.0e-8 | 164 | Not reported in the public row |
+| Qwen2.5-7B on MBPP | 76.7% | 85.2% | +8.5pp | 4.6e-16 | 427 | Not reported in the public row |
+
+The public row provides a paired win-loss count for the Llama MBPP cell.
+The public rows for the other three cells provide the lift, p-value, and denominator, but not a win-loss pair, so this article does not invent one.
+
+The table is a comparison of measured cells, not a promise about a package version or a universal model property.
+Here a p-value is the exact sign-test probability assigned to a discordant split at least as extreme under a no-direction null.
+The baseline and full loop must be read together because the full loop includes more than generation.
+It samples candidates, checks them, chooses a valid candidate, and may perform a limited repair step.
+
+A `pass@k` estimate is the chance that at least one of `k` sampled candidates passes.
+The same public report says every positive cell captures at least 93% of its pass@k bound and that selection accounts for 85–92% of the effect.
+Those are useful decomposition claims because they separate the value of having several chances from the smaller value of repairing a selected answer.
+They are also bounded by the report's task set, model settings, checker design, and grading procedure.
+
+## Why the effect appears
+
+Language-model generation has two relevant properties.
+The model can produce different answers for the same task, and those answers are not equally likely to be correct.
+The first property creates a pool of alternatives.
+The second property creates room for a checker to improve the final choice.
+
+If every candidate is wrong in the same way, five tries do not help.
+If at least one candidate contains the needed fix and the checker can recognize it, the pool gives the system a chance to recover.
+Selection converts that chance into a decision.
+
+For a rough mental model, let `p` be the probability that one independently sampled candidate passes the checker.
+The probability that at least one of five passes is `1 - (1 - p)^5`.
+At `p = 0.4`, the expression is about 92.2%.
+That calculation is illustrative, not a claim that model samples are independent or that the public cells have `p = 0.4`.
+
+Real candidates are correlated.
+They share the same prompt, model weights, task wording, and visible examples.
+Correlation reduces the value of additional attempts because the fifth answer may repeat the first error.
+The public result is therefore stronger than a generic “more samples are better” slogan: it shows that this particular combination of candidate diversity and checking produced a positive result in four cells.
+
+The effect also has a natural diminishing-return curve.
+The first additional candidate can rescue a common mistake.
+The fourth and fifth candidates are more likely to repeat a pattern already present in the pool.
+Each added candidate still costs generation and checking time, so the marginal gain should be measured rather than assumed.
+
+## Comparison fairness is part of the method
+
+Best-of-five is easy to make look better or worse through an unfair comparison.
+The baseline must use one candidate from the same model and task distribution.
+The five-candidate arm must use the same visible information and the same output budget per candidate.
+The checker must receive equivalent inputs and limits for every candidate.
+The final grading set must remain separate from the checks used to choose a candidate.
+
+The report should preserve the candidate-level records.
+At minimum, retain each candidate identifier, generation settings, checker results, score, validity, selection outcome, and total time.
+Those records answer questions that the final percentage cannot answer.
+They show whether the winner changed often, whether all five candidates failed together, and whether repair replaced a valid candidate with an invalid one.
+
+The score also needs a declared denominator.
+If a task is skipped because its checker crashed, it should not remain in the denominator as a failure without an explanation.
+If a candidate times out, the result should say whether timeout means invalid, unknown, or a separate outcome.
+The same policy must apply to the one-attempt and five-attempt arms.
+
+The public measurements use HumanEval, a Python function benchmark, and MBPP, which means Mostly Basic Python Problems, another Python code-generation benchmark.
+The [HumanEval repository](https://github.com/openai/human-eval) publishes the benchmark tasks and evaluation code.
+The [MBPP implementation](https://github.com/google-research/google-research/tree/master/mbpp) publishes the benchmark source and evaluation material.
+The original [pass@k paper](https://arxiv.org/abs/2107.03374) explains how code-generation evaluation estimates the chance that at least one of several samples is correct.
+
+Those sources define benchmark and sampling concepts.
+The Tangle report is the source for the four cells in the table above.
+Keeping those roles separate prevents a general benchmark definition from being mistaken for a measurement of this specific runtime loop.
+
+## When one attempt is the better choice
+
+Five attempts are not automatically the right default.
+Use one attempt when the checker is slow, expensive, stateful, or unavailable.
+Five candidates can multiply a five-minute integration test into a twenty-five-minute wait before the user sees any answer.
+Parallel execution can reduce wall time, but it does not remove model or compute cost.
+
+Use one attempt when the baseline is already near the task's practical maximum.
+The public report includes saturated model rows with no positive result, which is a reminder that a method cannot recover errors that the model rarely makes or that the checker cannot expose.
+At high baseline accuracy, the expected absolute lift may be too small to justify five calls.
+
+Use one attempt when candidates are strongly correlated.
+Changing a seed without changing the prompt, model, or failure mode may produce five cosmetic rewrites of the same wrong solution.
+Measure candidate disagreement before committing to a larger pool.
+
+Use one attempt when the task has no safe validity signal.
+A weak rubric can reward confident but incorrect output.
+When a human must review every candidate, the extra cost moves from model calls to review time.
+
+Use five attempts when the task has a cheap deterministic check, the model has meaningful uncertainty, and a wrong answer costs more than the extra calls.
+Code compilation, schema validation, and fixed unit tests are good candidates for a pilot.
+Open-ended writing and taste judgments need a more careful rubric before a best-of-five rule is credible.
+
+## A runnable toy best-of-five picker
+
+The following TypeScript program keeps generation, checking, scoring, tie handling, and failure explicit.
+The generator is a fixed stand-in for five model calls, so the example runs without an API key.
+The checker runs four deterministic input-output cases.
+The normal path has two equally valid candidates, and the stable identifier rule resolves the tie.
+The failure path produces five invalid candidates and returns an explicit error.
+
+Save it as `best-of-five.ts` and run it with Node 22.12 or newer:
+
+~~~typescript
+import assert from 'node:assert/strict'
+
+type Candidate = {
+  id: string
+  solve: (value: number) => number
+  complexity: number
+}
+
+type Check = {
+  valid: boolean
+  passed: number
+  total: number
+  score: number
+  failures: string[]
+}
+
+type Selection = {
+  winner: Candidate
+  checked: Array<Candidate & { check: Check }>
+}
+
+const cases = [
+  { input: 2, expected: 4 },
+  { input: 7, expected: 14 },
+  { input: 0, expected: 0 },
+  { input: -3, expected: -6 },
+]
+
+function generateCandidates(mode: 'normal' | 'broken'): Candidate[] {
+  if (mode === 'broken') {
+    return Array.from({ length: 5 }, (_, index) => ({
+      id: `broken-${index}`,
+      solve: (value: number) => value + index + 1,
+      complexity: index + 1,
+    }))
+  }
+
+  return [
+    { id: 'a-add-self', solve: (value) => value + value, complexity: 1 },
+    { id: 'b-times-two', solve: (value) => value * 2, complexity: 1 },
+    { id: 'c-plus-two', solve: (value) => value + 2, complexity: 1 },
+    { id: 'd-minus-two', solve: (value) => value - 2, complexity: 1 },
+    { id: 'e-times-three', solve: (value) => value * 3, complexity: 2 },
+  ]
+}
+
+function validate(candidate: Candidate): Check {
+  const failures = cases.flatMap(({ input, expected }) => {
+    const actual = candidate.solve(input)
+    return actual === expected ? [] : [`${input}: expected ${expected}, got ${actual}`]
+  })
+  const passed = cases.length - failures.length
+
+  return {
+    valid: failures.length === 0,
+    passed,
+    total: cases.length,
+    score: passed * 100 - candidate.complexity,
+    failures,
+  }
+}
+
+function chooseBest(mode: 'normal' | 'broken'): Selection {
+  const checked = generateCandidates(mode).map((candidate) => ({
+    ...candidate,
+    check: validate(candidate),
+  }))
+  const valid = checked.filter(({ check }) => check.valid)
+
+  if (valid.length === 0) {
+    throw new Error('No valid candidate passed the deterministic checker')
+  }
+
+  valid.sort((left, right) =>
+    right.check.score - left.check.score || left.id.localeCompare(right.id),
+  )
+  return { winner: valid[0], checked }
+}
+
+const normal = chooseBest('normal')
+assert.equal(normal.winner.id, 'a-add-self')
+assert.equal(normal.checked.filter(({ check }) => check.valid).length, 2)
+console.log({ winner: normal.winner.id, score: normal.winner.check.score })
+
+assert.throws(() => chooseBest('broken'), /No valid candidate/)
+console.log('failure path: no candidate was promoted')
+~~~
+
+The two valid normal candidates tie on the test score and complexity.
+The identifier rule chooses `a-add-self`, so the result is repeatable.
+The broken mode demonstrates the important unhappy path: a system that cannot find a valid answer must report that state instead of silently returning the first sample.
+
+## What the result does and does not establish
+
+The four public cells establish that this best-of-k shape improved measured code-generation outcomes under the reported conditions.
+They also show that the lift varies by model and benchmark.
+The smallest reported lift is +8.5 percentage points, while the largest is +21.3 percentage points.
+
+The cells do not establish that every checker is reliable.
+They do not establish that a model can author its own checks without error.
+They do not establish that five is the optimal number for a new task.
+They do not establish that repair is harmless at high baseline accuracy.
+The public report explicitly notes wrong visible examples and exact-equality assertions as failure classes that need protection.
+
+The cells also do not isolate every component of the full loop.
+The public decomposition says selection accounts for 85–92% of the effect and repair supplies a smaller increment, but the full loop still contains both.
+An implementation that removes repair must measure its own result rather than importing the full-loop lift.
+
+This is why the correct causal story is modest.
+Sampling created alternatives.
+The deterministic checker supplied a shared signal.
+Selection retained a valid high-scoring alternative.
+Those operations explain why a gain is plausible, but the public evidence belongs to the measured task cells, not to a law about all agent systems.
+
+## Decision rule
+
+Choose best-of-five when all of the following are true:
+
+- The candidate generator can make meaningfully different attempts.
+- A deterministic checker can run on every candidate under the same limits.
+- Validity and score are defined before the run.
+- The final grade is separated from the visible checks used to choose.
+- The extra compute is cheaper than a wrong result.
+
+Choose one attempt when any of those conditions fails.
+If the tradeoff is uncertain, run a small paired pilot with frozen tasks, complete candidate records, and a predeclared stopping rule.
+Measure quality, invalid outputs, total calls, and wall time together.
+
+The useful structure is small: five chances, one common check, one explicit winner rule, and one explicit no-winner state.
+Everything beyond that should earn its place with a measured change in the decision the user cares about.
+
+## FAQ
+
+### Is best-of-five the same as majority voting?
+
+No.
+Majority voting asks several answers to agree, while best-of-five scores each answer against a common check and keeps a valid winner.
+
+### How is pass@5 different from the selected result?
+
+Pass@5 asks whether at least one of five samples passes.
+The selected result asks whether the system's checker and winner rule return a good candidate as the final answer.
+Selection can approach the available pass@5 opportunity, but the two measurements are not identical.
+
+### What should happen when all five candidates fail?
+
+Return an explicit no-valid-candidate result.
+The caller can retry under a new policy or request human review, but it should not pretend that an arbitrary failed candidate passed.
+
+### Can the checker use hidden tests?
+
+The checker used for selection should use information available at candidate time.
+Hidden tests belong to final grading, because exposing them would let the winner-picker optimize against the answer key rather than the task.
+
+### Is five always the right number of samples?
+
+No.
+Five is the measured configuration discussed here, not a universal optimum.
+Choose the smallest candidate pool whose measured gain pays for its generation and checking cost.
+
+### Does Tangle guarantee that sampling will improve my agent?
+
+No.
+Tangle's public runtime and report provide an implementation shape and evidence for the four reported cells.
+Your model, checker, tasks, and limits still determine the result.
+
+## Sources and related reading
+
+- [Structural rollout integration report](https://github.com/tangle-network/agent-runtime/blob/main/docs/design/structural-rollout-integration.md), the public source for the four measured cells and the selection-versus-repair decomposition.
+- [Tangle agent runtime](https://github.com/tangle-network/agent-runtime), including its public quickstart for a worker, checker, and driver decision.
+- [HumanEval benchmark repository](https://github.com/openai/human-eval), the public tasks and evaluation code.
+- [MBPP benchmark implementation](https://github.com/google-research/google-research/tree/master/mbpp), the public benchmark source.
+- [Evaluating Large Language Models Trained on Code](https://arxiv.org/abs/2107.03374), the primary paper that introduced the pass@k evaluation estimator used widely for code generation.
+- [Evaluation gates for agent changes](/blog/self-improving-stack-evaluation-gates/), a related explanation of frozen comparisons and promotion decisions.
+- [Supervisor versus solo accounting](/blog/when-supervisor-costs-more-than-solo/), the next article in this series.

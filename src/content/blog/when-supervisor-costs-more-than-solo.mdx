@@ -1,0 +1,450 @@
+---
+title: 'Supervisor vs. Solo AI Agents: Measure Coordination Cost'
+slug: when-supervisor-costs-more-than-solo
+summary: >-
+  A paired replay found solo 7/10 versus supervisor 4/10, p=.25, with 2.55× tokens and 2.42× wall time; learn the result's limits and fair test.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agents
+  - agent-runtime
+  - benchmarks
+  - coordination
+  - measurement
+  - cost
+series: When Structure Pays
+seriesOrder: 2
+coverImage: /images/covers/editorial/when-structure-pays-v2.webp
+heroImage: /images/covers/editorial/when-structure-pays-v2.webp
+imageAlt: 'A precision balance weighs one blue glass token against five teal tokens beside a brass selection ring.'
+---
+
+One public paired replay found solo resolving 7 of 10 gradeable software tasks and a supervisor resolving 4 of 10.
+The exact two-sided paired sign test, a statistic based on pairs where outcomes differ, was `p = .25`.
+Reconciled accounting, an arm-by-arm usage total, put the supervisor at 2.55 times the solo tokens and 2.42 times the solo wall time.
+Tokens are model-usage units, and wall time is elapsed time from start to finish.
+This result describes one replay fixture and cannot establish a general quality ranking for supervisors and solo agents.
+It is also a useful warning: a parent process can add coordination work, and missing worker usage can disappear from the run's cost ledger.
+The comparison must expose that missing work before anyone compares prices or efficiency.
+
+## Start with the paired question
+
+An engineer has two ways to handle a difficult coding task.
+The **solo** design gives the task to one agent, which reads the problem, edits the project, runs checks, and returns a patch.
+The **supervisor** design gives the task to a parent process that delegates pieces of the work to child workers, separate model-driven processes that perform delegated work, collect their outputs, and decide what to deliver.
+
+A supervisor is therefore a process arrangement, not a stronger model.
+The parent may be the same model as the solo agent, or it may use a different model.
+Its quality depends on delegation, worker execution, result aggregation, retries, and the final delivery rule.
+
+An **arm** is one compared system configuration.
+The tempting comparison is to run each arm on a different task set and compare percentages.
+That mixes task difficulty with system behavior.
+The fairer design gives both arms the same task, records both outcomes, and compares each pair.
+
+This article calls that a **paired comparison**.
+Each task is a pair because the solo and supervisor arms face the same underlying problem.
+The paired unit is the denominator for the quality question, not the number of model calls or worker processes.
+
+Here, Tangle refers to the public open-source project that publishes the runtime and replay evidence discussed in this article.
+The [Tangle agent runtime](https://github.com/tangle-network/agent-runtime) is a public TypeScript runtime that can run one agent or supervise a team of agents while recording the run.
+Its public documentation describes a supervisor that spawns and steers workers toward a goal, with the worker location, budget, journal, and stopping behavior treated as runtime data.
+That makes it a useful place to inspect both the result and the cost boundary.
+
+## What the public replay measured
+
+The source for the numbers in this article is the public [SWE, short for software engineering, arena replay test](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.test.mts) in the `tangle-network/agent-runtime` repository.
+The replay test pins the fixture inputs, outcome counts, token rollups, wall times, and the expected statistical calculation.
+It labels the head-to-head as the same model in solo and supervisor arms.
+
+The raw fixture contains 12 task rows.
+A gold patch is the reference patch used to check whether a task can be graded.
+Two gold patches could not be graded by the judge, the program that evaluates a patch, and are explicitly excluded as ungradeable.
+Gradeable means that the judge produced a usable result for the row.
+The valid denominator is therefore 10 tasks.
+
+| Boundary | Solo | Supervisor | Interpretation |
+| --- | ---: | ---: | --- |
+| Raw rows | 7/12 | 4/12 | The visible replay table before exclusions. |
+| Gradeable rows | 7/10 | 4/10 | The valid paired outcome denominator. |
+| Discordant pairs | 3 solo-only | 0 supervisor-only | Every differing grade favored solo in this fixture. |
+| Exact two-sided sign test | Not applicable | `p = .25` | The public replay's paired uncertainty calculation. |
+
+The `7/10` and `4/10` values are the measured result for this fixture.
+The p-value quantifies this fixture's discordant split under a no-direction null.
+With only three discordant pairs, the result is too small to support a broad claim.
+
+That denominator distinction matters.
+If the two ungradeable rows were silently counted as failures, the table would mix judge failure with agent failure.
+If they were silently counted as successes, the table would reward an unmeasured outcome.
+The public test keeps them visible and removes them from the quality denominator.
+
+## The cost result depends on complete accounting
+
+The same replay test exposes two supervisor token totals.
+The first is the parent process's own usage, which the fixture calls the supervisor brain.
+The second adds the child-worker sessions that performed delegated work.
+
+| Role or arm | Tokens | Included work |
+| --- | ---: | --- |
+| Solo | 675,412 | All recorded solo model calls. |
+| Supervisor parent | 560,554 | Parent calls only. |
+| Supervisor child workers | 1,161,836 | Worker-session calls. |
+| Supervisor total | 1,722,390 | Parent plus workers. |
+
+The true supervisor total is `560,554 + 1,161,836 = 1,722,390` tokens.
+Dividing by the solo total gives about 2.55 times as many tokens.
+The parent-only number would make supervision appear cheaper at 0.83 times the solo tokens, but that comparison excludes the work the parent requested from workers.
+
+The [public replay implementation](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.mts) prints the distinction directly: the normal analysis line reports the parent total, then a separate line reports true supervisor spend as parent plus workers.
+The [public run-report README](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/README.md) describes the committed reports as evidence files rather than a promise that their original run directories are available to readers.
+
+Wall time is another dimension.
+The replay records 3,769 seconds for solo and 9,124 seconds for the supervisor arm.
+The supervisor-to-solo wall-time ratio is 2.42.
+Wall time includes waiting, scheduling, worker execution, retries, and other elapsed time, so it should not be treated as a second token price.
+
+Tokens answer how much model-generated text the arm consumed.
+Wall time answers how long the arm occupied the elapsed-time budget.
+Neither number alone explains whether the user received a correct patch.
+
+The public replay also records telemetry gaps where runtime `spentTokens` differs from journal-backed usage on no-winner or crashed runs.
+That is a measurement defect boundary, not a reason to replace every missing number with zero.
+
+## Why paired design changes the conclusion
+
+Suppose the supervisor happens to receive harder tasks than the solo arm.
+A lower supervisor percentage could reflect the task mix rather than coordination.
+Suppose the supervisor receives the same tasks but its workers have a lower per-worker budget.
+The result could reflect a budget mismatch rather than delegation itself.
+Suppose both arms receive the same tasks and budgets, but the supervisor must merge conflicting patches.
+The result could reflect a delivery policy rather than the idea of a parent process.
+
+A paired design does not remove these possibilities.
+It makes them inspectable because every task has two outcomes and two cost records.
+The engineer can ask where the arms disagree, whether the disagreement is one-sided, and whether the supervisor spent more before it failed.
+
+The public replay has three discordant pairs, all solo-only, and no supervisor-only pair.
+That directional pattern is interesting, but the count is still three.
+Four pairs resolve in both arms, and the remaining gradeable pairs resolve in neither arm.
+The p-value records the small amount of directional evidence rather than hiding it behind the aggregate percentages.
+
+The same discipline applies to cost.
+A parent that uses 560,554 tokens and launches workers that use another 1,161,836 has not used 560,554 tokens for the task.
+It has used 1,722,390 recorded tokens for the coordinated arm.
+The parent-only view can be useful for debugging the parent, but it is not the total cost of the product decision.
+
+The sibling article [AI agent cost accounting: include child-worker tokens in every run](/blog/ai-agent-cost-accounting-child-workers/) follows this accounting boundary in more detail.
+The related post on [evaluation gates for agent changes](/blog/self-improving-stack-evaluation-gates/) explains why a paired outcome and its denominator should be frozen before a change is promoted.
+
+## Unknown usage is different from zero usage
+
+A complete comparison needs a state for missing data.
+Known usage is a measured token or wall-time value.
+Unknown usage means the run happened but the required field was not captured or cannot be trusted.
+Zero usage means the run used no tokens or no wall time in that category.
+
+Those states have different meanings.
+Replacing unknown with zero lowers the supervisor total and can make a failed or interrupted worker look free.
+Replacing unknown with an estimate may be reasonable for a separately labelled bound, but it is not a measured total.
+
+The public replay makes this concrete in two ways.
+Its test expects a true worker-token rollup in addition to the parent journal.
+It also expects a list of telemetry gaps where runtime spent-token values were zeroed on no-winner or crashed instances.
+The test preserves both facts instead of silently selecting the prettier total.
+
+A report should therefore expose at least four accounting fields per arm:
+
+- Known input and output token totals.
+- Count of participants or calls with missing usage.
+- Known wall-time subtotal and missing wall-time count.
+- A nullable complete total and a nullable ratio.
+
+If either arm's denominator is unknown, the ratio is unknown.
+A partial subtotal can still be useful, but label it as a lower bound only when the data model guarantees that unobserved work can add value and cannot subtract it.
+
+The [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) provide a public vocabulary for recording model-call usage at the span level.
+They do not decide how a product aggregates a parent and its children, so the application still needs a role-aware run ledger.
+Provider documentation such as [Anthropic's token-counting guide](https://docs.anthropic.com/en/docs/build-with-claude/token-counting) also shows why token counts should be read from provider usage rather than guessed from character length.
+
+## What might have caused the result?
+
+The public replay establishes the outcome and accounting numbers.
+It does not by itself identify one universal cause.
+Several explanations remain possible.
+
+Coordination adds work.
+The parent must describe subtasks, wait for responses, inspect outputs, and choose what reaches the final patch.
+Those calls add tokens even when every worker is productive.
+
+Delegation can fragment context.
+A worker may receive a narrow assignment without the surrounding constraints that the solo agent kept in working memory.
+The worker can then produce a locally plausible patch that does not compose with the rest of the task.
+
+The delivery rule can discard useful work.
+If the parent accepts only one complete worker result, a partial repair may be thrown away even when it contains the needed fix.
+An all-or-nothing policy can turn progress into a no-winner outcome.
+
+Retries can amplify a defect.
+When the parent retries a worker after an ambiguous result, each retry adds tokens and wall time.
+If the retry sees the same context and failure, the system pays repeatedly without creating new information.
+
+Execution can fail independently of reasoning.
+A worker may lack a dependency, receive a malformed task, or stop before its output is delivered.
+The public fixture explicitly records no-winner and crashed runs in its telemetry-gap test, so the result should be read with execution behavior in view.
+
+Accounting can distort the apparent cost.
+If child-worker usage is omitted, the supervisor can look cheaper than solo.
+If missing usage is zeroed, the total can become a lower number while appearing exact.
+The replay's 2.55 ratio is only visible after the parent and worker rows are reconciled.
+
+These alternatives are not interchangeable.
+An execution failure calls for a runtime fix or a new trial with the failure removed.
+A delegation failure calls for a different task split or worker brief.
+An accounting failure calls for data repair before any quality conclusion.
+
+## A runnable paired comparison with null accounting
+
+The following TypeScript example is a small, original model of the comparison.
+It compares outcomes pair by pair, calculates an exact two-sided sign-test value for the discordant pairs, and rolls up tokens and wall time without treating missing values as zero.
+The quality counts use only gradeable pairs, while the cost ledger charges every attempted pair, including a row whose judge could not grade the reference patch.
+The first run is complete.
+The second run has one missing supervisor token value, so its supervisor token total and token ratio become `null`.
+
+Save it as `paired-agent-comparison.ts` and run it with Node 22.12 or newer:
+
+~~~typescript
+import assert from 'node:assert/strict'
+
+type Usage = {
+  tokens: number | null
+  wallSeconds: number | null
+}
+
+type Pair = {
+  id: string
+  gradeable: boolean
+  solo: { resolved: boolean; usage: Usage }
+  supervisor: { resolved: boolean; usage: Usage }
+}
+
+type Total = {
+  known: number
+  missing: number
+  total: number | null
+}
+
+function total(values: Array<number | null>): Total {
+  const known = values.reduce((sum, value) => sum + (value ?? 0), 0)
+  const missing = values.filter((value) => value === null).length
+  return { known, missing, total: missing === 0 ? known : null }
+}
+
+function ratio(numerator: number | null, denominator: number | null): number | null {
+  return numerator === null || denominator === null || denominator === 0
+    ? null
+    : numerator / denominator
+}
+
+function choose(n: number, k: number): number {
+  if (k < 0 || k > n) return 0
+  let result = 1
+  for (let i = 1; i <= k; i += 1) {
+    result = (result * (n - i + 1)) / i
+  }
+  return result
+}
+
+function exactTwoSidedSignPValue(soloOnly: number, supervisorOnly: number): number {
+  const discordant = soloOnly + supervisorOnly
+  if (discordant === 0) return 1
+  const observed = choose(discordant, soloOnly) / 2 ** discordant
+  let probability = 0
+  for (let soloWins = 0; soloWins <= discordant; soloWins += 1) {
+    const candidate = choose(discordant, soloWins) / 2 ** discordant
+    if (candidate <= observed + 1e-12) probability += candidate
+  }
+  return probability
+}
+
+function compare(pairs: Pair[]) {
+  const gradeable = pairs.filter((pair) => pair.gradeable)
+  const soloOnly = gradeable.filter((pair) => pair.solo.resolved && !pair.supervisor.resolved).length
+  const supervisorOnly = gradeable.filter((pair) => !pair.solo.resolved && pair.supervisor.resolved).length
+  const both = gradeable.filter((pair) => pair.solo.resolved && pair.supervisor.resolved).length
+  const neither = gradeable.filter((pair) => !pair.solo.resolved && !pair.supervisor.resolved).length
+  const soloTokens = total(pairs.map((pair) => pair.solo.usage.tokens))
+  const supervisorTokens = total(pairs.map((pair) => pair.supervisor.usage.tokens))
+  const soloWall = total(pairs.map((pair) => pair.solo.usage.wallSeconds))
+  const supervisorWall = total(pairs.map((pair) => pair.supervisor.usage.wallSeconds))
+
+  return {
+    n: gradeable.length,
+    accountingRows: pairs.length,
+    soloWins: soloOnly + both,
+    supervisorWins: supervisorOnly + both,
+    soloOnly,
+    supervisorOnly,
+    both,
+    neither,
+    pValue: exactTwoSidedSignPValue(soloOnly, supervisorOnly),
+    tokens: {
+      solo: soloTokens,
+      supervisor: supervisorTokens,
+      supervisorToSolo: ratio(supervisorTokens.total, soloTokens.total),
+    },
+    wall: {
+      solo: soloWall,
+      supervisor: supervisorWall,
+      supervisorToSolo: ratio(supervisorWall.total, soloWall.total),
+    },
+  }
+}
+
+const completePairs: Pair[] = [
+  { id: 'a', gradeable: true, solo: { resolved: true, usage: { tokens: 100, wallSeconds: 10 } }, supervisor: { resolved: false, usage: { tokens: 140, wallSeconds: 20 } } },
+  { id: 'b', gradeable: true, solo: { resolved: true, usage: { tokens: 110, wallSeconds: 11 } }, supervisor: { resolved: false, usage: { tokens: 160, wallSeconds: 22 } } },
+  { id: 'c', gradeable: true, solo: { resolved: true, usage: { tokens: 120, wallSeconds: 12 } }, supervisor: { resolved: false, usage: { tokens: 180, wallSeconds: 24 } } },
+  { id: 'd', gradeable: true, solo: { resolved: true, usage: { tokens: 130, wallSeconds: 13 } }, supervisor: { resolved: true, usage: { tokens: 190, wallSeconds: 25 } } },
+  { id: 'e', gradeable: true, solo: { resolved: false, usage: { tokens: 140, wallSeconds: 14 } }, supervisor: { resolved: false, usage: { tokens: 200, wallSeconds: 26 } } },
+  { id: 'excluded', gradeable: false, solo: { resolved: false, usage: { tokens: 999, wallSeconds: 99 } }, supervisor: { resolved: true, usage: { tokens: 999, wallSeconds: 99 } } },
+]
+
+const complete = compare(completePairs)
+assert.equal(complete.n, 5)
+assert.deepEqual(
+  { soloOnly: complete.soloOnly, supervisorOnly: complete.supervisorOnly, pValue: complete.pValue },
+  { soloOnly: 3, supervisorOnly: 0, pValue: 0.25 },
+)
+assert.equal(complete.accountingRows, 6)
+assert.equal(complete.tokens.supervisor.total, 1869)
+assert.equal(complete.wall.supervisor.total, 216)
+assert.equal(complete.tokens.supervisorToSolo, 1869 / 1599)
+console.log('complete accounting', complete)
+
+const missingPairs = completePairs.map((pair) =>
+  pair.id === 'd'
+    ? { ...pair, supervisor: { ...pair.supervisor, usage: { ...pair.supervisor.usage, tokens: null } } }
+    : pair,
+)
+const missing = compare(missingPairs)
+assert.equal(missing.tokens.supervisor.known, 1679)
+assert.equal(missing.tokens.supervisor.missing, 1)
+assert.equal(missing.tokens.supervisor.total, null)
+assert.equal(missing.tokens.supervisorToSolo, null)
+console.log('missing accounting', missing)
+~~~
+
+The complete run reports a supervisor total of 1,869 tokens and 216 seconds across six attempted pairs, while its quality denominator is five gradeable pairs.
+The missing-data run still reports the known supervisor subtotal of 1,679 tokens, but its total and ratio are `null` because one participant is unknown.
+The code never turns that missing participant into a free worker.
+
+The toy p-value is included to show the paired calculation's shape, not to replace a tested statistics library in production.
+For a real comparison, record the statistic definition, the excluded rows, and the exact package version that computed it.
+
+## What the replay does not prove
+
+The supervisor result describes one setup; a broader quality ranking needs more paired data.
+It is one small paired fixture with 10 gradeable tasks, one model label, one delegation policy, one worker execution path, and one judging procedure.
+The p-value is `.25`, and the public test itself exposes telemetry gaps and a parent-versus-worker accounting divergence.
+
+The result also does not prove that the parent process has no value.
+A supervisor could help when tasks decompose cleanly, when workers have complementary tools, or when the parent can reject bad intermediate work before it reaches a user.
+The replay did not establish those conditions.
+
+Nor does the result prove that the 2.55 token ratio is a fixed tax.
+Worker count, prompt size, retry policy, model choice, parallelism, output length, and stopping behavior can all move the ratio.
+The public number is a measured ratio for this arm after worker tokens are included.
+
+Finally, the result does not prove that a clean accounting layer fixes the quality gap.
+Complete accounting makes the comparison honest, but it may reveal that the supervisor spent more for an execution failure, a coordination failure, or a genuinely harder reasoning path.
+Those require different interventions.
+
+## What evidence would justify another trial?
+
+Run another trial only after writing down the claim it must test.
+“Supervision is better” is too broad to be falsifiable.
+“This delegation policy improves gradeable task resolution by at least the predeclared margin at no more than the predeclared cost multiple” is testable.
+
+Freeze the task IDs before either arm runs.
+Use the same model identity, task text, visible tools, and judge for both arms.
+Record the full parent and child call ledger because the parent journal alone is insufficient.
+Represent missing tokens or wall time as `null` and report how many fields remain unknown.
+Choose the quality denominator before reading results.
+Set a minimum effect and maximum cost ratio before the experiment starts.
+
+Then run enough fresh pairs to make the decision useful.
+The number should come from the expected discordance and the minimum effect, not from a convenient round number.
+If the supervisor arm fails to deliver, preserve that as an outcome with a reason rather than converting it into an absent row.
+If a checker fails, classify the task as ungradeable and apply the same exclusion policy to both arms.
+
+The next trial should also include a mechanism record.
+For each pair, capture worker count, retries, parent decisions, delivery status, tokens by role, and wall time by role.
+That record lets the team distinguish “workers added useful parallel work” from “the parent spent tokens coordinating a worker that never returned a usable patch.”
+
+A second trial is justified when the first run's accounting is complete, its gradeable denominator is stable, and the proposed policy change targets a named cause.
+Repeating the same opaque setup merely buys another ambiguous number.
+
+## The practical decision
+
+Keep a supervisor when the task benefits from explicit decomposition and the runtime can record every parent and child action.
+Treat the supervisor as an experimental policy, not as an automatic quality upgrade.
+
+Prefer solo when the task is small, context is tightly coupled, or the parent cannot reliably merge worker results.
+The solo arm has fewer coordination steps and a simpler cost boundary.
+
+Prefer a paired pilot when the expected benefit is plausible but unproven.
+The pilot should compare quality, token totals, wall time, missing usage, and delivery failures in one table.
+
+For this public replay, the decision is straightforward.
+The supervisor arm resolved 4 of 10 gradeable tasks versus 7 of 10 for solo, and it consumed 2.55 times the recorded tokens and 2.42 times the wall time after worker usage was included.
+Those numbers justify repairing the execution and accounting path before treating the result as a verdict on supervision.
+
+## FAQ
+
+### Does 4/10 versus 7/10 prove that supervision is worse?
+
+No.
+It describes one paired fixture with 10 gradeable tasks, and the exact sign test is `p = .25`.
+Use it as a measured warning about this setup, not as a universal rule.
+
+### Why is the valid denominator 10 instead of 12?
+
+Two of the 12 raw rows had gold patches that the judge could not grade.
+The public replay marks those rows ungradeable and evaluates the remaining 10 pairs.
+
+### Why do supervisor tokens include worker tokens?
+
+Workers are model-driven processes that performed delegated work.
+Their calls are part of the supervisor arm's cost even when the parent launched them.
+
+### Why should missing usage be `null` rather than zero?
+
+Zero means no usage was recorded for that category.
+`null` means the run's usage is unknown, so the total and ratio cannot honestly be presented as complete.
+
+### What does a p-value of .25 mean here?
+
+It is the exact two-sided paired sign-test result for the three discordant pairs.
+With this small discordant count, it does not provide strong evidence for a general quality difference.
+
+### Can a supervisor still be useful after this replay?
+
+Yes.
+Different tasks, workers, budgets, and delivery rules can produce different results.
+The next trial should name the mechanism it changes and measure both quality and complete cost.
+
+### Where can I read the cost-accounting method?
+
+Read [AI agent cost accounting: include child-worker tokens in every run](/blog/ai-agent-cost-accounting-child-workers/), which explains the parent, worker, and unknown-usage boundaries with a separate runnable example.
+
+## Sources and related reading
+
+- [Public replay test](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.test.mts), the primary source for 7/10, 4/10, `p = .25`, 2.55× tokens, 2.42× wall time, and the telemetry-gap assertions.
+- [Public replay renderer](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.mts), which prints the parent-only and parent-plus-worker accounting boundaries.
+- [Public run-report README](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/README.md), which explains the status of committed replay evidence.
+- [Tangle agent runtime](https://github.com/tangle-network/agent-runtime), the public runtime documentation for solo runs and supervised teams.
+- [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/), a primary public reference for recording model-call usage.
+- [Anthropic token-counting documentation](https://docs.anthropic.com/en/docs/build-with-claude/token-counting), a provider primary source for explicit token usage rather than character-based estimates.
+- [Evaluation gates for agent changes](/blog/self-improving-stack-evaluation-gates/), a related explanation of frozen denominators and promotion decisions.
+- [AI agent cost accounting: include child-worker tokens in every run](/blog/ai-agent-cost-accounting-child-workers/), the accounting-focused sibling post.
