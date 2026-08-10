@@ -225,7 +225,7 @@ function extractCopy(html, route = '') {
     // textContent joins them. Preserve that boundary without inserting
     // spaces between syntax-highlighter spans, which use style attributes.
     .replace(/<\/span>\s*(?=<span\b[^>]*\bclass=["'][^"']*\bline\b)/gi, '</span>\n')
-    .replace(/<\/span>\s*<span\b(?=[^>]*\bclass=["'][^"']*\bvbb-(?:sub|profile|n|cost)\b)/gi, '</span> · <span')
+    .replace(/<\/span>\s*<span\b(?=[^>]*\bclass=["'][^"']*\bvbb-(?:leg|sub|profile|n|cost)\b)/gi, '</span> · <span')
     .replace(/<\/span>\s*<em\b/gi, '</span> <em')
     .replace(/<\/em>\s*<span\b/gi, '</em> <span')
     .replace(/<\/em>\s*<small\b/gi, '</em> · <small')
