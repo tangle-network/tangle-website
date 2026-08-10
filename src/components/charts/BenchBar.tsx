@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import type { ProfileRow } from '../../data/benchmarks/schema';
+import {
+  benchmarkHarnessLabel,
+  benchmarkModelLabel,
+  benchmarkProfileLabel,
+  type ProfileRow,
+} from '../../data/benchmarks/schema';
 
 // Vertical column chart ranking agents on one benchmark. Each column = one agent
 // (AgentProfile × runLoop × ExecutionEnvironment): bar height = mean score on a
@@ -43,8 +48,8 @@ const METHOD_LABEL: Record<string, string> = {
 // Absolute accuracy axis: 0-100%, fixed gridline stops. No truncation.
 const TICKS = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
-export default function BenchBar({ rows, metricLabel = 'Score' }:
-  { rows: ProfileRow[]; metricLabel?: string }) {
+export default function BenchBar({ rows, metricLabel = 'Score', costLabel = 'cost/success' }:
+  { rows: ProfileRow[]; metricLabel?: string; costLabel?: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const [sort, setSort] = useState<'score' | 'n' | 'costUsd'>('score');
 
@@ -69,6 +74,10 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
     (byMethod && r.method && METHOD_COLOR[r.method]) || RANK_COLORS[Math.min(i, RANK_COLORS.length - 1)];
   const logoFor = (r: ProfileRow) => (r.harness && HARNESS_LOGO[r.harness]) || null;
   const anyCI = rows.some((r) => r.ciLow != null && r.ciHigh != null);
+  const hasMeasuredCost = rows.some((r) => r.costUsd != null);
+  const sortOptions: Array<'score' | 'n' | 'costUsd'> = hasMeasuredCost
+    ? ['score', 'n', 'costUsd']
+    : ['score', 'n'];
   const methodsPresent = [...new Set(sorted.map((r) => r.method).filter(Boolean))] as string[];
 
   return (
@@ -90,14 +99,15 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
           </div>
         )}
         <div className="vbb-sort mono">
-          {(['score', 'n', 'costUsd'] as const).map((k) => (
+          {sortOptions.map((k) => (
             <button key={k} className={sort === k ? 'on' : ''} onClick={() => setSort(k)}>
-              {k === 'costUsd' ? 'cost' : k}
+              {k === 'costUsd' ? 'cost' : k === 'n' ? 'cases' : 'score'}
             </button>
           ))}
         </div>
       </div>
 
+      <div className="vbb-scroll" tabIndex={0} aria-label="Agent configuration chart; scroll horizontally on narrow screens">
       <div className="vbb-plot">
         {/* y-axis title */}
         <div className="vbb-ytitle mono">{metricLabel}, %</div>
@@ -114,7 +124,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
               const logo = logoFor(r);
               const hasCI = r.ciLow != null && r.ciHigh != null;
               return (
-                <div className={`vbb-col${hover === i ? ' hover' : ''}`} key={r.model + (r.loop ?? '') + i}
+                <div className={`vbb-col${hover === i ? ' hover' : ''}`} key={`${r.agentProfile ?? 'raw'}:${r.model}:${r.harness ?? 'direct'}:${i}`}
                   onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
                   <div className={`vbb-bar vbb-bar-${r.method ?? 'raw'}`} style={{ height: `${r.score * 100}%`, background: colorFor(r, i) }}>
                     {/* value inside the bar, artificial-analysis style */}
@@ -133,7 +143,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                         <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
                         {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
                         {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)} to {(r.ciHigh! * 100).toFixed(1)} · n={r.n}</b></>}
-                        {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
+                        {r.costUsd != null && <><span>{costLabel}</span><b>${r.costUsd.toFixed(2)}</b></>}
                       </div>
                     </div>
                   )}
@@ -149,7 +159,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
             const harnessLogo = logoFor(r);
             const isHarness = r.method === 'harness' || r.method === 'harness-steered';
             return (
-              <div className={`vbb-foot${hover === i ? ' hover' : ''}`} key={r.model + (r.loop ?? '') + i}
+              <div className={`vbb-foot${hover === i ? ' hover' : ''}`} key={`${r.agentProfile ?? 'raw'}:${r.model}:${r.harness ?? 'direct'}:${i}`}
                 onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
                 {/* model provider mark, always; harness backend mark layered for
                     harness configs so "model in a harness" ≠ "raw model call". */}
@@ -159,12 +169,16 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                     <img className="vbb-harness-logo" src={harnessLogo} alt={r.harness} title={`harness: ${r.harness}`} />
                   )}
                 </span>
-                <span className="vbb-name">{r.model}</span>
-                <span className="vbb-sub mono">{isHarness ? r.harness : 'direct'}</span>
+                <span className="vbb-name">{benchmarkModelLabel(r.model)}</span>
+                <span className="vbb-sub mono">via {isHarness ? benchmarkHarnessLabel(r.harness) : 'direct call'}</span>
+                <span className="vbb-profile mono" title={r.agentProfile ?? 'raw'}>{benchmarkProfileLabel(r.agentProfile)}</span>
+                <span className="vbb-n mono">n={r.n}</span>
+                {r.costUsd != null && <span className="vbb-cost mono">{costLabel} ${r.costUsd.toFixed(2)}</span>}
               </div>
             );
           })}
         </div>
+      </div>
       </div>
       {(() => {
         const ns = [...new Set(rows.map((r) => r.n))];

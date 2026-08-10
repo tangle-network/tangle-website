@@ -2,16 +2,10 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro'
 import BlogCover from '../../../components/BlogCover.astro'
 import { getCollection } from 'astro:content'
-import { formatDate } from '../../../utils/date'
+import { blogSeriesSlug, getBlogSeriesDetails } from '../../../data/blogSeries'
 
 export async function getStaticPaths() {
   const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
-  const slugifySeries = (series: string) =>
-    series
-      .toLowerCase()
-      .replace(/&/g, 'and')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
   const sortSeriesPosts = (posts: Awaited<ReturnType<typeof getCollection<'blog'>>>) =>
     [...posts].sort((a, b) => {
       const orderA = a.data.seriesOrder ?? 999
@@ -31,17 +25,19 @@ export async function getStaticPaths() {
   }
 
   return [...seriesMap.entries()].map(([seriesName, entries]) => ({
-    params: { series: slugifySeries(seriesName) },
+    params: { series: blogSeriesSlug(seriesName) },
     props: { seriesName, posts: sortSeriesPosts(entries) },
   }))
 }
 
 const { seriesName, posts } = Astro.props
+const details = getBlogSeriesDetails(seriesName)
+const displayName = details?.title ?? seriesName
 ---
 
 <BaseLayout
-  title={`${seriesName} | Blog`}
-  description={`Tangle blog posts in the ${seriesName} series.`}
+  title={`${displayName} | Blog`}
+  description={details?.description ?? `Tangle blog posts in the ${displayName} series.`}
   bodyClass="page-editorial"
 >
   <section class="series-page" aria-labelledby="series-title">
@@ -49,11 +45,21 @@ const { seriesName, posts } = Astro.props
       <a href="/blog" class="back-link"><span aria-hidden="true">&larr;</span> Blog</a>
 
       <header class="series-hero">
-        <h1 id="series-title">{seriesName}</h1>
+        <h1 id="series-title">{displayName}</h1>
+        {details && (
+          <div class="series-intro">
+            <p>{details.premise}</p>
+            <p>{details.decision}</p>
+            <p class="series-start">
+              Start here: <a href={`/blog/${details.startHere.slug}`}>{details.startHere.title}</a>.
+              {posts.length === 1 ? ' This collection currently contains one article.' : ` ${details.path ?? 'Then continue in the order below.'}`}
+            </p>
+          </div>
+        )}
       </header>
 
       <div class="series-posts">
-        {posts.map((post) => (
+        {posts.map((post, index) => (
           <a href={`/blog/${post.data.slug}`} class="series-post">
             <div class="series-post-cover">
               <BlogCover
@@ -67,7 +73,7 @@ const { seriesName, posts } = Astro.props
               />
             </div>
             <div class="series-post-copy">
-              <time datetime={post.data.date}>{formatDate(post.data.date, 'short')}</time>
+              <span class="series-part">Part {index + 1}</span>
               <h2>{post.data.title}</h2>
               <p>{post.data.summary}</p>
             </div>
@@ -120,10 +126,31 @@ const { seriesName, posts } = Astro.props
   }
 
   .series-hero h1 {
-    max-width: 11ch;
+    max-width: 15ch;
     font-size: clamp(3rem, 6vw, 5.25rem);
     font-weight: 600;
     line-height: 1;
+  }
+
+  .series-intro {
+    max-width: 56rem;
+    margin-top: 1.4rem;
+  }
+
+  .series-intro p {
+    margin: 0.65rem 0 0;
+    color: #4a4d60;
+    font-size: 1.05rem;
+    line-height: 1.65;
+  }
+
+  .series-intro .series-start {
+    color: #34364a;
+    font-weight: 600;
+  }
+
+  .series-start a {
+    color: #4f46e5;
   }
 
   .series-posts {
@@ -162,7 +189,7 @@ const { seriesName, posts } = Astro.props
     min-width: 0;
   }
 
-  .series-post time {
+  .series-part {
     display: block;
     margin-bottom: 0.55rem;
     color: #5e6174;

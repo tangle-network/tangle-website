@@ -1,0 +1,362 @@
+---
+title: 'Why AI Agent Delivery Checks Must Run After Worker Failure'
+slug: agent-runtime-delivery-after-failure
+summary: >-
+  An AI agent can write a valid artifact and still exceed its budget. Separate delivery, resource compliance, and failure propagation so each result stays true.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - agent-delivery
+  - coding-agents
+  - ai-infrastructure
+series: Agent Runtime Infrastructure
+seriesOrder: 7
+coverImage: /images/covers/editorial/agent-runtime-v2.webp
+heroImage: /images/covers/editorial/agent-runtime-v2.webp
+imageAlt: 'An editorial still life about the software that runs an agent'
+---
+
+A child worker is one delegated execution, and it can write the file its parent asked for before dying because it exceeded a budget.
+If the runtime checks the file only after a clean completion, it reports that the work was missing even when the artifact is present.
+That single verdict erases two different facts: what the worker delivered and whether it obeyed the resource policy.
+
+The public [agent-runtime ordering change](https://github.com/tangle-network/agent-runtime/commit/2430ee5ee166beed91ed973d8d1a0f2c7468b472) fixes the ordering.
+Its controlled child artifact was exactly `PROOF-RECURSIVE-CHILD`.
+The public source record describes a parent-authored 12,000-token budget and 76,657 tokens spent before the child was stopped.
+The new code checks the artifact from both a streaming cleanup path and a rejected one-shot path, while the original execution error still propagates.
+
+This article defines the result dimensions, walks through the failure, and includes a runnable TypeScript model.
+The model is deliberately small so a reader can see why “delivered” and “within budget” must be stored separately.
+
+> Delivery answers whether the requested artifact exists and passes its check.
+> Resource compliance answers whether the worker stayed within its limits.
+> A worker error remains an error even when the artifact check passes.
+
+## Start with the artifact, not the exit signal
+
+An **agent** is a program that uses a language model and tools to complete a task.
+An **agent runtime** is the software that starts the program, supplies its state and limits, records events, and settles the result.
+A **parent run** is the execution that coordinates one or more children.
+A **child worker** is the delegated execution that performs one part of the parent task.
+
+An **output artifact** is a value that another program can inspect after the worker stops.
+It might be a file, a JSON object, a patch, a report, or a signed result reference.
+“The model said it finished” is not an artifact because it does not give the surrounding system a stable object to check.
+
+A **delivery check** is a deterministic or otherwise specified function that examines the artifact and returns whether it meets the output contract.
+For the public test, the contract is a string comparison against `PROOF-RECURSIVE-CHILD`.
+In a production code task, the check might require a file to exist, a schema to validate, or a test command to pass.
+
+**Resource compliance** is the separate result of comparing actual usage with the policy the parent authored.
+The policy can include input tokens, output tokens, elapsed time, iterations, memory, or a dollar limit.
+An execution that writes a correct file after spending too many tokens delivered the file and violated the resource policy at the same time.
+
+Those facts answer different questions for different callers.
+The parent may want the artifact for a later check.
+The budget ledger may need to reject the run or charge an overrun.
+An operator may need to retry with a larger ceiling.
+One boolean cannot preserve all three decisions.
+
+The earlier [budget-floor article](/blog/agent-runtime-budget-floor/) explains how a parent can reject an impossible ceiling before launch.
+This article covers the case that remains when the ceiling was accepted, the child began work, and an artifact appeared before termination.
+
+## The old decision tree had a blind branch
+
+Many wrappers around asynchronous work have a clean path that looks like this:
+
+1. Start the worker.
+2. Read every event until the stream ends.
+3. Read the settled artifact.
+4. Run the delivery check.
+5. Return the verdict.
+
+That sequence works when the stream ends normally.
+It skips the check when a budget, deadline, cancellation, or provider error interrupts the stream before step 2 finishes.
+The same omission appears in one-shot code when `execute()` rejects before the caller reaches the code that checks its resolved result.
+
+The caller then sees a failure with no delivery verdict.
+If the runtime treats an unset verdict as “not delivered,” it turns a real artifact into a false negative.
+If it treats the failure as proof that no artifact exists, it can schedule duplicate work or discard a file that a later step could have inspected.
+
+The linked change describes exactly this path.
+The child wrote its required artifact and then overran its parent-authored budget.
+The stream aborted before the delivery check ran, and the run recorded no winner over a file that was correct on disk.
+The defect was the missing question, not a weak output check.
+
+The distinction is easiest to see as a result table:
+
+| Worker state | Artifact check | Resource check | Error propagation | Correct stored result |
+| --- | --- | --- | --- | --- |
+| Clean completion with correct artifact | Pass | Within limit | None | Delivered, compliant |
+| Budget stop after correct artifact | Pass | Over limit | `budget-exhausted` | Delivered, over limit, failed execution |
+| Budget stop before artifact | Fail | Over limit | `budget-exhausted` | Undelivered, over limit, failed execution |
+| Clean completion with wrong artifact | Fail | Within limit | None | Undelivered, compliant |
+| Checker throws | Unknown input | Depends on usage | Maybe none | Undelivered by fail-closed policy |
+
+The second row is the case the fix restores.
+The third row prevents the fix from becoming permissive.
+The worker still fails its resource policy, but the parent can now see that the child produced the exact object the output contract requested.
+
+## The public change checks both execution shapes
+
+The runtime supports a streaming worker that yields usage events and a one-shot worker that resolves a result.
+Both shapes can fail after writing an artifact.
+The fix therefore places the delivery check in two cleanup boundaries.
+
+For a stream, the check runs in `finally`.
+The language guarantees that cleanup code runs when the iterator ends normally and when iteration throws.
+The runtime reads the artifact that the worker managed to produce, applies the delivery check, and then preserves the original stream error.
+
+For a one-shot call, the wrapper catches a rejected `execute()` promise long enough to check the artifact.
+It then rethrows the same error.
+The caller still knows that execution failed, while the settled artifact retains an independent delivery verdict.
+
+The [open completion-gate implementation](https://github.com/tangle-network/agent-runtime/blob/2430ee5ee166beed91ed973d8d1a0f2c7468b472/src/runtime/supervise/completion-gate.ts) also keeps the check fail-closed.
+If reading the artifact throws, the wrapper leaves delivery invalid.
+If the check itself throws, the wrapper treats the artifact as undelivered rather than turning a broken checker into a pass.
+
+The [open completion-gate tests](https://github.com/tangle-network/agent-runtime/blob/2430ee5ee166beed91ed973d8d1a0f2c7468b472/tests/kernel/completion-gate.test.ts) make the independent dimensions visible.
+One streaming worker writes the proof string and then throws `budget-exhausted`.
+The test expects the error to propagate and the artifact verdict to be valid.
+Another worker dies with a different value and remains invalid.
+The one-shot test follows the same rule after a rejected promise.
+
+The test file also checks the ordinary cases.
+A high self-score does not override a failed delivery check.
+A low-score artifact that passes the check can still become the selected output.
+A child that ran without delivering does not become a winner merely because it consumed resources.
+Those cases protect the output contract from both silent failure and self-reported success.
+
+## Delivery and resource compliance are separate results
+
+The runtime's output verdict should answer the output question only.
+It should not silently convert a resource overrun into a valid overall success.
+Instead, the settlement can carry independent fields such as:
+
+| Field | Question | Example for the controlled child |
+| --- | --- | --- |
+| `delivered` | Did the output exist and pass its check? | `true` |
+| `resourceCompliant` | Did measured usage stay within policy? | `false` |
+| `failure` | Did execution terminate with an error? | `budget-exhausted` |
+
+The parent can then choose a policy appropriate to the task.
+It may retain a delivered artifact for diagnosis while refusing to promote it.
+It may allow a reviewer to inspect the file before deciding whether the overrun was acceptable.
+It may retry the work with a larger budget and compare both artifacts.
+
+The runtime should not choose among those business decisions by hiding one of the facts.
+Its job is to report the evidence at the boundary it owns.
+
+The distinction also protects accounting.
+An artifact check does not refund tokens, erase elapsed time, or make an over-budget worker compliant.
+The resource ledger should settle actual usage independently of the output verdict.
+The delivery wrapper should ask whether the artifact passed independently of that ledger.
+
+This is the same boundary that makes an [agent profile delivery contract](/blog/agent-profile-materialization-contracts/) useful.
+A profile contract says which settings reached the worker.
+A delivery contract says which artifact came back.
+Resource accounting says what the run consumed.
+Each contract can be true or false without changing the meaning of the others.
+
+## A runnable toy model of independent outcomes
+
+The following TypeScript program models one artifact check, one resource policy, and one propagated failure.
+It uses no package imports beyond Node's built-in assertions.
+The `delivered` field is calculated from the artifact, while `resourceCompliant` is calculated from usage and the limit.
+
+```typescript
+import assert from 'node:assert/strict'
+
+type Execution =
+  | { status: 'completed' }
+  | { status: 'failed'; reason: 'budget-exhausted' | 'deadline' }
+
+type WorkerOutcome = {
+  artifact: string | null
+  usedTokens: number
+  tokenLimit: number
+  execution: Execution
+}
+
+type Settlement = {
+  delivered: boolean
+  resourceCompliant: boolean
+  failure: string | undefined
+}
+
+function settle(outcome: WorkerOutcome): Settlement {
+  const delivered = outcome.artifact === 'PROOF-RECURSIVE-CHILD'
+  const resourceCompliant = outcome.usedTokens <= outcome.tokenLimit
+  const failure = outcome.execution.status === 'failed' ? outcome.execution.reason : undefined
+  return { delivered, resourceCompliant, failure }
+}
+
+const deliveredAfterOverrun = settle({
+  artifact: 'PROOF-RECURSIVE-CHILD',
+  usedTokens: 76_657,
+  tokenLimit: 12_000,
+  execution: { status: 'failed', reason: 'budget-exhausted' },
+})
+assert.deepEqual(deliveredAfterOverrun, {
+  delivered: true,
+  resourceCompliant: false,
+  failure: 'budget-exhausted',
+})
+
+const killedBeforeDelivery = settle({
+  artifact: null,
+  usedTokens: 12_001,
+  tokenLimit: 12_000,
+  execution: { status: 'failed', reason: 'budget-exhausted' },
+})
+assert.deepEqual(killedBeforeDelivery, {
+  delivered: false,
+  resourceCompliant: false,
+  failure: 'budget-exhausted',
+})
+
+const cleanSuccess = settle({
+  artifact: 'PROOF-RECURSIVE-CHILD',
+  usedTokens: 900,
+  tokenLimit: 12_000,
+  execution: { status: 'completed' },
+})
+assert.deepEqual(cleanSuccess, {
+  delivered: true,
+  resourceCompliant: true,
+  failure: undefined,
+})
+console.log('delivery example: 3 checks passed')
+```
+
+Save it as `delivery-outcomes-example.ts` and run `npx --yes tsx delivery-outcomes-example.ts`.
+The first case intentionally has a true delivery field beside a false resource field and a propagated failure reason.
+The second case proves that cleanup does not manufacture delivery when the artifact is absent.
+The third case shows the ordinary clean path.
+
+The conditional type in `Settlement` is intentionally modest.
+The object stores the failure reason as optional data because a completed run has no error.
+A production runtime may use a discriminated union that carries timestamps, iteration counts, artifact IDs, and a ledger reference.
+The important property survives either representation: the fields answer different questions.
+
+## A recursive parent must preserve the distinction
+
+A child can itself be a parent.
+For example, a root run can ask a middle worker to coordinate a leaf worker that writes the final file.
+If the leaf fails its delivery check, the middle worker must not settle as delivered merely because it received a message from the leaf.
+If the leaf writes a valid file and then exceeds a resource limit, the middle worker can report that delivery passed while carrying the overrun and failure upward.
+
+The public test file exercises this recursive shape before the kill-specific tests.
+It checks that an undelivered leaf prevents a sub-driver from becoming a winner at the root.
+That test protects the meaning of delivery across delegation boundaries.
+The parent must pass a checked result upward, not a sentence that says “the child finished.”
+
+This matters for retries and selection.
+Suppose a parent launches two children.
+One produces a high self-score but fails its artifact check.
+The other produces a lower score and passes the artifact check.
+The public test expects the delivered child to win.
+The score remains useful as a secondary ranking value, but it cannot outrank the output contract.
+
+The same ordering applies when one child is a coordinator.
+An intermediate process may have produced a valid coordination note, but that note is not necessarily the final artifact.
+Each level needs a declared output contract, and each level should settle against the contract it owns.
+
+## What the fix does not approve
+
+The change does not make an over-budget run compliant.
+The resource policy can still reject promotion, charge the overrun, or force a retry.
+The fix only prevents a missing delivery verdict from hiding an artifact that exists.
+
+The change does not trust the model's own claim of success.
+The output check reads the artifact and applies a separate rule.
+If the worker writes the wrong file, writes a partial file, or writes nothing, the check remains false.
+
+The change does not make a checker correct.
+A checker that accepts an invalid schema or a weak test can produce a valid delivery verdict for the wrong reason.
+The check needs its own review, versioning, and tests.
+
+The change does not guarantee that every artifact is recoverable.
+The wrapper can ask the executor for the artifact it has retained, but a process that never persisted its output may have nothing to inspect.
+That is why artifact storage and trace recording need an explicit boundary around the worker.
+
+The [worker observability article](/blog/agent-runtime-worker-observability/) describes the companion rule for live state.
+Progress and trace signals should remain visible while the worker is active, while the final artifact and resource settlement should remain available after it stops.
+
+## The cleanup path needs one source of output truth
+
+The delivery check should read the executor's retained artifact rather than reconstructing output from the last event it happened to see.
+A stream can end between two events, and a one-shot promise can reject after the executor has written its final file.
+The artifact accessor is the boundary that answers what the worker left behind.
+
+The wrapper should also run that accessor once per settlement.
+Running a check twice can create a different answer when the checker reads a changing file, consumes a one-time stream, or records a side effect.
+The public implementation stores the gated verdict and returns it from the settled artifact, so later readers see the same result that cleanup computed.
+
+Cleanup must happen before the error is handed back to the parent, but the error must still be handed back.
+That order gives the parent a complete record without changing control flow.
+The parent can log the artifact verdict, reconcile resource usage, and decide whether to retry after the original exception remains visible.
+
+This ordering also makes tests more realistic.
+A success-only test can pass while a kill path remains blind.
+The open tests create a streaming worker that yields an event, throws, and exposes an artifact afterward.
+They create a one-shot worker whose promise rejects while the artifact accessor still returns the proof string.
+Those shapes exercise the boundary where production failures happen rather than only the clean path.
+
+## Pick the policy after you preserve the facts
+
+When a worker terminates, run the delivery check in cleanup code that covers both normal and exceptional paths.
+Store its result separately from resource compliance.
+Preserve the original error so callers can retry, alert, or refuse promotion for the right reason.
+
+For a streamed worker, put the check in `finally` after the event loop has yielded the last event it can provide.
+For a one-shot worker, check the retained artifact in the rejection path before rethrowing.
+Make artifact lookup and the check fail-closed.
+
+Then decide what a delivered overrun means for your product.
+For a disposable experiment, retain it for diagnosis.
+For a production deployment, reject promotion and ask the parent to raise the budget or simplify the context.
+For a human review workflow, show the artifact beside the explicit overrun.
+
+The decision should be visible because “the file exists” and “the worker obeyed the contract” are both useful facts, and neither one can stand in for the other.
+
+## FAQ
+
+### Can a worker deliver an artifact after it fails?
+
+Yes.
+If it wrote the artifact before a budget, deadline, or cancellation error, a cleanup path can check that artifact while still propagating the failure.
+
+### Does a valid delivery verdict mean the run succeeded?
+
+No.
+It means the artifact passed its output check.
+Resource compliance, execution errors, policy approval, and task quality remain separate decisions.
+
+### Why should the error still be rethrown?
+
+The caller needs to know that the worker exceeded a limit or otherwise failed.
+Checking the artifact should add evidence, not hide the failure or make an overrun look compliant.
+
+### What happens when the artifact is missing?
+
+The delivery check stays false.
+An executor that never produced an artifact cannot become a winner because the cleanup code asked the question.
+
+### Why check both streaming and one-shot workers?
+
+Streaming workers fail while an iterator is being consumed, while one-shot workers fail through a rejected promise.
+The same output contract must survive both execution shapes.
+
+### Is `PROOF-RECURSIVE-CHILD` a public API value?
+
+No.
+It is a controlled test artifact used by the public test to make the delivery boundary observable.
+Production code should name its own artifact contract and check it directly.
+
+## Public evidence
+
+The [delivery-check source change](https://github.com/tangle-network/agent-runtime/commit/2430ee5ee166beed91ed973d8d1a0f2c7468b472) records the controlled artifact, the 12,000-versus-76,657 overrun, the `finally` and rejection-path behavior, and the test result.
+The [public completion-gate test](https://github.com/tangle-network/agent-runtime/blob/2430ee5ee166beed91ed973d8d1a0f2c7468b472/tests/kernel/completion-gate.test.ts) checks delivered and undelivered artifacts after streaming and one-shot failures, plus recursive propagation.
+The [published agent-runtime package](https://www.npmjs.com/package/@tangle-network/agent-runtime) is the installable boundary for applications that need to confirm which release contains a source change.

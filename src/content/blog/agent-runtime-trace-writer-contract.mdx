@@ -1,0 +1,337 @@
+---
+title: 'How Agent Trace Writers Stay Compatible With Public Readers'
+slug: agent-runtime-trace-writer-contract
+summary: >-
+  An agent trace reader depends on a stable writer contract. Publish the layout, move state to .agent, and classify every backend at compile time.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - traces
+  - agent-observability
+  - ai-infrastructure
+series: Agent Runtime Infrastructure
+seriesOrder: 8
+coverImage: /images/covers/editorial/agent-runtime-v2.webp
+heroImage: /images/covers/editorial/agent-runtime-v2.webp
+imageAlt: 'An editorial still life about the software that runs an agent'
+---
+
+A trace reader is a program that loads recorded agent events, and it can be public, tested, and useless when the writer keeps a private layout convention.
+The reader opens one directory, expects one event shape, and finds nothing after a producer renames a folder or changes a filename.
+The agent still ran, but the evidence disappears at the boundary between writer and reader.
+
+Two public `agent-runtime` changes make that boundary explicit.
+[The run-layout change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the supervisor-run layout and bounded evidence helpers that a trace reader already needed.
+[The state-directory change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new supervisor state from `.loops` to `.agent` and leaves a legacy read path for older records.
+
+The change is a lesson in public contracts.
+The writer and reader must agree on location, names, event shape, and compatibility behavior before either side can be released independently.
+This article defines those terms, shows why layout drift breaks analysis, and includes a runnable TypeScript map that makes an unclassified backend a compile-time error.
+
+> A trace is useful only when the program that writes it and the program that reads it share a versioned contract.
+
+## A trace is a conversation between two programs
+
+An **agent** is a program that uses a language model and tools to complete a task.
+An **agent runtime** is the software that starts the agent, supplies state and limits, and records its work.
+A **worker** is one running copy of the agent.
+A **trace** is a time-ordered record of that work.
+It can contain model requests, tool calls, worker state changes, output artifacts, errors, resource usage, and links between related events.
+
+A **trace event** is one structured record in that time order.
+It has a kind or name, a payload, and usually an identifier or timestamp that lets a reader place it beside other events.
+The event can say that a worker started, that a tool was requested, or that an artifact was written.
+It should not claim a tool succeeded unless the execution boundary produced that result.
+
+A **writer** is the process that creates the trace events and persists them in a file or stream.
+A **reader** is the process that loads those events and turns them into a report, timeline, diagnosis, or live view.
+The published [`@tangle-network/traces` package](https://github.com/tangle-network/traces) is a reader and analysis tool for agent traces.
+The runtime that owns the worker is often the writer, although an adapter can translate another system's records.
+
+The [worker observability article](/blog/agent-runtime-worker-observability/) covers the first half of this boundary.
+Live progress tells a parent whether to wait, steer, stop, or retry.
+A durable trace lets another process inspect the run after the worker and its parent have stopped.
+
+The boundary becomes easy to miss when both programs live in one organization.
+A developer can change a folder name in the writer and update a local reader in the same branch.
+The change looks harmless until an installed reader analyzes a run written by an older runtime, or a new reader analyzes a run produced by a deployment that was not upgraded at the same time.
+
+## The reader can arrive before the writer contract
+
+The public `traces` command already had a mode for analyzing a supervisor run directory before `agent-runtime` published the helper that writes that directory.
+The reader therefore depended on a layout that the runtime had not yet published as a supported contract.
+That is an unstable relationship even if the path works in development.
+
+The reader needs answers to concrete questions:
+
+| Question | Contract the reader needs |
+| --- | --- |
+| Where is one run? | A stable root and run identifier |
+| Which files belong to one worker? | A naming rule that handles spaces and punctuation |
+| Which records can be partial? | A rule for trailing writes and malformed lines |
+| What is an instruction versus a report? | A typed event shape and direction |
+| Can a restarted process continue? | A durable location and an append rule |
+| Can an older run still be read? | A documented compatibility path |
+
+Without those answers, the reader must guess.
+It may scan every JSON Lines file (JSONL), also called newline-delimited JSON (NDJSON), where each line contains one JSON object, and treat unrelated logs as spans.
+It may expect a final newline and discard the last event while a writer is appending it.
+It may interpret a worker label as a filename and create an invalid or ambiguous path.
+It may report an empty run when the data exists under a previous directory name.
+
+The result is worse than a visible parser error.
+An empty report looks like a worker that produced no activity, so a reviewer can make a wrong decision from missing evidence.
+The runtime's task may have succeeded while the reader's input contract failed.
+
+## The run-layout change publishes the missing writer contract
+
+The public [run-layout change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) promotes three groups of behavior into the runtime's public surface.
+The run-layout functions define where one supervisor run and each worker's inbox live.
+The untracked-clone helpers preserve working-tree artifacts that a plain history clone would omit.
+The worker-evidence helpers assemble bounded evidence for a settled worker.
+
+The published layout places a run under `.loops/supervisor/<id>`.
+Inside it, a worker inbox uses a safe worker label followed by `.inbox.ndjson`.
+A separate worker event file records control bookkeeping.
+The precise names matter because the reader can now open the same shape the writer promises.
+
+The contract also says how to handle imperfect writes.
+A partial trailing line can occur when a process is killed during an append.
+A corrupt line can come from a damaged file or a producer bug.
+The reader skips that line and continues with later valid lines instead of losing the rest of the worker record.
+That rule keeps one bad append from hiding unrelated evidence.
+
+The worker inbox and the control log have different jobs.
+The inbox is the durable down-leg request that asks a worker to steer or answer.
+The control log is best-effort bookkeeping about the delivery attempt.
+If the bookkeeping append fails, the durable inbox write remains the action that matters.
+Keeping those responsibilities separate prevents a telemetry failure from silently cancelling a real control request.
+
+The change also publishes worker evidence as bounded data.
+Evidence should be large enough for the parent to make a decision and small enough to retain in a trace or journal.
+The exact limits belong to the runtime version, but the public change makes the principle visible: a settled worker should expose a defined evidence block rather than every caller inventing its own summary.
+
+This is an API change even though much of the work concerns files.
+The filesystem is the cross-process interface for a worker that outlives the process holding its in-memory handles.
+Publishing the functions and types makes that interface reviewable, testable, and available to the reader's maintainers.
+
+## The state-directory change moves new state to `.agent`
+
+The first public layout carried the product-shell name `.loops` into the runtime contract.
+The [state-directory change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) changes the writer to `.agent/supervisor/<id>`.
+The reason is organizational and technical.
+Agent-owned state such as hypotheses and skill-run records already lives under `.agent`, so supervisor state now sits beside it rather than under a product-branded directory.
+
+The move could have broken readers that already held old run records.
+The change therefore exports a legacy path for readers that need historical visibility.
+Readers check the new `.agent` location first and fall back to the old `.loops` location.
+The new writer creates `.agent`; it does not create new `.loops` runs.
+
+The release history records that the rename happened before the `v0.111.0` agent-runtime tags and that no released version had shipped the old writer path.
+That statement bounds the migration.
+It does not mean that every private file or local experiment has the new layout.
+It means the public release history had a clean point at which the writer contract could move without stranding a released producer.
+
+The [open run-layout test for the rename](https://github.com/tangle-network/agent-runtime/blob/a7bcb946abe2118f023f018c7564bbd793be3658/tests/run-layout.test.ts) pins the new path and the legacy path separately.
+It treats a path change as a compatibility decision rather than a formatting preference.
+That test should fail if a future refactor silently sends a writer back to `.loops`.
+
+## The published packages are separate boundaries
+
+The current public package versions matter because a source change and an installable package can move through release automation at different times.
+On 2026-08-09, the public registry reports `@tangle-network/traces@0.11.5` and `@tangle-network/agent-runtime@0.128.0`.
+The [traces package page](https://www.npmjs.com/package/@tangle-network/traces) is the installable reader boundary.
+The [agent-runtime package page](https://www.npmjs.com/package/@tangle-network/agent-runtime) is the installable writer/runtime boundary.
+
+The current [traces README](https://github.com/tangle-network/traces#integrate-your-own-system) documents two ways to read data.
+Systems that control their own output can emit the public OpenTelemetry trace contract and pass it to the reader.
+Systems that do not control their source format can use a translation adapter.
+The first path is the stable integration choice because the producer and consumer agree on the event contract instead of sharing a private session-store convention.
+
+The [agent-runtime README](https://github.com/tangle-network/agent-runtime#supervise-a-team-of-agents) describes the runtime as a TypeScript engine for chat agents, one-shot tasks, and agent teams.
+It also presents the worker execution backend as data supplied to the supervisor.
+That separation lets a profile choose where work runs while the surrounding runtime owns budgets, journaling, and stopping.
+
+These package pages do not prove that every future release preserves every experimental helper.
+They tell a reader where the public installation boundary is today.
+The source links above prove the specific layout changes.
+Keep both citations beside a version-sensitive statement so an application does not infer that the latest package always matches an arbitrary source version.
+
+## A backend is a choice that needs a trace policy
+
+A **backend** is the execution route that runs a worker.
+One backend may keep the worker in an inline loop.
+Another may start a coding-agent process inside an isolated workspace.
+The backend determines which state, event source, and trace propagation channel exist.
+
+If a runtime has three backends and one map says which ones forward trace state, the map is part of the runtime's contract.
+A newly added backend cannot be allowed to fall through to a default that silently drops events.
+The compiler can make that omission visible when the map is keyed by the complete backend union.
+
+This is the useful role of a discriminated map.
+The map does not discover whether a backend is correct in production.
+It does make the developer classify its trace behavior before the code builds.
+That small compile-time requirement is cheaper than discovering an empty trace after a release.
+
+## A runnable TypeScript classification check
+
+The following program uses two toy backends and two trace policies.
+The `satisfies Record<Backend, TracePolicy>` line requires one policy for every backend.
+The `UnclassifiedBackend` assertion makes the intent explicit.
+If a developer adds `'remote-cli'` to `Backend` without adding a map entry, TypeScript rejects both checks at compile time.
+
+```typescript
+import assert from 'node:assert/strict'
+
+type Backend = 'inline-router' | 'sandbox-worker'
+
+type TracePolicy =
+  | { kind: 'forward'; source: 'live-events' }
+  | { kind: 'rebuild'; source: 'durable-files' }
+
+const tracePolicy = {
+  'inline-router': { kind: 'forward', source: 'live-events' },
+  'sandbox-worker': { kind: 'rebuild', source: 'durable-files' },
+} as const satisfies Record<Backend, TracePolicy>
+
+type UnclassifiedBackend = Exclude<Backend, keyof typeof tracePolicy>
+const everyBackendIsClassified: UnclassifiedBackend extends never ? true : never = true
+
+function policyFor(backend: Backend): TracePolicy {
+  return tracePolicy[backend]
+}
+
+assert.deepEqual(policyFor('inline-router'), {
+  kind: 'forward',
+  source: 'live-events',
+})
+assert.deepEqual(policyFor('sandbox-worker'), {
+  kind: 'rebuild',
+  source: 'durable-files',
+})
+assert.equal(everyBackendIsClassified, true)
+console.log('trace-policy example: 3 checks passed')
+```
+
+Save it as `trace-policy-example.ts` and run `npx --yes tsx trace-policy-example.ts`.
+The runtime assertions check the two values at execution time.
+The map and type assertion check coverage at compile time.
+
+The example classifies where events come from, not whether the events are truthful.
+The inline route must still emit valid timestamps and identifiers.
+The sandbox route must still persist the files that the reader expects.
+The type system prevents an omitted branch, while tests and public contracts protect the behavior of each branch.
+
+## Stable contracts include failure behavior
+
+A location alone is not a complete trace contract.
+The writer and reader also need to agree on identifiers, event names, append semantics, corruption handling, and compatibility.
+
+For a worker run, the contract should answer these questions before shipping:
+
+| Boundary | Writer promise | Reader behavior |
+| --- | --- | --- |
+| Run identity | One stable ID maps all worker files to one run | Group events by that ID |
+| Worker labels | Labels become safe, deterministic filename stems | Open the same file for every supported label |
+| Append | Each event is one complete newline-delimited record | Tolerate a partial trailing record |
+| Corruption | A bad line cannot be repaired into invented evidence | Skip it and retain later valid lines |
+| Artifacts | Working-tree outputs and evidence have named locations | Include them without treating them as model events |
+| Migration | New writes use `.agent`; old reads can use `.loops` | Check the new path, then the legacy path |
+
+The table is a design checklist, not a claim that a reader can answer every question about a run.
+For example, a valid trace can show that a tool request happened without proving that the tool completed successfully.
+The [delivery article](/blog/agent-runtime-delivery-after-failure/) explains why output checks and resource results must be separate from worker termination.
+
+The stable writer contract also helps a second reader.
+A dashboard, a command-line report, and an evaluator can consume the same durable records without each recreating the runtime's private event-to-file rules.
+That is the payoff of publishing the writer beside the reader.
+
+## Emit the public event contract when you own the system
+
+The current traces documentation recommends emitting a public OpenTelemetry JSONL contract when the producer is under your control.
+That path gives the reader a defined span shape and lets other tools inspect the same artifact.
+Use a translation adapter when the source format belongs to another product and cannot be changed.
+
+The choice is a boundary decision.
+If you own the worker runtime, adding one more private file convention increases the amount of code every reader must reverse-engineer.
+If you do not own the source log, an adapter is a reasonable compatibility edge, provided the adapter states what it can and cannot recover.
+
+In either case, keep the raw evidence and the normalized view distinguishable.
+The reader should be able to say that a field was missing, malformed, or unavailable rather than filling it with a default that looks measured.
+An empty trace section should carry the reason it is empty.
+
+The same rule applies to backend classification.
+Do not let an unknown backend enter a default trace path because the fallback produces a report that happens to render.
+Make the classification compile, test the event source, then verify one real run for that backend.
+
+## What these source changes do not prove
+
+The two source changes prove a public writer layout and a migration rule.
+They do not prove that every trace contains every event a product might want.
+The run-layout contract concerns durable supervisor state, not a universal schema for model requests, tool outputs, or application databases.
+
+The legacy fallback preserves discoverability of older run locations.
+It does not rewrite old records into the new format or guarantee that a removed event field can be recovered.
+Readers still need to report missing capabilities honestly.
+
+The package versions stated here are a date-bound observation.
+The registry can publish a newer version after this article is built.
+Pin the package in an application and inspect its release notes before assuming a helper or path is available.
+
+The TypeScript map is also illustrative.
+Compile-time coverage cannot verify that a backend emits spans, persists artifacts, or flushes its final event before shutdown.
+Those properties need integration tests against the real writer and a reader that opens the resulting artifact.
+
+## Decide the writer boundary before adding another reader
+
+If you own an agent runtime, publish the path and event contract that a reader must consume.
+Give each backend an explicit trace policy and make the map complete at compile time.
+Add tests for normal append, partial trailing records, corrupt records, clean migration, and the backend-specific event source.
+
+If you inherit an old writer, add a reader fallback for the old path and mark it as read-only compatibility.
+A reader may still find the old layout, but new writes should use the published path.
+Then choose a public event contract for new integrations so future readers do not need another private translation.
+
+The practical question is not whether a trace file exists.
+It is whether a different process can find the same run, interpret its events, preserve its unknowns, and explain which backend produced them.
+That is the standard a published reader and writer should meet.
+
+## FAQ
+
+### What is an agent trace?
+
+An agent trace is a time-ordered record of an agent run's model events, tool requests, worker state, outputs, errors, and related artifacts.
+It is evidence for inspection, not a guarantee that the task was correct.
+
+### Why does a reader need a writer contract?
+
+The reader needs stable locations, filenames, event shapes, and failure rules.
+Without those promises, a harmless writer refactor can make existing runs appear empty or incomplete.
+
+### Why did supervisor state move from `.loops` to `.agent`?
+
+The public runtime was consolidating agent-owned state under `.agent`.
+The rename keeps new supervisor runs with related agent state while the reader retains a legacy fallback for older `.loops` records.
+
+### What is a backend in an agent runtime?
+
+A backend is the execution route that runs a worker, such as an inline loop or a sandboxed coding process.
+It determines which event source and persistence behavior the trace policy must account for.
+
+### Does the compile-time map prove the trace is complete?
+
+No.
+It proves that every declared backend has a classification in the map.
+Tests and real runs still need to verify that each classification emits the promised events and artifacts.
+
+### Which public package versions were checked?
+
+On 2026-08-09, the registry reported `@tangle-network/traces@0.11.5` and `@tangle-network/agent-runtime@0.128.0`.
+Use the package pages and release metadata to check a later installation.
+
+## Public evidence
+
+The [writer-contract source change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the run layout, worker inbox, untracked-artifact copy, and bounded worker-evidence helpers.
+The [layout migration source change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new writes to `.agent` and documents the legacy `.loops` reader fallback.
+The [public traces documentation](https://github.com/tangle-network/traces#integrate-your-own-system) documents the supported event-contract and translation paths.

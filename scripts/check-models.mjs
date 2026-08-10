@@ -157,6 +157,10 @@ async function fetchDenylist() {
         }
       }
 
+      if (found.size === 0) {
+        throw new Error('parsed zero model IDs; provider page format may have changed');
+      }
+
       console.log(`  ▸ ${source.name}: ${found.size} deprecated model ids parsed`);
       for (const id of found) {
         const arr = denylist.get(id) ?? [];
@@ -219,13 +223,13 @@ function scan(files, denylist, allow) {
   const findings = [];
   // Build a single regex that matches any deprecated model id as a
   // whole token. Sort by length desc so longer ids match before
-  // their substrings. The trailing negative lookahead `(?![\w.-])`
-  // ensures we match the full id, never a prefix — i.e. `gpt-5`
-  // won't match inside `gpt-5.5`.
+  // their substrings. The trailing negative lookahead rejects both a
+  // literal suffix and an escaped suffix inside a regular-expression
+  // source, so `gpt-5` cannot match `gpt-5.5` or `gpt-5\.5`.
   const ids = [...denylist.keys()].sort((a, b) => b.length - a.length);
   if (ids.length === 0) return findings;
   const escaped = ids.map((id) => id.replace(/[.+*?^${}()|[\]\\]/g, '\\$&'));
-  const allRe = new RegExp(`\\b(?:${escaped.join('|')})(?![\\w.-])`, 'gi');
+  const allRe = new RegExp(`\\b(?:${escaped.join('|')})(?![\\w.-]|\\\\[.-])`, 'gi');
 
   const allowFiles = new Set(allow.files ?? []);
   const allowPhrases = (allow.phrases ?? []).map((p) => new RegExp(p, 'i'));
@@ -258,10 +262,10 @@ function scan(files, denylist, allow) {
 console.log('▸ Fetching live deprecation lists…');
 const fetched = await fetchDenylist();
 let denylist = fetched.denylist;
+const cache = loadCache();
 
 if (denylist.size === 0 || !fetched.allFetched) {
-  const cache = loadCache();
-  if (cache) {
+  if (cache && cache.deprecated.length > 0) {
     console.log(`  ▸ falling back to cache (${cache.deprecated.length} ids, fetched ${cache.fetchedAt})`);
     if (denylist.size === 0) {
       denylist = new Map(cache.deprecated.map((id) => [id, ['cache']]));
@@ -273,6 +277,11 @@ if (denylist.size === 0 || !fetched.allFetched) {
       }
     }
   }
+}
+
+if (!fetched.allFetched && (!cache || cache.deprecated.length === 0)) {
+  console.error('✗ Incomplete deprecation data — a provider fetch failed and no non-empty cache is available. Aborting.');
+  process.exit(2);
 }
 
 // Subtract the active-models whitelist. Provider pages list active

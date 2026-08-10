@@ -92,6 +92,7 @@ const rows = ranked.map((r) => {
   const raw = r.harness === 'router';
   const row = {
     model: r.model,
+    agentProfile: r.profileId,
     harness: r.harness,
     loop: raw ? 'single-shot' : 'harness-native',
     method: raw ? 'raw' : 'harness',
@@ -139,7 +140,9 @@ const perTask = perTaskProfiles
       byProfile[p.profileId] = {
         passRate: p.passRate,
         n: p.n,
-        ...(finite(p.meanCostUsd) ? { meanCostUsd: p.meanCostUsd } : {}),
+        // VerticalBench subscription harnesses currently emit zero when cost
+        // telemetry is unavailable. Omit it instead of publishing "free."
+        ...(finite(p.meanCostUsd) && p.meanCostUsd > 0 ? { meanCostUsd: p.meanCostUsd } : {}),
         ...(finite(p.meanTokensIn) ? { meanTokensIn: p.meanTokensIn } : {}),
         ...(finite(p.meanTokensOut) ? { meanTokensOut: p.meanTokensOut } : {}),
         ...(finite(p.meanWallMs) ? { meanWallMs: p.meanWallMs } : {}),

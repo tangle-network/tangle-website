@@ -44,6 +44,11 @@ const debrisPatterns = [
   /\b[0-9a-f]{40}\b/i,
 ]
 
+const visibleCommitPatterns = [
+  /\b(?:commit(?:\s+(?:id|hash))?|git\s+commit)\s*[`'“”]?([0-9a-f]{7,40})[`'“”]?\b|\b([0-9a-f]{7,40})\s+commit\b/i,
+  /\[\s*`?([0-9a-f]{7,40})`?\s*\]\(\s*https?:\/\/[^)\s]+\/(?:commit|blob)\/[0-9a-f]{7,40}(?:[\/?#][^)\s]*)?\s*\)/i,
+]
+
 const problemWords = /\b(?:problem|failure|failed|wrong|why|when|need|risk|cost|challenge|question|decision|tradeoff|break|missing|cannot|can't)\b/i
 const definitionWords = /\b(?:is a|is an|means|refers to|defined as|we call|in plain language|in other words|stands for)\b/i
 const decisionWords = /\b(?:choose|use|avoid|test|measure|compare|decide|should|do not|don't|next)\b/i
@@ -146,7 +151,10 @@ function scorePost(file) {
   const externalLinks = (body.match(/https?:\/\//g) || []).length
   const internalLinks = (body.match(/\]\(\/(?!\/)/g) || []).length
   const codeBlocks = Math.floor((body.match(/```/g) || []).length / 2)
-  const debris = debrisPatterns.filter((pattern) => pattern.test(bodyWithoutLinks)).map((pattern) => pattern.source)
+  const debris = [
+    ...debrisPatterns.filter((pattern) => pattern.test(bodyWithoutLinks)),
+    ...visibleCommitPatterns.filter((pattern) => pattern.test(body) || pattern.test(bodyWithoutLinks)),
+  ].map((pattern) => pattern.source)
   const nativeOpening = nativeTermsInOpening(opening)
   const nativeCount = nativeTerms.reduce((count, term) => {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -160,7 +168,7 @@ function scorePost(file) {
   const hasEvidence = evidenceWords.test(body) || externalLinks > 0 || internalLinks > 0 || tableRows > 0 || codeBlocks > 0
   const numberMatches = [...prose.matchAll(/(?:\b\d+(?:\.\d+)?\s*(?:%|percent|x|×|pp|ms|seconds?|minutes?|hours?|days?|dollars?|USD|ETH|wei|tests?|contracts?|paths?|jobs?|requests?|rows?|records?|tokens?|agents?|words?)\b|\bn\s*=\s*\d+\b|\b\d+\s+out of\s+\d+\b)/gi)]
   const hasNumbers = numberMatches.length > 0
-  const measurementCondition = /(?:\bn\s*=\s*\d+\b|\b\d+\s+out of\s+\d+\b|\b(?:per|over|across)\s+\d+\b|\b(?:sample|attempts?|trials?|baseline|control|version|date|limit|limitation|not measured|not reported|does not prove|completed|reported|snapshot|default|inventory|declares?|carries?|counts?|listed|describes?)\b)/i
+  const measurementCondition = /(?:\bn\s*=\s*\d+\b|\b\d+\s+out of\s+\d+\b|\b(?:per|over|across)\s+\d+\b|\b(?:sample|attempts?|trials?|baseline|control|version|date|limit|limitation|fixture|replay|runs?|tasks?|tests?|rows?|denominator|arms?|measured|not measured|not reported|does not prove|completed|reports?|reported|records?|recorded|snapshot|default|inventory|declares?|carries?|counts?|listed|describes?)\b)/i
   const unconditionedNumbers = numberMatches.filter(({ index }) => {
     const context = prose.slice(Math.max(0, index - 100), index + 120)
     return !measurementCondition.test(context)

@@ -17,22 +17,22 @@ heroImage: /images/covers/editorial/browser-agent-v2.webp
 imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
 
-A user clicks “Sign,” reads the wallet prompt, and sees an account or network that the application never mentioned.
-An automated test that checks only the page can report success while the actual approval flow is wrong.
+A swap page says that it will approve 10 USDC.
+MetaMask opens with a different network or an unlimited allowance for an unfamiliar contract.
+A page-only test still sees the “Approve” button, clicks it, and reports success.
+The test passed the web page while missing the security decision the user saw.
 
-MetaMask automated testing has to inspect the boundary between the dapp and the wallet extension.
+MetaMask automated testing must inspect both sides of that boundary.
 MetaMask is a browser and mobile wallet documented in the [official developer documentation](https://docs.metamask.io/).
-A dapp is a web application that asks a wallet to expose account state, sign messages, switch networks, or submit transactions.
-DeFi means finance applications that use blockchain accounts and smart contracts, or programs deployed on a blockchain, for actions such as swaps, lending, borrowing, and liquidity provision.
-An allowance is a token-spending limit that a user grants to a contract.
-A spender is the contract that receives that allowance.
-A provider is the page-facing interface through which the dapp requests wallet and chain actions.
-The page requests the action, the wallet presents the security decision, and the chain records the result.
+A dapp is a web application that asks the wallet to expose an account, switch networks, sign data, or submit a transaction.
+The dapp sends a request through the page’s wallet provider; MetaMask presents the approval; and, if a broadcast transaction is accepted and included, the chain records it.
+For an allowance, the prompt must identify the token-spending limit and the spender contract receiving it.
 
-Tangle Browser Agent is Tangle’s browser driver for goal-based browser sessions.
-Its `bad` command is the command-line interface (CLI) for starting those sessions from a terminal.
-The public driver repository documents a wallet and DeFi testing path built around the same browser automation surface used for ordinary pages.
-Each case records the page screenshot, wallet prompt screenshot, provider result, and final application state so the user’s approval remains visible.
+Tangle Browser Agent drives a real Chromium session from a goal; `bad` is the short name of its command-line program.
+Its public [wallet-testing guide](https://github.com/tangle-network/browser-agent-driver/blob/main/docs/guides/wallet.md) runs MetaMask or Rabby against a local Anvil chain using two routes.
+The extension's background RPC calls go to Anvil, while page-level RPC interception forwards only calls involving the configured test-wallet address to Anvil; protocol and pool data continue to use real RPC endpoints.
+The driver records page actions and screenshots.
+A useful wallet test should add the wallet prompt, provider response, and final application state so a reviewer can compare what the dapp requested, what the wallet displayed, and what happened afterward.
 For the wider state model, read [DeFi Wallet Testing With Browser Agents](/blog/defi-wallet-testing-browser-agent).
 For the evidence record, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
 
@@ -170,6 +170,57 @@ The test should compare the prompt to the expected fixture before a controlled t
 It should run the rejection path as well.
 The application must not record a session, allowance, or completed action when the user rejects the request.
 
+The provider request and the wallet screenshot prove different things.
+The request shows the structured data the dapp handed to MetaMask; the screenshot shows what MetaMask rendered for the user.
+Save the intercepted `eth_signTypedData_v4` request as `captured-wallet-request.json` and the fixture above as `expected-permit.json`, then make the field comparison explicit:
+
+~~~typescript
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+
+type TypedDataRequest = {
+  method: 'eth_signTypedData_v4'
+  params: [string, string]
+}
+
+const captured = JSON.parse(
+  await readFile('captured-wallet-request.json', 'utf8'),
+) as TypedDataRequest
+const expected = JSON.parse(
+  await readFile('expected-permit.json', 'utf8'),
+)
+const actual = JSON.parse(captured.params[1])
+
+assert.equal(captured.method, 'eth_signTypedData_v4')
+
+function assertTypedDataMatches(
+  actualData: typeof expected,
+  expectedData: typeof expected,
+) {
+  assert.deepEqual(actualData.domain, expectedData.domain)
+  assert.deepEqual(actualData.types, expectedData.types)
+  assert.equal(actualData.primaryType, expectedData.primaryType)
+  assert.deepEqual(actualData.message, expectedData.message)
+}
+
+assertTypedDataMatches(actual, expected)
+
+const wrongSchema = structuredClone(expected)
+wrongSchema.domain.name = 'Lookalike Exchange'
+wrongSchema.types.Permit[1].type = 'bytes32'
+assert.throws(() => assertTypedDataMatches(actual, wrongSchema))
+
+const wrongSpender = structuredClone(expected)
+wrongSpender.message.spender =
+  '0x0000000000000000000000000000000000000004'
+assert.throws(() => assertTypedDataMatches(actual, wrongSpender))
+~~~
+
+The two negative fixtures change the expected domain and signing schema, then the spender.
+They prove that the comparison rejects both a lookalike prompt shape and a prompt for the wrong contract.
+This Node assertion is independent of the browser driver.
+Adapt the capture step to the application’s test setup, and keep the prompt screenshot beside the JSON because a correct request can still be presented poorly.
+
 ## Build a repeatable MetaMask fixture
 
 The fixture is the state prepared before the browser opens.
@@ -198,7 +249,7 @@ When prompt identification fails, the team needs to know whether the page change
 ## Stop at the signing prompt
 
 The public [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) names the scoped package, bad binary, and safe discovery commands.
-The public [driver README](https://github.com/tangle-network/browser-agent-driver) documents the wallet and DeFi section as well as the general CLI and SDK surfaces.
+The public [driver README](https://github.com/tangle-network/browser-agent-driver#wallet--defi-testing) documents the wallet and DeFi commands; the linked wallet guide covers the full setup.
 
 ~~~bash
 npm install -g @tangle-network/browser-agent-driver
@@ -206,11 +257,19 @@ npx playwright install chromium
 bad --help
 bad run \
   --url https://app.example.com \
-  --goal "Connect the disposable MetaMask account, verify the configured test chain, open the swap preview, capture the wallet prompt, and stop before signing"
+  --goal "Connect the disposable MetaMask account, verify the configured test chain, open the swap preview, capture the wallet prompt, and stop before signing" \
+  --wallet \
+  --extension ./extensions/metamask \
+  --user-data-dir ./.agent-wallet-profile \
+  --wallet-preflight \
+  --wallet-chain-id 31337 \
+  --wallet-chain-rpc-url http://127.0.0.1:8545 \
+  --no-headless
 ~~~
 
 The example deliberately stops before an irreversible action.
-A controlled transaction case needs a separate goal, a test wallet, a test chain, and an explicit approval policy.
+A controlled transaction case needs a separate goal, a disposable wallet, a local or test chain, and an explicit approval policy.
+In that separate case, Browser Agent’s wallet popup handler performs the approval only when `--wallet-auto-approve` is enabled; the test must then wait for the transaction receipt or a defined failure state before it can pass.
 Do not place seed phrases or private keys in the goal text.
 
 The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
@@ -294,32 +353,6 @@ It does not make a production wallet appropriate for unattended automation.
 Use simulation to inspect calldata, a receipt to establish settlement, contract tests for invariants, and manual review for high-value signing.
 Treat a wallet prompt screenshot as evidence of what the user was asked to approve.
 Treat a chain receipt or application-owned confirmation as evidence of what happened afterward.
-
-
-## What is MetaMask automated testing?
-
-It is browser automation that drives a dapp and a controlled MetaMask flow to check account access, network changes, signing, rejection, and transaction states.
-
-## Can MetaMask tests run on a local chain?
-
-Yes.
-Local chains make account, balance, nonce, and transaction state easier to reset.
-Keep live-network smoke checks separate because they have different failure and cost boundaries.
-
-## What should a failed MetaMask run include?
-
-It should include the page screenshot, wallet prompt or blocked state, actions, account and chain context, provider error, final page state, extension and browser versions, and stop reason.
-
-## Should the test accept a transaction automatically?
-
-Only with a disposable wallet and test chain under an explicit policy.
-The default for exploratory or production-adjacent checks should be to stop at the signing prompt.
-
-## Does Tangle Browser Agent replace MetaMask’s SDK?
-
-No.
-MetaMask Connect defines MetaMask’s supported connection product and integration paths.
-Browser Agent drives a browser workflow and records evidence around the application’s chosen wallet integration.
 
 ## Make the prompt reviewable
 

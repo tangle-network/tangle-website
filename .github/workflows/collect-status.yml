@@ -5,15 +5,24 @@ on:
     - cron: '17 */6 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       deployments: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           ref: master
 
       - uses: pnpm/action-setup@v4
@@ -23,21 +32,12 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Collect public status checks
-        run: node scripts/collect-status.mjs
+      - name: Check status workflow safety
+        run: pnpm check:status-workflow
 
-      - name: Commit status history
-        run: |
-          if git diff --quiet -- public/status/history.json; then
-            echo "No status history changes"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/status/history.json
-          git commit -m "chore(status): update public status history"
-          git push origin HEAD:master
+      - name: Collect and publish status history branch
+        id: status
+        run: bash scripts/publish-status-history.sh prepare
 
       - name: Checkout @tangle-network/brand sibling
         run: git clone --depth 1 https://github.com/tangle-network/brand.git ../brand
@@ -45,8 +45,46 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
+      - name: Resolve proposed revision
+        if: steps.status.outputs.has_update == 'true'
+        id: proposed-revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build proposed status history
+        if: steps.status.outputs.has_update == 'true'
+        env:
+          TANGLE_BUILD_REVISION: ${{ steps.proposed-revision.outputs.sha }}
         run: pnpm build
+
+      - name: Check proposed revision
+        if: steps.status.outputs.has_update == 'true'
+        run: pnpm check:version "${{ steps.proposed-revision.outputs.sha }}" github-actions
+
+      - name: Merge reviewed status history
+        if: steps.status.outputs.has_update == 'true'
+        env:
+          STATUS_HEAD_SHA: ${{ steps.status.outputs.head_sha }}
+          STATUS_PR_NUMBER: ${{ steps.status.outputs.pr_number }}
+        run: bash scripts/publish-status-history.sh merge
+
+      # A merge performed with GITHUB_TOKEN does not trigger the push workflow.
+      # Rebuild the persisted squash commit so revision metadata matches production.
+      - name: Check out persisted master
+        run: |
+          git fetch origin master
+          git switch --detach origin/master
+
+      - name: Resolve deploy revision
+        id: deploy-revision
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build persisted master
+        env:
+          TANGLE_BUILD_REVISION: ${{ steps.deploy-revision.outputs.sha }}
+        run: pnpm build
+
+      - name: Check deploy revision
+        run: pnpm check:version "${{ steps.deploy-revision.outputs.sha }}" github-actions
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
