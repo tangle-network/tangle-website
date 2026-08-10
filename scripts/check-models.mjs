@@ -262,10 +262,10 @@ function scan(files, denylist, allow) {
 console.log('▸ Fetching live deprecation lists…');
 const fetched = await fetchDenylist();
 let denylist = fetched.denylist;
+const cache = loadCache();
 
 if (denylist.size === 0 || !fetched.allFetched) {
-  const cache = loadCache();
-  if (cache) {
+  if (cache && cache.deprecated.length > 0) {
     console.log(`  ▸ falling back to cache (${cache.deprecated.length} ids, fetched ${cache.fetchedAt})`);
     if (denylist.size === 0) {
       denylist = new Map(cache.deprecated.map((id) => [id, ['cache']]));
@@ -277,6 +277,11 @@ if (denylist.size === 0 || !fetched.allFetched) {
       }
     }
   }
+}
+
+if (!fetched.allFetched && (!cache || cache.deprecated.length === 0)) {
+  console.error('✗ Incomplete deprecation data — a provider fetch failed and no non-empty cache is available. Aborting.');
+  process.exit(2);
 }
 
 // Subtract the active-models whitelist. Provider pages list active
