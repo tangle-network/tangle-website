@@ -48,8 +48,8 @@ const METHOD_LABEL: Record<string, string> = {
 // Absolute accuracy axis: 0-100%, fixed gridline stops. No truncation.
 const TICKS = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 
-export default function BenchBar({ rows, metricLabel = 'Score' }:
-  { rows: ProfileRow[]; metricLabel?: string }) {
+export default function BenchBar({ rows, metricLabel = 'Score', costLabel = 'cost/success' }:
+  { rows: ProfileRow[]; metricLabel?: string; costLabel?: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const [sort, setSort] = useState<'score' | 'n' | 'costUsd'>('score');
 
@@ -143,7 +143,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                         <span>agent profile</span><b>{r.agentProfile ?? 'raw · no profile'}</b>
                         {r.profileAxes && r.profileAxes.length > 0 && <><span>changed axes</span><b>{r.profileAxes.join(', ')}</b></>}
                         {hasCI && <><span>95% CI</span><b>{(r.ciLow! * 100).toFixed(1)} to {(r.ciHigh! * 100).toFixed(1)} · n={r.n}</b></>}
-                        {r.costUsd != null && <><span>cost/success</span><b>${r.costUsd.toFixed(2)}</b></>}
+                        {r.costUsd != null && <><span>{costLabel}</span><b>${r.costUsd.toFixed(2)}</b></>}
                       </div>
                     </div>
                   )}
@@ -173,7 +173,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                 <span className="vbb-sub mono">via {isHarness ? benchmarkHarnessLabel(r.harness) : 'direct call'}</span>
                 <span className="vbb-profile mono" title={r.agentProfile ?? 'raw'}>{benchmarkProfileLabel(r.agentProfile)}</span>
                 <span className="vbb-n mono">n={r.n}</span>
-                {r.costUsd != null && <span className="vbb-cost mono">mean cost/return ${r.costUsd.toFixed(2)}</span>}
+                {r.costUsd != null && <span className="vbb-cost mono">{costLabel} ${r.costUsd.toFixed(2)}</span>}
               </div>
             );
           })}

@@ -32,7 +32,7 @@ export interface ProfileRow {
   ciLow?: number; // 0..1 lower bound of the 95% CI of the mean (t, df=n-1), when per-task scores are available
   ciHigh?: number; // 0..1 upper bound of the 95% CI
   passRate?: number; // 0..1 honest-all-pass
-  costUsd?: number; // $ per success, if measured
+  costUsd?: number; // measured USD in the unit named by DomainBoard.costLabel
   date: string; // ISO run date
   profileHash?: string; // agent-eval agentProfileHash (identity)
   highlight?: boolean;
@@ -88,6 +88,7 @@ export interface DomainBoard {
   lastRun?: string; // ISO
   taskCount?: number; // how many held-out tasks in the suite
   metricLabel?: string; // "Blended score", "Pass rate"
+  costLabel?: string; // "cost/success", "mean cost/return"
   confidenceMethod?: string; // exact interval method for any published whiskers
 }
 

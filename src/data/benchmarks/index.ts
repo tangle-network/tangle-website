@@ -31,6 +31,7 @@ export const tax: DomainBoard = {
   paperUrl: 'https://arxiv.org/abs/2507.16126',
   scoredBy: 'Each held-out return is graded line-by-line against Column Tax’s reference 1040 for that case. Chart cost is the mean recorded cost per return in the published run data.',
   metricLabel: 'By-line accuracy',
+  costLabel: 'mean cost/return',
   confidenceMethod: '95% Student-t interval across the 51 per-return by-line accuracy scores.',
   source: taxResults.source,
   status: 'live',
