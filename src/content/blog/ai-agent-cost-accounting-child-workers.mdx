@@ -1,0 +1,332 @@
+---
+title: 'AI Agent Cost Accounting: Include Child-Worker Tokens in Every Run'
+slug: ai-agent-cost-accounting-child-workers
+summary: >-
+  An AI agent run can look cheap when its ledger counts only the driver; reconcile child-worker tokens and mark missing usage as unknown before comparing systems.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agent-eval
+  - benchmarks
+  - coding-agents
+  - traces
+  - measurement
+series: The Instrument Problem
+seriesOrder: 4
+coverImage: /images/covers/editorial/instrument-problem-v2.webp
+heroImage: /images/covers/editorial/instrument-problem-v2.webp
+imageAlt: 'An editorial still life about reconciling agent run costs'
+---
+
+An agent system can report a precise cost while omitting the model calls that did most of the work.
+The usual shape is a driver, sometimes called a supervisor, that launches child workers and records its own model usage.
+If the ledger stops at the driver, the workers' tokens are absent from the total.
+
+The public runtime factory report makes the omission concrete.
+Its brain row records 228,169 input tokens and 19,398 output tokens, or 247,567 tokens.
+Its worker row records 286,763 input tokens and 69,794 output tokens, or 356,557 tokens.
+Adding both roles gives 604,124 actual recorded tokens for that factory run, even though the report's dollar total is brain-priced only.
+
+The public replay tests show the same boundary on a different fixture.
+They record 675,412 solo tokens, 560,554 supervisor-brain tokens, and 1,161,836 worker tokens.
+The true supervisor total is 1,722,390 tokens, which is 2.55 times the solo total.
+The replay's wall-time totals are 3,769 seconds for solo and 9,124 seconds for the supervisor arm, or 2.42 times as much wall time.
+
+Those are two different public measurements, not one combined benchmark.
+The factory report demonstrates why a driver-only ledger is incomplete.
+The replay fixture demonstrates the cost and outcome boundaries of one paired comparison.
+Neither supports a general claim that supervision loses.
+
+The honest rule is straightforward: sum every role that made model calls, price only complete usage, and represent missing usage as unknown rather than zero.
+
+## The roles a cost ledger must name
+
+An **agent runtime** is the software that gives a model a task, tools, state, limits, and a record of the run.
+The runtime may execute one model loop directly or coordinate several loops.
+
+[agent-runtime](https://github.com/tangle-network/agent-runtime) is Tangle's public TypeScript runtime for chat agents, one-shot tasks, and agent teams.
+Its public reports are useful here because they keep run-level evidence separate from the accounting question.
+
+The **driver** is the process that owns the top-level task.
+In a coordinated run it may decide what work to delegate, wait for results, retry a worker, and assemble a final response.
+The public factory report calls this role the brain.
+
+A **child worker** is a separate model-driven process that performs one delegated piece of the task.
+The worker can read files, call tools, reason about the assignment, and produce a patch or other result.
+Its tokens are real work even when the driver launched it.
+
+**Input tokens** are the units of text sent to a model.
+**Output tokens** are the units returned by a model.
+The exact tokenizer differs by provider and model, so a ledger should preserve the provider's usage fields and the model identity alongside the totals.
+
+A **cost ledger** is an accounting record that maps usage to a price boundary.
+It should answer who made each call, how many input and output tokens the call used, which rate applied, and whether any field was missing.
+
+That last field is not bookkeeping trivia.
+If a worker made calls but its usage was not captured, treating the missing value as zero makes the total look complete while lowering it.
+The correct value is unknown until the missing telemetry is recovered or an explicit upper bound is chosen.
+
+The [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) give a useful public vocabulary for this boundary.
+Token counts belong to model-call spans, while a larger run can contain many spans and many participants.
+The convention does not solve aggregation for you, but it points to the right raw unit: preserve usage per call before rolling it up by role or run.
+
+## The factory report: 247,567 is not 604,124
+
+The public [factory run report](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/factory-agent-eval-309-FSUP0.md) has two rows in its economics table.
+The first is the brain.
+The second is the workers.
+
+| Role | Input tokens | Output tokens | Role total | Dollar field in report |
+| --- | ---: | ---: | ---: | --- |
+| Brain | 228,169 | 19,398 | 247,567 | $0.179577 |
+| Workers | 286,763 | 69,794 | 356,557 | $0 |
+| **All recorded roles** | **514,932** | **89,192** | **604,124** | **Not fully priced** |
+
+The arithmetic is visible in the public rows.
+The brain total is `228,169 + 19,398 = 247,567`.
+The worker total is `286,763 + 69,794 = 356,557`.
+The complete token sum is `247,567 + 356,557 = 604,124`.
+
+The worker dollar field is zero in the report because the worker CLI inference is unpriced there.
+That zero is not evidence that worker inference cost nothing.
+It means the public report has worker token counts but no worker dollar price in that field.
+
+This is the distinction between a complete usage total and a complete cost total.
+The report supports the former.
+It does not support claiming that the entire run cost $0.179577.
+It supports saying that the brain's recorded spend was $0.179577 while worker usage remained unpriced in the report.
+
+The report also contains a judge score of 13 out of 30 and a score of 0.4333 for this cell.
+Those outcome fields are separate from the token accounting.
+A run can have a measured result and an incomplete cost.
+The missing price does not erase the result, and the result does not fill the missing price.
+
+The public [run-report README](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/README.md) explains that these files are committed evidence from completed runs and that the original source-run directories are not part of the repository.
+That boundary is why the report itself, rather than an implied rerun, is the source for these numbers.
+
+## The replay fixture: brain-only and true totals
+
+The second evidence set is the public [SWE arena replay test](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.test.mts).
+The SWE arena in this article is a public replay fixture for software-engineering cases, with tests that pin outcome and usage rollups.
+It pins the inputs, intermediate rows, expected outcomes, token rollups, and wall-time values for one paired solo-versus-supervisor comparison.
+
+The test deliberately preserves two supervisor totals.
+The brain-only total is 560,554 tokens.
+The true supervisor-arm total adds 1,161,836 worker tokens, producing 1,722,390.
+
+| Arm or role | Tokens | What the number includes |
+| --- | ---: | --- |
+| Solo | 675,412 | The solo model calls in the replay fixture. |
+| Supervisor brain | 560,554 | The top-level supervisor calls only. |
+| Supervisor workers | 1,161,836 | The child-worker calls in the supervisor arm. |
+| **Supervisor true total** | **1,722,390** | **Brain plus workers.** |
+
+The brain-only comparison makes the supervisor look cheaper than solo: `560,554 / 675,412` is about 0.83.
+The full comparison reverses that cost impression: `1,722,390 / 675,412` is about 2.55.
+
+Both ratios are arithmetically correct because they answer different questions.
+The first asks how many tokens the driver used.
+The second asks how many tokens the complete supervisor arm used.
+Only the second is appropriate for the total cost of the coordinated run.
+
+The replay tests also pin wall time.
+Solo takes 3,769 seconds in the fixture.
+The supervisor arm takes 9,124 seconds.
+The ratio is `9,124 / 3,769`, or about 2.42.
+
+Wall time is not token cost.
+It includes waiting, scheduling, retries, worker execution, and other elapsed time.
+It is still a relevant operational measure when a user is waiting for the result or when a worker fleet is occupied.
+
+The replay's quality outcomes require the same care.
+The raw table contains 12 instances, with solo resolving 7 and the supervisor resolving 4.
+Two gold patches are ungradeable and are excluded from the valid denominator, leaving 10 instances.
+On that valid denominator, the outcomes are 7/10 for solo and 4/10 for the supervisor.
+The exact two-sided sign test on the three discordant pairs is `p = 0.25`.
+
+| Boundary | Solo | Supervisor | What it means |
+| --- | ---: | ---: | --- |
+| Raw 12-instance replay | 7/12 | 4/12 | Includes the two ungradeable gold cases in the table. |
+| Valid denominator | 7/10 | 4/10 | Excludes exactly those two ungradeable cases. |
+| Total tokens | 675,412 | 1,722,390 | Includes supervisor workers in the supervisor total. |
+| Total wall time | 3,769 s | 9,124 s | Elapsed time in the replay fixture. |
+
+The valid result is a measured outcome for this fixture.
+The p-value and the small number of discordant pairs make it a weak basis for a broad claim about supervision.
+The public tests are valuable because they keep the accounting and the outcome boundaries visible at the same time.
+
+## A missing value is unknown, never free
+
+A reliable ledger needs a three-state view of usage.
+
+1. A number is known when the call's input and output usage are present and valid.
+2. A number is missing when the call happened but a required usage field was not captured.
+3. A number is invalid when a field is malformed, negative, or belongs to the wrong run.
+
+Known values can be added.
+Missing and invalid values should prevent a complete total unless the report explicitly labels the result as a lower bound or an upper bound.
+
+This is different from storing `0` for convenience.
+Zero means no tokens were used.
+Unknown means the ledger cannot establish how many tokens were used.
+Those statements have opposite implications for cost.
+
+The [Anthropic token-counting documentation](https://docs.anthropic.com/en/docs/build-with-claude/token-counting) is one provider-specific example of why token accounting is an explicit request rather than a guess from character length.
+Different model providers expose usage through different APIs and fields.
+A multi-provider runtime should preserve the reported usage and mark the absence of a report instead of silently filling it with zero.
+
+## A runnable aggregation example
+
+This TypeScript example models a driver with one known worker and one worker whose usage is missing.
+It returns a known subtotal, a missing-count, and a nullable total.
+The total remains unknown because one role is incomplete.
+
+Save it as `usage-rollup.ts` and run it with `npx --yes tsx usage-rollup.ts`.
+
+~~~typescript
+import assert from 'node:assert/strict'
+
+type Usage = {
+  input: number
+  output: number
+}
+
+type Participant = {
+  role: string
+  usage: Usage | null
+}
+
+function rollup(participants: Participant[]) {
+  let knownTokens = 0
+  let missingParticipants = 0
+
+  for (const participant of participants) {
+    if (participant.usage === null) {
+      missingParticipants += 1
+      continue
+    }
+    knownTokens += participant.usage.input + participant.usage.output
+  }
+
+  return {
+    knownTokens,
+    missingParticipants,
+    totalTokens: missingParticipants === 0 ? knownTokens : null,
+  }
+}
+
+const complete = rollup([
+  { role: 'driver', usage: { input: 120, output: 30 } },
+  { role: 'worker-a', usage: { input: 200, output: 50 } },
+])
+
+const incomplete = rollup([
+  { role: 'driver', usage: { input: 120, output: 30 } },
+  { role: 'worker-a', usage: null },
+])
+
+assert.deepEqual(complete, {
+  knownTokens: 400,
+  missingParticipants: 0,
+  totalTokens: 400,
+})
+assert.deepEqual(incomplete, {
+  knownTokens: 150,
+  missingParticipants: 1,
+  totalTokens: null,
+})
+assert.notEqual(incomplete.totalTokens, 150)
+
+console.log({ complete, incomplete })
+~~~
+
+The final assertion is the important one.
+The known subtotal of 150 is not the total because the worker's usage is missing.
+It is a lower bound only if the report explicitly labels it as such.
+
+To calculate dollars, add a rate only after every participant has a known usage and a valid rate for the relevant model.
+If worker pricing is missing, report “tokens known, cost unknown” rather than multiplying a partial token sum by the driver's rate.
+
+## What the replay does not prove
+
+The replay is one public fixture with 12 raw instances and 10 gradeable instances.
+It is a careful accounting and replay test, not a general study of every supervisor design.
+
+The 7/10 versus 4/10 result does not establish that supervision always reduces quality.
+It describes this arm, this model, these tasks, this runtime behavior, and this judging procedure.
+
+The 2.55× token ratio does not establish that every child-worker design costs 2.55 times as much.
+Worker count, delegation policy, retries, model choice, prompt length, and stopping conditions can all change the ratio.
+
+The 2.42× wall-time ratio does not establish a universal latency tax.
+Parallel workers, queue capacity, cache behavior, and task size can change elapsed time.
+
+The factory report and the replay test also have different boundaries.
+The factory report has five workers in one cell and reports 604,124 recorded tokens, with only the brain priced.
+The replay test aggregates a solo arm and a supervisor arm across its own fixture and reports 1,722,390 supervisor tokens after adding workers.
+The numbers should not be merged into a single headline.
+
+The [runtime report README](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/README.md) says these files preserve the measured record even though the original source-run directories are unavailable in the public repository.
+That is a reason to state the evidence boundary, not a reason to pretend the report is a universally rerunnable benchmark.
+
+## A cost report that a release decision can trust
+
+Before comparing two agent architectures, require a role-complete report.
+At minimum, include the following columns.
+
+| Field | Why it matters |
+| --- | --- |
+| Run identifier | Prevents usage from different attempts being combined. |
+| Role | Separates driver, worker, judge, and other model callers. |
+| Model and provider | Makes tokenization and price differences visible. |
+| Input tokens | Captures prompt and context growth. |
+| Output tokens | Captures generated work. |
+| Missing-usage count | Prevents an incomplete ledger from looking complete. |
+| Price status | Distinguishes priced, unpriced, and estimated amounts. |
+| Wall time | Measures elapsed operational cost separately from tokens. |
+| Outcome denominator | Shows which cases had valid grading. |
+
+Then make the comparison at the boundary the user cares about.
+For a budget decision, include every model-calling role and show unknown price explicitly.
+For a latency decision, include waiting and worker execution in wall time.
+For a quality decision, state the raw and valid denominators and keep ungradeable cases visible.
+
+If you use Tangle's public runtime evidence, begin with the [factory report](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/fixtures/run-report/factory-agent-eval-309-FSUP0.md) and then inspect the [public replay tests](https://github.com/tangle-network/agent-runtime/blob/main/bench/src/swe-arena/replay.test.mts).
+For the broader observability boundary, read [AI Agent Observability: Why a Worker You Cannot See Is a Decision You Authored Blind](/blog/agent-runtime-worker-observability).
+For the shape of an agent runtime, read [Agent Runtime Topology: When an Agent Needs More Than a Prompt](/blog/self-improving-stack-agent-runtime-topology).
+
+The practical decision is not “supervise” or “never supervise.”
+It is “measure the complete arm before deciding whether the extra structure paid for itself.”
+If the driver total is the only number in view, the decision has not reached the workers yet.
+
+## FAQ
+
+### What is the difference between driver and child-worker usage?
+
+Driver usage belongs to the top-level process that owns the task.
+Child-worker usage belongs to delegated model loops that perform part of the task.
+Both count toward the coordinated run's total usage.
+
+### Why is 604,124 different from 247,567 in the factory report?
+
+247,567 is the brain subtotal: 228,169 input plus 19,398 output tokens.
+604,124 adds the worker subtotal of 356,557 tokens.
+
+### Does a zero worker-dollar field mean workers were free?
+
+No.
+It means the report did not attach a worker dollar price in that field.
+Worker tokens are recorded, but the complete cost remains unpriced there.
+
+### What does the replay's 2.55× token ratio mean?
+
+For that public replay fixture, the full supervisor total of 1,722,390 tokens divided by the solo total of 675,412 is about 2.55.
+It is not a universal ratio for supervision.
+
+### Should missing token usage be recorded as zero?
+
+No.
+Record it as unknown, preserve the known subtotal, and prevent a complete-cost claim until the missing usage or an explicit bound is available.
+
+Good accounting makes the architectural choice harder to fake and easier to change.
+The next run may prove that workers paid for themselves, but only a ledger that counts them can discover that result.
