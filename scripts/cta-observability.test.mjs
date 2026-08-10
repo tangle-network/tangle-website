@@ -150,12 +150,28 @@ test('drops dynamic and encoded identifier paths before emission', () => {
   const body = node('body', { 'data-content-type': 'page' })
   for (const pathname of [
     '/account/alice@example.com',
+    '/account/12345',
     '/users/opaque-token-abc123',
     '/blog/alice%2540example.com',
     '/blog/reset-token-secret',
   ]) {
     assert.equal(buildCtaPayload({ anchor, location: { pathname }, body }), undefined)
   }
+})
+
+test('allows a legitimate static slug containing token', () => {
+  const anchor = node('a', { href: 'https://docs.tangle.tools' })
+  const payload = buildCtaPayload({
+    anchor,
+    location: { pathname: '/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags' },
+    body: node('body', { 'data-content-type': 'blog' }),
+  })
+  assert.deepEqual(payload, {
+    page_path: '/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags',
+    content_type: 'blog',
+    destination_product: 'docs',
+    destination_origin: 'https://docs.tangle.tools',
+  })
 })
 
 test('uses only explicit or semantic placement values', () => {
