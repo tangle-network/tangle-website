@@ -50,6 +50,7 @@ test('classifies only fixed Tangle product origins and drops query data', () => 
   assert.equal(classifyDestination('https://evil.tangle.tools/start'), undefined)
   assert.equal(classifyDestination('https://user@sandbox.tangle.tools/start'), undefined)
   assert.equal(classifyDestination('https://sandbox.tangle.tools:444/start'), undefined)
+  assert.equal(classifyDestination('/services/sandbox'), undefined)
   assert.deepEqual(
     classifyDestination('https://github.com/tangle-network/tangle?email=secret@example.test'),
     { product: 'github', origin: 'https://github.com' },

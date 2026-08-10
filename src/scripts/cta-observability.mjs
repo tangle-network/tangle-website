@@ -12,12 +12,6 @@ const PRODUCT_ORIGINS = new Map([
   ['docs.tangle.tools', 'docs'],
 ])
 
-const INTERNAL_PRODUCT_PATHS = [
-  ['/services/sandbox', 'sandbox'],
-  ['/services/browser-agent', 'browser-agent'],
-  ['/services/blueprint-agent', 'blueprint-agent'],
-]
-
 const installedDocuments = new WeakSet()
 
 function safeDimension(value) {
@@ -94,14 +88,6 @@ function anchorFromTarget(target) {
   return undefined
 }
 
-function internalProduct(pathname) {
-  const path = pathname.replace(/\/$/, '') || '/'
-  for (const [prefix, product] of INTERNAL_PRODUCT_PATHS) {
-    if (path === prefix || path.startsWith(`${prefix}/`)) return product
-  }
-  return undefined
-}
-
 export function classifyDestination(href, baseHref = 'https://tangle.tools/') {
   if (typeof href !== 'string' || !href.trim()) return undefined
 
@@ -115,12 +101,6 @@ export function classifyDestination(href, baseHref = 'https://tangle.tools/') {
   if (url.protocol !== 'https:' || url.username || url.password || url.port) return undefined
 
   const host = url.hostname.toLowerCase()
-  if (host === 'tangle.tools' || host === 'www.tangle.tools') {
-    const product = internalProduct(url.pathname)
-    if (!product) return undefined
-    return { product, origin: url.origin }
-  }
-
   const product = PRODUCT_ORIGINS.get(host)
   if (product) return { product, origin: url.origin }
 
