@@ -44,6 +44,11 @@ const debrisPatterns = [
   /\b[0-9a-f]{40}\b/i,
 ]
 
+const visibleCommitPatterns = [
+  /\b(?:commit(?:\s+(?:id|hash))?|git\s+commit)\s*[`'“”]?([0-9a-f]{7,40})[`'“”]?\b|\b([0-9a-f]{7,40})\s+commit\b/i,
+  /\[\s*`?([0-9a-f]{7,40})`?\s*\]\(\s*https?:\/\/[^)\s]+\/(?:commit|blob)\/[0-9a-f]{7,40}(?:[\/?#][^)\s]*)?\s*\)/i,
+]
+
 const problemWords = /\b(?:problem|failure|failed|wrong|why|when|need|risk|cost|challenge|question|decision|tradeoff|break|missing|cannot|can't)\b/i
 const definitionWords = /\b(?:is a|is an|means|refers to|defined as|we call|in plain language|in other words|stands for)\b/i
 const decisionWords = /\b(?:choose|use|avoid|test|measure|compare|decide|should|do not|don't|next)\b/i
@@ -146,7 +151,10 @@ function scorePost(file) {
   const externalLinks = (body.match(/https?:\/\//g) || []).length
   const internalLinks = (body.match(/\]\(\/(?!\/)/g) || []).length
   const codeBlocks = Math.floor((body.match(/```/g) || []).length / 2)
-  const debris = debrisPatterns.filter((pattern) => pattern.test(bodyWithoutLinks)).map((pattern) => pattern.source)
+  const debris = [
+    ...debrisPatterns.filter((pattern) => pattern.test(bodyWithoutLinks)),
+    ...visibleCommitPatterns.filter((pattern) => pattern.test(body) || pattern.test(bodyWithoutLinks)),
+  ].map((pattern) => pattern.source)
   const nativeOpening = nativeTermsInOpening(opening)
   const nativeCount = nativeTerms.reduce((count, term) => {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
