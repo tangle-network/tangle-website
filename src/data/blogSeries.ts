@@ -20,9 +20,10 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
   },
   'agent-runtime-infrastructure': {
     title: 'Agent Runtime Infrastructure',
-    description: 'How agent profiles become running workers with faithfully delivered settings, observable events, and reviewable run records.',
-    premise: 'Follow a saved agent profile—its model, tools, files, permissions, and limits—into a running worker that receives those settings, emits events, and leaves a record of the run.',
-    decision: 'For teams maintaining agent runtimes, this series explains how to deliver settings faithfully, remove conflicting execution paths, and observe live work without claiming the record proves correctness.',
+    description: 'How agent settings become running workers with enforceable budgets, checked outputs, observable events, and durable run records.',
+    premise: 'An agent runtime is the software that gives a model its tools, files, limits, and record of work. Follow those settings into isolated workers, then see how the runtime handles budgets, failures, output checks, and traces.',
+    decision: 'For teams maintaining agent runtimes, this series shows how to deliver settings faithfully, remove conflicting execution paths, reject impossible budgets, and preserve useful evidence when a worker fails.',
+    path: 'Start with the settings contract and one shared execution path. Then add worker visibility, isolated environments, measured budget limits, failure-safe output checks, and a trace format that another tool can read.',
     startHere: { title: 'AI Agent Profile: Make Settings Deliverable', slug: 'agent-profile-materialization-contracts' },
   },
   'blueprint-agent': {
@@ -79,9 +80,10 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
   },
   'the-instrument-problem': {
     title: 'The Instrument Problem',
-    description: 'What coding-agent benchmarks measure, what their scores omit, and how evaluation teams choose the next useful outcome.',
-    premise: 'CodeTraceBench measures whether an analyst can find coding-agent steps marked wrong or unhelpful. The article asks what that score omits: why a step failed, how it was repaired, who checked the fix, and how much work a reviewer still had to do.',
-    decision: 'For teams evaluating coding agents, the evidence helps decide when a recursive analyst—one that revisits and checks earlier agent steps—is worth its extra work and which outcome the next benchmark should measure.',
+    description: 'How to keep coding-agent benchmarks, behavioral signals, winner selection, and cost reports aligned with the decision they support.',
+    premise: 'An agent evaluation is a repeatable test used to compare systems or decide whether a change should ship. This series examines four ways that an otherwise precise result can answer the wrong question: an incomplete benchmark, a weak behavioral signal, a ranking rule that disagrees with release policy, and a cost total that omits workers.',
+    decision: 'For teams evaluating coding agents, the evidence helps decide what each number can support, which failures require another measurement, and whether the release decision uses the same outcome the test actually counted.',
+    path: 'Begin with the boundary of a real coding-agent benchmark. Then test a behavioral signal against chance, align the winner with the release rule, and count every model-calling role before comparing cost.',
     startHere: { title: 'AI Coding Agent Benchmark: What CodeTraceBench Measures', slug: 'codetracebench-benchmark-measured-wrong-capability' },
   },
   'the-self-improving-stack': {
@@ -90,6 +92,14 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
     premise: 'Map the parts an agent team can change—prompts, skills, runtime, traces, evaluations, model training, and release rules—and the evidence required before promoting a candidate change.',
     decision: 'For teams improving agents, the series helps choose the right layer, protect fresh test cases from the search process, and keep a human release decision at the end.',
     startHere: { title: 'The Self-Improving Stack: How AI Agents Get Better', slug: 'the-self-improving-stack' },
+  },
+  'when-structure-pays': {
+    title: 'When Structure Pays',
+    description: 'Measured comparisons of one agent, repeated candidates, and supervised workers, including quality, token cost, elapsed time, and uncertainty.',
+    premise: 'An agent system can spend extra computation in two ways: generate several candidates and choose among them, or add a parent process that delegates to workers. These articles compare both choices against a simpler one-agent baseline.',
+    decision: 'For teams choosing an agent design, the series shows when a shared checker makes extra samples useful, when coordination adds cost without a measured gain, and what another experiment must record before the result can generalize.',
+    path: 'Start with best-of-five sampling, where every candidate faces the same deterministic check. Then examine a paired supervisor-versus-solo replay that records quality, tokens, elapsed time, missing data, and uncertainty.',
+    startHere: { title: 'When Does Best-of-Five Sampling Pay for AI Code Generation?', slug: 'when-best-of-five-sampling-pays' },
   },
   'x402-production-runway': {
     title: 'x402 Production Runway',
