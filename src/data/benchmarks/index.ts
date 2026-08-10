@@ -152,7 +152,7 @@ export const svix: DomainBoard = {
   by: 'Tangle VerticalBench',
   sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
   scoredBy:
-    'Each task is graded by a hidden test suite that signs fresh deliveries with its own random key each run and requires the verifier to accept authentic deliveries and reject tampered payloads, wrong keys, stale timestamps, and rotated multi-signature headers. Pass means the agent code executes correctly, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-scheme reference passes, and the Stripe-scheme solution fails on the intended trap.',
+    'Each task is graded by a hidden test suite that signs fresh deliveries with its own random key each run and requires the verifier to accept authentic deliveries and reject tampered payloads, wrong keys, stale timestamps, and rotated multi-signature headers. Pass means the agent code executes correctly, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-scheme reference passes, and the Stripe-scheme solution fails on the intended trap. The prompts and calibration fixtures remain private to keep the test held out; this page publishes every scored attempt. The chart is the mean of the two task cells. Five profiles passed both tasks: Claude Sonnet with either reviewer setting, GLM-5.2 with either reviewer setting, and GLM-5.1 with no reviewer. Three profiles passed task 01 and failed task 02: the two pi harness profiles and GLM-5.1 with the default reviewer.',
   profiles: svixResults.profiles as BoardProfile[],
   perTask: svixResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
