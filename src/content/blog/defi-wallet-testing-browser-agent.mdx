@@ -26,11 +26,12 @@ A token allowance is a limit on how much a contract may spend from an account.
 A wallet extension manages keys and displays the approval prompts.
 The browser page can request work from the wallet, but it does not own the key or the final approval.
 
-Tangle Browser Agent opens pages, observes Document Object Model state, and executes bounded browser actions toward a stated goal.
+Tangle is the platform around these tools: it provides a way to run agent workflows and inspect the evidence they produce.
+Tangle Browser Agent is the browser-facing tool that opens pages, observes Document Object Model state, and executes bounded browser actions toward a stated goal.
 After installing the public driver, run `bad --help` to inspect the Browser Agent commands available from a terminal.
 The public driver repository documents wallet and DeFi testing support alongside screenshots, page observations, and browser actions.
 The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
-Capture page, wallet, provider, and chain evidence in one timeline.
+The rest of this article uses one toy run to show how page, wallet, provider, and chain evidence fit into one timeline.
 For the narrower MetaMask fixture and release workflow, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows).
 
 ## Track application, wallet, provider, and chain state
@@ -68,34 +69,21 @@ Forbidden actions: production-network (mainnet) signing, real-value transfer, un
 or accepting a prompt whose account or chain does not match the case.
 ~~~
 
-Record the connect, chain, quote, prompt, rejection, and final-state checkpoints:
+The following is a deliberately fake run on a local test chain, not a production result.
+The addresses are toy identifiers chosen to make the evidence legible.
 
-1. The application detects the wallet and shows the selected account.
-2. The provider reports the expected chain identifier.
-3. The quote shows the requested input token, output token, amount, and route.
-4. The wallet prompt shows the account, chain, contract, and requested action.
-5. The application remains truthful when the user rejects the prompt.
-6. The run stops or continues only according to the explicit test policy.
+| Time | Observation | Evidence | Outcome |
+| --- | --- | --- | --- |
+| 09:00:01 | The injected provider emits `accountsChanged` with `0x0000000000000000000000000000000000000001`, and the page observes it. | App screenshot and event log | The page and wallet show the same disposable account. |
+| 09:00:02 | `eth_chainId` returns `0x7a69`, which is chain 31337 in this fixture. | Provider response and chain label | The test is on the named local chain, not mainnet. |
+| 09:00:04 | A quote requests 10 `TST` for 9.8 `USDT` through router `0x0000000000000000000000000000000000000002`. | Quote response and page screenshot | The route and amount match the test case. |
+| 09:00:05 | The wallet prompt says: “Approve 10 TST to `0x0000000000000000000000000000000000000002` on Local Test Chain (31337).” | Wallet screenshot and prompt record | The user can inspect the exact spender, asset, amount, and chain. |
+| 09:00:06 | The fixture rejects the prompt with provider error `4001`. | Provider error and `accountsChanged`/`chainChanged` event log | No signature or transaction identifier exists. |
+| 09:00:07 | The page keeps the quote, shows “Approval cancelled,” and offers retry. | Final app screenshot and stop reason | The run passes: it did not claim a transaction that never happened. |
 
-The test should capture the prompt before approval.
-Capture the quote, route, amount, and requested action beside the page screenshot.
-Require the wallet screenshot to show the account, chain, spender, asset, amount, and action presented for authorization.
-The post-rejection screenshot explains whether the app recovered.
-
-## What to save for each checkpoint
-
-A trace is the ordered record of an agent run.
-For wallet testing, it needs page state and wallet state in the same timeline.
-
-| Checkpoint | Evidence to capture | Question it answers |
-| --- | --- | --- |
-| before connect | app screenshot, web address (URL), available wallet state | Did the app offer the right connection path? |
-| after connect | selected account in app and wallet, provider response | Are both sides using the same account? |
-| after network request | requested and selected chain identifiers | Did the app ask for the intended network? |
-| before sign | quote, token, amount, spender or contract, wallet prompt | What would the user approve? |
-| after reject | wallet rejection, provider error, app error state | Did the app recover without claiming success? |
-| after test transaction | receipt or local-chain result, app state, balance | Does the page reflect the chain result? |
-| stop | final screenshot, terminal status, reason | Why did the test end? |
+This timeline gives every claim an owner: the page owns its displayed state, the wallet owns the prompt, the provider owns the response, and a receipt or chain-state check establishes confirmation.
+For a different flow, keep the same fields: phase, application state, wallet state, provider or chain observation, outcome, and stop reason.
+This avoids creating a new checklist for every action.
 
 Store sensitive values according to the test environment’s retention policy.
 Redact private keys, seed phrases, session cookies, and personal addresses that the reviewer does not need.
@@ -118,7 +106,7 @@ The [EIP-712 standard](https://eips.ethereum.org/EIPS/eip-712) defines typed dat
 It explicitly does not provide replay protection by itself.
 The dapp and contract still need a nonce, or one-use counter, expiry, chain binding, or another replay policy appropriate to the operation.
 
-An illustrative provider listener can make the app-side evidence explicit:
+The following illustrative TypeScript provider listener makes the app-side evidence explicit:
 
 ~~~typescript
 type ProviderError = Error & { code?: number; data?: unknown }
@@ -229,7 +217,7 @@ Compare runs with identical settings before attributing prompt differences to th
 
 ## Separate page, wallet, provider, and chain evidence
 
-Browser Agent can run as a local package and CLI without the service-packaging layer described by Tangle Blueprints.
+The public [driver README](https://github.com/tangle-network/browser-agent-driver) shows package and CLI usage without the service-packaging layer described by Tangle Blueprints; verify installation details against that README as the driver evolves.
 If a team offers wallet testing as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) can define the job inputs, runtime requirements, and returned artifacts, while an operator is the provider that runs the job.
 The Blueprint records Job inputs, runtime requirements, returned artifacts, and operator responsibility.
 It does not validate a wallet prompt, a contract, or a chain result.
@@ -247,32 +235,6 @@ It cannot make a signing action safe merely because a model reached the prompt.
 
 The strongest claim is narrow:
 under a recorded runtime and disposable fixture, the application showed the expected wallet state, the wallet showed the expected approval details, and the app reported the resulting state honestly.
-
-
-## What is DeFi wallet testing?
-
-DeFi wallet testing checks a finance application across the web page, wallet extension, provider, chain, and user approval boundary.
-
-## Why is it harder than ordinary browser testing?
-
-The decisive state can live outside the page.
-The application can show one account or chain while the wallet prompt shows another.
-The test must capture both sides.
-
-## What is the minimum evidence?
-
-Capture the starting app state, selected account, chain identifier, wallet prompt, action log, provider error or transaction result, final app state, and stop reason.
-
-## Should a browser agent sign transactions?
-
-Only in a controlled test environment with a disposable wallet, test chain, non-production credentials, and an explicit policy that permits the action.
-Otherwise stop at the signing prompt.
-
-## Does this replace a smart contract audit?
-
-No.
-It tests the user flow around contract interactions.
-It does not establish that the contract logic or economic design is safe.
 
 ## Set the approval boundary before you automate
 
