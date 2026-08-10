@@ -83,6 +83,10 @@ for (const text of ['group: production-deploy', 'cancel-in-progress: false']) {
   if (!deployWorkflow.includes(text)) failures.push(`deploy workflow is missing: ${text}`);
 }
 
+if (deployWorkflow.includes('scripts/collect-status.mjs')) {
+  failures.push('deploy workflow must not publish an unreviewed status-history snapshot');
+}
+
 for (const pattern of forbiddenText) {
   if (pattern.test(workflow) || pattern.test(publisher)) {
     failures.push(`forbidden status workflow pattern: ${pattern}`);
