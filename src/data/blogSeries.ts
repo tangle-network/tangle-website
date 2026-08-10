@@ -37,8 +37,8 @@ export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
   'blueprint-sdk': {
     title: 'Blueprint SDK',
     description: 'A practical Rust guide to packaging, testing, deploying, monitoring, and rolling back operator-run Tangle services.',
-    premise: 'Blueprint SDK is a Rust toolkit for packaging, testing, and operating Tangle services. A Blueprint declares the Jobs, inputs, outputs, and artifacts; a configured Service is run by an operator.',
-    decision: 'For Rust teams moving from a local service to Tangle, this guide covers the deployment contract, first test-network run, monitoring, and rollback evidence.',
+    premise: 'Tangle is a network where independent operators run services. The Blueprint SDK is a Rust toolkit for packaging, testing, and operating those services: a Blueprint is a reusable service definition, a Job is one callable unit of work, and a Service is one live configured instance run by an operator.',
+    decision: 'For Rust teams deciding whether a local service should be run by independent Tangle operators, this guide shows how to define and run a job, test the deployment, and collect monitoring and rollback evidence; it does not prove the service’s business logic is correct.',
     startHere: { title: 'Blueprint SDK Deployment: Run an Operator Job', slug: 'blueprint-sdk-deployment-guide' },
   },
   'browser-agent': {

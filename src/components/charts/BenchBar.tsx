@@ -173,6 +173,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                 <span className="vbb-sub mono">via {isHarness ? benchmarkHarnessLabel(r.harness) : 'direct call'}</span>
                 <span className="vbb-profile mono" title={r.agentProfile ?? 'raw'}>{benchmarkProfileLabel(r.agentProfile)}</span>
                 <span className="vbb-n mono">n={r.n}</span>
+                {r.costUsd != null && <span className="vbb-cost mono">mean cost/return ${r.costUsd.toFixed(2)}</span>}
               </div>
             );
           })}
