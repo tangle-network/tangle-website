@@ -2,6 +2,11 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchBar from '../../components/charts/BenchBar.tsx';
 import { boards, boardById } from '../../data/benchmarks/index';
+import {
+  benchmarkHarnessLabel,
+  benchmarkModelLabel,
+  benchmarkProfileLabel,
+} from '../../data/benchmarks/schema';
 
 export function getStaticPaths() {
   return boards.map((b) => ({ params: { id: b.id } }));
@@ -10,6 +15,9 @@ export function getStaticPaths() {
 const { id } = Astro.params;
 const b = boardById(id!);
 if (!b) return Astro.redirect('/benchmarks');
+const hasMeasuredCosts = b.perTask?.some((task) =>
+  Object.values(task.byProfile).some((profile) => (profile.meanCostUsd ?? 0) > 0),
+) ?? false;
 ---
 <BaseLayout
   title={`${b.domain} benchmark`}
@@ -22,15 +30,30 @@ if (!b) return Astro.redirect('/benchmarks');
       <div class="bd-crumbs mono"><span>{b.category}</span>{b.by && <span>· by {b.by}</span>}</div>
       <h1>{b.domain}</h1>
       <p class="bd-lede">{b.blurb}</p>
+      <p class="bd-decision">Use this board to compare tested agent configurations on this exact task suite—not to rank models in general.</p>
       <div class="bd-links">
         {b.sourceUrl && <a class="bd-link" href={b.sourceUrl} target="_blank" rel="noopener">Benchmark on GitHub ↗</a>}
         {b.paperUrl && <a class="bd-link ghost" href={b.paperUrl} target="_blank" rel="noopener">Read the paper ↗</a>}
+        {b.referenceUrl && <a class="bd-link ghost" href={b.referenceUrl} target="_blank" rel="noopener">{b.referenceLabel ?? 'API reference'} ↗</a>}
       </div>
     </div>
   </section>
 
   <section class="bd-body">
     <div class="shell">
+      <section class="bd-method" aria-labelledby="method-title">
+        <h2 id="method-title">How to read this benchmark</h2>
+        <p>{b.scoredBy}</p>
+        <dl>
+          <div><dt>Last run</dt><dd>{b.lastRun ? <time datetime={b.lastRun}>{new Date(b.lastRun).toISOString().slice(0, 10)}</time> : 'Not published'}</dd></div>
+          <div><dt>Held-out tasks</dt><dd>{b.taskCount ?? 'Not published'}</dd></div>
+          <div><dt>Configurations</dt><dd>{b.rows.length} agent configurations</dd></div>
+          <div><dt>Chart metric</dt><dd>{b.metricLabel ?? 'Score'} on a 0–100% scale</dd></div>
+        </dl>
+        <p class="bd-method-note">An agent profile is the exact instruction and tool configuration used for a run. A harness is the coding tool that gives a model its agent loop and tools; “direct” is a model call without that coding harness. On coding boards, “default reviewer” means the run used VerticalBench's standard between-attempt review, while “no reviewer” means the coding harness ran once without that review. Hover a chart label to see its immutable profile ID. {b.confidenceMethod ?? 'No confidence interval method is published for this board.'} Small suites are narrow capability checks, not evidence that one model is generally better.</p>
+        <a href="/blog/agent-readiness-index-methodology">Read the full methodology →</a>
+      </section>
+
       <div class="bd-chart">
         <BenchBar client:visible rows={b.rows} metricLabel={b.metricLabel ?? 'Score'} />
       </div>
@@ -39,7 +62,7 @@ if (!b) return Astro.redirect('/benchmarks');
         <div class="bd-tasks">
           <div class="bd-tasks-head">
             <h2>Per-task breakdown</h2>
-            <span class="bd-tasks-count mono">{b.perTask.length} tasks · suite kept private</span>
+            <span class="bd-tasks-count mono">{b.perTask.length} held-out tasks · prompts private</span>
           </div>
           {b.profiles && (
           <div class="bd-matrix-scroll">
@@ -48,7 +71,11 @@ if (!b) return Astro.redirect('/benchmarks');
                 <tr>
                   <th class="bd-mx-corner">Task</th>
                   {b.profiles.map((col) => (
-                    <th class="bd-mx-prof"><span>{col.model}</span><em>{col.harness}</em></th>
+                    <th class="bd-mx-prof">
+                      <span>{benchmarkModelLabel(col.model)}</span>
+                      <em>via {benchmarkHarnessLabel(col.harness)}</em>
+                      <small title={col.profileId}>{benchmarkProfileLabel(col.profileId)}</small>
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -61,17 +88,31 @@ if (!b) return Astro.redirect('/benchmarks');
                     </th>
                     {b.profiles!.map((col) => {
                       const p = t.byProfile[col.profileId];
-                      if (!p) return <td class="bd-mx-cell bd-mx-empty"></td>;
+                      if (!p) {
+                        return (
+                          <td class="bd-mx-cell bd-mx-empty" title={`${col.profileId} · no recorded run`}>
+                            <span class="bd-mx-missing">not run</span>
+                          </td>
+                        );
+                      }
                       const pct = Math.round(p.passRate * 100);
-                      const cost = p.meanCostUsd != null ? `$${p.meanCostUsd < 0.01 ? p.meanCostUsd.toFixed(3) : p.meanCostUsd.toFixed(2)}` : '';
+                      const measuredCost = (p.meanCostUsd ?? 0) > 0
+                        ? `$${p.meanCostUsd! < 0.01 ? p.meanCostUsd!.toFixed(3) : p.meanCostUsd!.toFixed(2)}`
+                        : null;
+                      const displayedCost = measuredCost ?? (hasMeasuredCosts ? '—' : null);
+                      const tokens = p.meanTokensIn != null || p.meanTokensOut != null
+                        ? `${Math.round((p.meanTokensIn ?? 0) + (p.meanTokensOut ?? 0))} tok`
+                        : '';
+                      const wall = p.meanWallMs != null ? `${(p.meanWallMs / 1000).toFixed(1)}s` : '';
                       return (
                         <td
                           class="bd-mx-cell"
                           style={`--f:${p.passRate}`}
-                          title={`${col.harness}/${col.model} · ${pct}% pass · ${cost} · ${p.meanTokensIn ?? 0}/${p.meanTokensOut ?? 0} tok · ${Math.round((p.meanWallMs ?? 0) / 1000)}s`}
+                          title={`${col.harness}/${col.model} · ${pct}% pass · ${measuredCost ?? 'cost not captured'} · ${p.meanTokensIn ?? 0}/${p.meanTokensOut ?? 0} tok · ${Math.round((p.meanWallMs ?? 0) / 1000)}s`}
                         >
                           <span class="bd-mx-pct">{pct}</span>
-                          {cost && <span class="bd-mx-cost">{cost}</span>}
+                          {displayedCost && <span class="bd-mx-cost">{displayedCost}</span>}
+                          {(tokens || wall) && <span class="bd-mx-runtime">{[tokens, wall].filter(Boolean).join(' · ')}</span>}
                         </td>
                       );
                     })}
@@ -81,7 +122,7 @@ if (!b) return Astro.redirect('/benchmarks');
             </table>
           </div>
           )}
-          <p class="bd-tasks-note">Cell shows pass rate; hover for cost, tokens, and latency. Task contents are proprietary and not shown.</p>
+          <p class="bd-tasks-note">Each cell shows pass rate, total input-plus-output tokens, and mean wall time for that task and agent profile. {hasMeasuredCosts ? 'Mean cost appears where captured; a dash means it was not captured.' : 'Cost was not captured for these subscription-harness runs; that does not mean the runs were free.'} “Not run” means the result artifact has no recorded attempt for that task and profile. Task prompts stay private so they remain held out; opaque task numbers and every measured result are published.</p>
         </div>
       )}
     </div>
@@ -97,6 +138,7 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-crumbs { display: flex; align-items: center; gap: 0.5rem; color: var(--ink-muted); font-size: 0.85rem; margin-top: 1.4rem; }
   .bd-hero h1 { margin: 0.5rem 0 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.03em; color: var(--ink); font-size: clamp(2.2rem, 4vw, 3.3rem); }
   .bd-lede { margin: 0.9rem 0 0; color: var(--ink-secondary); font-size: 1.2rem; line-height: 1.6; max-width: 46rem; }
+  .bd-decision { margin: 0.65rem 0 0; color: var(--ink); font-size: 0.98rem; line-height: 1.55; max-width: 46rem; font-weight: 500; }
   /* links to the real benchmark */
   .bd-links { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-top: 1.4rem; }
   .bd-link { display: inline-flex; align-items: center; font-size: 0.92rem; font-weight: 600; text-decoration: none; padding: 0.5rem 0.95rem; border-radius: 9px; background: #4F46E5; color: #fff; transition: background 0.15s; }
@@ -122,11 +164,15 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-mx-prof { padding: 0.75rem 0.7rem; border-bottom: 1px solid var(--hairline-light); min-width: 5.2rem; }
   .bd-mx-prof span { display: block; color: var(--ink); font-weight: 700; font-size: 0.82rem; letter-spacing: -0.01em; }
   .bd-mx-prof em { display: block; color: var(--ink-muted); font-style: normal; font-size: 0.68rem; margin-top: 0.1rem; }
+  .bd-mx-prof small { display: block; max-width: 8rem; margin-top: 0.18rem; color: var(--ink-muted); font: 500 0.58rem/1.2 var(--font-mono); overflow-wrap: anywhere; }
   .bd-mx-task { text-align: left; padding: 0.5rem 1rem; white-space: nowrap; position: sticky; left: 0; background: #fff; z-index: 1; border-top: 1px solid var(--hairline-light); }
   .bd-mx-num { color: var(--ink); font-weight: 700; margin-right: 0.5rem; }
   .bd-mx-cell { border-top: 1px solid var(--hairline-light); border-left: 1px solid var(--hairline-light); padding: 0.5rem 0.4rem; background: color-mix(in srgb, #4F46E5 calc(var(--f) * 100%), #F3F4F8); }
   .bd-mx-pct { display: block; font-weight: 700; font-size: 0.92rem; color: color-mix(in srgb, #fff calc(var(--f) * 100%), var(--ink)); }
   .bd-mx-cost { display: block; font-size: 0.64rem; margin-top: 0.05rem; color: color-mix(in srgb, rgba(255,255,255,0.9) calc(var(--f) * 100%), var(--ink-muted)); }
+  .bd-mx-runtime { display: block; margin-top: 0.05rem; color: color-mix(in srgb, rgba(255,255,255,0.85) calc(var(--f) * 100%), var(--ink-muted)); font-size: 0.56rem; white-space: nowrap; }
+  .bd-mx-empty { background: var(--paper-1); }
+  .bd-mx-missing { color: var(--ink-muted); font-size: 0.66rem; white-space: nowrap; }
   @media (max-width: 680px) {
     .bd-tasks-head h2 { font-size: 1.4rem; }
     .bd-mx-cell { padding: 0.4rem 0.3rem; }
@@ -134,6 +180,15 @@ if (!b) return Astro.redirect('/benchmarks');
   }
 
   .bd-body { background: var(--paper-0); padding: 3rem 0 6rem; min-height: 50vh; }
+  .bd-method { margin-bottom: 1.5rem; padding: 1.5rem 1.6rem; border: 1px solid var(--hairline-light); border-radius: 14px; background: #fff; }
+  .bd-method h2 { margin: 0; color: var(--ink); font-family: var(--font-display); font-size: 1.45rem; font-weight: 600; }
+  .bd-method p { max-width: 58rem; margin: 0.75rem 0 0; color: var(--ink-secondary); line-height: 1.6; }
+  .bd-method dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; margin: 1.2rem 0 0; }
+  .bd-method dl div { padding: 0.75rem; border-radius: 9px; background: var(--paper-1); }
+  .bd-method dt { color: var(--ink-muted); font: 600 0.7rem/1.2 var(--font-mono); text-transform: uppercase; }
+  .bd-method dd { margin: 0.35rem 0 0; color: var(--ink); font-size: 0.9rem; font-weight: 600; }
+  .bd-method .bd-method-note { font-size: 0.9rem; }
+  .bd-method > a { display: inline-block; margin-top: 0.85rem; color: #4F46E5; font-size: 0.9rem; font-weight: 600; }
   /* overflow visible so the hover tooltip can escape above the bars; wide charts
      scroll via the inner .vbb-scroll wrapper, which reserves top headroom so the
      tooltip is not clipped by its own scroll box. */
@@ -148,6 +203,7 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-chart :global(.vbb-sort) { display: flex; gap: 0.35rem; align-items: center; }
   .bd-chart :global(.vbb-sort button) { background: var(--paper-1); border: 1px solid var(--hairline-light); color: var(--ink-secondary); font-family: inherit; font-size: 0.76rem; padding: 0.2rem 0.55rem; border-radius: 6px; cursor: pointer; }
   .bd-chart :global(.vbb-sort button.on) { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+  .bd-chart :global(.vbb-scroll) { max-width: 100%; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(79,70,229,0.35) transparent; }
 
   /* Scientific plot: a fixed-height band on a TRUE 0-100% axis. Bars, gridlines,
      ticks, target and CI whiskers all position by `bottom: <pct>%` inside the
@@ -183,6 +239,7 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-chart :global(.vbb-name) { color: var(--ink); font-size: 0.92rem; font-weight: 700; text-align: center; line-height: 1.15; max-width: 5.4rem; letter-spacing: -0.01em; word-break: break-word; }
   /* sub-line: harness (or 'direct') + n, so the harness is legible without hover. */
   .bd-chart :global(.vbb-sub) { color: var(--ink-muted); font-size: 0.66rem; font-weight: 500; text-align: center; line-height: 1.1; max-width: 5.4rem; word-break: break-word; }
+  .bd-chart :global(.vbb-profile) { color: var(--ink-muted); font-size: 0.62rem; font-weight: 500; text-align: center; line-height: 1.15; max-width: 5.4rem; overflow-wrap: anywhere; }
   .bd-chart :global(.vbb-tip) { position: absolute; bottom: calc(100% + 0.5rem); left: 50%; transform: translateX(-50%); z-index: 9; background: #1a1936; border: 1px solid rgba(129,140,248,0.4); border-radius: 10px; padding: 0.8rem 1rem; box-shadow: 0 14px 40px rgba(25,28,60,0.25); min-width: 14rem; }
   .bd-chart :global(.vbb-tip-h) { color: #fff; font-size: 0.85rem; font-weight: 700; margin-bottom: 0.5rem; white-space: nowrap; }
   .bd-chart :global(.vbb-tip-grid) { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.78rem; }
@@ -193,10 +250,12 @@ if (!b) return Astro.redirect('/benchmarks');
   .bd-chart :global(.bb-empty-badge) { display: inline-block; font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); background: var(--paper-2); padding: 0.25rem 0.7rem; border-radius: 999px; }
   .bd-chart :global(.bb-empty p) { margin: 1rem auto 0; color: var(--ink-secondary); font-size: 0.95rem; line-height: 1.55; max-width: 34rem; }
   @media (max-width: 680px) {
-    .bd-chart :global(.vbb-cols), .bd-chart :global(.vbb-feet) { gap: 0.55rem; }
-    .bd-chart :global(.vbb-col), .bd-chart :global(.vbb-foot) { width: 3rem; }
-    .bd-chart :global(.vbb-bar) { width: 2.8rem; }
-    .bd-chart :global(.vbb-name) { font-size: 0.74rem; }
+    .bd-method dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .bd-chart :global(.vbb-plot) { min-width: 39rem; }
+    .bd-chart :global(.vbb-cols), .bd-chart :global(.vbb-feet) { gap: 0.75rem; }
+    .bd-chart :global(.vbb-col), .bd-chart :global(.vbb-foot) { width: 4rem; }
+    .bd-chart :global(.vbb-bar) { width: 3.8rem; }
+    .bd-chart :global(.vbb-name) { font-size: 0.8rem; }
     .bd-chart :global(.vbb-val) { font-size: 0.9rem; }
   }
 </style>

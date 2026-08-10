@@ -7,6 +7,8 @@ import plausibleResults from './results/plausible.json';
 import svixResults from './results/svix.json';
 import directusResults from './results/directus.json';
 
+const WILSON_CONFIDENCE = '95% Wilson interval for observed pass/fail outcomes; each configuration shows its own sample size.';
+
 // Domain leaderboards, vals.ai structure: an index of benchmarks grouped by
 // category, each clicking into a detail page with a ranked bar chart of every
 // agent profile. Rows come from real eval runs (scripts/run-domain-bench.mjs);
@@ -29,6 +31,7 @@ export const tax: DomainBoard = {
   paperUrl: 'https://arxiv.org/abs/2507.16126',
   scoredBy: 'Each return is graded line-by-line against the correct 1040 (Column Tax’s own scorer).',
   metricLabel: 'By-line accuracy',
+  confidenceMethod: '95% Student-t interval across the 51 per-return by-line accuracy scores.',
   source: taxResults.source,
   status: 'live',
   lastRun: taxResults.generated,
@@ -47,15 +50,18 @@ export const stripe: DomainBoard = {
   company: 'Stripe',
   category: 'Coding',
   blurb:
-    'Twelve coding tasks built from real Stripe API changes in 2025 and 2026, each graded by running the agent code against Stripe current contract.',
+    'Twelve coding tasks built from documented Stripe API changes in 2025 and 2026. Each run is checked against the suite\'s versioned mock contract as it existed on the published run date.',
   benchSource: 'Proprietary',
   by: 'Tangle VerticalBench',
   sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  referenceUrl: 'https://docs.stripe.com/api/versioning',
+  referenceLabel: 'Stripe API versioning',
   scoredBy:
     'Each task is graded by a hidden mock server implementing Stripe current API contract (endpoints, required params, error shapes) including the trap a from-memory solution falls into. Pass means the agent code executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
   profiles: stripeResults.profiles as BoardProfile[],
   perTask: stripeResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: stripeResults.source,
   status: 'live',
   lastRun: stripeResults.generated,
@@ -78,6 +84,7 @@ export const calcom: DomainBoard = {
   profiles: calcomResults.profiles as BoardProfile[],
   perTask: calcomResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: calcomResults.source,
   status: 'live',
   lastRun: calcomResults.generated,
@@ -100,6 +107,7 @@ export const posthog: DomainBoard = {
   profiles: posthogResults.profiles as BoardProfile[],
   perTask: posthogResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: posthogResults.source,
   status: 'live',
   lastRun: posthogResults.generated,
@@ -113,15 +121,18 @@ export const plausible: DomainBoard = {
   company: 'Plausible',
   category: 'Coding',
   blurb:
-    'Two coding tasks that query the Plausible Stats API v2, a single POST endpoint with a strict JSON query grammar that replaced the v1 GET endpoints most training data documents.',
+    'Two coding tasks that query the Plausible Stats API v2 through its single POST endpoint and strict JSON query grammar. Clients that send legacy v1 GET requests fail these tasks.',
   benchSource: 'Proprietary',
   by: 'Tangle VerticalBench',
   sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
+  referenceUrl: 'https://plausible.io/docs/stats-api',
+  referenceLabel: 'Plausible Stats API v2',
   scoredBy:
-    'Each task is graded by a hidden mock server implementing Plausible current v2 query contract (required body keys, prefixed dimensions, filter trees, date ranges) with production error shapes; v1-style requests fail. Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+    'Each task is graded by a hidden mock server implementing Plausible current v2 query contract (required body keys, prefixed dimensions, filter trees, and date ranges); malformed and v1-style requests return structured errors and fail. Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
   profiles: plausibleResults.profiles as BoardProfile[],
   perTask: plausibleResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: plausibleResults.source,
   status: 'live',
   lastRun: plausibleResults.generated,
@@ -144,6 +155,7 @@ export const svix: DomainBoard = {
   profiles: svixResults.profiles as BoardProfile[],
   perTask: svixResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: svixResults.source,
   status: 'live',
   lastRun: svixResults.generated,
@@ -166,6 +178,7 @@ export const directus: DomainBoard = {
   profiles: directusResults.profiles as BoardProfile[],
   perTask: directusResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
+  confidenceMethod: WILSON_CONFIDENCE,
   source: directusResults.source,
   status: 'live',
   lastRun: directusResults.generated,

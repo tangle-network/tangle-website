@@ -1,0 +1,114 @@
+export interface BlogSeriesDetails {
+  title: string
+  description: string
+  premise: string
+  decision: string
+  path?: string
+  startHere: {
+    title: string
+    slug: string
+  }
+}
+
+export const blogSeriesDetails: Record<string, BlogSeriesDetails> = {
+  'agent-intent-infrastructure': {
+    title: 'Agent Intent Infrastructure',
+    description: 'Guides to service discovery, sandboxed execution, model routing, x402 payments, and evidence for teams integrating AI agent services.',
+    premise: 'Learn how software discovers a Tangle service, runs a bounded task, pays per request, and keeps evidence. A Blueprint is a reusable service definition, a Job is one callable unit, and an operator runs that Job.',
+    decision: 'For teams integrating external agent services, this series separates discovery, execution, payment, and evidence so each boundary can be designed and tested on its own.',
+    startHere: { title: 'How AI Agents Discover Products', slug: 'how-ai-agents-discover-products' },
+  },
+  'agent-runtime-infrastructure': {
+    title: 'Agent Runtime Infrastructure',
+    description: 'How agent profiles become running workers with faithfully delivered settings, observable events, and reviewable run records.',
+    premise: 'Follow a saved agent profile—its model, tools, files, permissions, and limits—into a running worker that receives those settings, emits events, and leaves a record of the run.',
+    decision: 'For teams maintaining agent runtimes, this series explains how to deliver settings faithfully, remove conflicting execution paths, and observe live work without claiming the record proves correctness.',
+    startHere: { title: 'AI Agent Profile: Make Settings Deliverable', slug: 'agent-profile-materialization-contracts' },
+  },
+  'blueprint-agent': {
+    title: 'Blueprint Agent',
+    description: 'How browser coding workspaces and code-verified quests can measure working integrations for developer programs and hackathons.',
+    premise: 'Explore a browser-based coding workspace where an agent works inside an isolated Sandbox—a disposable environment where it writes and runs code—and completes small quests checked by builds, tests, browser behavior, runtime state, or deployment evidence.',
+    decision: 'For developer-relations, partner, and hackathon teams, the series asks when a working artifact is better proof of learning than clicks or self-reported completion. Builds and tests show code behavior, wallet evidence shows account and network state, and a deployment check shows that a versioned URL responded; none alone proves the whole submission correct.',
+    path: 'Build the evidence foundation first, then apply it to developer onboarding, individual quests, hackathon judging, and a reusable browser workbench.',
+    startHere: { title: 'AI Coding Assistant With Deployment Evidence', slug: 'ai-coding-assistant-deployment-evidence' },
+  },
+  'blueprint-sdk': {
+    title: 'Blueprint SDK',
+    description: 'A practical Rust guide to packaging, testing, deploying, monitoring, and rolling back operator-run Tangle services.',
+    premise: 'Blueprint SDK is a Rust toolkit for packaging, testing, and operating Tangle services. A Blueprint declares the Jobs, inputs, outputs, and artifacts; a configured Service is run by an operator.',
+    decision: 'For Rust teams moving from a local service to Tangle, this guide covers the deployment contract, first test-network run, monitoring, and rollback evidence.',
+    startHere: { title: 'Blueprint SDK Deployment: From a Local Service to an Operator-Run Job', slug: 'blueprint-sdk-deployment-guide' },
+  },
+  'browser-agent': {
+    title: 'Browser Agent',
+    description: 'Evidence-based browser testing for QA, product, and wallet teams using natural-language goals, screenshots, and safe stops.',
+    premise: 'A browser agent drives real Chromium from a natural-language goal and returns its observations, actions, screenshots, and result. A fixture is the controlled test data prepared before a run; provider state is the wallet’s current account, network, and connection.',
+    decision: 'For QA, product, and wallet teams, this series shows how to turn English goals into release checks while stopping before irreversible actions such as signing or sending a transaction.',
+    path: 'After the evidence-trace foundation, move through a multi-page end-to-end journey, translate an English goal into exact checks, then test DeFi, MetaMask, and bounded recovery.',
+    startHere: { title: 'AI Browser Testing With Evidence Traces', slug: 'ai-browser-testing-evidence-traces' },
+  },
+  'building-an-ai-tax-agent': {
+    title: 'Building an AI Tax Agent',
+    description: 'A proposed source-linked tax preparation workflow for calculations, draft forms, open questions, and human review before filing.',
+    premise: 'This proposed preparation workflow turns source documents into linked facts, draft forms, and workpapers—the calculations and records supporting a return—inside a review packet that a person inspects before filing.',
+    decision: 'For taxpayers, tax professionals, and software builders, the articles apply Tangle’s isolated-workspace and evidence pattern as a teaching design. They are not tax advice, do not claim Tangle files returns, and do not describe autonomous filing.',
+    path: 'Begin with the general preparation workflow, then add electronic-filing controls, crypto reconciliation, source-linked workpapers, approval, foreign-corporation and S-corporation cases, founder records, and multiple K-1 forms.',
+    startHere: { title: 'AI Tax Preparation For Complex Returns: Evidence Before Forms', slug: 'ai-tax-preparation-complex-returns' },
+  },
+  'code-auditor': {
+    title: 'Code Auditor',
+    description: 'Agent-assisted code audit guides for turning scanner alerts into reproducible findings with reachability and impact evidence.',
+    premise: 'This series describes agent-assisted code review in which scanner alerts enter an isolated workspace for reachability, impact, and reproduction tests. An alert is a candidate; a finding is a claim another reviewer can reproduce.',
+    decision: 'For security and release teams, the articles show what evidence supports escalating a risk, rejecting a false positive, or continuing an investigation.',
+    startHere: { title: 'AI Code Audit: From Scanner Alert to Reproducible Evidence', slug: 'ai-code-audit-sandboxed-agents' },
+  },
+  'tangle-protocol': {
+    title: 'Tangle Protocol',
+    description: 'How Tangle coordinates operator-run services across provider selection, payment, privacy, staking, lifecycle, and result checks.',
+    premise: 'Tangle coordinates services run by independent operators. A Blueprint is the service template, a Service is one configured instance, and a Job is one unit of work; the actual computation runs off-chain.',
+    decision: 'For builders and buyers, this series separates provider selection, payment, privacy, staking, service lifecycle, and result checking so the protocol is not mistaken for proof of correctness.',
+    startHere: { title: 'Decentralized Compute Protocol: How Tangle Blueprints Run Services', slug: 'decentralized-compute-protocol-blueprints' },
+  },
+  'tangle-re-introduction': {
+    title: 'Tangle Re-Introduction',
+    description: 'A first-principles guide to Tangle Blueprints, Services, Jobs, operators, verification, deployment, inference, and sandboxes.',
+    premise: 'Start from first principles: Tangle coordinates operator-run services defined as Blueprints, deployed as Services, and called through Jobs. The series moves from that architecture to verification, deployment, inference, sandboxes, and hardware-isolation evidence.',
+    decision: 'For new builders and buyers, the sequence helps decide whether an operator-run service fits the workload, what each verification claim means, and what a first deployment must disclose.',
+    startHere: { title: 'Why Decentralized AI Infrastructure?', slug: 'why-ai-infrastructure-needs-decentralization' },
+  },
+  'the-instrument-problem': {
+    title: 'The Instrument Problem',
+    description: 'What coding-agent benchmarks measure, what their scores omit, and how evaluation teams choose the next useful outcome.',
+    premise: 'CodeTraceBench measures whether an analyst can find coding-agent steps marked wrong or unhelpful. The article asks what that score omits: why a step failed, how it was repaired, who checked the fix, and how much work a reviewer still had to do.',
+    decision: 'For teams evaluating coding agents, the evidence helps decide when a recursive analyst—one that revisits and checks earlier agent steps—is worth its extra work and which outcome the next benchmark should measure.',
+    startHere: { title: 'AI Coding Agent Benchmark: What CodeTraceBench Measures', slug: 'codetracebench-benchmark-measured-wrong-capability' },
+  },
+  'the-self-improving-stack': {
+    title: 'The Self-Improving Stack',
+    description: 'How agent teams improve prompts, skills, runtimes, traces, evaluations, and models without letting weak evidence ship.',
+    premise: 'Map the parts an agent team can change—prompts, skills, runtime, traces, evaluations, model training, and release rules—and the evidence required before promoting a candidate change.',
+    decision: 'For teams improving agents, the series helps choose the right layer, protect fresh test cases from the search process, and keep a human release decision at the end.',
+    startHere: { title: 'The Self-Improving Stack: How AI Agents Get Better', slug: 'the-self-improving-stack' },
+  },
+  'x402-production-runway': {
+    title: 'x402 Production Runway',
+    description: 'A production guide to x402 payment flows, typed Tangle jobs, pricing, quotes, operators, monitoring, and failure recovery.',
+    premise: 'x402 turns an HTTP 402 payment challenge into signed payment terms and a retried request. On Tangle, a Blueprint is the typed service contract: each paid request becomes one Job declared by it, facilitators verify and settle payment, and operators execute the work.',
+    decision: 'For pay-per-request service teams, this series covers pricing, quotes, monitoring, deployment, and safe recovery when payment, facilitator, operator, or result state is uncertain.',
+    path: 'Follow the payment lifecycle: map an HTTP payment to a Job; choose a facilitator and price; design quotes, monitoring, distribution, and protected execution; then deploy, recover failures, and assess product fit.',
+    startHere: { title: 'x402 Payments Blueprint: How a Paid HTTP Request Becomes a Job', slug: 'blueprint-sdk-x402-payments-runnable-jobs' },
+  },
+}
+
+export function blogSeriesSlug(series: string) {
+  return series
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+export function getBlogSeriesDetails(series: string) {
+  return blogSeriesDetails[blogSeriesSlug(series)]
+}

@@ -23,7 +23,10 @@ export default defineConfig({
   // /brand-kit. Re-enable with ASTRO_DEV_TOOLBAR=1.
   devToolbar: { enabled: process.env.ASTRO_DEV_TOOLBAR === '1' },
   integrations: [react(), mdx(), sitemap({
-    filter: (page) => !page.includes('/preview/') && !page.endsWith('/version.json'),
+    filter: (page) => {
+      const pathname = new URL(page).pathname.replace(/\/$/, '') || '/';
+      return !pathname.includes('/preview/') && pathname !== '/research' && pathname !== '/version.json';
+    },
   })],
 
   vite: {

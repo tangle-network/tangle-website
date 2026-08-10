@@ -77,6 +77,8 @@ export interface DomainBoard {
   by?: string; // who built the benchmark, e.g. "Column Tax"
   sourceUrl?: string; // link to the benchmark's own repo/site
   paperUrl?: string; // link to the paper, if any
+  referenceUrl?: string; // public API or product documentation exercised by the suite
+  referenceLabel?: string; // short public-document label
   scoredBy?: string; // one plain line on how a run is scored
   profiles?: BoardProfile[]; // stable column order for the per-task heatmap
   perTask?: PerTaskBreakdown[]; // opaque per-task breakdown (no task identity)
@@ -86,6 +88,35 @@ export interface DomainBoard {
   lastRun?: string; // ISO
   taskCount?: number; // how many held-out tasks in the suite
   metricLabel?: string; // "Blended score", "Pass rate"
+  confidenceMethod?: string; // exact interval method for any published whiskers
+}
+
+export function benchmarkModelLabel(model: string): string {
+  const labels: Record<string, string> = {
+    sonnet: 'Claude Sonnet',
+    'glm-5.1': 'GLM-5.1',
+    'glm-5.2': 'GLM-5.2',
+    'gpt-5-mini': 'GPT-5 mini',
+  };
+  return labels[model] ?? model;
+}
+
+export function benchmarkHarnessLabel(harness?: string): string {
+  const labels: Record<string, string> = {
+    'claude-code': 'Claude Code',
+    opencode: 'OpenCode',
+    pi: 'pi',
+    router: 'Direct call',
+  };
+  return harness ? labels[harness] ?? harness : 'Direct call';
+}
+
+export function benchmarkProfileLabel(profileId?: string): string {
+  if (!profileId || profileId === 'raw') return 'No profile';
+  if (profileId === 'harness default') return 'Default profile';
+  if (profileId.endsWith('@generic')) return 'Default reviewer';
+  if (/^(?:cc|oc|pi)-/.test(profileId)) return 'No reviewer';
+  return profileId;
 }
 
 export const INDIGO_RAMP = ['#4F46E5', '#6366F1', '#818CF8', '#A5AAFC', '#C7C9F5'];

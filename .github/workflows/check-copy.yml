@@ -1,22 +1,21 @@
 name: Check copy
 
-# Anti-slop copywriting audit. Runs `pnpm check:copy` against the
-# built site, sends each page's visible copy to a strong LLM judge,
-# scores 1–10 against a strict rubric (hollow adjectives, counting
-# headlines, em-dashes, mechanism-less claims, dev-tool clichés).
-# Pages below the threshold fail the workflow.
+# Full-site copy audit. Runs `pnpm check:copy` against the built site,
+# chooses a rubric for each route type, and retains every route result
+# as a JSON artifact. Scores below 8 fail at the 7.5 threshold.
 #
 # Local: `pnpm check:copy` (single page: `pnpm check:copy services/sandbox`).
 
 on:
   pull_request:
     paths:
-      - 'src/content/blog/**'
-      - 'src/pages/**'
-      - 'src/components/**'
-      - 'src/layouts/**'
+      - 'src/**'
+      - 'public/**'
       - 'scripts/check-copy.mjs'
       - '.github/workflows/check-copy.yml'
+      - 'astro.config.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -50,32 +49,62 @@ jobs:
       - name: Run copy audit
         env:
           # CI uses the repo-secret router key. Set this in
-          # Settings → Secrets → Actions. If unset we skip the
-          # audit with a warning rather than failing the workflow.
+          # Settings → Secrets → Actions. The audit fails closed if this
+          # credential is absent or rejected.
           TANGLE_API_KEY: ${{ secrets.TANGLE_API_KEY }}
-          # gpt-5.6-luna is the default router judge for stable,
-          # mechanism-level copy decisions. Override it when a provider-
-          # specific audit is intentional.
-          COPY_AUDIT_MODEL: ${{ vars.COPY_AUDIT_MODEL || 'gpt-5.6-luna' }}
+          # Pin Luna's live OpenRouter route. The shorter aliases can remain
+          # catalogued while no provider is attached to them.
+          COPY_AUDIT_MODEL: ${{ vars.COPY_AUDIT_MODEL || 'openrouter/openai/gpt-5.6-luna' }}
           COPY_AUDIT_TIMEOUT_MS: ${{ vars.COPY_AUDIT_TIMEOUT_MS || '45000' }}
-          COPY_AUDIT_THRESHOLD: ${{ vars.COPY_AUDIT_THRESHOLD || '6.5' }}
+          COPY_AUDIT_THRESHOLD: ${{ vars.COPY_AUDIT_THRESHOLD || '7.5' }}
         run: |
           if [ -z "$TANGLE_API_KEY" ]; then
-            echo "::warning title=Copy audit skipped::TANGLE_API_KEY secret not configured. Add it under Settings → Secrets → Actions to enable the anti-slop audit."
-            exit 0
+            echo "::error title=Copy audit unavailable::TANGLE_API_KEY is not configured."
+            exit 1
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            mapfile -t changed_pages < <(
-              git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- 'src/content/blog/*.mdx' \
-                | sed -E 's#^src/content/blog/##; s#\.mdx$##; s#^#/blog/#'
+            mapfile -t changed_files < <(
+              git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
             )
-            if [ "${#changed_pages[@]}" -gt 0 ]; then
-              echo "Auditing changed blog pages: ${changed_pages[*]}"
+
+            only_blog_mdx=true
+            if [ "${#changed_files[@]}" -eq 0 ]; then
+              only_blog_mdx=false
+            fi
+            for file in "${changed_files[@]}"; do
+              if [[ ! "$file" =~ ^src/content/blog/[^/]+\.mdx$ ]]; then
+                only_blog_mdx=false
+                break
+              fi
+            done
+
+            if [ "$only_blog_mdx" = true ]; then
+              changed_pages=(/blog)
+              for file in "${changed_files[@]}"; do
+                slug="${file#src/content/blog/}"
+                slug="${slug%.mdx}"
+                if [ -f "dist/client/blog/$slug/index.html" ]; then
+                  changed_pages+=("/blog/$slug")
+                fi
+              done
+              while IFS= read -r series_dir; do
+                changed_pages+=("/blog/series/${series_dir##*/}")
+              done < <(find dist/client/blog/series -mindepth 1 -maxdepth 1 -type d | sort)
+              echo "Auditing changed posts plus every index that renders their metadata: ${changed_pages[*]}"
               pnpm check:copy "${changed_pages[@]}"
             else
-              echo "No blog page changed; auditing the full rendered site."
+              echo "A shared or non-blog route changed; auditing the full rendered site."
               pnpm check:copy
             fi
           else
             pnpm check:copy
           fi
+
+      - name: Upload copy audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copy-audit-${{ github.run_attempt }}
+          path: audit-results/copy-audit.json
+          if-no-files-found: error
+          retention-days: 30
