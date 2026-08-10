@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const [revisionArgument, sourceArgument] = process.argv.slice(2);
+if (revisionArgument && !/^[0-9a-f]{40}$/i.test(revisionArgument)) {
+  throw new Error('Expected revision must be a full 40-character Git SHA');
+}
+
 const expected = revisionArgument
   ? {
       revision: revisionArgument.toLowerCase(),
