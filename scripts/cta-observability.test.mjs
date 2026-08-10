@@ -67,7 +67,7 @@ test('classifies only fixed Tangle product origins and drops query data', () => 
   assert.equal(classifyDestination('javascript:alert(1)'), undefined)
 })
 
-test('homepage CTA emits one privacy-safe event with product dimensions', () => {
+test('homepage CTA emits one privacy-safe event with standard GA dimensions', () => {
   const section = node('section', { class: 'flex hero-section', 'data-cta-placement': 'hero' })
   const anchor = node('a', { href: 'https://sandbox.tangle.tools/?user_id=42' }, section)
   const body = node('body', { 'data-content-type': 'page' })
@@ -90,11 +90,9 @@ test('homepage CTA emits one privacy-safe event with product dimensions', () => 
     'event',
     'tangle_cta_click',
     {
-      page_path: '/',
       content_type: 'page',
-      destination_product: 'sandbox',
-      destination_origin: 'https://sandbox.tangle.tools',
-      placement: 'hero',
+      link_url: 'https://sandbox.tangle.tools',
+      link_id: 'hero',
     },
   ])
   assert.equal(JSON.stringify(calls).includes('user_id'), false)
@@ -118,11 +116,9 @@ test('blog CTA emits one event and excludes query, text, and PII', () => {
 
   assert.equal(calls.length, 1)
   assert.deepEqual(calls[0][2], {
-    page_path: '/blog/agent-runtime',
     content_type: 'blog',
-    destination_product: 'docs',
-    destination_origin: 'https://docs.tangle.tools',
-    placement: 'article',
+    link_url: 'https://docs.tangle.tools',
+    link_id: 'article',
   })
   assert.equal(JSON.stringify(calls).includes('secret@example.test'), false)
 })
@@ -167,10 +163,9 @@ test('allows a legitimate static slug containing token', () => {
     body: node('body', { 'data-content-type': 'blog' }),
   })
   assert.deepEqual(payload, {
-    page_path: '/blog/pricing-without-hand-waving-wei-token-conversion-markup-dynamic-price-tags',
     content_type: 'blog',
-    destination_product: 'docs',
-    destination_origin: 'https://docs.tangle.tools',
+    link_url: 'https://docs.tangle.tools',
+    link_id: 'unknown',
   })
 })
 
@@ -183,10 +178,9 @@ test('uses only explicit or semantic placement values', () => {
     body: node('body', { 'data-content-type': 'page' }),
   })
   assert.deepEqual(payload, {
-    page_path: '/',
     content_type: 'page',
-    destination_product: 'docs',
-    destination_origin: 'https://docs.tangle.tools',
+    link_url: 'https://docs.tangle.tools',
+    link_id: 'unknown',
   })
 })
 
@@ -202,7 +196,7 @@ test('classifies article links by structural reading position', () => {
     location: { pathname: '/blog/agent-runtime' },
     body: node('body', { 'data-content-type': 'blog' }),
   })
-  assert.equal(payload.placement, 'article-close')
+  assert.equal(payload.link_id, 'article-close')
 })
 
 test('captures nested targets and dataLayer-only middle clicks', () => {
@@ -222,11 +216,9 @@ test('captures nested targets and dataLayer-only middle clicks', () => {
     'event',
     'tangle_cta_click',
     {
-      page_path: '/releases',
       content_type: 'page',
-      destination_product: 'github',
-      destination_origin: 'https://github.com',
-      placement: 'footer',
+      link_url: 'https://github.com',
+      link_id: 'footer',
     },
   ]])
 })

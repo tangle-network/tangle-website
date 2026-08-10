@@ -145,17 +145,12 @@ export function buildCtaPayload({ anchor, location, body }) {
   if (!destination) return undefined
 
   const contentType = safeDimension(body?.getAttribute?.('data-content-type')) || 'page'
-  const pagePath = safePagePath(location)
-  if (!pagePath) return undefined
-  const payload = {
-    page_path: pagePath,
+  if (!safePagePath(location)) return undefined
+  return {
     content_type: contentType,
-    destination_product: destination.product,
-    destination_origin: destination.origin,
+    link_url: destination.origin,
+    link_id: findPlacement(anchor) || 'unknown',
   }
-  const placement = findPlacement(anchor)
-  if (placement) payload.placement = placement
-  return payload
 }
 
 function runtimeFromGlobals() {
