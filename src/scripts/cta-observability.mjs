@@ -112,7 +112,7 @@ export function classifyDestination(href, baseHref = 'https://tangle.tools/') {
     return undefined
   }
 
-  if (url.protocol !== 'https:') return undefined
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return undefined
 
   const host = url.hostname.toLowerCase()
   if (host === 'tangle.tools' || host === 'www.tangle.tools') {
