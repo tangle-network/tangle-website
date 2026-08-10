@@ -1,0 +1,287 @@
+---
+title: 'Why AI Agent Token Budgets Need a Measured Runtime Floor'
+slug: agent-runtime-budget-floor
+summary: >-
+  An AI agent token budget can be impossible before work starts. A measured runtime floor lets a parent reject unsafe child budgets and preserve unknowns.
+date: '2026-08-09'
+author: Drew Stone
+tags:
+  - agent-runtime
+  - agent-budgets
+  - coding-agents
+  - ai-infrastructure
+series: Agent Runtime Infrastructure
+seriesOrder: 6
+coverImage: /images/covers/editorial/agent-runtime-v2.webp
+heroImage: /images/covers/editorial/agent-runtime-v2.webp
+imageAlt: 'An editorial still life about the software that runs an agent'
+---
+
+A parent process can give a child worker a token budget that no run of that worker can satisfy.
+The child then spends its allowance loading instructions, tool definitions, and workspace context before it reaches the task.
+The resulting failure looks like an unproductive model or a bad prompt, even though the budget was impossible when the parent wrote it.
+
+The public `agent-runtime` change at [commit `012762f`](https://github.com/tangle-network/agent-runtime/commit/012762f00b012507d924edd6f060e5f7edec9b3a) records the fix.
+Four parent runs authored child budgets of 2,000, 8,000, 12,000, and 20,000 input tokens.
+Six measured settlements for one `pi` and `tangle-router/glm-5.2` pairing landed at 31,211, 32,296, 47,365, 47,965, 48,253, and 62,616 input tokens.
+The smallest observed settlement therefore became a conservative lower bound for that pairing, and the runtime added `below-runtime-floor` as a rejection that tells the caller to raise the budget.
+
+This article explains what that number means, where it does not apply, and how to implement the same decision with a small TypeScript example.
+The example uses toy values and runs without Tangle credentials or private code.
+
+> A child budget is a promise about the whole run, so the parent needs evidence about the fixed cost that arrives before the task.
+
+## The budget is a promise made by the parent
+
+An **agent** is a program that uses a language model and tools to complete a task.
+An **agent runtime** is the software that starts that program, gives it state and limits, observes its events, and records its result.
+An **agent profile** is the saved description of the model, instructions, tools, files, and policies a worker should receive.
+The [profile materialization article](/blog/agent-profile-materialization-contracts/) covers the earlier boundary where those settings must be deliverable through the selected execution path.
+
+A **parent run** is one runtime execution that coordinates work and may create children.
+The parent chooses a child profile, authorizes a budget, and decides how the child settlement affects the larger result.
+A **child worker** is the separate process or execution unit that receives that profile and performs the delegated task.
+The child can be another model call, a coding-agent command, or an in-process worker, depending on the runtime.
+
+A **token** is a unit used to measure model text.
+Input tokens cover the instructions and context sent into a model request, while output tokens cover the text returned from it.
+Token counts are not a universal measure of useful work, but they are a concrete resource limit that a runtime can reserve and reconcile.
+
+A **token budget** is the maximum input or total usage a parent authorizes for one child according to the runtime's accounting contract.
+It is a resource promise, not a request for the model to be brief.
+If the fixed material sent before each turn already exceeds that promise, the child cannot reach the task regardless of how concise its answer would have been.
+
+That distinction matters in a recursive system.
+The parent may look at the child task and think a 2,000-token limit is generous because the requested code change is small.
+The worker may receive a system instruction, a tool catalog, repository or workspace context, and the same scaffolding again on later turns.
+Those bytes arrive before the worker can make a useful edit.
+
+The parent therefore needs two separate questions.
+Can the shared budget pool afford this reservation?
+Can this execution path do any useful work within the requested ceiling?
+The first question is ordinary resource accounting.
+The second question needs measurements tied to the path and model that will run.
+
+## A token budget can be spent before the task appears
+
+Consider a parent that asks a child to update one dependency and run a test.
+The parent records `maxTokens: 8_000` because the expected patch is only a few lines.
+The child starts and the provider reports an 8,000-token limit reached before the first useful turn.
+The runtime stops it at the ceiling.
+
+The child did not prove that the dependency update was impossible.
+The run proved that this context could not fit under an 8,000-token limit.
+That is a runtime admission failure, and the right repair is to change the budget or the execution path.
+Changing the prompt alone cannot remove a tool catalog or a workspace snapshot that the path always sends.
+
+The public change describes this fixed amount as the cost of system instructions, tool definitions, and workspace context that are resent on every turn.
+It also records why the name matters.
+Calling the result `budget-exhausted` suggests that a smaller request might fit, while `below-runtime-floor` tells the parent that a larger ceiling is required.
+
+The distinction is useful to callers that retry.
+An exhausted shared pool can sometimes admit a smaller child.
+A child budget below the measured runtime floor cannot.
+The two failures point in opposite directions, so collapsing them into one label creates a retry policy that makes the original problem worse.
+
+## Six settlements establish one lower bound
+
+The public commit records six live child settlements for one backend and model pairing.
+The input-token values were:
+
+| Settlement | Input tokens | What the record establishes |
+| --- | ---: | --- |
+| 1 | 31,211 | The smallest observed settlement in this sample |
+| 2 | 32,296 | A second run also exceeded 32,000 input tokens |
+| 3 | 47,365 | A longer run consumed more context before settling |
+| 4 | 47,965 | The observed cost varies across runs of the same pairing |
+| 5 | 48,253 | The minimum is not a typical or median value |
+| 6 | 62,616 | The upper end is more than twice the minimum |
+
+The same commit reports 515–1,128 output tokens across one to four iterations.
+The table above is about the input side because that is the amount the runtime uses for the measured floor.
+It does not claim that output is free or that the six rows describe every model request made by the worker.
+
+The smallest value, 31,211, is deliberately conservative.
+It means “below the least input settlement observed so far for this pairing,” not “the normal cost of a child” and not “the amount every future run requires.”
+Using the minimum avoids refusing a budget merely because it is below a median that a short successful run might beat.
+
+The public test file at [the same commit's budget-floor test](https://github.com/tangle-network/agent-runtime/blob/012762f00b012507d924edd6f060e5f7edec9b3a/tests/kernel/budget-floor.test.ts) checks all four authored budgets against 31,211.
+It also checks that a budget at or above the floor is admitted and that unmeasured entries remain `null`.
+The test is small, but the design decision is larger: a measured census can make one refusal precise without pretending to know the other entries.
+
+## Four authored budgets were impossible at that boundary
+
+The public record says four separate parent runs authored the following child budgets.
+
+| Authored child budget | Comparison with 31,211 | Preflight result |
+| ---: | --- | --- |
+| 2,000 | 29,211 below the measured minimum | `below-runtime-floor` |
+| 8,000 | 23,211 below the measured minimum | `below-runtime-floor` |
+| 12,000 | 19,211 below the measured minimum | `below-runtime-floor` |
+| 20,000 | 11,211 below the measured minimum | `below-runtime-floor` |
+
+The arithmetic is only a toy comparison against the recorded minimum.
+It does not estimate a new floor, and it does not say how many tokens a future child will use.
+It answers the narrower question that the runtime needs before launching: is the requested ceiling below the lowest settlement we have seen for this exact measured pairing?
+
+A **preflight rejection** is a decision made after the runtime knows which execution path will run but before it admits the child to useful work.
+In this change, the floor check happens after executor resolution because that is where the runtime knows the backend.
+If the budget is below a known floor, the reservation is reconciled with zero spend, the permit is released, and the caller receives `below-runtime-floor`.
+
+That ordering preserves accounting.
+The parent does not pay for a child that the runtime rejected before execution.
+The settlement also remains distinct from ordinary pool exhaustion, because the caller needs to choose a larger budget rather than compete for a smaller slice of the same pool.
+
+## Unknown floors stay `null`
+
+The most important value in the public table may be the value that is absent.
+The commit leaves entries such as `codex` and `claude-code` as `null` because no measured floor was available for them at the time of the change.
+The inline router arm also has no floor of this kind because it carries coordination work without resending the same coding-agent scaffolding.
+
+`null` means “unknown and unenforced.”
+It does not mean zero tokens, free execution, or proof that the path has no setup cost.
+Zero would be a measured assertion that the path can settle with no input usage, which is a different and unsupported claim.
+
+This is a practical safety rule for new backends.
+If a team adds a new coding-agent route and has not measured it, rejecting every small budget would be overconfident.
+The route may be lightweight, or its context assembly may differ from the measured `pi` path.
+Admitting the work while recording the settlement creates the evidence needed for a later floor.
+
+The settlement record needs enough context to make that later measurement meaningful.
+At minimum, keep the backend identity, model identity, input-token count, output-token count, iteration count, and the context policy that produced them.
+The same backend label can hide different system prompts, tool catalogs, workspace snapshots, or replay rules.
+Two numbers with the same label but different inputs should not be merged into one floor without an explanation.
+
+The parent also needs to know whether a value is a completed settlement or a stop event.
+A child killed before its first useful turn may report a large input count, but that observation answers a different question from a child that reached a checked output.
+The public commit uses the settlements that the runtime measured for the pairing, while the separate overrun example explains why a child can write an artifact and still fail its budget.
+Keeping those records distinct prevents a failed admission study from becoming a fake lower bound.
+
+This provenance is useful when the floor changes.
+If a new tool catalog adds 10,000 input tokens, an operator can point to the context change instead of treating the higher floor as random model behavior.
+If a provider changes its token accounting, the old rows can be retired or relabeled rather than silently mixed with new values.
+The floor is a small table, but the table must carry the conditions that make its numbers comparable.
+
+The reverse risk also matters.
+If a team copies 31,211 into every backend entry, a successful short run on another path could be refused without reason.
+The floor belongs to a backend/model pairing and its context policy, not to the word “agent.”
+Changes to model, system instructions, tools, workspace size, turn replay, or provider routing can all move the number.
+
+## A toy preflight check you can run
+
+The following program models the same decision with intentionally small values.
+It distinguishes a known floor, an unknown floor, and a child whose requested budget is too small.
+It uses only Node's built-in assertion library.
+
+```typescript
+import assert from 'node:assert/strict'
+
+type Backend = 'coding-cli' | 'inline-router' | 'new-backend'
+type Preflight =
+  | { ok: true; floor: number | null }
+  | { ok: false; reason: 'below-runtime-floor'; floor: number }
+
+const inputFloor: Record<Backend, number | null> = {
+  'coding-cli': 240,
+  'inline-router': null,
+  'new-backend': null,
+}
+
+function preflight(backend: Backend, maxInputTokens: number): Preflight {
+  const floor = inputFloor[backend]
+  if (floor !== null && maxInputTokens < floor) {
+    return { ok: false, reason: 'below-runtime-floor', floor }
+  }
+  return { ok: true, floor }
+}
+
+assert.deepEqual(preflight('coding-cli', 120), {
+  ok: false,
+  reason: 'below-runtime-floor',
+  floor: 240,
+})
+assert.deepEqual(preflight('coding-cli', 240), { ok: true, floor: 240 })
+assert.deepEqual(preflight('inline-router', 1), { ok: true, floor: null })
+assert.deepEqual(preflight('new-backend', 1), { ok: true, floor: null })
+console.log('budget-floor example: 4 checks passed')
+```
+
+Save it as `budget-floor-example.ts` and run `npx --yes tsx budget-floor-example.ts`.
+The toy `coding-cli` floor is 240 rather than 31,211 so the boundary is easy to inspect.
+The two `null` entries show the important behavior: an unknown path is admitted and measured later.
+
+The example returns the floor in the rejection so a caller can explain the action.
+A production runtime may return a richer union with reservation state, backend identity, and a measurement reference.
+The caller should still be able to distinguish “the pool had no room” from “this path cannot begin under that ceiling.”
+
+## The floor check does not replace a budget ledger
+
+A floor is an admission aid, not a complete cost model.
+The shared pool still has to reserve the requested amount, consume usage events, reconcile actual spend, and release what was not used.
+The [generic executor article](/blog/agent-runtime-generic-executor-deletion/) describes why those boundaries belong to the shared runtime rather than to one special coding path.
+
+The floor also does not guarantee completion.
+A child with a 100,000-token budget can still fail because its provider is unavailable, its tool returns an error, its task is malformed, or its output fails the delivery check.
+The [worker observability article](/blog/agent-runtime-worker-observability/) explains why those outcomes need separate records instead of one generic “agent failed” label.
+
+The floor check does not infer a floor from one failed run.
+A failed child may have stopped because of a deadline, a provider error, or a missing artifact.
+Only a settlement that tells you how much the path consumed before a useful end state can contribute to a floor, and even then the pairing and context must be recorded.
+
+The public commit's measurements also do not establish a universal property of `pi`, `glm-5.2`, or Tangle Router in every deployment.
+They establish a lower bound for the observed combination under the measured context policy.
+That boundary is why the number is useful and why the number must be re-measured after material changes.
+
+## Choose a ceiling from evidence
+
+When a backend/model pairing has a measured floor, reject budgets below the smallest observed settlement before launching a child.
+Give the parent the named reason and the measured value so it can raise the budget or select another path.
+
+When the pairing is unmeasured, keep the floor `null`, allow the normal pool policy to decide, and capture the settlement with enough context to classify it later.
+Do not turn missing measurements into zeroes.
+
+When the path changes its model, tool set, workspace context, or turn-replay policy, treat the old floor as stale evidence until a fresh run confirms that it still bounds the new path.
+The runtime should make that re-measurement cheap because the alternative is a stream of child failures that look like model quality problems.
+
+The immediate builder decision is simple.
+Use a measured floor to prevent an impossible child budget from entering the queue, and use `null` to say honestly that the evidence has not arrived yet.
+That is enough to remove one class of false negatives without inventing certainty for every backend.
+
+## FAQ
+
+### What is a runtime token floor?
+
+A runtime token floor is the smallest observed input-token settlement for a specific execution backend, model, and context policy.
+It is a conservative lower bound for admission, not a universal token price or completion guarantee.
+
+### Why can a child spend tokens before it reads the task?
+
+The execution path may send system instructions, tool definitions, workspace context, and prior-turn material before the task content reaches the model.
+Those fixed inputs count toward the budget.
+
+### What does `below-runtime-floor` mean?
+
+It means the requested child ceiling is below a measured minimum for the selected path.
+The caller should raise the budget or choose another path instead of retrying with a smaller budget.
+
+### Why is an unmeasured floor `null` instead of zero?
+
+`null` preserves the fact that no measurement exists.
+Zero would falsely claim that the path has no minimum input cost and could cause the runtime to make an unjustified admission decision.
+
+### Does meeting the floor mean the worker will succeed?
+
+No.
+It means only that the budget is not below the observed setup boundary.
+Provider errors, tool failures, task correctness, output delivery, and policy checks still need their own results.
+
+### Which package version contains the public runtime change?
+
+At the time of this article's publication on 2026-08-09, the public registry reports `@tangle-network/agent-runtime@0.128.0`.
+The commit link remains the source evidence for this specific change, so pin and verify the package version your application installs.
+
+## Public evidence
+
+The [budget-floor commit](https://github.com/tangle-network/agent-runtime/commit/012762f00b012507d924edd6f060e5f7edec9b3a) records the six settlements, four authored budgets, rejection reason, refund behavior, and type-check result.
+The [open budget-floor test](https://github.com/tangle-network/agent-runtime/blob/012762f00b012507d924edd6f060e5f7edec9b3a/tests/kernel/budget-floor.test.ts) shows the measured value, the `null` cases, and the authored-budget assertions.
+The [published agent-runtime package](https://www.npmjs.com/package/@tangle-network/agent-runtime) is the installable boundary and may move ahead of or behind a source commit during release automation.
