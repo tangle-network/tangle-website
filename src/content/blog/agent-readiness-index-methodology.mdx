@@ -35,12 +35,15 @@ It does not claim to measure general coding ability or every provider’s API.
 ## The failure that looks like a provider problem
 
 Stripe’s current documentation distinguishes pausing payment collection from pausing a subscription.
-The documented field named "pause_collection" leaves the subscription status unchanged, while the pause-subscription flow can set the status to "paused".
+The documented field named "pause_collection" leaves the subscription status unchanged, while the [pause-subscription API endpoint](https://docs.stripe.com/api/subscriptions/pause.md?api-version=preview) can set the status to "paused".
 The [Stripe API reference](https://docs.stripe.com/api/subscriptions/update) and [pause-subscription guide](https://docs.stripe.com/billing/subscriptions/pause) make that difference explicit.
 
 A client written from memory can call the old-looking field, receive a successful HTTP response, and leave service delivery active when the product meant to pause it.
 The integration did not fail at compilation.
 It failed at the state the customer sees.
+
+The pause endpoint is a separate `POST /v1/subscriptions/{id}/pause` operation.
+The current guide says it requires Stripe API version `2025-06-30.preview` or later.
 
 Stripe also removed subscription-level "current_period_start" and "current_period_end" in the "2025-03-31.basil" release and moved billing periods to subscription items.
 The [dated Stripe changelog entry](https://docs.stripe.com/changelog/basil/2025-03-31/deprecate-subscription-current-period-start-and-end) documents the replacement.
@@ -100,9 +103,11 @@ The index is built around four choices.
 | Hidden execution | The submitted code runs against a server that checks behavior | A prose answer or status code cannot pass alone |
 | Calibration | Empty, current-reference, and stale solutions are tested before admission | A task must separate doing nothing, knowing the contract, and remembering the old contract |
 
-The public [Stripe benchmark board](/benchmarks/stripe) shows the current task count, public rows, denominator, per-task heatmap, and run date.
+The public [Stripe benchmark board](/benchmarks/stripe) shows the task count, public rows, denominator, per-task heatmap, and run date for this dated snapshot.
 The benchmark task suite remains private, so the board does not expose task contents.
 That protects the hidden assertions, but it also limits independent reproduction.
+The private mock contract was derived from the linked Stripe documentation and admitted only after empty, documented, and stale implementations passed the calibration checks described above.
+The board publishes no separate run ID or Stripe API-version value, so treat this as dated benchmark evidence rather than a live Stripe guarantee.
 The [AI agent discovery guide](/blog/how-ai-agents-discover-products) covers the public documentation and manifest surfaces an agent can inspect before writing an integration.
 
 ## A hidden execution test checks behavior
@@ -110,7 +115,7 @@ The [AI agent discovery guide](/blog/how-ai-agents-discover-products) covers the
 Each task gives the agent a goal and access to public documentation.
 The task does not hand over the exact request shape that the agent is expected to discover.
 
-The submitted code is run against a mock server that implements the current behavior for the tested endpoint.
+The submitted code is run against a mock server that implements the Stripe behavior recorded for the benchmark task.
 The mock is a test double for the provider’s API.
 It returns the request and response behavior needed to check the integration without sending the benchmark run to a live payment account.
 
@@ -120,12 +125,7 @@ A useful grader checks fields and side effects:
 {
   "request": {
     "method": "POST",
-    "path": "/v1/subscriptions/sub_example",
-    "body": {
-      "pause_collection": {
-        "behavior": "void"
-      }
-    }
+    "path": "/v1/subscriptions/sub_example/pause"
   },
   "expected": {
     "status": "paused",
@@ -136,7 +136,8 @@ A useful grader checks fields and side effects:
 }
 ~~~
 
-The object above is an illustrative grader shape.
+The object above is an illustrative grader shape for the pause-subscription operation.
+Updating `/v1/subscriptions/{id}` with `pause_collection` pauses payment collection while the subscription remains active; the separate pause operation produces the paused status.
 The public benchmark does not publish its task assertions.
 The principle is the important part: a client can receive status 200 and still fail if it changed the wrong resource state.
 
@@ -166,7 +167,7 @@ If a task fails calibration, remove or repair it before comparing agent profiles
 
 ## The public Stripe snapshot
 
-The current public board snapshot was generated on July 25, 2026.
+The public board snapshot used here was generated on July 25, 2026.
 It contains 12 tasks, but some rows have fewer completed attempts because the board preserves the real denominator.
 The table below includes every public row and its 95 percent interval.
 
@@ -199,7 +200,7 @@ The first public row is 11 passes out of 12 attempts, which is 91.7 percent.
 The fifth row is 6 passes out of 10 attempts, which is 60.0 percent.
 Those are not equally informative observations, and neither is a permanent property of the model name in the first column.
 
-The board’s interval gives a rough range for the underlying pass rate under the benchmark’s sampling assumptions.
+The board’s 95% Wilson interval gives a range for the underlying pass rate under the benchmark’s sampling assumptions.
 It is wide because twelve tasks provide little room to distinguish close configurations.
 If one additional task changes a row from 10/12 to 11/12, the displayed percentage moves by 8.3 points even though the underlying behavior may not have changed in a durable way.
 
@@ -294,27 +295,18 @@ Use per-task failures to improve docs and errors.
 Use fresh tasks to check whether the improvement survives the next API change.
 
 
-## What does the Agent Readiness Index measure?
+## API benchmark FAQ
+
+### What does the Agent Readiness Index measure?
 
 It measures whether a coding-agent configuration can discover and use a changing API contract well enough for its code to pass hidden execution checks.
 
-## Does a high score prove that an agent can build any integration?
-
-No.
-It describes one provider, one task set, one run procedure, and the published attempt counts.
-It does not measure general coding, interface work, or every provider’s current behavior.
-
-## Why use hidden execution checks instead of a model judge?
-
-The code must send the right request and create the right result against the current contract.
-That gives the pass condition an inspectable behavior rather than a second model’s opinion about the explanation.
-
-## Why are there duplicate model and harness labels?
+### Why are there duplicate model and harness labels?
 
 The public rows represent distinct agent-profile configurations.
 The board exposes the model and harness but does not expose every changed profile axis.
 Readers should not infer a cause the public data does not show.
 
-## How should a company use a low score?
+### How should a company use a low score?
 
 Inspect the per-task failure pattern, make the current contract discoverable, make silent failures loud where possible, and rerun the same calibrated tasks after the change.

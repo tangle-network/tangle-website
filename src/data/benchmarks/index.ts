@@ -57,7 +57,7 @@ export const stripe: DomainBoard = {
   referenceUrl: 'https://docs.stripe.com/api/versioning',
   referenceLabel: 'Stripe API versioning',
   scoredBy:
-    'Each task is graded by a hidden mock server implementing Stripe current API contract (endpoints, required params, error shapes) including the trap a from-memory solution falls into. Pass means the agent code executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+    'Each task is graded by a hidden mock server implementing the Stripe contract recorded for this benchmark run (endpoints, required params, error shapes), including the trap a from-memory solution falls into. Pass means the agent code executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
   profiles: stripeResults.profiles as BoardProfile[],
   perTask: stripeResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
@@ -75,12 +75,12 @@ export const calcom: DomainBoard = {
   company: 'Cal.com',
   category: 'Coding',
   blurb:
-    'Two coding tasks that implement a client for the Cal.com Bookings API v2, whose required versioned-header dates are post-cutoff, so a client written from memory falls back to the legacy v1 contract and fails.',
+    'Two coding tasks that implement a client for the Cal.com Bookings API v2. The required versioned headers and response envelope differ from the legacy v1 contract, so a client written from memory can fail.',
   benchSource: 'Proprietary',
   by: 'Tangle VerticalBench',
   sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
   scoredBy:
-    'Each task is graded by a hidden mock server implementing Cal.com current v2 Bookings contract (Bearer auth, cal-api-version headers, response envelope, cursor pagination). Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+    'Each task is graded by a hidden mock server implementing the Cal.com v2 Bookings contract recorded for this benchmark run (Bearer auth, cal-api-version headers, response envelope, cursor pagination). Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
   profiles: calcomResults.profiles as BoardProfile[],
   perTask: calcomResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',

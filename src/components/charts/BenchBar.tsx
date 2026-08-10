@@ -172,6 +172,7 @@ export default function BenchBar({ rows, metricLabel = 'Score' }:
                 <span className="vbb-name">{benchmarkModelLabel(r.model)}</span>
                 <span className="vbb-sub mono">via {isHarness ? benchmarkHarnessLabel(r.harness) : 'direct call'}</span>
                 <span className="vbb-profile mono" title={r.agentProfile ?? 'raw'}>{benchmarkProfileLabel(r.agentProfile)}</span>
+                <span className="vbb-n mono">n={r.n}</span>
               </div>
             );
           })}
