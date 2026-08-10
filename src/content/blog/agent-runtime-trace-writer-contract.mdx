@@ -21,9 +21,9 @@ A trace reader is a program that loads recorded agent events, and it can be publ
 The reader opens one directory, expects one event shape, and finds nothing after a producer renames a folder or changes a filename.
 The agent still ran, but the evidence disappears at the boundary between writer and reader.
 
-Two public `agent-runtime` commits make that boundary explicit.
-[Commit `7d900957`](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the supervisor-run layout and bounded evidence helpers that a trace reader already needed.
-[Commit `a7bcb946`](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new supervisor state from `.loops` to `.agent` and leaves a legacy read path for older records.
+Two public `agent-runtime` changes make that boundary explicit.
+[The run-layout change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the supervisor-run layout and bounded evidence helpers that a trace reader already needed.
+[The state-directory change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new supervisor state from `.loops` to `.agent` and leaves a legacy read path for older records.
 
 The change is a lesson in public contracts.
 The writer and reader must agree on location, names, event shape, and compatibility behavior before either side can be released independently.
@@ -75,7 +75,7 @@ The reader needs answers to concrete questions:
 | Can an older run still be read? | A documented compatibility path |
 
 Without those answers, the reader must guess.
-It may scan every JSONL file and treat unrelated logs as spans.
+It may scan every JSON Lines file (JSONL), also called newline-delimited JSON (NDJSON), where each line contains one JSON object, and treat unrelated logs as spans.
 It may expect a final newline and discard the last event while a writer is appending it.
 It may interpret a worker label as a filename and create an invalid or ambiguous path.
 It may report an empty run when the data exists under a previous directory name.
@@ -84,14 +84,14 @@ The result is worse than a visible parser error.
 An empty report looks like a worker that produced no activity, so a reviewer can make a wrong decision from missing evidence.
 The runtime's task may have succeeded while the reader's input contract failed.
 
-## Commit 7d900957 publishes the missing writer contract
+## The run-layout change publishes the missing writer contract
 
-The public [7d900957 commit](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) promotes three groups of behavior into the runtime's public surface.
+The public [run-layout change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) promotes three groups of behavior into the runtime's public surface.
 The run-layout functions define where one supervisor run and each worker's inbox live.
 The untracked-clone helpers preserve working-tree artifacts that a plain history clone would omit.
 The worker-evidence helpers assemble bounded evidence for a settled worker.
 
-The layout at that commit places a run under `.loops/supervisor/<id>`.
+The published layout places a run under `.loops/supervisor/<id>`.
 Inside it, a worker inbox uses a safe worker label followed by `.inbox.ndjson`.
 A separate worker event file records control bookkeeping.
 The precise names matter because the reader can now open the same shape the writer promises.
@@ -110,36 +110,36 @@ Keeping those responsibilities separate prevents a telemetry failure from silent
 
 The change also publishes worker evidence as bounded data.
 Evidence should be large enough for the parent to make a decision and small enough to retain in a trace or journal.
-The exact limits belong to the runtime version, but the public commit makes the principle visible: a settled worker should expose a defined evidence block rather than every caller inventing its own summary.
+The exact limits belong to the runtime version, but the public change makes the principle visible: a settled worker should expose a defined evidence block rather than every caller inventing its own summary.
 
 This is an API change even though much of the work concerns files.
 The filesystem is the cross-process interface for a worker that outlives the process holding its in-memory handles.
 Publishing the functions and types makes that interface reviewable, testable, and available to the reader's maintainers.
 
-## Commit a7bcb946 moves new state to `.agent`
+## The state-directory change moves new state to `.agent`
 
 The first public layout carried the product-shell name `.loops` into the runtime contract.
-The [a7bcb946 commit](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) changes the writer to `.agent/supervisor/<id>`.
+The [state-directory change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) changes the writer to `.agent/supervisor/<id>`.
 The reason is organizational and technical.
 Agent-owned state such as hypotheses and skill-run records already lives under `.agent`, so supervisor state now sits beside it rather than under a product-branded directory.
 
 The move could have broken readers that already held old run records.
-The commit therefore exports a legacy path for readers that need historical visibility.
+The change therefore exports a legacy path for readers that need historical visibility.
 Readers check the new `.agent` location first and fall back to the old `.loops` location.
 The new writer creates `.agent`; it does not create new `.loops` runs.
 
-The commit records that the rename happened before the `v0.111.0` agent-runtime tags and that no released version had shipped the old writer path.
+The release history records that the rename happened before the `v0.111.0` agent-runtime tags and that no released version had shipped the old writer path.
 That statement bounds the migration.
 It does not mean that every private file or local experiment has the new layout.
 It means the public release history had a clean point at which the writer contract could move without stranding a released producer.
 
-The [open run-layout test at the rename commit](https://github.com/tangle-network/agent-runtime/blob/a7bcb946abe2118f023f018c7564bbd793be3658/tests/run-layout.test.ts) pins the new path and the legacy path separately.
+The [open run-layout test for the rename](https://github.com/tangle-network/agent-runtime/blob/a7bcb946abe2118f023f018c7564bbd793be3658/tests/run-layout.test.ts) pins the new path and the legacy path separately.
 It treats a path change as a compatibility decision rather than a formatting preference.
 That test should fail if a future refactor silently sends a writer back to `.loops`.
 
 ## The published packages are separate boundaries
 
-The current public package versions matter because a source commit and an installable package can move through release automation at different times.
+The current public package versions matter because a source change and an installable package can move through release automation at different times.
 On 2026-08-09, the public registry reports `@tangle-network/traces@0.11.5` and `@tangle-network/agent-runtime@0.128.0`.
 The [traces package page](https://www.npmjs.com/package/@tangle-network/traces) is the installable reader boundary.
 The [agent-runtime package page](https://www.npmjs.com/package/@tangle-network/agent-runtime) is the installable writer/runtime boundary.
@@ -155,8 +155,8 @@ That separation lets a profile choose where work runs while the surrounding runt
 
 These package pages do not prove that every future release preserves every experimental helper.
 They tell a reader where the public installation boundary is today.
-The commit links above prove the specific layout changes.
-Keep both citations beside a version-sensitive statement so an application does not infer that the latest package always matches an arbitrary source commit.
+The source links above prove the specific layout changes.
+Keep both citations beside a version-sensitive statement so an application does not infer that the latest package always matches an arbitrary source version.
 
 ## A backend is a choice that needs a trace policy
 
@@ -265,9 +265,9 @@ The same rule applies to backend classification.
 Do not let an unknown backend enter a default trace path because the fallback produces a report that happens to render.
 Make the classification compile, test the event source, then verify one real run for that backend.
 
-## What these commits do not prove
+## What these source changes do not prove
 
-The two commits prove a public writer layout and a migration rule.
+The two source changes prove a public writer layout and a migration rule.
 They do not prove that every trace contains every event a product might want.
 The run-layout contract concerns durable supervisor state, not a universal schema for model requests, tool outputs, or application databases.
 
@@ -332,6 +332,6 @@ Use the package pages and release metadata to check a later installation.
 
 ## Public evidence
 
-The [writer-contract commit](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the run layout, worker inbox, untracked-artifact copy, and bounded worker-evidence helpers.
-The [layout migration commit](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new writes to `.agent` and documents the legacy `.loops` reader fallback.
+The [writer-contract source change](https://github.com/tangle-network/agent-runtime/commit/7d900957df97164b8c4ca41bf9e1490a07ce2a49) publishes the run layout, worker inbox, untracked-artifact copy, and bounded worker-evidence helpers.
+The [layout migration source change](https://github.com/tangle-network/agent-runtime/commit/a7bcb946abe2118f023f018c7564bbd793be3658) moves new writes to `.agent` and documents the legacy `.loops` reader fallback.
 The [public traces documentation](https://github.com/tangle-network/traces#integrate-your-own-system) documents the supported event-contract and translation paths.
