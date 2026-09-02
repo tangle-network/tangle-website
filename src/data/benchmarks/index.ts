@@ -81,7 +81,7 @@ export const calcom: DomainBoard = {
   by: 'Tangle VerticalBench',
   sourceUrl: 'https://github.com/tangle-network/blueprint-agent',
   scoredBy:
-    'Each task is graded by a hidden mock server implementing the Cal.com v2 Bookings contract recorded for this benchmark run (Bearer auth, cal-api-version headers, response envelope, cursor pagination). Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap.',
+    'Each task is graded by a hidden mock server implementing the Cal.com v2 Bookings contract recorded for this benchmark run (Bearer auth, cal-api-version headers, response envelope, cursor pagination). Pass means the agent client executes correctly against the mock, never a model judging its own work. Every task is calibrated three ways before it is admitted: an empty solution fails, a current-contract reference passes, and the stale-memory solution fails on the intended trap. The chart shows each profile aggregate across both tasks, and the table uses the same score order. GPT-5 mini without a reviewer scored 50% overall: task 01 passed and task 02 failed. GPT-5 mini with the default reviewer scored 100% on its one recorded task. Claude Sonnet with the default reviewer scored 50% overall.',
   profiles: calcomResults.profiles as BoardProfile[],
   perTask: calcomResults.perTask as PerTaskBreakdown[],
   metricLabel: 'Pass rate',
