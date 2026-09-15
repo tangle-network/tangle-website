@@ -24,7 +24,7 @@ Every agent-intent post needs:
 
 ## Live Tangle Surfaces
 
-- Sandbox page: `https://tangle.tools/services/sandbox`
+- Sandbox page: `https://sandbox.tangle.tools/`
 - Tangle root manifest: `https://tangle.tools/.well-known/tangle-agent.json`
 - Router manifest: `https://router.tangle.tools/.well-known/tangle-agent.json`
 - Sandbox manifest: `https://agents.tangle.tools/.well-known/tangle-agent.json`
