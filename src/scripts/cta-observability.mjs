@@ -15,7 +15,6 @@ const PRODUCT_ORIGINS = new Map([
 const installedDocuments = new WeakSet()
 const ROOT_PATHS = new Set([
   '/',
-  '/benchmarks',
   '/blog',
   '/brand-kit',
   '/privacy-policy',
@@ -26,7 +25,7 @@ const ROOT_PATHS = new Set([
   '/sub-processors',
   '/terms-of-service',
 ])
-const CONTENT_PATH = /^\/(?:benchmarks\/[a-z0-9][a-z0-9-]{0,79}|blog\/(?:series\/[a-z0-9][a-z0-9-]{0,79}|[a-z0-9][a-z0-9-]{0,79}))$/
+const CONTENT_PATH = /^\/blog\/(?:series\/[a-z0-9][a-z0-9-]{0,79}|[a-z0-9][a-z0-9-]{0,79})$/
 // "token" is a normal term in static product slugs; unknown dynamic paths still fail closed below.
 const SENSITIVE_PATH = /(?:@|\b(?:api[-_]?key|email|password|secret|user[-_]?id)\b)/i
 
