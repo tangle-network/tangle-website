@@ -1,0 +1,140 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { assessedSuites, suiteById } from '../../data/benchmarks/index';
+import type { GateOutcome } from '../../data/benchmarks/standard';
+
+export function getStaticPaths() {
+  return assessedSuites.map((suite) => ({ params: { id: suite.id } }));
+}
+
+const { id } = Astro.params;
+const suite = suiteById(id!);
+if (!suite) return Astro.redirect('/benchmarks');
+
+const { assessment } = suite;
+const blocked = assessment.gates.filter((gate) => gate.outcome !== 'met');
+
+const outcomeClass: Record<GateOutcome, string> = {
+  met: 'text-emerald-300 border-emerald-300/40',
+  unmet: 'text-red-300 border-red-300/40',
+  unproven: 'text-amber-300 border-amber-300/40',
+};
+
+const facts: { label: string; value: string; counts: string }[] = [
+  {
+    label: 'Run recorded',
+    value: assessment.runDate,
+    counts: 'the date the sweep was exported to this record',
+  },
+  {
+    label: 'Held-out tasks',
+    value: assessment.taskCount === null ? 'not broken out' : String(assessment.taskCount),
+    counts: 'distinct tasks in the suite, each graded independently',
+  },
+  {
+    label: 'Agent configurations',
+    value: assessment.configCount === null ? String(assessment.withheldRows) : String(assessment.configCount),
+    counts: 'distinct AgentProfile × runLoop × execution-environment combinations swept',
+  },
+  {
+    label: 'Cells graded',
+    value:
+      assessment.cellsExpected === null
+        ? 'not broken out'
+        : `${assessment.cellsGraded} of ${assessment.cellsExpected}`,
+    counts: 'task × configuration pairs that carry a grade, out of the pairs the sweep should contain',
+  },
+  {
+    label: 'Cells with no model call',
+    value: assessment.cellsGraded === 0 ? 'not recorded' : String(assessment.cellsWithoutModelCall),
+    counts: 'graded cells that recorded zero input and zero output tokens',
+  },
+  {
+    label: 'Repetitions per cell',
+    value: assessment.repetitions === null ? 'not recorded' : String(assessment.repetitions),
+    counts: 'times each task × configuration pair was run',
+  },
+  {
+    label: 'Scored configurations withheld',
+    value: String(assessment.withheldRows),
+    counts: `rows in the run record carrying a ${suite.metricLabel.toLowerCase()}, none of them published`,
+  },
+];
+---
+
+<BaseLayout
+  title={`${suite.domain} benchmark`}
+  description={`${suite.domain}: what the suite grades, the coverage its last run achieved, and which publishing gate is keeping its ranking unpublished.`}
+>
+  <section class="max-w-4xl mx-auto px-6 pt-32 pb-12">
+    <a class="text-sm text-indigo-300 hover:text-indigo-200" href="/benchmarks">All benchmarks</a>
+    <h1 class="mt-6 text-4xl md:text-5xl font-bold tracking-tight">{suite.domain}</h1>
+    <p class="mt-6 text-lg text-text-secondary leading-relaxed">{suite.blurb}</p>
+    <p class="mt-6 text-text-secondary leading-relaxed">
+      {assessment.publishes
+        ? `This run clears all three publishing gates, so its ranking is published below.`
+        : `No ranking is published for this suite. Its run record holds ${assessment.withheldRows} scored configurations, and ${blocked.length === 1 ? 'one gate is' : `${blocked.length} gates are`} not met, so no score, rank or ${suite.metricLabel.toLowerCase()} from it appears on this page.`}
+    </p>
+    {(suite.sourceUrl || suite.paperUrl) && (
+      <div class="mt-6 flex flex-wrap gap-6 text-sm">
+        {suite.sourceUrl && (
+          <a class="text-indigo-300 hover:text-indigo-200" href={suite.sourceUrl} target="_blank" rel="noopener">
+            {suite.by} on GitHub
+          </a>
+        )}
+        {suite.paperUrl && (
+          <a class="text-indigo-300 hover:text-indigo-200" href={suite.paperUrl} target="_blank" rel="noopener">
+            The paper behind the suite
+          </a>
+        )}
+      </div>
+    )}
+  </section>
+
+  <section class="max-w-4xl mx-auto px-6 pb-16">
+    <h2 class="text-2xl font-bold tracking-tight">How one task is graded</h2>
+    <p class="mt-4 text-text-secondary leading-relaxed">{suite.scoredBy}</p>
+  </section>
+
+  <section class="max-w-4xl mx-auto px-6 pb-16">
+    <h2 class="text-2xl font-bold tracking-tight">What the last run actually covered</h2>
+    <div class="mt-6 border border-white/15 bg-white/[0.03] divide-y divide-white/10">
+      {facts.map((fact) => (
+        <div class="grid gap-1 px-5 py-4 sm:grid-cols-[14rem_7rem_1fr] sm:items-baseline sm:gap-5">
+          <div class="text-sm font-medium text-text-primary">{fact.label}</div>
+          <div class="font-mono text-sm text-text-primary">{fact.value}</div>
+          <div class="text-xs leading-relaxed text-text-muted">{fact.counts}</div>
+        </div>
+      ))}
+    </div>
+    {suite.coverageNote && (
+      <div class="mt-6 border-l-2 border-amber-300/50 pl-5">
+        <p class="text-sm leading-relaxed text-text-secondary">
+          <span class="text-amber-300">Recorded outside the run record.</span> {suite.coverageNote}
+        </p>
+      </div>
+    )}
+  </section>
+
+  <section class="max-w-4xl mx-auto px-6 pb-24">
+    <h2 class="text-2xl font-bold tracking-tight">The three gates against this run</h2>
+    <div class="mt-6 space-y-px bg-white/15 border border-white/15">
+      {assessment.gates.map((gate) => (
+        <div class="bg-bg-dark p-6">
+          <div class="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 class="font-medium text-text-primary">{gate.requirement}</h3>
+            <span class={`shrink-0 border px-2 py-0.5 text-xs uppercase tracking-wide ${outcomeClass[gate.outcome]}`}>
+              {gate.outcome}
+            </span>
+          </div>
+          <p class="mt-3 text-sm leading-relaxed text-text-secondary">{gate.finding}</p>
+        </div>
+      ))}
+    </div>
+    <p class="mt-8 max-w-2xl text-sm leading-relaxed text-text-muted">
+      Each result above is computed from this suite's run record when the site is built. Rerunning the
+      sweep so that every cell is graded, no cell loses its model call, and the top row separates from
+      the runner-up over repeated passes is what publishes the ranking here.
+    </p>
+  </section>
+</BaseLayout>
