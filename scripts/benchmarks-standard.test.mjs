@@ -126,3 +126,45 @@ test('gateTally reports a denominator', () => {
   const blocked = { assessment: assess({ source: 'test', generated: '2026-09-20', rows: [] }) }
   assert.deepEqual(gateTally([met, blocked], 'stable'), { met: 1, total: 2 })
 })
+
+test('a single scored configuration leaves the stable gate unproven, not met', () => {
+  const run = qualifyingRun()
+  run.rows = [run.rows[0]]
+  run.profiles = [run.profiles[0]]
+  for (const task of run.perTask) delete task.byProfile.b
+  const assessment = assess(run)
+  assert.equal(outcome(assessment, 'stable'), 'unproven')
+  assert.match(assessment.gates[2].finding, /no runner-up/)
+  assert.equal(assessment.publishes, false)
+})
+
+test('a missing confidence bound on the top two rows leaves the stable gate unproven', () => {
+  const run = qualifyingRun()
+  delete run.rows[1].ciHigh
+  const assessment = assess(run)
+  assert.equal(outcome(assessment, 'stable'), 'unproven')
+  assert.match(assessment.gates[2].finding, /cannot be measured/)
+  assert.equal(assessment.publishes, false)
+})
+
+test('repetitions report the fewest of any cell, so one unrepeated cell blocks publication', () => {
+  const run = qualifyingRun()
+  run.perTask[5].byProfile.b.n = 1
+  const assessment = assess(run)
+  assert.equal(assessment.repetitions, 1)
+  assert.equal(outcome(assessment, 'stable'), 'unmet')
+  assert.match(assessment.gates[2].finding, /ran once/)
+  assert.equal(assessment.publishes, false)
+})
+
+test('an undeclared configuration in the task breakdown fails the graded gate even when counts match', () => {
+  const run = qualifyingRun()
+  // Swap a declared cell for a stray one: the raw cell count stays 24.
+  run.perTask[2].byProfile.zzz = run.perTask[2].byProfile.b
+  delete run.perTask[2].byProfile.b
+  const assessment = assess(run)
+  assert.equal(outcome(assessment, 'graded'), 'unmet')
+  assert.match(assessment.gates[0].finding, /`zzz`/)
+  assert.equal(assessment.cellsGraded, 23)
+  assert.equal(assessment.publishes, false)
+})

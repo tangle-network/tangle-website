@@ -30,7 +30,7 @@ export interface Assessment {
   cellsWithoutModelCall: number;
   taskCount: number | null;
   configCount: number | null;
-  /** Repetitions per cell. One sweep cannot measure rerun variance. */
+  /** Fewest repetitions of any cell. One unrepeated cell cannot measure rerun variance. */
   repetitions: number | null;
   /** Scored configurations held back from publication. */
   withheldRows: number;
@@ -46,7 +46,7 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function gradedGate(cellsGraded: number, cellsExpected: number | null): Gate {
+function gradedGate(cellsGraded: number, cellsExpected: number | null, undeclared: string[]): Gate {
   const requirement = 'Every task × configuration cell runs to completion and receives a valid grade.';
   if (cellsExpected === null) {
     return {
@@ -55,6 +55,15 @@ function gradedGate(cellsGraded: number, cellsExpected: number | null): Gate {
       outcome: 'unproven',
       finding:
         'The run record carries per-configuration aggregates only, with no task × configuration breakdown, so per-cell completion cannot be checked against it.',
+    };
+  }
+  if (undeclared.length > 0) {
+    const ids = undeclared.map((id) => `\`${id}\``).join(', ');
+    return {
+      id: 'graded',
+      requirement,
+      outcome: 'unmet',
+      finding: `The task breakdown carries grades for ${ids}, which the record does not declare as a configuration, so the sweep's shape does not match its declaration and the declared cells cannot be trusted to be the ones that ran.`,
     };
   }
   const missing = cellsExpected - cellsGraded;
@@ -132,16 +141,33 @@ function stableGate(record: RunRecord, repetitions: number | null): Gate {
       finding: 'No run is recorded for this suite yet, so there is no ranking to test.',
     };
   }
-  const reasons: string[] = [];
-
   const top = ranked[0];
   const runnerUp = ranked[1];
-  if (top && runnerUp && top.ciLow != null && runnerUp.ciHigh != null) {
-    if (top.ciLow <= runnerUp.ciHigh) {
-      reasons.push(
-        `the top row's 95% interval (${percent(top.ciLow)}–${percent(top.ciHigh ?? 1)}) overlaps the runner-up's (${percent(runnerUp.ciLow ?? 0)}–${percent(runnerUp.ciHigh)}), so first place is not separated from second`,
-      );
-    }
+  // Both of these are "unproven", not "unmet": nothing measured says the
+  // ranking is unstable, but nothing measured says it is stable either, and a
+  // gate that cannot be measured must not read as passed.
+  if (!runnerUp) {
+    return {
+      id: 'stable',
+      requirement,
+      outcome: 'unproven',
+      finding: 'Only one configuration is scored, so there is no runner-up to separate it from and stability cannot be measured.',
+    };
+  }
+  if (top.ciLow == null || runnerUp.ciHigh == null) {
+    return {
+      id: 'stable',
+      requirement,
+      outcome: 'unproven',
+      finding: 'The top two rows do not both carry a 95% interval, so their separation cannot be measured.',
+    };
+  }
+
+  const reasons: string[] = [];
+  if (top.ciLow <= runnerUp.ciHigh) {
+    reasons.push(
+      `the top row's 95% interval (${percent(top.ciLow)}–${percent(top.ciHigh ?? 1)}) overlaps the runner-up's (${percent(runnerUp.ciLow ?? 0)}–${percent(runnerUp.ciHigh)}), so first place is not separated from second`,
+    );
   }
 
   const tasksPerRow = ranked.map((row) => row.n);
@@ -177,16 +203,27 @@ export function assess(record: RunRecord): Assessment {
   const profiles = record.profiles ?? [];
   const hasMatrix = perTask.length > 0 && profiles.length > 0;
 
-  const cells = perTask.flatMap((task) => Object.values(task.byProfile));
+  // Count only cells whose key is a declared profile. A stray key can make the
+  // raw count equal tasks × profiles while a declared configuration never ran.
+  const declared = new Set(profiles.map((profile) => profile.profileId));
+  const entries = perTask.flatMap((task) => Object.entries(task.byProfile));
+  const cells = hasMatrix
+    ? entries.filter(([key]) => declared.has(key)).map(([, cell]) => cell)
+    : entries.map(([, cell]) => cell);
+  const undeclared = hasMatrix
+    ? [...new Set(entries.map(([key]) => key).filter((key) => !declared.has(key)))].sort()
+    : [];
   const cellsGraded = cells.length;
   const cellsExpected = hasMatrix ? perTask.length * profiles.length : null;
   const cellsWithoutModelCall = cells.filter(
     (cell) => cell.meanTokensIn === 0 && cell.meanTokensOut === 0,
   ).length;
-  const repetitions = cells.length > 0 ? Math.max(...cells.map((cell) => cell.n)) : null;
+  // The fewest repetitions of any cell: one unrepeated cell leaves the ranking
+  // able to flip on rerun no matter how often the others ran.
+  const repetitions = cells.length > 0 ? Math.min(...cells.map((cell) => cell.n)) : null;
 
   const gates: Gate[] = [
-    gradedGate(cellsGraded, cellsExpected),
+    gradedGate(cellsGraded, cellsExpected, undeclared),
     cleanGate(record, cellsGraded, cellsWithoutModelCall),
     stableGate(record, repetitions),
   ];
