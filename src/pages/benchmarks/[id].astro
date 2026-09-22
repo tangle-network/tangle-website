@@ -22,6 +22,11 @@ const blockedPhrase =
       ? 'two of the three gates are not met'
       : 'one of the three gates is not met';
 
+// Rendered only when every gate is met; sorted here so the table order is the
+// ranking the gates were tested against, not the record's file order.
+const ranking = assessment.publishes ? [...suite.run.rows].sort((a, b) => b.score - a.score) : [];
+const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+
 const outcomeClass: Record<GateOutcome, string> = {
   met: 'text-emerald-300 border-emerald-300/40',
   unmet: 'text-red-300 border-red-300/40',
@@ -62,11 +67,17 @@ const facts: { label: string; value: string; counts: string }[] = [
     value: assessment.repetitions === null ? 'not recorded' : String(assessment.repetitions),
     counts: 'times each task × configuration pair was run',
   },
-  {
-    label: 'Scored configurations withheld',
-    value: String(assessment.withheldRows),
-    counts: `rows in the run record with a measured ${suite.metricLabel.toLowerCase()}, none of them published`,
-  },
+  assessment.publishes
+    ? {
+        label: 'Scored configurations published',
+        value: String(assessment.withheldRows),
+        counts: `rows in the run record with a measured ${suite.metricLabel.toLowerCase()}, all of them ranked above`,
+      }
+    : {
+        label: 'Scored configurations withheld',
+        value: String(assessment.withheldRows),
+        counts: `rows in the run record with a measured ${suite.metricLabel.toLowerCase()}, none of them published`,
+      },
 ];
 ---
 
@@ -98,6 +109,43 @@ const facts: { label: string; value: string; counts: string }[] = [
       </div>
     )}
   </section>
+
+  {assessment.publishes && (
+    <section class="max-w-4xl mx-auto px-6 pb-16">
+      <h2 class="text-2xl font-bold tracking-tight">Ranking</h2>
+      <div class="mt-6 overflow-x-auto border border-white/15 bg-white/[0.03]">
+        <table class="w-full text-sm">
+          <thead class="text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr class="border-b border-white/10">
+              <th class="px-5 py-3">#</th>
+              <th class="px-5 py-3">Configuration</th>
+              <th class="px-5 py-3">{suite.metricLabel}</th>
+              <th class="px-5 py-3">95% interval</th>
+              <th class="px-5 py-3">Graded tasks</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            {ranking.map((row, index) => (
+              <tr>
+                <td class="px-5 py-3 font-mono text-text-muted">{index + 1}</td>
+                <td class="px-5 py-3 text-text-primary">
+                  {row.model}{row.harness ? <span class="text-text-muted"> · {row.harness}</span> : null}
+                </td>
+                <td class="px-5 py-3 font-mono text-text-primary">{pct(row.score)}</td>
+                <td class="px-5 py-3 font-mono text-text-secondary">
+                  {row.ciLow != null && row.ciHigh != null ? `${pct(row.ciLow)}–${pct(row.ciHigh)}` : '—'}
+                </td>
+                <td class="px-5 py-3 font-mono text-text-secondary">{row.n}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-4 text-xs leading-relaxed text-text-muted">
+        Ordered by {suite.metricLabel.toLowerCase()}. Every row cleared the three gates below on this run.
+      </p>
+    </section>
+  )}
 
   <section class="max-w-4xl mx-auto px-6 pb-16">
     <h2 class="text-2xl font-bold tracking-tight">How one task is graded</h2>
@@ -140,9 +188,9 @@ const facts: { label: string; value: string; counts: string }[] = [
       ))}
     </div>
     <p class="mt-8 max-w-2xl text-sm leading-relaxed text-text-muted">
-      Each result above is computed from this suite's run record when the site is built. Rerunning the
-      sweep so that every cell is graded, no cell loses its model call, and the top row separates from
-      the runner-up over repeated passes is what publishes the ranking here.
+      {assessment.publishes
+        ? `Each result above is computed from this suite's run record when the site is built. The ranking stays published only while every gate stays met on the latest run.`
+        : `Each result above is computed from this suite's run record when the site is built. Rerunning the sweep so that every cell is graded, no cell loses its model call, and the top row separates from the runner-up over repeated passes is what publishes the ranking here.`}
     </p>
   </section>
 </BaseLayout>
