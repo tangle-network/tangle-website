@@ -52,6 +52,12 @@ test('an edit without the runner fails the digest', () => {
   assert.throws(() => verifyBoardRecord(board, 'edited.json'), /benchmark board edited.json does not verify/)
 })
 
+// The runner ranks AgentProfiles across models with a `profile` comparison
+// (blueprint-agent #2632); a board ordered by one verifies like any other.
+test('a record ordered by a profile comparison verifies', () => {
+  assert.deepEqual(boardRecordProblems(edited((b) => { b.comparisons[0].kind = 'profile' })), [])
+})
+
 const inconsistent = [
   ['a solved count its cells do not hold', (b) => { b.profiles[1].solved += 1 }, /counts \d+ solved; its cells hold/],
   ['a missing cell', (b) => { b.cells.pop() }, /has 9 of 10 task cells/],
@@ -70,6 +76,7 @@ const inconsistent = [
   ['an AgentProfile its digest does not name', (b) => { b.profiles[0].agentProfile.model.default = 'another-model' }, /AgentProfile digest does not match/],
   ['a looser analysis than the floors', (b) => { b.decision.alpha = 0.1 }, /alpha and power within the floors/],
   ['a grader that counts an F', (b) => { b.grader.passTier = 'F' }, /pass tier above F/],
+  ['a comparison of no known kind', (b) => { b.comparisons[0].kind = 'vibes' }, /comparison \S+ has no known kind/],
 ]
 for (const [name, edit, detail] of inconsistent) {
   test(`refuses ${name}, even re-signed`, () => {
