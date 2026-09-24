@@ -96,6 +96,7 @@ try {
 
       const layout = await page.evaluate(() => {
         const logo = document.querySelector('.wf-nav-brand-logo')
+        const card = document.querySelector('.p-card-art')
         const action = document.querySelector('.hero .hero-actions .btn-primary')
         const rect = action?.getBoundingClientRect()
         const x = rect ? Math.min(innerWidth - 1, Math.max(0, rect.left + rect.width / 2)) : -1
@@ -103,6 +104,9 @@ try {
         return {
           overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
           logoLoaded: Boolean(logo?.complete && logo.naturalWidth > 0),
+          logoSource: logo?.currentSrc ?? '',
+          cardBackground: card ? getComputedStyle(card).backgroundImage : '',
+          cardImageDisplay: card?.querySelector('img') ? getComputedStyle(card.querySelector('img')).display : '',
           actionHit: Boolean(action?.contains(document.elementFromPoint(x, y))),
           posterVisible: getComputedStyle(document.querySelector('.hero-poster')).display !== 'none',
           cls: window.__homeCls,
@@ -110,6 +114,16 @@ try {
       })
       assert.equal(layout.overflow, 0, `${fixture.name} horizontal overflow`)
       assert.ok(layout.logoLoaded, `${fixture.name} nav logo`)
+      if (fixture.mode === 'fast') {
+        assert.ok(layout.logoSource.endsWith('/brand/tangle-nav-icon.svg'), `${fixture.name} fast logo`)
+        assert.equal(layout.cardBackground, 'none', `${fixture.name} fast card background`)
+        assert.equal(layout.cardImageDisplay, 'block', `${fixture.name} lazy card image`)
+        assert.ok(!requests.some((url) => url.includes('Tnt%20Logo.png')), `${fixture.name} fetched control logo`)
+      } else {
+        assert.ok(layout.logoSource.includes('/images/webflow/Tnt%20Logo.png'), `${fixture.name} control logo`)
+        assert.ok(layout.cardBackground.includes('card-sandbox.webp'), `${fixture.name} control card background`)
+        assert.equal(layout.cardImageDisplay, 'none', `${fixture.name} control card image`)
+      }
       assert.ok(layout.actionHit, `${fixture.name} CTA hit target`)
       if (fixture.mode === 'fast' || fixture.isMobile) assert.ok(layout.posterVisible, `${fixture.name} poster`)
       if (fixture.name === 'desktop-control') {

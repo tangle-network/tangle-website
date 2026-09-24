@@ -42,6 +42,23 @@ Use `--round 2` for the second speed target.
 The candidate URL can be a preview deployment instead of a local server.
 The candidate must use the same browser, host, fixture, and sample count for a meaningful paired comparison.
 
+## Published homepage copy readback
+
+The [post-copy raw run](./live-post-copy-2026-09-24.json.gz) used the same host, browser, network and CPU settings, and 9 visits per fixture after website PR #164 deployed as `e577a4bdb42f8ae873409e8f2d23a13e3bc98acc`.
+All 36 visits returned HTTP 200, yielded paint and usable timestamps, had no horizontal overflow or console errors, and rendered the new heading.
+All 18 mobile visits passed menu open and close.
+
+| Fixture | Original FCP / usable p75 | Published-copy FCP / usable p75 |
+|---|---:|---:|
+| Desktop cold | 352 / 352 ms | 440 / 440 ms |
+| Desktop warm | 460 / 460 ms | 868 / 868 ms |
+| Mobile cold | 1,080 / 1,087.3 ms | 1,164 / 1,164.8 ms |
+| Mobile warm | 248 / 268 ms | 352 / 368.4 ms |
+
+This is one synthetic readback, not a causal attribution of the slower paints.
+The original round-one and round-two thresholds above remain fixed.
+The content fixture now pins the published homepage copy, including the hospitality preview and infrastructure action.
+
 ## Resource and behavior evidence
 
 Cold visits had 31 requests and about 1.22 MB of encoded network traffic at p75.
@@ -89,9 +106,10 @@ It rejects budgets raised above the prior base revision.
 | Local build path | Total / own requests | Built JS bytes | CLS |
 |---|---:|---:|---:|
 | Fast, desktop and mobile | 22 / 20 | 13,019 | 0 |
-| Control, desktop and mobile | 23 / 21 | 546,233 | 0 |
+| Control, desktop and mobile | 26 / 24 | 546,233 | 0 |
 
 The current fast budgets are at most 22 total requests, 20 own requests, 13,500 built JS bytes, and 0.01 CLS per device.
+Control restores the original PNG navigation mark and CSS card backgrounds; fast mode fetches the SVG mark and lazy card images.
 These local counters are deterministic proxies, not the encoded bytes or paint times measured on the production CDN.
 The optimization also removed an exact duplicate 252-line CSS block; the surviving rules are unchanged except for lazy card images.
 
