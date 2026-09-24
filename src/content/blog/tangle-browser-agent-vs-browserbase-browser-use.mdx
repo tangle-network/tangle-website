@@ -49,24 +49,20 @@ Imagine a release check for an online store:
 6. Save what the browser saw.
 
 A useful result is more than `passed`.
-It includes the URL at each important step, the visible page state, the DOM evidence used for assertions, the actions taken, the failure reason, and a recording or screenshot that a reviewer can open.
+It includes the URL at each important step, the visible page state, the DOM evidence used for assertions (checks that expected conditions are true), the actions taken, the failure reason, and a recording or screenshot that a reviewer can open.
 
 A browser session is one isolated browser instance running for a task.
 Browserbase describes a session as its fundamental unit and lets callers configure its region, viewport, recording, logging, identity, proxy, and browser context.
 A browser agent is the software that decides what to do next from the page and the task.
 A browser automation library is the lower-level code that sends navigation, click, type, and assertion commands.
 
-Those distinctions make the comparison clearer:
+Those distinctions make the first choice clearer:
 
-| Layer | Browserbase | Browser Use | Tangle Browser Agent |
-| --- | --- | --- | --- |
-| Browser hosting | Primary product surface | Available through its cloud/API path | Uses a real browser through its driver |
-| Agent loop | You provide Playwright, Stagehand, or another controller | Natural-language agent and SDK/API | Natural-language goal through CLI or SDK |
-| Evidence | Session recordings, logs, live inspector | Session result and provider-defined run data | Screenshots, DOM snapshots, action trace, and report |
-| Human handoff | Live View and Session Inspector | Depends on the selected session workflow | Evidence artifact is returned with the run |
-| Best first question | Where should my browser run? | Can a service perform this browser task? | Can a reviewer verify what this run did? |
+- **Browserbase:** Start with a managed browser session. Supply your own controller and assertions; inspect the session through its recordings, logs, and Live View.
+- **Browser Use:** Start with a natural-language task. Its cloud API creates a run and returns a result; add the checks and approval rules your application needs.
+- **Tangle Browser Agent:** Start with a CLI or SDK browser task. Inspect its action trace, captured page state, and run report before accepting the result.
 
-The official [Browserbase session guide](https://docs.browserbase.com/platform/browser/getting-started/create-browser-session), [Browser Use v4 quickstart](https://docs.browser-use.com/cloud/agent/quickstart), and [Tangle Browser Agent driver repository](https://github.com/tangle-network/browser-agent-driver) describe these public surfaces directly.
+The [Browserbase session guide](https://docs.browserbase.com/platform/browser/getting-started/create-browser-session), [Browser Use v4 quickstart](https://docs.browser-use.com/cloud/agent/quickstart), and [Tangle Browser Agent driver documentation](https://github.com/tangle-network/browser-agent-driver#cli-reference) describe those surfaces.
 
 ## Browserbase is the browser layer
 
@@ -107,24 +103,26 @@ Browserbase gives you the parts needed to do that, but the final report is your 
 Browser Use starts from a different question.
 Instead of asking which browser session your code should control, you give the service a natural-language task and receive a session result.
 
-The current Browser Use cloud documentation describes a v4 SDK whose `client.runs.create` method starts a run and whose `client.runs.wait_for_completion` waits for its result.
+The [Browser Use v4 quickstart](https://docs.browser-use.com/cloud/agent/quickstart), checked September 24, 2026, describes `client.runs.create` for starting a run and `client.runs.wait_for_completion` for waiting for its result.
 Each run creates a session and a workspace for the conversation and its files.
 It lists extraction, form filling, multi-step workflows, research, monitoring, and testing as use cases.
 That makes Browser Use attractive when the agent loop itself is the product surface.
 
-The shape is intentionally simple:
+The task submission is intentionally short:
 
 ```python
 from browser_use_sdk.v4 import BrowserUse
 
-client = BrowserUse()
-run = client.runs.create(
-    "Open the preview store, apply the spring coupon, and report the final total",
-    model="grok-4.5",
-)
-run = client.runs.wait_for_completion(run.id)
-print(run.result)
+with BrowserUse() as client:
+    run = client.runs.create(
+        "Open the preview store, apply the spring coupon, and report the final total"
+    )
+    result = client.runs.wait_for_completion(run.id)
+    print(result.result)
 ```
+
+This example prints the service's result, not a release verdict.
+Before using that result as a check, record the final URL, visible total, assertion outcome, and any approval boundary in your own application.
 
 This is the right abstraction for an early workflow where the output is a page observation or extracted answer.
 It is less complete as a release decision until you specify what evidence to keep, how to validate the total, and what happens when the agent reaches a login, wallet, CAPTCHA, or payment step.
@@ -133,13 +131,13 @@ Browser Use can also be paired with browser infrastructure and application-speci
 The comparison should not pretend that a natural-language agent cannot produce evidence.
 The relevant question is which evidence and control rules are part of your product contract, and which ones you must add.
 
-## Tangle makes evidence part of the run
+## Inspect a Tangle browser run
 
 Tangle Browser Agent is exposed through the `bad` CLI and the `@tangle-network/browser-agent-driver` package.
 The public driver repository documents a CLI install, a browser snapshot command, a natural-language run command, and a JavaScript/TypeScript SDK.
-It exposes the same engine as a CLI for one-off work and an SDK for continuous-integration (CI) tests.
+The documented CLI and SDK are driver entry points for one-off work and continuous-integration (CI) tests.
 
-A snapshot is a useful first check because it separates browser access from model behavior:
+A snapshot captures the current page and browser state. It is a useful first check because it separates browser access from model behavior:
 
 ```bash
 npm install -g @tangle-network/browser-agent-driver
@@ -202,12 +200,13 @@ An action trace records the steps and their outcomes.
 A failure reason says where the run stopped and why.
 Together, those artifacts let a reviewer distinguish “the goal was reached” from “the model produced a plausible report.”
 
-That evidence contract is the main Tangle distinction.
+That documented output is the reason to evaluate Tangle for a reviewable browser task.
 It does not mean Browserbase cannot record sessions or Browser Use cannot return useful run data.
-It means Tangle’s browser-task surface starts from the review artifact rather than adding one after a task fails.
+The choice depends on which review fields your application needs and who owns them.
 
 ## Compare the same flow, not the same marketing page
 
+The following is a proposed comparison protocol, not an observed head-to-head run.
 Use one task that contains a visible assertion and an unsafe boundary.
 For the checkout example, stop before payment and require:
 
@@ -234,7 +233,7 @@ For the checkout example, stop before payment and require:
 The JSON is an application test contract, not a vendor-specific schema.
 It gives each product the same target and gives the reviewer the same questions.
 
-| Check | Why it changes the choice |
+| Cross-product check | Why it changes the choice |
 | --- | --- |
 | Browser boundary | Affects network location, proxy, identity, and compliance |
 | Agent control | Determines whether you write the loop or delegate it |
@@ -302,7 +301,8 @@ For authentication and payment, stop and hand control to a person rather than te
 
 Browserbase’s Live View documentation explicitly describes human control for cases such as credential delegation and uploads.
 Browser Use’s task API describes long-running sessions and polling.
-Tangle’s evidence-oriented runner describes a report and artifact path for each browser task.
+The public [driver report schema](https://github.com/tangle-network/browser-agent-driver#report-schema) documents `report.json` with a schema version and per-test results.
+The [result type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/result.ts) includes `success`, `reason`, and `turns`; a captured screenshot depends on the selected observation mode.
 The appropriate recovery path depends on which product owns the session and which one owns the agent loop.
 
 None of these products makes a browser task inherently trustworthy.
@@ -311,32 +311,11 @@ A DOM snapshot can be complete and still reflect malicious page content.
 A successful navigation can be correct while the business assertion is wrong.
 Evidence supports review; it does not replace the assertion.
 
-## Where Tangle fits in a larger workflow
+## Use it in a larger test
 
-A Tangle runtime is the execution layer that starts the agent, controls tools and permissions, and returns the run artifacts.
-A Tangle agent profile is the configuration that selects the model, browser access, permissions, budgets, and policy for that run.
-The [Tangle Sandbox runtime](https://docs.tangle.tools/sandbox) can provide the isolated computer for code and browser work, while the Browser Agent supplies browser-specific evidence.
-
-A Blueprint is a reusable Tangle service definition.
-It names the jobs, inputs, outputs, artifacts, and execution requirements that an operator can run.
-An operator is the infrastructure provider that runs a live service instance from that definition.
-The [Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) explains those terms.
-
-That distinction matters if the browser check becomes a service.
-A local CLI run is a useful development step.
-A CI endpoint or paid browser-check service needs an explicit job contract, authentication, artifact retention, and failure policy.
-Do not call a task “verified” because a model reached the last page.
-
-The browser loop often looks like this:
-
-```
-Browser Agent -> navigation and action trace
-Sandbox -> code, fixtures, and test setup
-Browser Agent -> screenshot and DOM assertions
-Evaluation -> pass, fail, or human review
-```
-
-The internal links [browser automation for AI agents](/blog/browser-automation-for-ai-agents), [AI browser testing with evidence](/blog/ai-browser-testing-evidence-traces), and [natural-language end-to-end testing](/blog/natural-language-e2e-testing-wallet-apps) cover adjacent workflows.
+The browser driver can run on its own or inside an isolated [Tangle Sandbox](https://docs.tangle.tools/sandbox) when the task also needs code, fixtures, and workspace files.
+Your test still needs explicit assertions, artifact retention, and a rule for human review at payment or authentication boundaries.
+The [browser testing guide](/blog/ai-browser-testing-evidence-traces) covers that workflow.
 
 ## When to choose each product
 
@@ -352,38 +331,3 @@ You want one goal-driven runner for CLI, SDK, and CI use, with screenshots, DOM 
 Use more than one when the boundaries are real.
 For example, a team can use Browserbase for the browser session, Browser Use for a natural-language controller, and its own evaluation layer for release policy.
 A team can also use Tangle Browser Agent inside a Tangle Sandbox to edit code, exercise a preview, and return the browser evidence with the code result.
-
-
-## Is Tangle Browser Agent a Browserbase alternative?
-
-It can replace the task-running and evidence layer for some workflows.
-Browserbase remains a strong choice when your primary need is cloud browser sessions and you want to supply the controller.
-
-## Is Tangle Browser Agent a Browser Use alternative?
-
-It can be when you want a CLI and SDK that return browser evidence as part of a task result.
-Browser Use remains a strong choice when its natural-language agent API and integrations match your product.
-
-## Is Browserbase only for traditional Playwright tests?
-
-No.
-Browserbase documents integrations for Playwright, Stagehand, AI agents, and deployable Functions.
-It supplies the browser environment; your application still defines the result it will trust.
-
-## What is a browser-agent evaluation?
-
-It is a repeatable task set with explicit user-visible assertions, policy checks, and required evidence.
-The evaluation should mark a run incomplete when the browser result cannot be reviewed.
-
-## What does the `bad` CLI do?
-
-The `bad` CLI from `@tangle-network/browser-agent-driver` runs browser goals, captures browser state, and returns artifacts that can be used in QA, audits, and agent workflows.
-
-## The decision
-
-Write the evidence contract before selecting the browser product.
-If the contract is mainly “give my code a remote Chrome session,” start with Browserbase.
-If it is mainly “perform this natural-language browser task and return an answer,” start with Browser Use.
-If it is “run the task and let a reviewer inspect exactly what happened,” test Tangle Browser Agent.
-The correct choice is the one whose session, controller, and evidence boundaries match the failure you need to debug.
-When that browser capability must become a paid agent service, see [Deploying a paid AI agent service](/blog/deploy-paid-ai-agent-service).
