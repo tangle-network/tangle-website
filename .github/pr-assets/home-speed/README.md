@@ -161,3 +161,26 @@ The page emits FCP, LCP, CLS, and INP through the existing analytics path with b
 Compare those field distributions with control by build and device, including sample counts, before claiming a user-visible win.
 Field device split, first paint, and interaction data are not yet available.
 After field proof, remove the flag and keep the ratchet and frozen content checks.
+
+## Isolated runner readback at `ca0092a`
+
+The [control](./preview-control-ca0092a.json.gz) and [fast](./preview-fast-ca0092a.json.gz) receipts measured one served Pages preview revision, `ca0092a`.
+The [GitHub Actions run](https://github.com/tangle-network/tangle-website/actions/runs/35971877168) used Chromium 151 on an AMD EPYC 9V74 runner.
+It kept the original viewport, network, CPU throttling, cold/warm cache method, and nine visits per fixture.
+All 72 visits returned HTTP 200, painted the approved heading and action, and had no page or HTTP errors.
+All 36 mobile visits opened and closed the menu.
+No own asset or Google font failed.
+
+| Fixture | Control FCP / usable p75 | Fast FCP / usable p75 | Original round-one FCP / usable maximum |
+|---|---:|---:|---:|
+| Desktop cold | 364 / 364 ms | 144 / 175.3 ms | 293.33 / 293.33 ms |
+| Desktop warm | 128 / 161.6 ms | 128 / 128 ms | 383.33 / 383.33 ms |
+| Mobile cold | 952 / 952 ms | 484 / 627.8 ms | 900 / 906.08 ms |
+| Mobile warm | 252 / 295.1 ms | 248 / 288 ms | 206.67 / 223.33 ms |
+
+Fast mode passed six of eight fixed paint and usability limits.
+Mobile warm missed both limits, so this candidate is not ready for promotion.
+Mobile cold CLS was 0.018 in both modes; fast mode did not add that shift.
+The initial fast recording also showed a lighter navigation backdrop, which the next revision corrects.
+The runner's EPYC CPU differs from the Ryzen host used for the original numeric baseline.
+Treat these absolute values as an external served-path readback, and confirm the final candidate on the original vantage before promotion.
