@@ -100,6 +100,10 @@ try {
       assert.ok(rum.build_revision, `${fixture.name} field build`)
       assert.ok(Number.isFinite(rum.metric_value), `${fixture.name} first paint measurement`)
 
+      const fontMedia = await page.locator('link[href^="https://fonts.googleapis.com/css2"]').getAttribute('media')
+      if (fixture.mode === 'fast') assert.equal(fontMedia, 'all', `${fixture.name} font stylesheet activated`)
+      assert.ok(externalRequests.some((url) => url.startsWith('https://www.googletagmanager.com/gtag/js')), `${fixture.name} analytics requested`)
+
       const layout = await page.evaluate(() => {
         const logo = document.querySelector('.wf-nav-brand-logo')
         const card = document.querySelector('.p-card-art')
