@@ -1,6 +1,6 @@
 # Live homepage speed baseline
 
-The [raw baseline](./live-baseline-2026-09-24.json) measures the served homepage at `https://www.tangle.tools/`.
+The [compressed raw baseline](./live-baseline-2026-09-24.json.gz) measures the served homepage at `https://www.tangle.tools/`.
 The run started at 2026-09-24 04:18 UTC and finished at 04:23 UTC.
 The live [`version.json`](https://www.tangle.tools/version.json) returned revision `3d4abedee85de090ea96d4a050647635d3b97f78` after the run.
 Every measured visit requested the same hashed homepage script, `index.astro_astro_type_script_index_0_lang.B-yxQwbU.js`.
@@ -35,7 +35,7 @@ The comparator uses exact `baseline / 1.2` in round one and `baseline / 2` in ro
 Run a candidate against the same fixture with:
 
 ```bash
-node scripts/benchmark-homepage.mjs --url http://127.0.0.1:4321/ --pairs 9 --output /tmp/home-candidate.json --compare .github/pr-assets/home-speed/live-baseline-2026-09-24.json --round 1
+node scripts/benchmark-homepage.mjs --url http://127.0.0.1:4321/ --pairs 9 --output /tmp/home-candidate.json --compare .github/pr-assets/home-speed/live-baseline-2026-09-24.json.gz --round 1
 ```
 
 Use `--round 2` for the second speed target.
@@ -97,7 +97,7 @@ The optimization also removed an exact duplicate 252-line CSS block; the survivi
 
 ## Local comparison, not a release result
 
-The [local control](./local-control-2026-09-24.json) and [local fast](./local-fast-2026-09-24.json) runs used the same uncompressed Python static server and nine visits per fixture.
+The [local control](./local-control-2026-09-24.json.gz) and [local fast](./local-fast-2026-09-24.json.gz) runs used the same uncompressed Python static server and nine visits per fixture.
 All 36 control visits were valid.
 The fast run had 34 valid visits; desktop cold visits 2 and 6 timed out waiting for `load` after the document returned 200 and the stylesheet transfer stalled.
 The raw files retain both invalid visits and every request.

@@ -6,6 +6,7 @@ import { chromium } from 'playwright'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { cpus, platform, release } from 'node:os'
+import { gunzipSync } from 'node:zlib'
 
 const DEFAULT_URL = 'https://www.tangle.tools/'
 const FIXTURES = [
@@ -350,7 +351,11 @@ async function main() {
         }
       }
     }
-    if (opts.compare) result.comparison = compare(result, JSON.parse(await readFile(opts.compare, 'utf8')), opts.round)
+    if (opts.compare) {
+      const source = await readFile(opts.compare)
+      const baseline = opts.compare.endsWith('.gz') ? gunzipSync(source) : source
+      result.comparison = compare(result, JSON.parse(baseline.toString('utf8')), opts.round)
+    }
     result.completedAt = new Date().toISOString()
     if (opts.output) {
       await mkdir(dirname(opts.output), { recursive: true })
