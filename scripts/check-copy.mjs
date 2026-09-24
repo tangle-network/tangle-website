@@ -13,7 +13,7 @@
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
  *                          TANGLE_ROUTER_USER_KEY pulled from
  *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default: openrouter/openai/gpt-5.6-luna via the router
+ *   COPY_AUDIT_MODEL    — default: gpt-5.6-luna via the router's direct OpenAI route
  *   COPY_AUDIT_TIMEOUT_MS — per-page provider timeout (default 45000)
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.5)
  *   COPY_AUDIT_ROOT      — rendered-site root (default dist/client)
@@ -31,6 +31,7 @@ const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/co
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
+const DEFAULT_MODEL = 'gpt-5.6-luna';
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
@@ -46,14 +47,14 @@ let API_BASE = process.env.COPY_AUDIT_API_BASE;
 if (!API_KEY && process.env.TANGLE_API_KEY) {
   API_KEY = process.env.TANGLE_API_KEY;
   API_BASE = 'https://router.tangle.tools/v1';
-  MODEL ??= 'openrouter/openai/gpt-5.6-luna';
+  MODEL ??= DEFAULT_MODEL;
 }
 
 if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
   if (API_KEY) {
     API_BASE = 'https://router.tangle.tools/v1';
-    MODEL ??= 'openrouter/openai/gpt-5.6-luna';
+    MODEL ??= DEFAULT_MODEL;
   }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
@@ -62,7 +63,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
     if (k) {
       API_KEY = k;
       API_BASE = 'https://router.tangle.tools/v1';
-      MODEL ??= 'openrouter/openai/gpt-5.6-luna';
+      MODEL ??= DEFAULT_MODEL;
     }
   }
   catch {
@@ -73,7 +74,7 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
       API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
       if (API_KEY) {
         API_BASE = 'https://router.tangle.tools/v1';
-        MODEL ??= 'openrouter/openai/gpt-5.6-luna';
+        MODEL ??= DEFAULT_MODEL;
       }
     }
     catch {
@@ -87,7 +88,7 @@ if (!API_KEY) {
 }
 
 API_BASE ??= 'https://router.tangle.tools/v1';
-MODEL ??= 'openrouter/openai/gpt-5.6-luna';
+MODEL ??= DEFAULT_MODEL;
 
 if (!/(^|\/)gpt-5\.6-luna$/.test(MODEL)) {
   console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to the gpt-5.6-luna family.`);
