@@ -362,7 +362,8 @@ async function main() {
       await writeFile(opts.output, JSON.stringify(result, null, 2) + '\n')
       console.log(`Wrote ${opts.output}`)
     }
-    const failures = result.samples.filter((item) => item.httpStatus !== 200 || item.navigationError || item.fcpMs == null || item.heroUsableMs == null || item.content.bodyTextLength < 1000 || item.content.sectionHeadings.length < 5 || item.content.horizontalOverflowPx > 0 || item.mobileMenuError || item.mobileMenuOpened === false || item.mobileMenuClosed === false)
+    const ownOrigin = new URL(opts.url).origin
+    const failures = result.samples.filter((item) => item.httpStatus !== 200 || item.navigationError || item.fcpMs == null || item.heroUsableMs == null || item.content.bodyTextLength < 1000 || item.content.sectionHeadings.length < 5 || item.content.horizontalOverflowPx > 0 || item.mobileMenuError || item.mobileMenuOpened === false || item.mobileMenuClosed === false || item.failedRequests.some(({ url }) => new URL(url).origin === ownOrigin || /^https:\/\/fonts\.(googleapis|gstatic)\.com\//.test(url)))
     if (failures.length) {
       console.error(`${failures.length} samples failed content or measurement checks`)
       process.exitCode = 1

@@ -132,8 +132,28 @@ The fast path did not meet the round-one p75 target on this local server.
 The two invalid visits also prevent a complete desktop cold comparison.
 The production baseline used Cloudflare's served path with compression and had very different warm timings, so this local run cannot establish the deployed speed result.
 
-The next speed proof is a nine-sample run per desktop/mobile cold/warm fixture on a preview deployment.
-Use the same browser, host vantage, throttling, and correctness checks as this baseline.
+## Exact-preview comparison
+
+The [control](./preview-control-bfeb73b.json.gz) and [fast](./preview-fast-bfeb73b.json.gz) raw receipts both ran against `https://pr-165-home-speed.tangle-website.pages.dev/` at served revision `bfeb73b`.
+Each mode had nine visits per desktop/mobile cold/warm fixture, using the original browser, host vantage, and throttling.
+All 72 visits returned HTTP 200 and painted the published heading and action.
+Fast visits desktop cold pair 2 and mobile cold pair 3 had `ERR_NETWORK_CHANGED` on Google Tag Manager and Google Fonts respectively.
+The font failure can alter paint and visual metrics, so the runner now rejects a visit with a failed own resource or Google font even if it has a numeric FCP.
+The raw receipts retain every visit and error; the printed p75 values below include both anomalous visits.
+
+| Fixture | Preview control FCP / usable p75 | Preview fast FCP / usable p75 | Original round-one FCP / usable maximum |
+|---|---:|---:|---:|
+| Desktop cold | 1,024 / 1,113.1 ms | 388 / 631.7 ms | 293.33 / 293.33 ms |
+| Desktop warm | 344 / 412 ms | 256 / 256 ms | 383.33 / 383.33 ms |
+| Mobile cold | 1,180 / 1,658.5 ms | 928 / 1,233.5 ms | 900 / 906.08 ms |
+| Mobile warm | 492 / 688 ms | 404 / 469.2 ms | 206.67 / 223.33 ms |
+
+Fast mode improves FCP against the contemporaneous preview control in all four fixtures, but misses six of the eight fixed round-one paint and usability thresholds.
+The fast mode is not ready for promotion.
+The preview runs overlapped high load on the 32-CPU host, so these measurements do not isolate the site change from host contention.
+The fixed original baseline remains the gate; the slower preview control does not reset it.
+
+The next speed proof needs a new candidate with the same four fixtures and nine valid visits each.
 Keep every fixture at or below the round-one paint and usable thresholds above before considering production promotion.
 The cofounder owns the internal, 1%, and full rollout decision.
 The deployment variable `HOME_SPEED_PERCENT` selects 0, 1, or 100 and can be set back to 0 before a redeploy.
