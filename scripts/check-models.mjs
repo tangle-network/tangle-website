@@ -232,11 +232,13 @@ function scan(files, denylist, allow) {
   const allRe = new RegExp(`\\b(?:${escaped.join('|')})(?![\\w.-]|\\\\[.-])`, 'gi');
 
   const allowFiles = new Set(allow.files ?? []);
+  // An entry ending in `/` exempts every file under that directory.
+  const allowDirs = [...allowFiles].filter((path) => path.endsWith('/'));
   const allowPhrases = (allow.phrases ?? []).map((p) => new RegExp(p, 'i'));
 
   for (const file of files) {
     const rel = relative(ROOT, file);
-    if (allowFiles.has(rel)) continue;
+    if (allowFiles.has(rel) || allowDirs.some((dir) => rel.startsWith(dir))) continue;
     const text = readFileSync(file, 'utf8');
     const lines = text.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
