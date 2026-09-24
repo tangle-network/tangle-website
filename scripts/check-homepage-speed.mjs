@@ -113,7 +113,8 @@ try {
       assert.ok(externalRequests.some((url) => url.startsWith('https://www.googletagmanager.com/gtag/js')), `${fixture.name} analytics requested`)
 
       const layout = await page.evaluate(() => {
-        const logo = document.querySelector('.wf-nav-brand-logo')
+        const logo = [...document.querySelectorAll('.wf-nav-brand-logo')]
+          .find((image) => getComputedStyle(image).display !== 'none')
         const card = document.querySelector('.p-card-art')
         const action = document.querySelector('.hero .hero-actions .btn-primary')
         const rect = action?.getBoundingClientRect()
@@ -146,6 +147,7 @@ try {
         assert.ok(!requests.some((url) => url.includes('Tnt%20Logo.png')), `${fixture.name} fetched control logo`)
       } else {
         assert.ok(layout.logoSource.includes('/images/webflow/Tnt%20Logo.png'), `${fixture.name} control logo`)
+        assert.ok(!requests.some((url) => url.includes('/brand/tangle-nav-icon.svg')), `${fixture.name} fetched fast logo`)
         assert.ok(layout.cardBackground.includes('card-sandbox.webp'), `${fixture.name} control card background`)
         assert.equal(layout.cardImageDisplay, 'none', `${fixture.name} control card image`)
       }
