@@ -1,0 +1,106 @@
+name: Check homepage speed
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/check-home-speed.yml'
+      - 'scripts/check-homepage-speed.mjs'
+      - 'scripts/benchmark-homepage.mjs'
+      - 'scripts/fixtures/homepage-speed-*.json'
+      - 'src/components/Header.astro'
+      - 'src/layouts/BaseLayout.astro'
+      - 'src/pages/index.astro'
+      - 'src/scripts/homepage-*.mjs'
+      - 'src/styles/global.css'
+      - 'public/brand/tangle-nav-icon.svg'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/check-home-speed.yml'
+      - 'scripts/check-homepage-speed.mjs'
+      - 'scripts/fixtures/homepage-speed-*.json'
+      - 'src/components/Header.astro'
+      - 'src/layouts/BaseLayout.astro'
+      - 'src/pages/index.astro'
+      - 'src/scripts/homepage-*.mjs'
+      - 'src/styles/global.css'
+      - 'public/brand/tangle-nav-icon.svg'
+
+jobs:
+  homepage-speed:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Checkout @tangle-network/brand sibling
+        run: git clone --depth 1 https://github.com/tangle-network/brand.git ../brand
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build control and fast paths
+        env:
+          PUBLIC_HOME_SPEED_PERCENT: '0'
+        run: pnpm build
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run sequential content and cost cases
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && git show "$BASE_SHA:scripts/fixtures/homepage-speed-budget.json" > /tmp/home-speed-base-budget.json 2>/dev/null; then
+            node scripts/check-homepage-speed.mjs --base-budget /tmp/home-speed-base-budget.json
+          else
+            node scripts/check-homepage-speed.mjs
+          fi
+      - name: Retain screenshots and counters
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: homepage-speed-ci
+          path: audit-results/home-speed-ci/
+          if-no-files-found: warn
+          retention-days: 30
+
+  preview:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: homepage-speed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Checkout @tangle-network/brand sibling
+        run: git clone --depth 1 https://github.com/tangle-network/brand.git ../brand
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build internal preview
+        env:
+          TANGLE_BUILD_REVISION: ${{ github.event.pull_request.head.sha }}
+          PUBLIC_HOME_SPEED_PERCENT: '0'
+        run: pnpm build
+      - name: Deploy preview branch
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist/client --project-name=tangle-website --branch=pr-${{ github.event.pull_request.number }}-home-speed
+      - name: Show preview URL
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
+        run: echo "Preview $PREVIEW_URL"

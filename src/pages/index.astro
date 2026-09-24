@@ -2,6 +2,11 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 
 const canonicalUrl = 'https://tangle.tools/';
+const homeSpeedPercent = Number(import.meta.env.PUBLIC_HOME_SPEED_PERCENT ?? '0');
+if (!Number.isInteger(homeSpeedPercent) || homeSpeedPercent < 0 || homeSpeedPercent > 100) {
+  throw new Error('PUBLIC_HOME_SPEED_PERCENT must be an integer from 0 to 100');
+}
+const homeBuildRevision = process.env.TANGLE_BUILD_REVISION ?? 'local';
 const organizationJsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
@@ -73,6 +78,7 @@ const products = [
     href: 'https://sandbox.tangle.tools',
     domain: 'sandbox.tangle.tools',
     hue: 'cyan',
+    art: '/images/brand/cards/card-sandbox.webp',
   },
   {
     name: 'Intelligence',
@@ -80,6 +86,7 @@ const products = [
     href: 'https://intelligence.tangle.tools',
     domain: 'intelligence.tangle.tools',
     hue: 'magenta',
+    art: '/images/brand/cards/card-intelligence.webp',
   },
   {
     name: 'Inference',
@@ -87,6 +94,7 @@ const products = [
     href: 'https://router.tangle.tools',
     domain: 'router.tangle.tools',
     hue: 'indigo',
+    art: '/images/brand/cards/card-inference.webp',
   },
 ];
 
@@ -126,6 +134,30 @@ const pricingTiers = [
   imageAlt="Tangle infrastructure for running and evaluating AI agents"
 >
   <script type="application/ld+json" set:html={JSON.stringify(organizationJsonLd)} />
+
+  <script is:inline data-speed-percent={homeSpeedPercent} data-build-revision={homeBuildRevision}>
+    const percent = Number(document.currentScript?.dataset.speedPercent ?? '0');
+    const override = new URLSearchParams(location.search).get('home_speed');
+    let fast = percent === 100;
+    if (percent > 0 && percent < 100) {
+      try {
+        const key = 'tangle-home-speed-bucket';
+        let bucket = Number(localStorage.getItem(key));
+        if (!Number.isInteger(bucket) || bucket < 0 || bucket > 99 || localStorage.getItem(key) === null) {
+          bucket = Math.floor(Math.random() * 100);
+          localStorage.setItem(key, String(bucket));
+        }
+        fast = bucket < percent;
+      } catch {
+        fast = false;
+      }
+    }
+    if (override === 'fast') fast = true;
+    if (override === 'control') fast = false;
+    document.documentElement.dataset.homeSpeed = fast ? 'fast' : 'control';
+    document.documentElement.dataset.homeBuild = document.currentScript?.dataset.buildRevision ?? 'unknown';
+    if (fast) document.documentElement.classList.add('static-hero');
+  </script>
 
   <!-- No-JS: the scroll stories can't run, so collapse both pinned tracks to a
        plain visible stack. Only renders with JS off; !important beats the
@@ -337,7 +369,7 @@ const pricingTiers = [
       <div class="product-cards reveal">
         {products.map((p) => (
           <a class={`p-card p-card-${p.hue}`} href={p.href} target="_blank" rel="noopener noreferrer">
-            <div class="p-card-art" aria-hidden="true"></div>
+            <div class="p-card-art" aria-hidden="true"><img src={p.art} alt="" loading="lazy" decoding="async" width="600" height="400" /></div>
             <div class="p-card-body">
               <h3>{p.name}</h3>
               <p>{p.line}</p>
@@ -392,224 +424,30 @@ const pricingTiers = [
 </BaseLayout>
 
 <script>
-  import * as THREE from 'three';
-  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+  import { startMotion } from '../scripts/homepage-motion.mjs';
 
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const wide = window.matchMedia('(min-width: 861px)').matches;
   const flow = document.querySelector('.intel-flow');
 
-  // Hero brand object: fiber-optic torus knot, dispersion shader, bloom.
-  const knotCanvas = document.getElementById('hero-knot');
-  if (knotCanvas && !reduced && wide) {
-    const renderer = new THREE.WebGLRenderer({ canvas: knotCanvas, antialias: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#080814');
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(0, 0, 8.6);
+  startMotion(reduced, flow);
+  const loadRum = () => import('../scripts/homepage-rum.mjs')
+    .then(({ startRum }) => startRum())
+    .catch(() => { window.__homeRumReady = false; });
+  const afterLoad = () => {
+    if ('requestIdleCallback' in window) requestIdleCallback(loadRum, { timeout: 1500 });
+    else setTimeout(loadRum, 0);
+  };
+  if (document.readyState === 'complete') afterLoad();
+  else addEventListener('load', afterLoad, { once: true });
 
-    const stops = ['#C7C9F5', '#818CF8', '#6366F1', '#4F46E5'].map((c) => new THREE.Color(c));
-    const uniforms = {
-      uTime: { value: 0 },
-      uC0: { value: stops[0] }, uC1: { value: stops[1] },
-      uC2: { value: stops[2] }, uC3: { value: stops[3] },
-    };
-    const vert = `varying vec2 vUv; varying vec3 vNormal; varying vec3 vView;
-      void main() { vUv = uv; vNormal = normalize(normalMatrix * normal);
-        vec4 mv = modelViewMatrix * vec4(position, 1.0); vView = normalize(-mv.xyz);
-        gl_Position = projectionMatrix * mv; }`;
-    const material = new THREE.ShaderMaterial({
-      uniforms,
-      vertexShader: vert,
-      fragmentShader: `uniform float uTime; uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3;
-        varying vec2 vUv; varying vec3 vNormal; varying vec3 vView;
-        vec3 ramp(float t) { t = fract(t);
-          if (t < 0.3333) return mix(uC0, uC1, smoothstep(0.0, 1.0, t / 0.3333));
-          if (t < 0.6666) return mix(uC1, uC2, smoothstep(0.0, 1.0, (t - 0.3333) / 0.3333));
-          return mix(uC2, uC3, smoothstep(0.0, 1.0, (t - 0.6666) / 0.3334)); }
-        void main() {
-          vec3 base = ramp(vUv.x + uTime * 0.03);
-          float fresnel = pow(1.0 - max(dot(vNormal, vView), 0.0), 2.2);
-          float pulse = smoothstep(0.965, 1.0, sin((vUv.x - uTime * 0.06) * 40.0) * 0.5 + 0.5);
-          vec3 color = base * (0.22 + 0.62 * fresnel) + base * pulse * 0.85;
-          gl_FragColor = vec4(color, 1.0); }`,
-    });
-    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(1.6, 0.12, 520, 48, 2, 3), material);
-    knot.position.x = 1.7;
-    scene.add(knot);
-    const halo = new THREE.Mesh(
-      new THREE.TorusKnotGeometry(1.6, 0.22, 260, 32, 2, 3),
-      new THREE.ShaderMaterial({
-        uniforms, vertexShader: vert,
-        fragmentShader: `uniform vec3 uC1; varying vec3 vNormal; varying vec3 vView;
-          void main() { float f = pow(1.0 - max(dot(vNormal, vView), 0.0), 3.0);
-            gl_FragColor = vec4(uC1 * f * 0.28, 1.0); }`,
-        blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
-      }),
-    );
-    halo.position.x = 1.7;
-    scene.add(halo);
-
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.42, 0.28));
-
-    const fit = () => {
-      const w = knotCanvas.clientWidth, h = knotCanvas.clientHeight;
-      renderer.setSize(w, h, false);
-      composer.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    new ResizeObserver(fit).observe(knotCanvas);
-    fit();
-
-    let rx = 0.42, ry = -0.28, visible = true;
-    addEventListener('pointermove', (e) => {
-      ry = -0.28 + (e.clientX / innerWidth - 0.5) * 0.35;
-      rx = 0.42 + (e.clientY / innerHeight - 0.5) * 0.25;
-    });
-    new IntersectionObserver((es) => { visible = es[0].isIntersecting; }).observe(knotCanvas);
-
-    const clock = new THREE.Clock();
-    const frame = () => {
-      requestAnimationFrame(frame);
-      if (!visible) return;
-      const t = clock.getElapsedTime();
-      uniforms.uTime.value = t;
-      knot.rotation.z = t * 0.045;
-      knot.rotation.x += (rx - knot.rotation.x) * 0.04;
-      knot.rotation.y += (ry - knot.rotation.y) * 0.04;
-      halo.rotation.copy(knot.rotation);
-      composer.render();
-    };
-    frame();
-    knotCanvas.classList.add('ready');
-  } else {
+  if (document.documentElement.dataset.homeSpeed === 'fast') {
     document.documentElement.classList.add('static-hero');
-  }
-
-  if (reduced) {
-    flow?.classList.add('static');
-    document.querySelector('.sb-flow')?.classList.add('static');
   } else {
-    document.documentElement.classList.add('js');
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            e.target.classList.add('in-view');
-            io.unobserve(e.target);
-          }
-        }
-      },
-      { threshold: 0.14 },
-    );
-    document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
-
-    // Narrow-screen scroll motion: fade each stacked tile/stage up as it
-    // enters. Used by the mobile branches below (the static stack that
-    // replaces the desktop pinned story), so small screens still animate.
-    const revealStacked = (root) => {
-      const rio = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) {
-            if (e.isIntersecting) { e.target.classList.add('srin'); rio.unobserve(e.target); }
-          }
-        },
-        { threshold: 0.16, rootMargin: '0px 0px -8% 0px' },
-      );
-      root.querySelectorAll('.sb-tile, .istage').forEach((el) => rio.observe(el));
-    };
-
-    // Scroll-driven Sandbox chapter: tiles activate and traces draw with progress.
-    const sb = document.querySelector('.sb-flow');
-    if (sb && window.matchMedia('(min-width: 861px)').matches) {
-      const tiles = [...sb.querySelectorAll('.sb-tile')];
-      const lines = [...sb.querySelectorAll('.sb-line')];
-      let ticking = false;
-      const update = () => {
-        ticking = false;
-        const rect = sb.getBoundingClientRect();
-        const total = sb.offsetHeight - window.innerHeight;
-        const prog = Math.min(1, Math.max(0, -rect.top / total));
-        tiles.forEach((t, i) => t.classList.toggle('on', prog > 0.06 + i * 0.055));
-        lines.forEach((l, i) => {
-          const lp = Math.min(1, Math.max(0, (prog - (0.12 + i * 0.055)) / 0.32));
-          l.style.strokeDashoffset = String(1 - lp);
-        });
-        sb.classList.toggle('done', prog > 0.88);
-      };
-      const onScroll = () => {
-        if (!ticking) { ticking = true; requestAnimationFrame(update); }
-      };
-      window.addEventListener('scroll', onScroll, { passive: true });
-      update();
-    } else if (sb) {
-      sb.classList.add('static', 'reveal-on');
-      revealStacked(sb);
-    }
-
-    // Scroll-driven Intelligence stages. Narrow screens get the static stack.
-    //
-    // CHOREO is the one place to tune the ship-stage deal-out. Per card:
-    //   at    when the card lands, as a fraction of stage-2 scroll (0..1)
-    //   tilt  resting rotation in degrees
-    //   from  entry offset: y px, rotation deg, scale
-    // Stage 2 begins at STAGE2_START of total flow scroll and the deal-out
-    // uses the remainder. Edit numbers, reload, judge. Nothing else moves.
-    const STAGE2_START = 0.54;
-    const CHOREO = [
-      { at: 0.05, tilt: -3.2, from: { y: 130, rot: -10, scale: 1.06 } },
-      { at: 0.3, tilt: 2.6, from: { y: 150, rot: 9, scale: 1.06 } },
-      { at: 0.55, tilt: -1.8, from: { y: 150, rot: -8, scale: 1.05 } },
-      { at: 0.78, tilt: 2.2, from: { y: 170, rot: 10, scale: 1.05 } },
-    ];
-    if (flow) {
-      if (window.matchMedia('(min-width: 861px)').matches) {
-        const stepIO = new IntersectionObserver(
-          (entries) => {
-            for (const e of entries) {
-              if (e.isIntersecting) flow.dataset.stage = e.target.dataset.step;
-            }
-          },
-          { threshold: 0.51 },
-        );
-        flow.querySelectorAll('.intel-step').forEach((el) => stepIO.observe(el));
-
-        const cards = [...flow.querySelectorAll('.ship-card')];
-        const ease = (t) => 1 - Math.pow(1 - t, 3);
-        let ticking = false;
-        const deal = () => {
-          ticking = false;
-          const rect = flow.getBoundingClientRect();
-          const total = flow.offsetHeight - window.innerHeight;
-          const prog = Math.min(1, Math.max(0, -rect.top / total));
-          const p2 = Math.min(1, Math.max(0, (prog - STAGE2_START) / (1 - STAGE2_START)));
-          cards.forEach((card, i) => {
-            const c = CHOREO[i];
-            const t = ease(Math.min(1, Math.max(0, (p2 - c.at) / 0.22)));
-            card.style.opacity = String(t);
-            card.style.transform =
-              `translateY(${(1 - t) * c.from.y}px) ` +
-              `rotate(${c.from.rot + (c.tilt - c.from.rot) * t}deg) ` +
-              `scale(${c.from.scale + (1 - c.from.scale) * t})`;
-          });
-        };
-        window.addEventListener('scroll', () => {
-          if (!ticking) { ticking = true; requestAnimationFrame(deal); }
-        }, { passive: true });
-        deal();
-      } else {
-        flow.classList.add('static', 'reveal-on');
-        revealStacked(flow);
-      }
-    }
+    import('../scripts/homepage-hero-3d.mjs')
+      .then(({ startHero }) => startHero(reduced, wide))
+      .catch(() => document.documentElement.classList.add('static-hero'));
   }
-
 </script>
 
 <style>
@@ -825,258 +663,6 @@ const pricingTiers = [
     gap: 0.7rem;
     margin-top: 2rem;
   }
-
-  /* ---------- products (paper, gradient cards) ---------- */
-  .products-section {
-    background: var(--paper-0);
-    color: var(--ink);
-    padding: 5.5rem 0 5rem;
-  }
-
-  .statement {
-    max-width: 56rem;
-    color: var(--ink);
-    font-size: clamp(2.2rem, 3.6vw, 3.3rem);
-    line-height: 1.1;
-  }
-
-  .statement-grad {
-    background-image: linear-gradient(92deg, #818CF8 0%, #6366F1 50%, #4F46E5 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: #4F46E5; /* fallback */
-  }
-
-  @supports not (background-clip: text) {
-    .statement-grad { color: #4F46E5; -webkit-text-fill-color: currentColor; }
-  }
-
-  .product-cards {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1.1rem;
-    margin-top: 2.6rem;
-  }
-
-  .p-card {
-    position: relative;
-    display: flex;
-    min-height: 22rem;
-    overflow: hidden;
-    border-radius: 14px;
-    border: 1px solid rgba(25, 28, 60, 0.14);
-    text-decoration: none;
-    box-shadow: 0 22px 60px rgba(25, 28, 60, 0.14);
-    transition: transform 0.25s cubic-bezier(0.2, 0.6, 0.2, 1), box-shadow 0.25s ease;
-  }
-
-  .p-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 32px 80px rgba(25, 28, 60, 0.22);
-  }
-
-  /* Layered chromatic fields, replaced by generated card art when it lands
-     (background-image on .p-card-art). The gradient stack is the fallback
-     and the loading state. */
-  .p-card-art {
-    position: absolute;
-    inset: 0;
-    background-color: #0c0b1d;
-    background-size: cover;
-    background-position: center;
-    transition: transform 0.4s cubic-bezier(0.2, 0.6, 0.2, 1);
-  }
-
-  .p-card:hover .p-card-art { transform: scale(1.04); }
-
-  /* Generated dispersion card art (Gemini 3 Pro, briefs in gtm assets).
-     background-color stays as the loading/fallback state. */
-  .p-card-cyan .p-card-art {
-    background-image: url('/images/brand/cards/card-sandbox.webp');
-  }
-
-  .p-card-magenta .p-card-art {
-    background-image: url('/images/brand/cards/card-intelligence.webp');
-  }
-
-  .p-card-indigo .p-card-art {
-    background-image: url('/images/brand/cards/card-inference.webp');
-  }
-
-  .p-card-body {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    gap: 0.45rem;
-    width: 100%;
-    padding: 1.4rem 1.4rem 1.3rem;
-    background: linear-gradient(180deg, transparent 0%, rgba(8, 8, 20, 0.32) 42%, rgba(8, 8, 20, 0.78) 100%);
-  }
-
-  .p-card-body h3 {
-    color: #ffffff;
-    font-size: 1.8rem;
-    letter-spacing: -0.022em;
-  }
-
-  .p-card-body p {
-    margin: 0;
-    max-width: 24rem;
-    color: rgba(240, 240, 250, 0.9);
-    font-size: 1.18rem;
-    line-height: 1.55;
-  }
-
-  .p-card-link {
-    margin-top: 0.6rem;
-    color: rgba(240, 240, 250, 0.66);
-    font-size: 0.92rem;
-  }
-
-  .p-card:hover .p-card-link { color: #ffffff; }
-
-  /* ---------- sandbox chapter (dark, scroll-driven) ---------- */
-  .sb-section {
-    background: linear-gradient(180deg, #0c0b1d 0%, #11122d 100%);
-    border-top: 1px solid rgba(199, 201, 238, 0.08);
-  }
-
-  .sb-flow {
-    position: relative;
-    height: 180vh;
-  }
-
-  .sb-sticky {
-    position: sticky;
-    top: 0;
-    display: flex;
-    align-items: center;
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  .sb-head {
-    display: grid;
-    grid-template-columns: minmax(14rem, 0.55fr) minmax(0, 1.45fr);
-    gap: 2.5rem;
-    align-items: start;
-  }
-
-  .sb-head h2 {
-    color: #ffffff;
-    font-size: clamp(2.3rem, 3.6vw, 3.5rem);
-    letter-spacing: -0.032em;
-  }
-
-  .sb-head p {
-    margin: 0;
-    color: rgba(237, 237, 244, 0.8);
-    font-size: clamp(1.2rem, 1.5vw, 1.45rem);
-    line-height: 1.6;
-    max-width: 46rem;
-  }
-
-  .sb-rail {
-    display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
-    gap: 0.7rem;
-    margin-top: 2.6rem;
-  }
-
-  .sb-tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 1.1rem 0.6rem 0.9rem;
-    border: 1px solid rgba(199, 201, 238, 0.12);
-    border-radius: 12px;
-    background: #12112a;
-    text-align: center;
-    opacity: 0.38;
-    transition: opacity 0.45s ease, border-color 0.45s ease, box-shadow 0.45s ease, transform 0.45s ease;
-  }
-
-  .sb-tile.on {
-    opacity: 1;
-    border-color: rgba(129, 140, 248, 0.45);
-    box-shadow: 0 10px 40px rgba(99, 102, 241, 0.16);
-    transform: translateY(-3px);
-  }
-
-  .sb-logo {
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
-    object-fit: cover;
-    box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14);
-  }
-
-  .sb-name {
-    color: #ededf4;
-    font-size: 0.98rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .sb-cmd {
-    color: rgba(198, 200, 226, 0.66);
-    font-size: 0.85rem;
-  }
-
-  .sb-run {
-    color: #A5AAFC;
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    opacity: 0;
-    transition: opacity 0.4s ease;
-  }
-
-  .sb-tile.on .sb-run { opacity: 1; }
-
-  .sb-lines {
-    display: block;
-    width: 100%;
-    height: clamp(11rem, 24vh, 15rem);
-    margin-top: 0.4rem;
-  }
-
-  .sb-line {
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-  }
-
-  .sb-node {
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-
-  .sb-flow.done .sb-node {
-    opacity: 1;
-    filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.9));
-  }
-
-  .sb-node-label {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    fill: rgba(198, 200, 226, 0.7);
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-
-  .sb-flow.done .sb-node-label { opacity: 1; }
-
-  /* static fallback */
-  .sb-flow.static { height: auto; }
-  .sb-flow.static .sb-sticky { position: static; height: auto; padding: 4.5rem 0; }
-  .sb-flow.static .sb-tile { opacity: 1; }
-  .sb-flow.static .sb-tile .sb-run { opacity: 0; }
-  .sb-flow.static .sb-line { stroke-dashoffset: 0; }
-  .sb-flow.static .sb-node, .sb-flow.static .sb-node-label { opacity: 1; }
 
   /* ---------- intelligence split story (paper) ---------- */
   .intel-section {
@@ -1406,32 +992,21 @@ const pricingTiers = [
     box-shadow: 0 32px 80px rgba(25, 28, 60, 0.22);
   }
 
-  /* Layered chromatic fields, replaced by generated card art when it lands
-     (background-image on .p-card-art). The gradient stack is the fallback
-     and the loading state. */
+  /* Keep a dark fallback while card art loads below the fold. */
   .p-card-art {
     position: absolute;
     inset: 0;
     background-color: #0c0b1d;
-    background-size: cover;
-    background-position: center;
     transition: transform 0.4s cubic-bezier(0.2, 0.6, 0.2, 1);
   }
 
   .p-card:hover .p-card-art { transform: scale(1.04); }
 
-  /* Generated dispersion card art (Gemini 3 Pro, briefs in gtm assets).
-     background-color stays as the loading/fallback state. */
-  .p-card-cyan .p-card-art {
-    background-image: url('/images/brand/cards/card-sandbox.webp');
-  }
-
-  .p-card-magenta .p-card-art {
-    background-image: url('/images/brand/cards/card-intelligence.webp');
-  }
-
-  .p-card-indigo .p-card-art {
-    background-image: url('/images/brand/cards/card-inference.webp');
+  .p-card-art img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .p-card-body {
