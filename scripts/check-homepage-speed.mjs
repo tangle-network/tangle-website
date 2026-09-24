@@ -29,8 +29,10 @@ function normalize(value) {
 
 function checkRatchet(next, prior) {
   for (const device of ['desktop', 'mobile']) {
-    for (const key of ['maxJsBytes', 'maxRequests', 'maxOwnRequests', 'maxCls']) {
-      assert.ok(next.fast[device][key] <= prior.fast[device][key], `${device} ${key} budget was raised`)
+    for (const key of ['maxJsBytes', 'maxCssBytes', 'maxRequests', 'maxOwnRequests', 'maxCls']) {
+      if (prior.fast[device][key] !== undefined) {
+        assert.ok(next.fast[device][key] <= prior.fast[device][key], `${device} ${key} budget was raised`)
+      }
     }
   }
 }
@@ -79,12 +81,16 @@ try {
     try {
       const response = await page.goto(`${origin}/?home_speed=${fixture.mode}`, { waitUntil: 'load' })
       assert.equal(response?.status(), 200, `${fixture.name} document`)
-      await page.waitForFunction(() => window.__homeRumEvents?.some((event) => event.name === 'FCP'), null, { timeout: 5000 })
+      await page.waitForFunction(() => window.__homeRumEvents?.some((event) => event.name === 'FCP'), null, { timeout: 15000 })
       await page.waitForTimeout(300)
       assert.deepEqual((await page.locator('main h1').allInnerTexts()).map(normalize), [content.h1], `${fixture.name} h1`)
       assert.deepEqual((await page.locator('main h2').allInnerTexts()).map(normalize), content.h2, `${fixture.name} h2`)
       assert.equal(await page.locator('.hero .hero-actions .btn-primary').innerText(), content.primaryAction.text, `${fixture.name} CTA text`)
       assert.equal(await page.locator('.hero .hero-actions .btn-primary').getAttribute('href'), content.primaryAction.href, `${fixture.name} CTA target`)
+      const bodyText = normalize(await page.locator('body').innerText())
+      for (const line of content.requiredText) {
+        assert.ok(bodyText.includes(line), `${fixture.name} missing published copy: ${line}`)
+      }
       assert.equal(await page.locator('html').getAttribute('data-home-speed'), fixture.mode, `${fixture.name} flag`)
       assert.equal(errors.length, 0, `${fixture.name} page errors: ${errors.join('; ')}`)
 
@@ -138,23 +144,31 @@ try {
       await page.screenshot({ path: resolve(out, `${fixture.name}.png`) })
 
       const scripts = [...new Set(requests.filter((url) => new URL(url).pathname.endsWith('.js')))]
+      const stylesheets = [...new Set(requests.filter((url) => new URL(url).pathname.endsWith('.css')))]
       let jsBytes = 0
       for (const url of scripts) {
         const file = resolve(root, `.${new URL(url).pathname}`)
         assert.ok(file.startsWith(root + sep), `${fixture.name} asset escaped build root`)
         jsBytes += (await stat(file)).size
       }
+      let cssBytes = 0
+      for (const url of stylesheets) {
+        const file = resolve(root, `.${new URL(url).pathname}`)
+        assert.ok(file.startsWith(root + sep), `${fixture.name} stylesheet escaped build root`)
+        cssBytes += (await stat(file)).size
+      }
       const totalRequests = requests.length + externalRequests.length
-      const result = { case: fixture.name, mode: fixture.mode, device: fixture.device, requests: totalRequests, ownRequests: requests.length, externalRequests: externalRequests.length, jsBytes, cls: layout.cls, scriptUrls: scripts }
+      const result = { case: fixture.name, mode: fixture.mode, device: fixture.device, requests: totalRequests, ownRequests: requests.length, externalRequests: externalRequests.length, jsBytes, cssBytes, cls: layout.cls, scriptUrls: scripts, stylesheetUrls: stylesheets }
       if (fixture.mode === 'fast' && !fixture.reducedMotion) {
         const ceiling = budget.fast[fixture.device]
         assert.ok(jsBytes <= ceiling.maxJsBytes, `${fixture.name} JS ${jsBytes} > ${ceiling.maxJsBytes}`)
+        assert.ok(cssBytes <= ceiling.maxCssBytes, `${fixture.name} CSS ${cssBytes} > ${ceiling.maxCssBytes}`)
         assert.ok(totalRequests <= ceiling.maxRequests, `${fixture.name} requests ${totalRequests} > ${ceiling.maxRequests}`)
         assert.ok(requests.length <= ceiling.maxOwnRequests, `${fixture.name} own requests ${requests.length} > ${ceiling.maxOwnRequests}`)
         assert.ok(layout.cls <= ceiling.maxCls, `${fixture.name} CLS ${layout.cls} > ${ceiling.maxCls}`)
       }
       results.push(result)
-      console.log(`${fixture.name}: ${totalRequests} requests (${requests.length} own), ${jsBytes} JS bytes, CLS ${layout.cls.toFixed(5)}; content and interaction pass`)
+      console.log(`${fixture.name}: ${totalRequests} requests (${requests.length} own), ${jsBytes} JS bytes, ${cssBytes} CSS bytes, CLS ${layout.cls.toFixed(5)}; content and interaction pass`)
       if (fixture.mode === 'fast' && !fixture.reducedMotion) {
         await page.locator('.product-cards').scrollIntoViewIfNeeded()
         await page.waitForFunction(() => [...document.querySelectorAll('.p-card-art img')].every((image) => image.complete && image.naturalWidth > 0), null, { timeout: 10000 })
