@@ -25,6 +25,7 @@ const ROOT_PATHS = new Set([
   '/status',
   '/sub-processors',
   '/terms-of-service',
+  '/what-is-tangle',
 ])
 const CONTENT_PATH = /^\/(?:blog\/(?:series\/[a-z0-9][a-z0-9-]{0,79}|[a-z0-9][a-z0-9-]{0,79})|benchmarks\/[a-z0-9][a-z0-9-]{0,79})$/
 // "token" is a normal term in static product slugs; unknown dynamic paths still fail closed below.
