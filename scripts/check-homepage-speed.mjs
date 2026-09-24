@@ -17,6 +17,7 @@ const basePath = process.argv[2] === '--base-budget' ? process.argv[3] : null
 if (process.argv.length > 2 && !basePath) throw new Error('Usage: check-homepage-speed.mjs [--base-budget path]')
 const cases = [
   { name: 'desktop-fast', device: 'desktop', mode: 'fast', viewport: { width: 1440, height: 900 } },
+  { name: 'desktop-compact-fast', device: 'desktop', mode: 'fast', viewport: { width: 1280, height: 800 } },
   { name: 'mobile-fast', device: 'mobile', mode: 'fast', viewport: { width: 390, height: 844 }, isMobile: true },
   { name: 'mobile-reduced', device: 'mobile', mode: 'fast', viewport: { width: 390, height: 844 }, isMobile: true, reducedMotion: 'reduce' },
   { name: 'desktop-control', device: 'desktop', mode: 'control', viewport: { width: 1440, height: 900 } },
@@ -119,6 +120,7 @@ try {
           cardBackground: card ? getComputedStyle(card).backgroundImage : '',
           cardImageDisplay: card?.querySelector('img') ? getComputedStyle(card.querySelector('img')).display : '',
           actionHit: Boolean(action?.contains(document.elementFromPoint(x, y))),
+          actionFullyVisible: Boolean(rect && rect.top >= 0 && rect.bottom <= innerHeight),
           posterVisible: getComputedStyle(document.querySelector('.hero-poster')).display !== 'none',
           cls: window.__homeCls,
         }
@@ -137,6 +139,7 @@ try {
         assert.equal(layout.cardImageDisplay, 'none', `${fixture.name} control card image`)
       }
       assert.ok(layout.actionHit, `${fixture.name} CTA hit target`)
+      assert.ok(layout.actionFullyVisible, `${fixture.name} CTA entirely in viewport`)
       if (fixture.mode === 'fast' || fixture.isMobile) assert.ok(layout.posterVisible, `${fixture.name} poster`)
       if (fixture.name === 'desktop-control') {
         await page.locator('#hero-knot.ready').waitFor({ timeout: 15000 })
