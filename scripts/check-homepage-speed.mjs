@@ -113,6 +113,7 @@ try {
         const y = rect ? Math.min(innerHeight - 1, Math.max(0, rect.top + rect.height / 2)) : -1
         return {
           overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
+          pageBackground: getComputedStyle(document.documentElement).backgroundColor,
           logoLoaded: Boolean(logo?.complete && logo.naturalWidth > 0),
           logoSource: logo?.currentSrc ?? '',
           cardBackground: card ? getComputedStyle(card).backgroundImage : '',
@@ -123,6 +124,7 @@ try {
         }
       })
       assert.equal(layout.overflow, 0, `${fixture.name} horizontal overflow`)
+      if (fixture.mode === 'fast') assert.equal(layout.pageBackground, 'rgb(11, 11, 13)', `${fixture.name} dark page background`)
       assert.ok(layout.logoLoaded, `${fixture.name} nav logo`)
       if (fixture.mode === 'fast') {
         assert.ok(layout.logoSource.endsWith('/brand/tangle-nav-icon.svg'), `${fixture.name} fast logo`)
