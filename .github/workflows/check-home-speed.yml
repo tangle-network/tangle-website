@@ -74,6 +74,7 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: homepage-speed
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       deployments: write
@@ -104,3 +105,29 @@ jobs:
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
         run: echo "Preview $PREVIEW_URL"
+      - name: Install Chromium for served measurement
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Measure served preview control and fast modes
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
+        run: |
+          preview_base=${PREVIEW_URL%/}
+          mkdir -p audit-results/home-speed-preview
+          date -u
+          uptime
+          set +e
+          node scripts/benchmark-homepage.mjs --url "$preview_base/?home_speed=control" --pairs 9 --output audit-results/home-speed-preview/control.json --record-dir audit-results/home-speed-preview/control-recordings
+          control_exit=$?
+          node scripts/benchmark-homepage.mjs --url "$preview_base/?home_speed=fast" --pairs 9 --output audit-results/home-speed-preview/fast.json --record-dir audit-results/home-speed-preview/fast-recordings
+          fast_exit=$?
+          date -u
+          uptime
+          if [ "$control_exit" -ne 0 ] || [ "$fast_exit" -ne 0 ]; then exit 1; fi
+      - name: Retain served timing receipts and recordings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-speed-preview-measurement
+          path: audit-results/home-speed-preview/
+          if-no-files-found: warn
+          retention-days: 30
