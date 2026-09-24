@@ -35,7 +35,7 @@ export interface BoardProfile {
   egress: EgressStatus;
   agentProfile: Record<string, unknown>;
   agentProfileDigest: string;
-  pins: { harness: string; searchArm: string; searchPersona?: string; searchMode?: string };
+  pins: { harness: string; searchArm: string; searchPersona?: string; searchMode?: string; skills?: string[]; effort?: string };
   attempts: number;
   solved: number;
   solveRate: number;
