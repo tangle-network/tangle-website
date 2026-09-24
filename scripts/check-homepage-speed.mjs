@@ -119,6 +119,7 @@ try {
         const rect = action?.getBoundingClientRect()
         const x = rect ? Math.min(innerWidth - 1, Math.max(0, rect.left + rect.width / 2)) : -1
         const y = rect ? Math.min(innerHeight - 1, Math.max(0, rect.top + rect.height / 2)) : -1
+        const hit = document.elementFromPoint(x, y)
         return {
           overflow: Math.max(0, document.documentElement.scrollWidth - innerWidth),
           pageBackground: getComputedStyle(document.documentElement).backgroundColor,
@@ -126,8 +127,11 @@ try {
           logoSource: logo?.currentSrc ?? '',
           cardBackground: card ? getComputedStyle(card).backgroundImage : '',
           cardImageDisplay: card?.querySelector('img') ? getComputedStyle(card.querySelector('img')).display : '',
-          actionHit: Boolean(action?.contains(document.elementFromPoint(x, y))),
+          actionHit: Boolean(action?.contains(hit)),
           actionFullyVisible: Boolean(rect && rect.top >= 0 && rect.bottom <= innerHeight),
+          actionRect: rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } : null,
+          hitElement: hit?.tagName.toLowerCase() ?? null,
+          scrollY,
           posterVisible: getComputedStyle(document.querySelector('.hero-poster')).display !== 'none',
           cls: window.__homeCls,
         }
@@ -145,7 +149,10 @@ try {
         assert.ok(layout.cardBackground.includes('card-sandbox.webp'), `${fixture.name} control card background`)
         assert.equal(layout.cardImageDisplay, 'none', `${fixture.name} control card image`)
       }
-      assert.ok(layout.actionHit, `${fixture.name} CTA hit target`)
+      if (!layout.actionHit || !layout.actionFullyVisible) {
+        await page.screenshot({ path: resolve(out, `${fixture.name}-cta-failure.png`) })
+      }
+      assert.ok(layout.actionHit, `${fixture.name} CTA hit target: ${JSON.stringify(layout)}`)
       assert.ok(layout.actionFullyVisible, `${fixture.name} CTA entirely in viewport`)
       if (fixture.mode === 'fast' || fixture.isMobile) assert.ok(layout.posterVisible, `${fixture.name} poster`)
       if (fixture.name === 'desktop-control') {
