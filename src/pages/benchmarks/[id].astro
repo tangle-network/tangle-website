@@ -1,196 +1,231 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { assessedSuites, suiteById } from '../../data/benchmarks/index';
-import type { GateOutcome } from '../../data/benchmarks/standard';
+import { boards, boardById } from '../../data/benchmarks/index';
+import { TIERS, type EgressStatus, type TierCounts } from '../../data/benchmarks/board-record';
 
 export function getStaticPaths() {
-  return assessedSuites.map((suite) => ({ params: { id: suite.id } }));
+  return boards.map((board) => ({ params: { id: board.suite.id } }));
 }
 
-const { id } = Astro.params;
-const suite = suiteById(id!);
-if (!suite) return Astro.redirect('/benchmarks');
+const board = boardById(Astro.params.id!)!;
+const { campaign, grader, integrity, decision } = board;
 
-const { assessment } = suite;
-const blocked = assessment.gates.filter((gate) => gate.outcome !== 'met');
-// Spelled out, because "3 of the three gates" reads as a typo. There are always
-// exactly three gates, so this covers every case a page can render.
-const blockedPhrase =
-  blocked.length === 3
-    ? 'none of the three gates is met'
-    : blocked.length === 2
-      ? 'two of the three gates are not met'
-      : 'one of the three gates is not met';
-
-// Rendered only when every gate is met; sorted here so the table order is the
-// ranking the gates were tested against, not the record's file order.
-const ranking = assessment.publishes ? [...suite.run.rows].sort((a, b) => b.score - a.score) : [];
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
+const signedPct = (value: number) => `${value >= 0 ? '+' : '−'}${(Math.abs(value) * 100).toFixed(1)}`;
+const usd = (value: number) => (value >= 1 ? `$${value.toFixed(2)}` : `$${value.toFixed(3)}`);
+const duration = (ms: number) => (ms < 60_000 ? `${Math.round(ms / 1000)} s` : `${(ms / 60_000).toFixed(1)} min`);
+const short = (digest: string) => digest.replace(/^sha256:/, '').slice(0, 12);
+const tierText = (tiers: TierCounts) => TIERS.filter((tier) => tiers[tier] > 0).map((tier) => `${tiers[tier]}${tier}`).join(' ');
+// Labels name a harness and model; two contestants can share one, so a shared
+// label carries the contestant id that tells them apart.
+const shared = (label: string) => board.profiles.filter((profile) => profile.label === label).length > 1;
+const nameOf = new Map(board.profiles.map((profile) => [profile.id, shared(profile.label) ? `${profile.label} (${profile.id})` : profile.label]));
+const cellOf = new Map(board.cells.map((cell) => [`${cell.task}\u0000${cell.profile}`, cell]));
 
-const outcomeClass: Record<GateOutcome, string> = {
-  met: 'text-emerald-300 border-emerald-300/40',
-  unmet: 'text-red-300 border-red-300/40',
-  unproven: 'text-amber-300 border-amber-300/40',
+const egress: Record<EgressStatus, string> = {
+  'proven-no-egress': 'None, proven',
+  'proven-provider-only': 'One provider, proven',
+  'native-web-permitted': 'Harness web access',
 };
 
-const facts: { label: string; value: string; counts: string }[] = [
-  {
-    label: 'Run recorded',
-    value: assessment.runDate,
-    counts: 'the date the sweep was exported to this record',
-  },
-  {
-    label: 'Held-out tasks',
-    value: assessment.taskCount === null ? 'not broken out' : String(assessment.taskCount),
-    counts: 'distinct tasks in the suite, each graded independently',
-  },
-  {
-    label: 'Agent configurations',
-    value: assessment.configCount === null ? String(assessment.withheldRows) : String(assessment.configCount),
-    counts: 'distinct AgentProfile × runLoop × execution-environment combinations swept',
-  },
-  {
-    label: 'Cells graded',
-    value:
-      assessment.cellsExpected === null
-        ? 'not broken out'
-        : `${assessment.cellsGraded} of ${assessment.cellsExpected}`,
-    counts: 'task × configuration pairs that carry a grade, out of the pairs the sweep should contain',
-  },
-  {
-    label: 'Cells with no model call',
-    value: assessment.cellsGraded === 0 ? 'not recorded' : String(assessment.cellsWithoutModelCall),
-    counts: 'graded cells that recorded zero input and zero output tokens',
-  },
-  {
-    label: 'Repetitions per cell',
-    value: assessment.repetitions === null ? 'not recorded' : String(assessment.repetitions),
-    counts: 'times each task × configuration pair was run',
-  },
-  assessment.publishes
-    ? {
-        label: 'Scored configurations published',
-        value: String(assessment.withheldRows),
-        counts: `rows in the run record with a measured ${suite.metricLabel.toLowerCase()}, all of them ranked above`,
-      }
-    : {
-        label: 'Scored configurations withheld',
-        value: String(assessment.withheldRows),
-        counts: `rows in the run record with a measured ${suite.metricLabel.toLowerCase()}, none of them published`,
-      },
+const gradedBy =
+  grader.kind === 'app-grade'
+    ? `App Grade serves the production build each agent made, operates it in a real browser against the real vendor, and grades it from the browser, vendor and build evidence it records. An attempt counts as solved at tier ${grader.passTier} or above.`
+    : `The runner's own verification: ${grader.pass}.`;
+
+const integrityRows = [
+  { label: 'Expected cells', value: integrity.expectedCells },
+  { label: 'Recorded cells', value: integrity.recordedCells },
+  { label: 'Harness failures', value: integrity.harnessFailures },
+  { label: 'Missing', value: integrity.missing },
+  { label: 'Duplicated', value: integrity.duplicate },
+  { label: 'Without a receipt-backed cost', value: integrity.unknownCost },
+  { label: 'Quarantined', value: integrity.quarantined },
+];
+
+const provenance = [
+  { label: 'Board record', value: board.digest },
+  { label: 'Sealed plan', value: decision.planSeal },
+  { label: 'Expected cells', value: decision.manifest },
+  { label: 'Attempt history', value: decision.results },
+  ...(decision.grades ? [{ label: 'Grade ledger', value: decision.grades }] : []),
+  ...(grader.kind === 'app-grade' ? [{ label: 'Grader commit', value: grader.graderCommit }] : []),
 ];
 ---
 
 <BaseLayout
-  title={`${suite.domain} benchmark`}
-  description={`${suite.domain}: what the suite grades, the coverage its last run achieved, and which publishing gate is keeping its ranking unpublished.`}
+  title={`${board.suite.name} benchmark`}
+  description={`${board.suite.name}: ${board.profiles.length} agent profiles over ${board.tasks.length} held-out tasks, ${campaign.repetitions} runs each, ranked by solved tasks with 95% intervals and receipt-backed cost.`}
 >
-  <section class="max-w-4xl mx-auto px-6 pt-32 pb-12">
+  <section class="max-w-6xl mx-auto px-6 pt-32 pb-12">
     <a class="text-sm text-indigo-300 hover:text-indigo-200" href="/benchmarks">All benchmarks</a>
-    <h1 class="mt-6 text-4xl md:text-5xl font-bold tracking-tight">{suite.domain}</h1>
-    <p class="mt-6 text-lg text-text-secondary leading-relaxed">{suite.blurb}</p>
-    <p class="mt-6 text-text-secondary leading-relaxed">
-      {assessment.publishes
-        ? `This run clears all three publishing gates, so its ranking is published below.`
-        : `No ranking is published for this suite. Its run record holds ${assessment.withheldRows} scored configurations, and ${blockedPhrase}, so no score and no ordering from it appears on this page.`}
+    <h1 class="mt-6 text-4xl md:text-5xl font-bold tracking-tight">{board.suite.name}</h1>
+    <p class="mt-6 max-w-3xl text-lg text-text-secondary leading-relaxed">{board.suite.description}</p>
+    <p class="mt-6 font-mono text-xs text-text-muted">
+      {campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks × {board.profiles.length} profiles × {campaign.repetitions} runs · {campaign.shots} shot{campaign.shots === 1 ? '' : 's'} per run
     </p>
-    {(suite.sourceUrl || suite.paperUrl) && (
-      <div class="mt-6 flex flex-wrap gap-6 text-sm">
-        {suite.sourceUrl && (
-          <a class="text-indigo-300 hover:text-indigo-200" href={suite.sourceUrl} target="_blank" rel="noopener">
-            {suite.by} on GitHub
-          </a>
-        )}
-        {suite.paperUrl && (
-          <a class="text-indigo-300 hover:text-indigo-200" href={suite.paperUrl} target="_blank" rel="noopener">
-            The paper behind the suite
-          </a>
-        )}
-      </div>
-    )}
+    <p class="mt-4 max-w-3xl text-sm text-text-secondary leading-relaxed">{gradedBy}</p>
   </section>
 
-  {assessment.publishes && (
-    <section class="max-w-4xl mx-auto px-6 pb-16">
-      <h2 class="text-2xl font-bold tracking-tight">Ranking</h2>
-      <div class="mt-6 overflow-x-auto border border-white/15 bg-white/[0.03]">
-        <table class="w-full text-sm">
-          <thead class="text-left text-xs uppercase tracking-wide text-text-muted">
-            <tr class="border-b border-white/10">
-              <th class="px-5 py-3">#</th>
-              <th class="px-5 py-3">Configuration</th>
-              <th class="px-5 py-3">{suite.metricLabel}</th>
-              <th class="px-5 py-3">95% interval</th>
-              <th class="px-5 py-3">Graded tasks</th>
+  <section class="max-w-6xl mx-auto px-6 pb-16">
+    <h2 class="text-2xl font-bold tracking-tight">Ranking</h2>
+    <div class="mt-6 overflow-x-auto border border-white/15 bg-white/[0.03]">
+      <table class="w-full min-w-[60rem] text-sm">
+        <thead class="text-left text-xs uppercase tracking-wide text-text-muted">
+          <tr class="border-b border-white/10">
+            <th class="px-4 py-3 font-medium">#</th>
+            <th class="px-4 py-3 font-medium">Agent profile</th>
+            <th class="px-4 py-3 font-medium">Solved</th>
+            <th class="px-4 py-3 font-medium">95% interval</th>
+            {board.grader.kind === 'app-grade' && <th class="px-4 py-3 font-medium">App Grade tiers</th>}
+            <th class="px-4 py-3 font-medium">Cost</th>
+            <th class="px-4 py-3 font-medium">Per solved</th>
+            <th class="px-4 py-3 font-medium">Median run</th>
+            <th class="px-4 py-3 font-medium">Web</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/10">
+          {board.profiles.map((profile) => (
+            <tr>
+              <td class="px-4 py-3 font-mono text-text-muted">{profile.rank}</td>
+              <td class="px-4 py-3">
+                <div class="text-text-primary">{profile.label}</div>
+                <div class="mt-1 font-mono text-xs text-text-muted" title={profile.agentProfileDigest}>
+                  {profile.id} · AgentProfile {short(profile.agentProfileDigest)}
+                </div>
+              </td>
+              <td class="px-4 py-3 font-mono text-text-primary whitespace-nowrap">
+                {pct(profile.solveRate)} <span class="text-text-muted">{profile.solved}/{profile.attempts}</span>
+              </td>
+              <td class="px-4 py-3 font-mono text-text-secondary whitespace-nowrap">
+                {pct(profile.interval.lower)}–{pct(profile.interval.upper)}
+              </td>
+              {profile.tiers && (
+                <td class="px-4 py-3 font-mono text-xs text-text-secondary whitespace-nowrap">
+                  {tierText(profile.tiers)}
+                </td>
+              )}
+              <td class="px-4 py-3 font-mono text-text-secondary whitespace-nowrap">{usd(profile.cost.totalUsd)}</td>
+              <td class="px-4 py-3 font-mono text-text-secondary whitespace-nowrap">
+                {profile.cost.perSolvedUsd === null ? '—' : usd(profile.cost.perSolvedUsd)}
+              </td>
+              <td class="px-4 py-3 font-mono text-text-secondary whitespace-nowrap">{duration(profile.medianWallMs)}</td>
+              <td class="px-4 py-3 text-xs text-text-secondary whitespace-nowrap">{egress[profile.egress]}</td>
             </tr>
-          </thead>
-          <tbody class="divide-y divide-white/10">
-            {ranking.map((row, index) => (
-              <tr>
-                <td class="px-5 py-3 font-mono text-text-muted">{index + 1}</td>
-                <td class="px-5 py-3 text-text-primary">
-                  {row.model}{row.harness ? <span class="text-text-muted"> · {row.harness}</span> : null}
-                </td>
-                <td class="px-5 py-3 font-mono text-text-primary">{pct(row.score)}</td>
-                <td class="px-5 py-3 font-mono text-text-secondary">
-                  {row.ciLow != null && row.ciHigh != null ? `${pct(row.ciLow)}–${pct(row.ciHigh)}` : '—'}
-                </td>
-                <td class="px-5 py-3 font-mono text-text-secondary">{row.n}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-4 max-w-3xl text-xs leading-relaxed text-text-muted">
+      {`Solved counts attempts: ${board.tasks.length} tasks × ${campaign.repetitions} runs per profile. ` +
+        `The interval resamples whole tasks, so a profile that solves one task every time is not treated as ` +
+        `${campaign.repetitions} independent wins. Cost is the router-receipt spend of every attempt, solved or not.` +
+        (grader.kind === 'app-grade' ? ` Grading cost ${usd(grader.costUsd)} in total, measured as ${grader.costBasis}.` : '')}
+    </p>
+  </section>
+
+  <section class="max-w-6xl mx-auto px-6 pb-16">
+    <h2 class="text-2xl font-bold tracking-tight">Why the order holds</h2>
+    <div class="mt-6 space-y-px bg-white/15 border border-white/15">
+      {board.comparisons.map((comparison) => (
+        <div class="bg-bg-dark p-6">
+          <h3 class="font-medium text-text-primary">
+            {nameOf.get(comparison.favored)} over {nameOf.get(comparison.other)}
+          </h3>
+          <p class="mt-3 text-sm leading-relaxed text-text-secondary">
+            {`Over ${comparison.pairs} paired attempts on the same tasks and runs, the solve-rate difference is `}
+            <span class="font-mono text-text-primary">{`${signedPct(comparison.interval.lower)} to ${signedPct(comparison.interval.upper)} points`}</span>
+            {` (${pct(comparison.interval.level)} task-clustered interval; exact interval ` +
+              `${signedPct(comparison.exactInterval.lower)} to ${signedPct(comparison.exactInterval.upper)}). ` +
+              `Both clear the minimum effect of ${signedPct(comparison.minimumEffect)} points registered before the campaign ran.`}
+          </p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="max-w-6xl mx-auto px-6 pb-16">
+    <h2 class="text-2xl font-bold tracking-tight">Every task</h2>
+    <p class="mt-3 max-w-3xl text-sm text-text-secondary leading-relaxed">
+      Task definitions are withheld so the suite stays held out. Each label maps to one task digest below.
+    </p>
+    <div class="mt-6 overflow-x-auto border border-white/15 bg-white/[0.03]">
+      <table class="w-full text-sm">
+        <thead class="text-left text-xs uppercase tracking-wide text-text-muted">
+          <tr class="border-b border-white/10">
+            <th class="px-4 py-3 font-medium">Task</th>
+            {board.profiles.map((profile) => <th class="px-4 py-3 font-medium normal-case">{nameOf.get(profile.id)}</th>)}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/10">
+          {board.tasks.map((task) => (
+            <tr>
+              <td class="px-4 py-2 font-mono text-text-muted" title={task.digest}>{task.label}</td>
+              {board.profiles.map((profile) => {
+                const cell = cellOf.get(`${task.label}\u0000${profile.id}`)!;
+                const tiers = cell.tiers ? tierText(cell.tiers) : null;
+                return (
+                  <td class="px-4 py-2 font-mono text-xs text-text-secondary whitespace-nowrap">
+                    <span class={cell.solved === cell.attempts ? 'text-emerald-300' : cell.solved === 0 ? 'text-text-muted' : 'text-text-primary'}>
+                      {cell.solved}/{cell.attempts}
+                    </span>
+                    {tiers && <span class="text-text-muted"> · {tiers}</span>}
+                    <span class="text-text-muted"> · {usd(cell.costUsd)}</span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="max-w-6xl mx-auto px-6 pb-16 grid gap-10 md:grid-cols-2">
+    <div>
+      <h2 class="text-2xl font-bold tracking-tight">Completeness</h2>
+      <div class="mt-6 border border-white/15 bg-white/[0.03] divide-y divide-white/10">
+        {integrityRows.map((row) => (
+          <div class="flex items-baseline justify-between gap-4 px-5 py-3 text-sm">
+            <span class="text-text-secondary">{row.label}</span>
+            <span class="font-mono text-text-primary">{row.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+    <div>
+      <h2 class="text-2xl font-bold tracking-tight">Provenance</h2>
+      <div class="mt-6 border border-white/15 bg-white/[0.03] divide-y divide-white/10">
+        {provenance.map((row) => (
+          <div class="px-5 py-3 text-sm">
+            <div class="text-text-secondary">{row.label}</div>
+            <div class="mt-1 break-all font-mono text-xs text-text-muted">{row.value}</div>
+          </div>
+        ))}
       </div>
       <p class="mt-4 text-xs leading-relaxed text-text-muted">
-        Ordered by {suite.metricLabel.toLowerCase()}. Every row cleared the three gates below on this run.
+        Significance {decision.alpha}, power {decision.power}, fixed before the campaign ran.
       </p>
-    </section>
-  )}
-
-  <section class="max-w-4xl mx-auto px-6 pb-16">
-    <h2 class="text-2xl font-bold tracking-tight">How one task is graded</h2>
-    <p class="mt-4 text-text-secondary leading-relaxed">{suite.scoredBy}</p>
+    </div>
   </section>
 
-  <section class="max-w-4xl mx-auto px-6 pb-16">
-    <h2 class="text-2xl font-bold tracking-tight">What the last run covered</h2>
-    <div class="mt-6 border border-white/15 bg-white/[0.03] divide-y divide-white/10">
-      {facts.map((fact) => (
-        <div class="grid gap-1 px-5 py-4 sm:grid-cols-[14rem_7rem_1fr] sm:items-baseline sm:gap-5">
-          <div class="text-sm font-medium text-text-primary">{fact.label}</div>
-          <div class="font-mono text-sm text-text-primary">{fact.value}</div>
-          <div class="text-xs leading-relaxed text-text-muted">{fact.counts}</div>
-        </div>
+  <section class="max-w-6xl mx-auto px-6 pb-24">
+    <h2 class="text-2xl font-bold tracking-tight">Agent profiles and task digests</h2>
+    <div class="mt-6 space-y-3">
+      {board.profiles.map((profile) => (
+        <details class="border border-white/15 bg-white/[0.03] px-5 py-3">
+          <summary class="cursor-pointer text-sm text-text-primary">
+            {nameOf.get(profile.id)} <span class="break-all font-mono text-xs text-text-muted">{profile.agentProfileDigest}</span>
+          </summary>
+          <pre class="mt-3 overflow-x-auto text-xs text-text-secondary">{JSON.stringify({ agentProfile: profile.agentProfile, pins: profile.pins }, null, 2)}</pre>
+        </details>
       ))}
+      <details class="border border-white/15 bg-white/[0.03] px-5 py-3">
+        <summary class="cursor-pointer text-sm text-text-primary">Task digests</summary>
+        <ul class="mt-3 space-y-1 font-mono text-xs text-text-secondary">
+          {board.tasks.map((task) => <li class="break-all">{task.label} {task.digest}</li>)}
+        </ul>
+      </details>
     </div>
-    {suite.coverageNote && (
-      <div class="mt-6 border-l-2 border-amber-300/50 pl-5">
-        <p class="text-sm leading-relaxed text-text-secondary">
-          <span class="text-amber-300">Recorded outside the run record.</span> {suite.coverageNote}
-        </p>
-      </div>
-    )}
-  </section>
-
-  <section class="max-w-4xl mx-auto px-6 pb-24">
-    <h2 class="text-2xl font-bold tracking-tight">The three gates against this run</h2>
-    <div class="mt-6 space-y-px bg-white/15 border border-white/15">
-      {assessment.gates.map((gate) => (
-        <div class="bg-bg-dark p-6">
-          <div class="flex flex-wrap items-baseline justify-between gap-3">
-            <h3 class="font-medium text-text-primary">{gate.requirement}</h3>
-            <span class={`shrink-0 border px-2 py-0.5 text-xs uppercase tracking-wide ${outcomeClass[gate.outcome]}`}>
-              {gate.outcome}
-            </span>
-          </div>
-          <p class="mt-3 text-sm leading-relaxed text-text-secondary">{gate.finding}</p>
-        </div>
-      ))}
-    </div>
-    <p class="mt-8 max-w-2xl text-sm leading-relaxed text-text-muted">
-      {assessment.publishes
-        ? `Each result above is computed from this suite's run record when the site is built. The ranking stays published only while every gate stays met on the latest run.`
-        : `Each result above is computed from this suite's run record when the site is built. Rerunning the sweep so that every cell is graded, no cell loses its model call, and the top row separates from the runner-up over repeated passes is what publishes the ranking here.`}
-    </p>
   </section>
 </BaseLayout>

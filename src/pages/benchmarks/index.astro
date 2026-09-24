@@ -1,177 +1,102 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { assessedSuites, publishingSuites } from '../../data/benchmarks/index';
-import { gateTally, type GateOutcome } from '../../data/benchmarks/standard';
+import { boards } from '../../data/benchmarks/index';
 
-const suites = assessedSuites;
-const publishing = publishingSuites();
-const total = suites.length;
+const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 
-const headline =
-  publishing.length === 0
-    ? `${total} suites measured. None publishes a ranking yet.`
-    : `${total} suites measured. ${publishing.length} publish a ranking.`;
-
-const gateColumns = [
+const standard = [
   {
-    id: 'graded' as const,
-    short: 'Every cell graded',
-    requirement: 'Every task × configuration cell runs to completion and receives a valid grade.',
-    why: 'A configuration scored over fewer tasks than its neighbours is not on the same board as them.',
+    title: 'Registered before it ran',
+    body: 'The tasks, the agent profiles, the grader and the comparisons that order the ranking are sealed before the first attempt. An attempt run outside that plan does not count.',
   },
   {
-    id: 'clean' as const,
-    short: 'No harness failure',
-    requirement: 'Zero infrastructure or harness failures among the graded cells.',
-    why: 'A cell that never reached the model measures the runner, and scoring it as a task failure blames the agent for it.',
+    title: 'Every cell graded, twice or more',
+    body: 'Each task × profile cell runs at least twice and gets exactly one grade. One infrastructure or harness failure withholds the board.',
   },
   {
-    id: 'stable' as const,
-    short: 'Ranking survives rerun',
-    requirement: 'Large and repeated enough that the ranking cannot flip on rerun.',
-    why: 'Overlapping confidence intervals over one unrepeated sweep order the rows by luck.',
+    title: 'Costed from receipts',
+    body: 'The cost of every attempt comes from router receipts, so cost per solved task is measured, not estimated.',
+  },
+  {
+    title: 'Ranked by a supported difference',
+    body: 'A profile ranks above the next only when a paired comparison over the same tasks and runs clears the minimum effect registered before the campaign, on both a task-clustered bootstrap interval and an exact paired interval.',
   },
 ];
-
-const outcomeClass: Record<GateOutcome, string> = {
-  met: 'text-emerald-300',
-  unmet: 'text-red-300',
-  unproven: 'text-amber-300',
-};
-const outcomeMark: Record<GateOutcome, string> = { met: 'met', unmet: 'unmet', unproven: 'unproven' };
-
-function cellCoverage(suite: (typeof suites)[number]): string {
-  const { cellsGraded, cellsExpected } = suite.assessment;
-  if (cellsExpected === null) return 'not broken out';
-  return `${cellsGraded} / ${cellsExpected}`;
-}
-
-function shape(suite: (typeof suites)[number]): string {
-  const { taskCount, configCount } = suite.assessment;
-  if (taskCount === null || configCount === null) return `${suite.assessment.withheldRows} configurations`;
-  return `${taskCount} × ${configCount}`;
-}
 ---
 
 <BaseLayout
   title="Agent benchmarks"
-  description="Tangle measures agent configurations on held-out domain suites and publishes a ranking only when the run passes three gates: every cell graded, no harness failure, and a ranking that survives rerun. Every suite's current gate result is on this page."
+  description="Boards that rank agent profiles by held-out tasks solved and cost per solved task. A board publishes only when its campaign was registered before it ran, graded every cell twice or more, costed every attempt from receipts, and separated its ranking by paired comparisons."
 >
   <section class="max-w-6xl mx-auto px-6 pt-32 pb-16">
-    <h1 class="text-4xl md:text-5xl font-bold tracking-tight max-w-4xl">{headline}</h1>
-    <div class="mt-6 max-w-3xl space-y-4 text-text-secondary leading-relaxed">
-      <p>
-        Each suite below grades an agent on held-out tasks in one domain, by executing what the agent
-        produced against a hidden contract. No model scores its own work.
-      </p>
-      <p>
-        A ranking is published only when its run passes three gates. Every suite here has a real
-        measured run behind it, and every one of those runs fails or cannot prove at least one gate,
-        so the scores stay in the run record and off this page. The gate result for each suite is
-        computed from that record, not asserted beside it.
-      </p>
-    </div>
-  </section>
-
-  <section class="max-w-6xl mx-auto px-6 pb-4">
-    <!-- Below md the eight columns would put the gate results, which are the
-         point of the page, behind a horizontal scroll. Same data, stacked. -->
-    <div class="space-y-px border border-white/15 bg-white/15 md:hidden">
-      {suites.map((suite) => (
-        <div class="bg-bg-dark p-5">
-          <a class="font-medium text-text-primary hover:text-indigo-200" href={`/benchmarks/${suite.id}`}>
-            {suite.domain}
-          </a>
-          <div class="mt-1 text-xs text-text-muted">{suite.category} · {suite.by}</div>
-          <dl class="mt-4 space-y-1.5">
-            {gateColumns.map((column) => {
-              const gate = suite.assessment.gates.find((entry) => entry.id === column.id)!;
-              return (
-                <div class="flex items-baseline justify-between gap-4 text-xs">
-                  <dt class="text-text-secondary">{column.short}</dt>
-                  <dd class={outcomeClass[gate.outcome]}>{outcomeMark[gate.outcome]}</dd>
-                </div>
-              );
-            })}
-          </dl>
-          <div class="mt-4 border-t border-white/10 pt-3 font-mono text-xs text-text-muted">
-            {suite.assessment.runDate} · {shape(suite)} · {cellCoverage(suite)} cells · {suite.assessment.repetitions ?? '—'} rep
-          </div>
-        </div>
-      ))}
-    </div>
-    <div class="hidden border border-white/15 bg-white/[0.03] overflow-x-auto md:block">
-      <table class="w-full min-w-[56rem] text-left text-sm">
-        <thead class="border-b border-white/15 text-xs uppercase tracking-wide text-text-muted">
-          <tr>
-            <th class="px-5 py-4 font-medium">Suite</th>
-            <th class="px-5 py-4 font-medium">Run</th>
-            <th class="px-5 py-4 font-medium">Tasks × configs</th>
-            <th class="px-5 py-4 font-medium">Cells graded</th>
-            <th class="px-5 py-4 font-medium">Repetitions</th>
-            {gateColumns.map((column) => (
-              <th class="px-5 py-4 font-medium" title={column.requirement}>{column.short}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-white/10">
-          {suites.map((suite) => (
-            <tr class="hover:bg-white/[0.04] transition-colors">
-              <td class="px-5 py-5 min-w-[15rem]">
-                <a class="font-medium text-text-primary hover:text-indigo-200" href={`/benchmarks/${suite.id}`}>
-                  {suite.domain}
-                </a>
-                <div class="mt-1 whitespace-nowrap text-xs text-text-muted">{suite.category} · {suite.by}</div>
-              </td>
-              <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">
-                {suite.assessment.runDate}
-              </td>
-              <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">{shape(suite)}</td>
-              <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">{cellCoverage(suite)}</td>
-              <td class="px-5 py-5 font-mono text-xs text-text-secondary">{suite.assessment.repetitions ?? '—'}</td>
-              {gateColumns.map((column) => {
-                const gate = suite.assessment.gates.find((entry) => entry.id === column.id)!;
-                return (
-                  <td class={`px-5 py-5 text-xs ${outcomeClass[gate.outcome]}`} title={gate.finding}>
-                    {outcomeMark[gate.outcome]}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-    <p class="mt-4 text-sm text-text-muted">
-      A cell is one task run by one agent configuration. <span class="text-amber-300">Unproven</span> means the
-      run record does not carry the field that would decide the gate, which fails closed in the same way as <span class="text-red-300">unmet</span>. Open a suite for the measured finding behind each result.
+    <h1 class="text-4xl md:text-5xl font-bold tracking-tight max-w-4xl">Agent benchmarks</h1>
+    <p class="mt-6 max-w-3xl text-lg text-text-secondary leading-relaxed">
+      Each board ranks agent profiles (a harness, a model and its tools) by how many held-out tasks they solve,
+      and what each solved task cost.
+    </p>
+    <p class="mt-4 max-w-3xl text-text-secondary leading-relaxed">
+      {boards.length === 0
+        ? 'No board has published yet. A board appears only when its campaign passes every check below.'
+        : 'A board appears only when its campaign passes every check below, and shows only that campaign\'s recorded results.'}
     </p>
   </section>
 
-  <section class="max-w-6xl mx-auto px-6 pt-16 pb-24">
-    <h2 class="text-2xl md:text-3xl font-bold tracking-tight">The three gates, and how many suites clear them</h2>
-    <div class="mt-8 grid gap-px bg-white/15 md:grid-cols-3 border border-white/15">
-      {gateColumns.map((column) => {
-        const tally = gateTally(suites, column.id);
-        return (
-          <div class="bg-bg-dark p-6">
-            <div class="font-mono text-2xl text-text-primary">{tally.met}<span class="text-text-muted"> / {tally.total}</span></div>
-            <h3 class="mt-3 font-medium text-text-primary">{column.short}</h3>
-            <p class="mt-2 text-sm leading-relaxed text-text-secondary">{column.requirement}</p>
-            <p class="mt-3 text-sm leading-relaxed text-text-muted">{column.why}</p>
-          </div>
-        );
-      })}
+  {boards.length > 0 && (
+    <section class="max-w-6xl mx-auto px-6 pb-16">
+      <div class="border border-white/15 bg-white/[0.03] overflow-x-auto">
+        <table class="w-full min-w-[48rem] text-left text-sm">
+          <thead class="border-b border-white/15 text-xs uppercase tracking-wide text-text-muted">
+            <tr>
+              <th class="px-5 py-4 font-medium">Suite</th>
+              <th class="px-5 py-4 font-medium">Campaign</th>
+              <th class="px-5 py-4 font-medium">Tasks × profiles × runs</th>
+              <th class="px-5 py-4 font-medium">First place</th>
+              <th class="px-5 py-4 font-medium">Solved</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            {boards.map((board) => {
+              const leader = board.profiles[0]!;
+              return (
+                <tr class="hover:bg-white/[0.04] transition-colors">
+                  <td class="px-5 py-5">
+                    <a class="font-medium text-text-primary hover:text-indigo-200" href={`/benchmarks/${board.suite.id}`}>
+                      {board.suite.name}
+                    </a>
+                  </td>
+                  <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">
+                    {board.campaign.completedAt.slice(0, 10)}
+                  </td>
+                  <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">
+                    {board.tasks.length} × {board.profiles.length} × {board.campaign.repetitions}
+                  </td>
+                  <td class="px-5 py-5 text-text-primary">{leader.label}</td>
+                  <td class="px-5 py-5 font-mono text-xs text-text-secondary whitespace-nowrap">
+                    {pct(leader.solveRate)} <span class="text-text-muted">({pct(leader.interval.lower)}–{pct(leader.interval.upper)})</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )}
+
+  <section class="max-w-6xl mx-auto px-6 pb-24">
+    <h2 class="text-2xl md:text-3xl font-bold tracking-tight">What a campaign must prove to publish</h2>
+    <div class="mt-8 grid gap-px bg-white/15 md:grid-cols-2 border border-white/15">
+      {standard.map((item) => (
+        <div class="bg-bg-dark p-6">
+          <h3 class="font-medium text-text-primary">{item.title}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-text-secondary">{item.body}</p>
+        </div>
+      ))}
     </div>
-    <div class="mt-10 max-w-3xl space-y-4 text-text-secondary leading-relaxed">
-      <p>
-        The standard is recorded on <a class="text-indigo-300 hover:text-indigo-200" href="https://github.com/tangle-network/blueprint-agent" target="_blank" rel="noopener">blueprint-agent</a> and was applied when the earlier boards came down: a board that cannot prove all three from its own
-        data does not publish. The gates run over each run record at build time, so a sweep that clears
-        them publishes its ranking on the next deploy, and no edit to this site can publish one that does not.
-      </p>
-      <p>
-        The method behind the scoring is written up in <a class="text-indigo-300 hover:text-indigo-200" href="/blog/agent-readiness-index-methodology">how these runs are scored and reported</a>.
-      </p>
-    </div>
+    <p class="mt-8 max-w-3xl text-sm leading-relaxed text-text-muted">
+      The site checks each board when it builds. It recomputes the board's digest and every total from its cells,
+      and a board that fails a check stops the deploy. A campaign that fails its decision writes no board, so it has
+      no page here.
+    </p>
   </section>
 </BaseLayout>
