@@ -110,8 +110,6 @@ try {
         assert.equal(await fontLink.count(), 1, `${fixture.name} font stylesheet`)
         if (fixture.mode === 'fast') assert.equal(await fontLink.getAttribute('media'), 'all', `${fixture.name} font stylesheet activated`)
       }
-      assert.ok(externalRequests.some((url) => url.startsWith('https://www.googletagmanager.com/gtag/js')), `${fixture.name} analytics requested`)
-
       const layout = await page.evaluate(() => {
         const logo = [...document.querySelectorAll('.wf-nav-brand-logo')]
           .find((image) => getComputedStyle(image).display !== 'none')
@@ -167,6 +165,10 @@ try {
         assert.equal(await page.locator('#mobile-menu-toggle').getAttribute('aria-expanded'), 'false', `${fixture.name} menu close`)
       }
       await page.screenshot({ path: resolve(out, `${fixture.name}.png`) })
+
+      await page.waitForFunction(() => performance.getEntriesByType('resource')
+        .some((entry) => entry.name.startsWith('https://www.googletagmanager.com/gtag/js')), null, { timeout: 4000 })
+      assert.ok(externalRequests.some((url) => url.startsWith('https://www.googletagmanager.com/gtag/js')), `${fixture.name} analytics requested`)
 
       const scripts = [...new Set(requests.filter((url) => new URL(url).pathname.endsWith('.js')))]
       const stylesheets = [...new Set(requests.filter((url) => new URL(url).pathname.endsWith('.css')))]
