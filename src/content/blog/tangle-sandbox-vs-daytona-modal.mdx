@@ -73,8 +73,8 @@ Modal supports agent code through functions and isolated sandboxes, and model se
 
 Tangle’s [Sandbox documentation](https://docs.tangle.tools/sandbox) describes a dev container or microVM, a lightweight virtual machine, with a shell, filesystem, ports, snapshots, optional GPU, and a selectable coding backend.
 It also documents durable agent sessions, per-second metering, isolated outbound network access, and traces that can be sent to Tangle Intelligence.
-A trace is the structured record of what a run received, did, and returned.
-It gives a reviewer a way to inspect a failure after the stream is gone.
+In this comparison, retain the session events and result described by the [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference).
+Those records let a reviewer inspect a failure after the live stream is gone.
 
 The differences are about workflow state:
 
@@ -84,7 +84,7 @@ The differences are about workflow state:
 | Code-defined function or batch job | Possible through the environment | Primary fit | Possible when the agent owns the workflow |
 | GPU selection for a controlled job | Documented GPU sandboxes | Primary GPU and inference surface | Optional GPU lease around an agent step |
 | Durable agent session and reconnect | Check the chosen lifecycle API | Depends on the product surface | Documented durable session API |
-| Browser plus code plus review artifacts | Build the composition | Build the composition | A workflow hypothesis to test with Sandbox and Browser Agent |
+| Browser plus code plus review artifacts | Build the composition | Build the composition | [Browser Agent](https://github.com/tangle-network/browser-agent-driver) records page snapshots and actions; test its handoff into the Sandbox session |
 | Tangle protocol service handoff | External integration | External integration | Adjacent Blueprint and payment paths |
 
 A Tangle Blueprint is a reusable service definition.
@@ -111,8 +111,7 @@ Use a workload that forces state to survive:
 9. Return the diff, test output, preview evidence, and failure history.
 10. Reconnect after the client process is stopped.
 
-The workload is intentionally ordinary.
-Persistent files, processes, ports, and reconnectable sessions turn the code runner into an agent computer.
+Repository repair exposes whether files, process ports, and review evidence survive a failed test and client disconnect.
 This section is a test plan, not an executed benchmark.
 No provider wins from this article until the same workload runs against the chosen configurations.
 
@@ -164,14 +163,9 @@ Modal should be tested both as a function or job and, when relevant, as its sand
 Tangle should be tested as a durable agent session with the model backend and evidence flow enabled.
 Do not compare a serverless function with an interactive workspace and call the shorter setup the winner.
 
-## Choose the lifecycle before the product
+### Check the lifecycle during the same test
 
-The same command can appear in all three systems while its lifecycle means something different.
-A function usually ends when it returns a value.
-A workspace usually remains available for another command or a human inspection.
-An agent session may need both properties: short commands inside a computer that remains available after the client disconnects.
-
-Write that expectation down before running a comparison:
+Record which state and identifier survive each event:
 
 | State | Function or job | Workspace | Agent session |
 | --- | --- | --- | --- |
@@ -181,8 +175,8 @@ Write that expectation down before running a comparison:
 | Completed | Return output artifact | Leave or tear down by policy | Return result and review record |
 | Retried | New invocation or deduplicated job | Continue or restore environment | Query the original session first |
 
-This table is an application contract, not a claim that every provider exposes these exact states.
-It gives the test a concrete question for each product: what identifier does the caller store, what can it query after a lost response, and which artifacts survive cleanup?
+This table is an application test contract, not a claim that every provider exposes these exact states.
+Check which identifier the caller stores, what it can query after a lost response, and which artifacts survive cleanup.
 
 For the repair-preview workload, persist the environment identifier before the first command.
 Persist the process or job identifier before starting the preview.
@@ -190,8 +184,8 @@ Persist the browser evidence reference before returning the final result.
 If any of those identifiers is missing, the caller should report unknown state rather than start a second repair.
 
 Missing workspace, command, and artifact identifiers force duplicate work or unknown state after a disconnect.
-If the product needs a developer to reopen the same computer, a function-only design creates recovery work around the function.
-If the product only needs a bounded transformation, keeping an interactive computer alive adds state that the result contract does not use.
+If a developer must reopen the same computer, a function-only design needs an external recovery record.
+If the task only needs a bounded transformation, an idle computer adds state that the result contract does not use.
 
 For a fair trial, give each product the same recovery budget.
 Allow one client disconnect, one failed test, and one retry.
@@ -285,8 +279,8 @@ app = modal.App('agent-evaluation')
 
 @app.function(gpu='A100', image=image)
 def check_cuda():
-  import torch
-  return torch.cuda.is_available()
+    import torch
+    return torch.cuda.is_available()
 ```
 
 This example tests a function.
@@ -307,20 +301,13 @@ A browser check can pass while the agent edited the wrong project.
 A disconnected client can leave the work running or accidentally start a duplicate.
 A GPU task can exceed its budget if the lease or function timeout is not enforced.
 
-For each failure, ask who owns the recovery state:
-
-| Failure | Workspace-oriented recovery | Function-oriented recovery |
-| --- | --- | --- |
-| Test fails after an edit | Reconnect to files, logs, and prior commands | Rerun with an input artifact and inspect logs |
-| Client disconnects | Resume the same session | Query job state before retrying |
-| Preview is wrong | Preserve process, port, and browser evidence | Recreate the function or external preview state |
-| Output is incomplete | Review the trace and changed files | Reconcile job result, logs, and stored artifacts |
-| Budget is exceeded | Stop the sandbox or GPU lease | Cancel the job and cap retries |
-
-Tangle’s durable session API is designed for the second row in the first column.
-Modal’s function and job model is designed for the second column.
-Daytona can occupy either side depending on the selected sandbox type and lifecycle.
-The actual answer needs a test against the chosen configuration.
+For each failure, use the earlier lifecycle table to locate the original environment, job, or session identifier before retrying.
+The [Tangle SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) documents server-derived session IDs and `events()`, `result()`, and `status()` queries from another process.
+Check those returned records in the deployed configuration before treating a lost client connection as recovered.
+Modal’s function and job model addresses a bounded invocation.
+[Daytona’s lifecycle guide](https://www.daytona.io/docs/sandboxes) documents stop, start, pause, and resume by sandbox class.
+Its [persistence guide](https://www.daytona.io/docs/en/persistence/) says containers retain files after stop, VM sandboxes can preserve memory when paused, and GPU sandboxes are ephemeral on stop.
+Test recovery against the exact class and lifecycle settings you select.
 
 ## Choose the smallest correct boundary
 
@@ -356,11 +343,5 @@ Daytona’s current documentation describes sandboxes for AI agents as well as d
 Modal documents serverless inference, batch work, training, notebooks, GPU execution, and isolated sandboxes.
 The deciding issue is the lifecycle, evidence, and control policy of the selected surface.
 
-## The decision
-
-Write down the artifact that must survive the run.
-If it is a function result, test Modal.
-If it is a composable computer for a developer or agent, test Daytona.
-If it is a durable agent session with workspace state, browser evidence, traces, and a path to a Tangle service, test Tangle Sandbox.
-Then run the repair-preview workload in the exact configuration you plan to ship.
-For browser-specific evidence and session ownership, continue with [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use).
+Run the repair-preview workload in the exact configuration you plan to ship.
+For browser evidence and session ownership, continue with [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use).
