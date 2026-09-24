@@ -106,12 +106,16 @@ jobs:
       - name: Show preview URL
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
-        run: echo "Preview $PREVIEW_URL"
+          PREVIEW_BUILD_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "Preview alias $PREVIEW_URL"
+          echo "Immutable measurement URL $PREVIEW_BUILD_URL"
       - name: Install Chromium for served measurement
         run: pnpm exec playwright install --with-deps chromium
       - name: Measure served preview control and fast modes
         env:
-          PREVIEW_URL: ${{ steps.deploy.outputs.pages-deployment-alias-url }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           preview_base=${PREVIEW_URL%/}
           mkdir -p audit-results/home-speed-preview
@@ -125,6 +129,8 @@ jobs:
           date -u
           uptime
           if [ "$control_exit" -ne 0 ] || [ "$fast_exit" -ne 0 ]; then exit 1; fi
+          test "$(jq -r .servedBuild.revision audit-results/home-speed-preview/control.json)" = "$EXPECTED_SHA"
+          test "$(jq -r .servedBuild.revision audit-results/home-speed-preview/fast.json)" = "$EXPECTED_SHA"
       - name: Retain served timing receipts and recordings
         if: always()
         uses: actions/upload-artifact@v4
