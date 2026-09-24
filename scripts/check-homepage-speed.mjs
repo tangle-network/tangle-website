@@ -101,8 +101,15 @@ try {
       assert.ok(rum.build_revision, `${fixture.name} field build`)
       assert.ok(Number.isFinite(rum.metric_value), `${fixture.name} first paint measurement`)
 
-      const fontMedia = await page.locator('link[href^="https://fonts.googleapis.com/css2"]').getAttribute('media')
-      if (fixture.mode === 'fast') assert.equal(fontMedia, 'all', `${fixture.name} font stylesheet activated`)
+      const fontLink = page.locator('link[href^="https://fonts.googleapis.com/css2"]')
+      if (fixture.mode === 'fast' && fixture.isMobile) {
+        assert.equal(await fontLink.count(), 0, `${fixture.name} loaded external font CSS`)
+        assert.ok(await page.locator('html.system-home-fonts').count(), `${fixture.name} system fonts`)
+        assert.ok(!externalRequests.some((url) => url.startsWith('https://fonts.googleapis.com/')), `${fixture.name} requested external font CSS`)
+      } else {
+        assert.equal(await fontLink.count(), 1, `${fixture.name} font stylesheet`)
+        if (fixture.mode === 'fast') assert.equal(await fontLink.getAttribute('media'), 'all', `${fixture.name} font stylesheet activated`)
+      }
       assert.ok(externalRequests.some((url) => url.startsWith('https://www.googletagmanager.com/gtag/js')), `${fixture.name} analytics requested`)
 
       const layout = await page.evaluate(() => {
