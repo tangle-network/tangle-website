@@ -54,9 +54,13 @@ export interface BoardCell {
   costUsd: number;
 }
 
+// `treatment`: two arms of one model. `trained-profile`: a trained checkpoint
+// against its parent. `profile`: two AgentProfiles across models.
+export const COMPARISON_KINDS = ['treatment', 'trained-profile', 'profile'] as const;
+
 export interface BoardComparison {
   id: string;
-  kind: 'treatment' | 'trained-profile';
+  kind: (typeof COMPARISON_KINDS)[number];
   favored: string;
   other: string;
   pairs: number;
@@ -302,6 +306,10 @@ export function boardRecordProblems(value: unknown): string[] {
       typeof comparison.minimumEffect !== 'number' || comparison.minimumEffect <= 0 || comparison.minimumEffect >= 1 ||
       !isInterval(comparison.interval) || !isInterval(comparison.exactInterval)) {
       problem('a comparison needs two ranked profiles, its pairs, a minimum effect and both intervals');
+      continue;
+    }
+    if (!(COMPARISON_KINDS as readonly unknown[]).includes(comparison.kind)) {
+      problem(`comparison ${comparison.id} has no known kind`);
       continue;
     }
     if (comparison.interval.lower <= comparison.minimumEffect || comparison.exactInterval.lower <= comparison.minimumEffect) {
