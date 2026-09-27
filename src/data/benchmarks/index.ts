@@ -6,6 +6,8 @@ import { verifyBoardRecord, type BoardRecord } from './board-record';
 // Nothing here is authored: no suite list, no scores, no status. A record that
 // does not verify stops the build, and a suite without a record has no page.
 const files = import.meta.glob<unknown>('./boards/*.json', { eager: true, import: 'default' });
+// The same files as committed bytes, served unchanged as each board's JSON.
+const sources = import.meta.glob<string>('./boards/*.json', { eager: true, import: 'default', query: '?raw' });
 
 // The retired hand-written suite pages redirect to /benchmarks. A redirect would
 // hide a board published under the same id, so that combination stops the build.
@@ -27,4 +29,11 @@ export const boards: BoardRecord[] = Object.entries(files)
 
 export function boardById(id: string): BoardRecord | undefined {
   return boards.find((board) => board.suite.id === id);
+}
+
+/** The committed record file, byte for byte. */
+export function boardSource(id: string): string {
+  const source = sources[`./boards/${id}.json`];
+  if (source === undefined) throw new Error(`benchmark board ${id} has no record file`);
+  return source;
 }
