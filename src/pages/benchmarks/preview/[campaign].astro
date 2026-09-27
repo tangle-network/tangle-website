@@ -1,0 +1,84 @@
+---
+// A local preview of an unpublished campaign, drawn with the same layout and
+// figures as a board. Inputs are JSON files in src/data/benchmarks/preview/
+// (gitignored), each built from a real run directory. No campaign here is a
+// board, and a deploy or CI build refuses to render one.
+import { renderNotes } from '@tangle-network/charts';
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import BenchmarkReport from '../../../components/BenchmarkReport.astro';
+import FigureSlots from '../../../components/FigureSlots.astro';
+import { numberFigures, reportFigures, type ReportInput } from '../../../data/benchmarks/figures';
+
+interface CampaignPreview {
+  /** The campaign id; the page slug. */
+  campaign: string;
+  suite: string;
+  /** One line: completion date, tasks × setups × runs, shots. */
+  summary: string;
+  /** What decides a pass in this preview. */
+  passRule: string;
+  /** Where the data came from. */
+  source: string;
+  /** Why the publisher refused it, in its own words. */
+  refusals: string[];
+  input: ReportInput;
+}
+
+export function getStaticPaths() {
+  const files = import.meta.glob<CampaignPreview>('../../../data/benchmarks/preview/*.json', { eager: true, import: 'default' });
+  const previews = Object.values(files);
+  if (previews.length > 0 && (import.meta.env.TANGLE_BUILD_REVISION || import.meta.env.CI)) {
+    throw new Error('src/data/benchmarks/preview holds unpublished campaigns; a deploy or CI build must not render them');
+  }
+  return previews.map((preview) => ({ params: { campaign: preview.campaign }, props: { preview } }));
+}
+
+const { preview } = Astro.props as { preview: CampaignPreview };
+const figures = numberFigures(reportFigures(preview.input));
+const contents = [
+  { id: 'board', number: '01', label: 'Board', items: [
+    { id: 'fig-ranking', label: 'Ranking' },
+    { id: 'fig-cost', label: 'Cost' },
+    { id: 'fig-order', label: 'Why the order holds' },
+  ] },
+  { id: 'tasks', number: '02', label: 'Tasks' },
+  { id: 'refused', number: '03', label: 'Not a board' },
+  { id: 'notes', label: 'Notes' },
+];
+---
+
+<BaseLayout title={`Preview: ${preview.campaign}`} description="Unpublished preview of a benchmark campaign. This is not a board.">
+  <BenchmarkReport contents={contents}>
+    <Fragment slot="hero">
+      <p class="bench-banner">Unpublished preview of campaign <span class="bench-mono">{preview.campaign}</span>. This is not a board.</p>
+      <h1 class="bench-h1">{preview.suite}</h1>
+      <p class="bench-lede">{preview.passRule}</p>
+      <p class="bench-meta">{preview.summary}</p>
+      <p class="bench-meta">{preview.source}</p>
+    </Fragment>
+
+    <section class="bench-section" id="board">
+      <h2 class="bench-h2"><span class="bench-num">01</span>Board</h2>
+      <FigureSlots slots={figures.board} />
+    </section>
+
+    <section class="bench-section" id="tasks">
+      <h2 class="bench-h2"><span class="bench-num">02</span>Tasks</h2>
+      <p class="bench-prose">Task definitions are withheld so the suite stays held out. Labels follow the registered task order.</p>
+      <FigureSlots slots={figures.tasks} />
+    </section>
+
+    <section class="bench-section" id="refused">
+      <h2 class="bench-h2"><span class="bench-num">03</span>Not a board</h2>
+      <p class="bench-prose">The publisher refused this campaign for {preview.refusals.length} {preview.refusals.length === 1 ? 'reason' : 'reasons'}:</p>
+      <ul class="tgc-refusals">
+        {preview.refusals.map((reason) => <li>{reason}</li>)}
+      </ul>
+    </section>
+
+    <section class="bench-section" id="notes">
+      <h2 class="bench-h2">Notes</h2>
+      <Fragment set:html={renderNotes(figures.drawn)} />
+    </section>
+  </BenchmarkReport>
+</BaseLayout>
