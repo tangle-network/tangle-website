@@ -1,4 +1,5 @@
 import { canonicalAgentProfileDigest, canonicalCandidateDigest } from '@tangle-network/agent-interface';
+import type { ComparisonRow, MatrixCell, RateRow } from '@tangle-network/charts';
 
 // A board record is what the benchmark runner writes for one suite when its
 // publication decision allows a campaign (blueprint-agent
@@ -12,6 +13,10 @@ import { canonicalAgentProfileDigest, canonicalCandidateDigest } from '@tangle-n
 // failures, and each adjacent pair in the ranking ordered by a comparison whose
 // interval clears its minimum effect. A record that fails any check throws, and
 // the throw stops the site build.
+//
+// Version 2 makes the record the chart library's input as written: profiles are
+// `RateRow`s, cells are `MatrixCell`s and comparisons are `ComparisonRow`s, so
+// the pages pass them to @tangle-network/charts without an adapter.
 
 export const TIERS = ['F', 'C', 'B', 'A', 'S'] as const;
 export type Tier = (typeof TIERS)[number];
@@ -21,11 +26,13 @@ export interface BoardInterval {
   lower: number;
   upper: number;
   level: number;
+  /** Profile and comparison intervals: task-clustered percentile bootstrap. Exact interval: the McNemar dual. */
+  method: 'task-cluster-bootstrap' | 'mcnemar-exact';
 }
 
 export type EgressStatus = 'proven-no-egress' | 'proven-provider-only' | 'native-web-permitted';
 
-export interface BoardProfile {
+export interface BoardProfile extends RateRow {
   id: string;
   rank: number;
   label: string;
@@ -38,19 +45,26 @@ export interface BoardProfile {
   pins: { harness: string; searchArm: string; searchPersona?: string; searchMode?: string; skills?: string[]; effort?: string };
   attempts: number;
   solved: number;
-  solveRate: number;
+  /** Solved over attempts. */
+  rate: number;
+  /** The decision computed the interval and gated power, so every board rate is a bootstrap estimate. */
+  estimate: 'bootstrap';
   interval: BoardInterval;
   tiers: TierCounts | null;
-  cost: { totalUsd: number; meanUsd: number; perSolvedUsd: number | null; receipts: number };
+  cost: { totalUsd: number; meanUsd: number; perSolvedUsd: number | null; basis: 'receipts'; receipts: number };
   medianWallMs: number;
+  /** On the producer's cost frontier: no profile has both a higher solve rate and a lower cost per solved task. */
+  onFront: boolean;
 }
 
-export interface BoardCell {
+export interface BoardCell extends MatrixCell {
   task: string;
-  profile: string;
+  /** The profile id. */
+  setup: string;
   attempts: number;
   solved: number;
   tiers: TierCounts | null;
+  mean: null;
   costUsd: number;
 }
 
@@ -58,7 +72,7 @@ export interface BoardCell {
 // against its parent. `profile`: two AgentProfiles across models.
 export const COMPARISON_KINDS = ['treatment', 'trained-profile', 'profile'] as const;
 
-export interface BoardComparison {
+export interface BoardComparison extends ComparisonRow {
   id: string;
   kind: (typeof COMPARISON_KINDS)[number];
   favored: string;
@@ -74,7 +88,7 @@ export type BoardGrader =
   | { kind: 'verification'; pass: string };
 
 export interface BoardRecord {
-  version: 1;
+  version: 2;
   digest: string;
   suite: { id: string; name: string; description: string };
   campaign: { id: string; completedAt: string; repetitions: number; shots: number };
@@ -100,6 +114,8 @@ export interface BoardRecord {
     grades: string | null;
     alpha: number;
     power: number;
+    /** The bootstrap budget and seed of every interval. */
+    bootstrap: { resamples: number; seed: number };
   };
 }
 
@@ -128,10 +144,10 @@ function close(a: number, b: number): boolean {
   return Math.abs(a - b) <= TOLERANCE;
 }
 
-function isInterval(value: unknown): value is BoardInterval {
+function isInterval(value: unknown, method: BoardInterval['method']): value is BoardInterval {
   return isRecord(value) && typeof value.lower === 'number' && typeof value.upper === 'number' &&
     typeof value.level === 'number' && Number.isFinite(value.lower) && Number.isFinite(value.upper) &&
-    value.lower <= value.upper && value.level > 0 && value.level < 1;
+    value.lower <= value.upper && value.level > 0 && value.level < 1 && value.method === method;
 }
 
 function isTierCounts(value: unknown): value is TierCounts {
@@ -142,13 +158,35 @@ function tierTotal(tiers: TierCounts): number {
   return TIERS.reduce((sum, tier) => sum + tiers[tier], 0);
 }
 
+/**
+ * Rechecks the producer's cost frontier: a profile is on it exactly when it has
+ * a cost per solved task and no other such profile solves at least as much for
+ * no more, and strictly better on one of the two.
+ */
+function frontierProblems(profiles: unknown[]): string[] {
+  const priced = profiles.filter((p): p is Record<string, unknown> & { rate: number; cost: { perSolvedUsd: number } } =>
+    isRecord(p) && typeof p.rate === 'number' && isRecord(p.cost) && typeof p.cost.perSolvedUsd === 'number');
+  const beats = (a: { rate: number; cost: { perSolvedUsd: number } }, b: { rate: number; cost: { perSolvedUsd: number } }) =>
+    a.rate >= b.rate && a.cost.perSolvedUsd <= b.cost.perSolvedUsd && (a.rate > b.rate || a.cost.perSolvedUsd < b.cost.perSolvedUsd);
+  const problems: string[] = [];
+  for (const profile of profiles) {
+    if (!isRecord(profile) || typeof profile.onFront !== 'boolean') continue;
+    const own = priced.find((p) => p === profile);
+    const front = own !== undefined && !priced.some((other) => other !== own && beats(other, own));
+    if (profile.onFront !== front) {
+      problems.push(`profile ${String(profile.id)} is ${profile.onFront ? '' : 'not '}marked on the cost frontier, but is ${front ? '' : 'not '}on it`);
+    }
+  }
+  return problems;
+}
+
 /** Every reason a parsed record is not a board the decision produced, or none. */
 export function boardRecordProblems(value: unknown): string[] {
   if (!isRecord(value)) return ['the record is not an object'];
   const problems: string[] = [];
   const problem = (text: string) => problems.push(text);
 
-  if (value.version !== 1) problem('version is not 1');
+  if (value.version !== 2) problem('version is not 2');
   if (typeof value.digest !== 'string' || !SHA256.test(value.digest)) {
     problem('digest is not a sha256 digest');
   } else {
@@ -205,27 +243,27 @@ export function boardRecordProblems(value: unknown): string[] {
   const cells = Array.isArray(value.cells) ? value.cells : [];
   const seen = new Set<string>();
   for (const cell of cells) {
-    if (!isRecord(cell) || !isText(cell.task) || !isText(cell.profile) || !isCount(cell.attempts) ||
-      !isCount(cell.solved) || !isAmount(cell.costUsd)) {
-      problem('a cell needs a task, a profile, counts and a cost');
+    if (!isRecord(cell) || !isText(cell.task) || !isText(cell.setup) || !isCount(cell.attempts) ||
+      !isCount(cell.solved) || !isAmount(cell.costUsd) || cell.mean !== null) {
+      problem('a cell needs a task, a setup, counts, a cost and no mean');
       continue;
     }
-    const key = `${cell.task}\u0000${cell.profile}`;
-    if (seen.has(key)) problem(`cell ${cell.profile}/${cell.task} repeats`);
+    const key = `${cell.task}\u0000${cell.setup}`;
+    if (seen.has(key)) problem(`cell ${cell.setup}/${cell.task} repeats`);
     seen.add(key);
-    if (!labels.has(cell.task)) problem(`cell ${cell.profile}/${cell.task} names no board task`);
-    if (cell.attempts !== reps) problem(`cell ${cell.profile}/${cell.task} ran ${cell.attempts} times, not ${reps}`);
-    if (cell.solved > cell.attempts) problem(`cell ${cell.profile}/${cell.task} solved more than it attempted`);
+    if (!labels.has(cell.task)) problem(`cell ${cell.setup}/${cell.task} names no board task`);
+    if (cell.attempts !== reps) problem(`cell ${cell.setup}/${cell.task} ran ${cell.attempts} times, not ${reps}`);
+    if (cell.solved > cell.attempts) problem(`cell ${cell.setup}/${cell.task} solved more than it attempted`);
     if (appGrade) {
       if (!isTierCounts(cell.tiers) || tierTotal(cell.tiers) !== cell.attempts) {
-        problem(`cell ${cell.profile}/${cell.task} needs one App Grade tier per attempt`);
+        problem(`cell ${cell.setup}/${cell.task} needs one App Grade tier per attempt`);
       }
     } else if (cell.tiers !== null) {
-      problem(`cell ${cell.profile}/${cell.task} carries tiers without an App Grade grader`);
+      problem(`cell ${cell.setup}/${cell.task} carries tiers without an App Grade grader`);
     }
-    const list = cellsByProfile.get(cell.profile) ?? [];
+    const list = cellsByProfile.get(cell.setup) ?? [];
     list.push(cell);
-    cellsByProfile.set(cell.profile, list);
+    cellsByProfile.set(cell.setup, list);
   }
 
   profiles.forEach((profile, index) => {
@@ -266,16 +304,18 @@ export function boardRecordProblems(value: unknown): string[] {
       problem(`profile ${id} counts ${String(profile.attempts)} attempts; its cells hold ${attempts}`);
     }
     if (profile.solved !== solved) problem(`profile ${id} counts ${String(profile.solved)} solved; its cells hold ${solved}`);
-    if (typeof profile.solveRate !== 'number' || attempts === 0 || !close(profile.solveRate, solved / attempts)) {
-      problem(`profile ${id} solve rate is not solved over attempts`);
+    if (typeof profile.rate !== 'number' || attempts === 0 || !close(profile.rate, solved / attempts)) {
+      problem(`profile ${id} rate is not solved over attempts`);
     }
-    if (!isInterval(profile.interval) || profile.interval.lower < 0 || profile.interval.upper > 1 ||
-      typeof profile.solveRate !== 'number' || profile.solveRate < profile.interval.lower - TOLERANCE ||
-      profile.solveRate > profile.interval.upper + TOLERANCE) {
-      problem(`profile ${id} interval does not contain its solve rate within [0, 1]`);
+    if (profile.estimate !== 'bootstrap') problem(`profile ${id} rate is not labelled a bootstrap estimate`);
+    if (!isInterval(profile.interval, 'task-cluster-bootstrap') || profile.interval.lower < 0 || profile.interval.upper > 1 ||
+      typeof profile.rate !== 'number' || profile.rate < profile.interval.lower - TOLERANCE ||
+      profile.rate > profile.interval.upper + TOLERANCE) {
+      problem(`profile ${id} interval is not a task-clustered bootstrap that contains its rate within [0, 1]`);
     }
+    if (typeof profile.onFront !== 'boolean') problem(`profile ${id} does not say whether it is on the cost frontier`);
     const cost = profile.cost;
-    if (!isRecord(cost) || !isAmount(cost.totalUsd) || !isAmount(cost.meanUsd) || !isCount(cost.receipts)) {
+    if (!isRecord(cost) || !isAmount(cost.totalUsd) || !isAmount(cost.meanUsd) || !isCount(cost.receipts) || cost.basis !== 'receipts') {
       problem(`profile ${id} needs a receipt-backed cost`);
     } else {
       if (!close(cost.totalUsd, costUsd)) problem(`profile ${id} cost ${cost.totalUsd} is not the sum of its cells (${costUsd})`);
@@ -297,6 +337,7 @@ export function boardRecordProblems(value: unknown): string[] {
     if (!isAmount(profile.medianWallMs)) problem(`profile ${id} has no median wall time`);
   });
   for (const profile of cellsByProfile.keys()) if (!ids.has(profile)) problem(`cells name profile ${profile}, which the board does not rank`);
+  for (const reason of frontierProblems(profiles)) problem(reason);
 
   const comparisons = Array.isArray(value.comparisons) ? value.comparisons : [];
   const supported = new Set<string>();
@@ -304,7 +345,7 @@ export function boardRecordProblems(value: unknown): string[] {
     if (!isRecord(comparison) || !isText(comparison.id) || !ids.has(comparison.favored as string) ||
       !ids.has(comparison.other as string) || comparison.favored === comparison.other || !isCount(comparison.pairs) ||
       typeof comparison.minimumEffect !== 'number' || comparison.minimumEffect <= 0 || comparison.minimumEffect >= 1 ||
-      !isInterval(comparison.interval) || !isInterval(comparison.exactInterval)) {
+      !isInterval(comparison.interval, 'task-cluster-bootstrap') || !isInterval(comparison.exactInterval, 'mcnemar-exact')) {
       problem('a comparison needs two ranked profiles, its pairs, a minimum effect and both intervals');
       continue;
     }
@@ -348,6 +389,10 @@ export function boardRecordProblems(value: unknown): string[] {
     typeof decision.alpha !== 'number' || decision.alpha <= 0 || decision.alpha > 0.05 ||
     typeof decision.power !== 'number' || decision.power < 0.8 || decision.power >= 1) {
     problem('decision needs the plan seal, the evidence digests, and alpha and power within the floors');
+  }
+  if (!isRecord(decision) || !isRecord(decision.bootstrap) || !isCount(decision.bootstrap.resamples) ||
+    decision.bootstrap.resamples === 0 || !Number.isSafeInteger(decision.bootstrap.seed)) {
+    problem('decision needs the bootstrap resamples and seed');
   }
   return problems;
 }
