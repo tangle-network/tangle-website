@@ -2,17 +2,17 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchmarkReport from '../../components/BenchmarkReport.astro';
 import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
+import BenchmarkTaskPrompts from '../../components/BenchmarkTaskPrompts.astro';
 import { boards, boardById } from '../../data/benchmarks/index';
-import type { EgressStatus } from '../../data/benchmarks/board-record';
 import { boardChartIdentities, boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
-import { gradingSourceFor, taskPromptsFor } from '../../data/benchmarks/task-sources';
+import { taskPromptsFor } from '../../data/benchmarks/task-sources';
 
 export function getStaticPaths() {
   return boards.map((board) => ({ params: { id: board.suite.id } }));
 }
 
 const board = boardById(Astro.params.id!)!;
-const { campaign, grader, integrity, decision } = board;
+const { campaign, grader } = board;
 const descriptive = board.mode === 'descriptive';
 const suiteTitles: Record<string, string> = {
   'meilisearch-apps': 'Meilisearch app benchmark',
@@ -28,58 +28,13 @@ for (const slot of [figures.board[0]!, figures.tasks[0]!]) {
   if ('refusal' in slot) throw new Error(`benchmark board ${board.suite.id}: ${slot.refusal.id} not drawn: ${slot.refusal.refused}`);
 }
 
-const usd = (value: number) => (value >= 1 ? `$${value.toFixed(2)}` : `$${value.toFixed(3)}`);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-
-const first = input.rows[0]!;
-const passRule = grader.kind === 'app-grade' ? `Pass: browser-tested app, grade ${grader.passTier} or better` : 'pass by runner verification';
+const passRule = grader.kind === 'app-grade' ? (grader.passTier === 'B' ? 'Pass: basic browser checks passed, with no failed user flows or app reviews.' : `Pass: browser-tested app, grade ${grader.passTier} or better`) : 'pass by runner verification';
 const meta = [
   campaign.completedAt.slice(0, 10),
   `${plural(board.tasks.length, 'task')} × ${plural(board.profiles.length, 'setup')} × ${plural(campaign.repetitions, 'run')}`,
   passRule,
 ].join(' · ');
-const gradedBy = grader.kind === 'app-grade'
-  ? `App Grade tests the generated app in a real browser against the search provider. ${board.suite.description}`
-  : `The runner's own verification decides a pass: ${grader.pass}.`;
-const gradingSource = grader.kind === 'app-grade'
-  ? gradingSourceFor(grader.graderCommit)
-  : null;
-
-const method = [
-  `Each task and setup ran ${plural(campaign.repetitions, 'time')} with ${plural(campaign.shots, 'shot')} per run, so each setup has ${first.attempts} attempts.`,
-  `Pass-rate intervals use a task-clustered percentile bootstrap with ${decision.bootstrap.resamples.toLocaleString()} resamples of n=${board.tasks.length} independent tasks. Repeated runs of one task are not independent samples.`,
-  descriptive
-    ? `Comparison intervals show the measured difference in the direction registered before the run. A result supports that direction only when both intervals clear its registered minimum effect.`
-    : `Each rank step needs a registered comparison whose task-clustered and exact McNemar intervals both clear its minimum effect, at significance ${decision.alpha} and power ${decision.power}, fixed before the campaign ran.`,
-  `Cost is the router-billed model spend of every attempt, passed or not; sandbox charges are excluded.` +
-    (grader.kind === 'app-grade' ? ` Grading cost ${usd(grader.costUsd)} in total, measured as ${grader.costBasis}.` : ''),
-];
-
-const completeness = [
-  { label: 'Expected cells', value: integrity.expectedCells },
-  { label: 'Recorded cells', value: integrity.recordedCells },
-  { label: 'Harness failures', value: integrity.harnessFailures },
-  { label: 'Missing', value: integrity.missing },
-  { label: 'Duplicated', value: integrity.duplicate },
-  { label: 'Without a receipt-backed cost', value: integrity.unknownCost },
-  { label: 'Quarantined', value: integrity.quarantined },
-];
-
-const provenance = [
-  { label: 'Board record', value: board.digest },
-  { label: 'Sealed plan', value: decision.planSeal },
-  { label: 'Expected cells', value: decision.manifest },
-  { label: 'Attempt history', value: decision.results },
-  ...(decision.grades ? [{ label: 'Grade ledger', value: decision.grades }] : []),
-  ...(grader.kind === 'app-grade' ? [{ label: 'Grader commit', value: grader.graderCommit }] : []),
-];
-const nameOf = new Map(input.rows.map((row) => [row.id, row.label]));
-const egress: Record<EgressStatus, string> = {
-  'proven-no-egress': 'Disabled',
-  'proven-provider-only': 'Search provider only',
-  'native-web-permitted': "The harness's own web access",
-};
-
 ---
 
 <BaseLayout
@@ -90,138 +45,23 @@ const egress: Record<EgressStatus, string> = {
     <Fragment slot="hero">
       <a class="bench-back" href="/benchmarks/">All benchmarks</a>
       <h1 class="bench-h1">{title}</h1>
-      <p class="bench-meta">{grader.kind === 'app-grade' && <>Coding agents build search apps. App Grade tests them in a browser.<br /></>}{meta}</p>
+      <p class="bench-meta">{grader.kind === 'app-grade' && <>Compare coding agents by success rate and model cost on search-app tasks.<br /></>}{meta}</p>
       <nav class="benchmark-suites" aria-label="Benchmarks">
         {boards.map((suite) => <a href={`/benchmarks/${suite.suite.id}/`} aria-current={suite.suite.id === board.suite.id ? 'page' : undefined}>{suiteTitles[suite.suite.id]?.replace(' app benchmark', '') ?? suite.suite.name}</a>)}
       </nav>
     </Fragment>
 
     <section class="bench-section" id="board">
-      <BenchmarkExplorer input={input} figures={figures}>
-        {tasks.length > 0 && (
-          <div slot="tasks" class="bench-table">
-            <table class="tgc-table">
-              <thead><tr><th scope="col">Task</th><th scope="col">Prompt</th></tr></thead>
-              <tbody>
-                {tasks.map((task) => (
-                  <tr>
-                    <th scope="row">{task.label}</th>
-                    <td>
-                      <details class="bench-details">
-                        <summary>{task.name}</summary>
-                        <p class="bench-prose bench-task-prompt">{task.prompt}</p>
-                      </details>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+      <BenchmarkExplorer figures={figures}>
+        <BenchmarkTaskPrompts slot="tasks" tasks={tasks} />
       </BenchmarkExplorer>
     </section>
-
-    <details class="bench-section bench-details" id="method">
-      <summary>Methodology</summary>
-      <p class="bench-prose">{gradedBy}</p>
-      {gradingSource && grader.kind === 'app-grade' && ['B', 'A', 'S'].includes(grader.passTier) && (
-        <p class="bench-prose">
-          A pass requires a served app, no failed or unmeasured basic checks, no failed user journeys, and no refuted product reviews.
-          {grader.passTier === 'B' && ' Grade B allows unresolved reviews and incomplete engineering checks.'}
-          {' '}<a href={gradingSource}>Grading rubric</a>.
-        </p>
-      )}
-      {method.map((sentence) => <p class="bench-prose">{sentence}</p>)}
-      <h3 class="bench-h3">Web access</h3>
-      <div class="bench-table">
-        <table class="tgc-table">
-          <thead><tr><th scope="col">Setup</th><th scope="col">Web access</th></tr></thead>
-          <tbody>
-            {board.profiles.map((profile) => (
-              <tr><th scope="row">{nameOf.get(profile.id)}</th><td>{egress[profile.egress]}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <h3 class="bench-h3">Completeness</h3>
-      <div class="bench-table">
-        <table class="tgc-table">
-          <thead><tr><th scope="col">Cells</th><th scope="col" class="tgc-n">Count</th></tr></thead>
-          <tbody>
-            {completeness.map((row) => (
-              <tr><th scope="row">{row.label}</th><td class="tgc-n">{row.value}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {integrity.funnel.length > 0 && (
-        <>
-          <h3 class="bench-h3">Exclusions</h3>
-          <div class="bench-table">
-            <table class="tgc-table">
-              <thead>
-                <tr>
-                  <th scope="col">Stage</th>
-                  <th scope="col" class="tgc-n">Entering</th>
-                  <th scope="col" class="tgc-n">Excluded</th>
-                  <th scope="col" class="tgc-n">Remaining</th>
-                </tr>
-              </thead>
-              <tbody>
-                {integrity.funnel.map((stage) => (
-                  <tr>
-                    <th scope="row">{stage.id}</th>
-                    <td class="tgc-n">{stage.entering}</td>
-                    <td class="tgc-n">{stage.excluded}</td>
-                    <td class="tgc-n">{stage.remaining}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-      <p class="bench-small"><a href="/benchmarks/#standard">Publication requirements</a></p>
-    </details>
-
-    <details class="bench-section bench-details" id="reproduce">
-      <summary>Data and source</summary>
-      <p class="bench-prose">
-        <a href={`/benchmarks/${board.suite.id}.json`} download>Download the results (JSON)</a>.
-        {tasks.length > 0 && <Fragment>{' '}<a href={`/benchmarks/inputs/${board.suite.id}.tasks.json`} download>Download the task inputs (JSON)</a>.</Fragment>}
-        The <a href="https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/board-record.ts">verifier</a> checks the result record's digest and totals.
-      </p>
-      <div class="bench-table">
-        <table class="tgc-table">
-          <thead><tr><th scope="col">Evidence</th><th scope="col">Digest</th></tr></thead>
-          <tbody>
-            {provenance.map((row) => (
-              <tr><th scope="row">{row.label}</th><td class="tgc-n bench-digest">{row.value}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {board.profiles.map((profile) => (
-        <details class="bench-details">
-          <summary>{nameOf.get(profile.id)} <span class="bench-mono bench-digest">{profile.agentProfileDigest}</span></summary>
-          <pre>{JSON.stringify({ agentProfile: profile.agentProfile, pins: profile.pins }, null, 2)}</pre>
-        </details>
-      ))}
-      <details class="bench-details">
-        <summary>Task digests</summary>
-        <ul>
-          {board.tasks.map((task) => <li class="bench-digest">{task.label} {task.digest}</li>)}
-        </ul>
-      </details>
-    </details>
-
 
   </BenchmarkReport>
 </BaseLayout>
 
 <style>
   .benchmark-suites { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
-  .benchmark-suites a { padding: 8px 12px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 13px; text-decoration: none; }
+  .benchmark-suites a { padding: 10px 16px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 17px; text-decoration: none; }
   .benchmark-suites a[aria-current="page"] { color: var(--text-primary); background: var(--depth-3); border-color: var(--accent-text); }
-  .bench-task-prompt { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

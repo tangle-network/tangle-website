@@ -40,3 +40,24 @@ test('preserves code lines and keeps shared navigation outside non-home audits',
   assert.match(extractCopy(html, '/'), /Shared nav/);
   assert.match(extractCopy(html, '/'), /Footer/);
 });
+
+test('audits plot labels without treating the clipped accessible table as visible copy', () => {
+  const html = '<main><figure aria-label="Luna: 1/26 passed, 3.8%"><svg aria-label="Pass rate by setup"></svg><div class="other tgc-accessible-data"><table><caption>Table labels</caption><tbody><tr><td>1B 1C 24F</td></tr></tbody></table></div><p>Visible context</p></figure><p class="tgc-accessible-data-example">Visible sibling</p></main>';
+  const copy = extractCopy(html, '/benchmarks');
+  assert.match(copy, /Luna: 1\/26 passed, 3\.8%/);
+  assert.match(copy, /Pass rate by setup/);
+  assert.match(copy, /Visible context/);
+  assert.match(copy, /Visible sibling/);
+  assert.doesNotMatch(copy, /Table labels|1B 1C 24F/);
+});
+
+
+test('does not treat data-class as a clipped chart class', () => {
+  const copy = extractCopy('<main><p data-class="tgc-accessible-data">Visible data-class</p></main>', '/x');
+  assert.equal(copy, 'Visible data-class');
+});
+
+test('does not parse class-like text inside a quoted attribute value', () => {
+  const copy = extractCopy(`<main><p aria-label="Text with class='tgc-accessible-data' inside">Visible quoted attribute</p></main>`, '/x');
+  assert.equal(copy, 'Visible quoted attribute');
+});

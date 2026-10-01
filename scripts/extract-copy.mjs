@@ -1,5 +1,15 @@
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 
+function attributesFor(tag) {
+  const attributes = new Map();
+  const pattern = /\s([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  for (const match of tag.matchAll(pattern)) {
+    const name = match[1].toLowerCase();
+    if (!attributes.has(name)) attributes.set(name, match[2] ?? match[3] ?? match[4] ?? '');
+  }
+  return attributes;
+}
+
 // Hidden states contribute no visible copy; retain all text in expandable sections.
 function removeHidden(html) {
   const tags = /<(?:!--[\s\S]*?--|\/?[A-Za-z](?:[^>"']|"[^"]*"|'[^']*')*)>/g;
@@ -12,10 +22,15 @@ function removeHidden(html) {
     const name = /^<\/?([\w:-]+)/.exec(tag)?.[1]?.toLowerCase();
     const closing = /^<\//.test(tag);
     const leaf = !name || voidTags.has(name) || /\/>$/.test(tag);
+    const attributes = attributesFor(tag);
+    const classes = (attributes.get('class') ?? '').split(/\s+/);
+    const hidden = attributes.has('hidden');
+    // The shared chart stylesheet clips this complete table for screen readers.
+    const clippedChartData = classes.includes('tgc-accessible-data');
     if (depth > 0) {
       if (closing) depth -= 1;
       else if (!leaf) depth += 1;
-    } else if (!closing && /\shidden(?=\s|=|\/?>)/i.test(tag.replace(/"[^"]*"|'[^']*'/g, '""'))) {
+    } else if (!closing && (hidden || clippedChartData)) {
       if (!leaf) depth = 1;
     } else output += tag;
     cursor = match.index + tag.length;
