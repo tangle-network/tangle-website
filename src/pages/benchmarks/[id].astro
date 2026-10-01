@@ -13,6 +13,7 @@ export function getStaticPaths() {
 
 const board = boardById(Astro.params.id!)!;
 const { campaign, grader, integrity, decision } = board;
+const descriptive = board.mode === 'descriptive';
 const input = boardReportInput(board);
 const figures = numberFigures(reportFigures(input));
 // A verified board always has a ranking and a task grid to draw; a refusal
@@ -27,7 +28,11 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 const first = input.rows[0]!;
 const firstProfile = board.profiles[0]!;
-const finding = firstProfile.cost.perSolvedUsd === null
+const finding = descriptive
+  ? board.comparisons.every((comparison) => !comparison.supported)
+    ? 'These runs did not establish a winner.'
+    : 'Compare measured success, cost, and runtime. Configurations are shown without a ranking.'
+  : firstProfile.cost.perSolvedUsd === null
   ? `${first.label} passes ${first.solved} of ${first.attempts} attempts on ${board.suite.name}.`
   : `${first.label} passes ${pct(first.rate)} of attempts on ${board.suite.name} at ${usd(firstProfile.cost.perSolvedUsd)} per pass.`;
 const passRule = grader.kind === 'app-grade' ? `pass at App Grade ${grader.passTier} or better` : 'pass by runner verification';
@@ -44,7 +49,9 @@ const gradedBy = grader.kind === 'app-grade'
 const method = [
   `Each task and setup ran ${plural(campaign.repetitions, 'time')} with ${plural(campaign.shots, 'shot')} per run, so each setup has ${first.attempts} attempts.`,
   `Pass-rate intervals use a task-clustered percentile bootstrap with ${decision.bootstrap.resamples.toLocaleString()} resamples of n=${board.tasks.length} independent tasks. Repeated runs of one task are not independent samples.`,
-  `Each rank step needs a registered comparison whose task-clustered and exact McNemar intervals both clear its minimum effect, at significance ${decision.alpha} and power ${decision.power}, fixed before the campaign ran.`,
+  descriptive
+    ? `Comparison intervals show the measured difference in the direction registered before the run. A result supports that direction only when both intervals clear its registered minimum effect.`
+    : `Each rank step needs a registered comparison whose task-clustered and exact McNemar intervals both clear its minimum effect, at significance ${decision.alpha} and power ${decision.power}, fixed before the campaign ran.`,
   `Cost is the router-billed model spend of every attempt, passed or not; sandbox charges are excluded.` +
     (grader.kind === 'app-grade' ? ` Grading cost ${usd(grader.costUsd)} in total, measured as ${grader.costBasis}.` : ''),
 ];
@@ -75,21 +82,21 @@ const egress: Record<EgressStatus, string> = {
 };
 
 const contents = [
-  { id: 'board', number: '01', label: 'Board', items: [
+  { id: 'board', number: '01', label: 'Results', items: [
     { id: 'fig-ranking', label: 'Success rate' },
     { id: 'fig-cost', label: 'Cost' },
     { id: 'fig-order', label: 'Comparisons' },
   ] },
   { id: 'view-tasks', number: '02', label: 'Task results' },
-  { id: 'method', number: '03', label: 'Method' },
-  { id: 'reproduce', number: '04', label: 'Reproduce' },
-  { id: 'notes', label: 'Notes' },
+  { id: 'method', number: '03', label: 'Methodology' },
+  { id: 'reproduce', number: '04', label: 'Data and source' },
+  { id: 'notes', label: 'Chart notes' },
 ];
 ---
 
 <BaseLayout
   title={`${board.suite.name} benchmark`}
-  description={`${board.suite.name}: ${board.profiles.length} agent setups over ${board.tasks.length} held-out tasks, ${campaign.repetitions} runs each, ranked by pass rate with task-clustered intervals and receipt-backed cost.`}
+  description={`${board.suite.name}: ${board.profiles.length} agent setups over ${board.tasks.length} held-out tasks, ${campaign.repetitions} runs each, ${descriptive ? 'measured' : 'ranked'} by pass rate with task-clustered intervals and receipt-backed cost.`}
 >
   <BenchmarkReport contents={contents}>
     <Fragment slot="hero">
@@ -104,8 +111,8 @@ const contents = [
       <BenchmarkExplorer input={input} figures={figures} />
     </section>
 
-    <section class="bench-section" id="method">
-      <h2 class="bench-h2"><span class="bench-num">03</span>Method</h2>
+    <details class="bench-section bench-details" id="method">
+      <summary>Methodology</summary>
       <p class="bench-prose">{gradedBy}</p>
       {method.map((sentence) => <p class="bench-prose">{sentence}</p>)}
       <h3 class="bench-h3">Web access</h3>
@@ -157,13 +164,13 @@ const contents = [
           </div>
         </>
       )}
-      <p class="bench-small">The checks a board must pass are listed under <a href="/benchmarks/#standard">What a board must prove</a>.</p>
-    </section>
+      <p class="bench-small"><a href="/benchmarks/#standard">Publication requirements</a></p>
+    </details>
 
-    <section class="bench-section" id="reproduce">
-      <h2 class="bench-h2"><span class="bench-num">04</span>Reproduce</h2>
+    <details class="bench-section bench-details" id="reproduce">
+      <summary>Data and source</summary>
       <p class="bench-prose">
-        <a href={`/benchmarks/${board.suite.id}.json`} download>Download the board record (JSON)</a>.
+        <a href={`/benchmarks/${board.suite.id}.json`} download>Download the results (JSON)</a>.
         The <a href="https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/board-record.ts">verifier</a> recomputes its digest and every total at build time.
       </p>
       <div class="bench-table">
@@ -188,11 +195,11 @@ const contents = [
           {board.tasks.map((task) => <li class="bench-digest">{task.label} {task.digest}</li>)}
         </ul>
       </details>
-    </section>
+    </details>
 
-    <section class="bench-section" id="notes">
-      <h2 class="bench-h2">Notes</h2>
+    <details class="bench-section bench-details" id="notes">
+      <summary>Chart notes</summary>
       <Fragment set:html={renderNotes(figures.drawn)} />
-    </section>
+    </details>
   </BenchmarkReport>
 </BaseLayout>

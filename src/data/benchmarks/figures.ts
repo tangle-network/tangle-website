@@ -19,6 +19,8 @@ import type { BoardRecord } from './board-record';
 
 /** What a report page draws, in the chart library's input types. */
 export interface ReportInput {
+  /** Descriptive results preserve the registered roster without implying rank. */
+  mode?: 'ranked' | 'descriptive';
   /** The measure, lower case. */
   measure: string;
   /** The App Grade tier a pass needs, or null when the runner's verification decides a pass. */
@@ -44,7 +46,7 @@ export function reportFigures(input: ReportInput): ReportFigures {
   const passTier = input.passTier ? { passTier: input.passTier } : {};
   return {
     board: [
-      rankedRates(input.rows, { measure: input.measure, ...passTier, id: 'ranking' }),
+      rankedRates(input.rows, { measure: input.measure, ...passTier, ...(input.mode === 'descriptive' ? { order: 'input' as const } : {}), id: 'ranking' }),
       costFrontier(input.rows, { measure: input.measure, id: 'cost' }),
       comparisonIntervals(input.comparisons, input.rows, { measure: input.measure, id: 'order' }),
     ],
@@ -53,12 +55,13 @@ export function reportFigures(input: ReportInput): ReportFigures {
 }
 
 /**
- * A verified board as the chart library's input. Version 2 records are the
+ * A verified board as the chart library's input. Version 3 records are the
  * library's rows as written; only a label two profiles share gets its id.
  */
 export function boardReportInput(board: BoardRecord): ReportInput {
   const shared = (label: string) => board.profiles.filter((profile) => profile.label === label).length > 1;
   return {
+    mode: board.mode,
     measure: MEASURE,
     passTier: board.grader.kind === 'app-grade' ? board.grader.passTier : null,
     rows: board.profiles.map((profile) => (shared(profile.label) ? { ...profile, label: `${profile.label} (${profile.id})` } : profile)),
@@ -73,9 +76,9 @@ export type FigureSlot = { figure: Figure; note: number } | { refusal: Refusal }
 
 /** What each figure is, for the heading of a figure the library refused to draw. */
 export const FIGURE_NAMES: Record<string, string> = {
-  ranking: 'Ranking',
+  ranking: 'Success rate',
   cost: 'Cost per pass',
-  order: 'Why the order holds',
+  order: 'Comparisons',
   tasks: 'Tasks',
 };
 

@@ -1,22 +1,12 @@
 import { canonicalAgentProfileDigest, canonicalCandidateDigest } from '@tangle-network/agent-interface';
 import type { ComparisonRow, MatrixCell, RateRow } from '@tangle-network/charts';
 
-// A board record is what the benchmark runner writes for one suite when its
-// publication decision allows a campaign (blueprint-agent
-// scripts/experiments/lib/board-record.ts, written by `vb-publish --board`).
-// A campaign the decision refuses writes no record, so it has no page here.
-//
-// This module does not decide anything. It checks that a record is the one the
-// decision produced and that its numbers agree with each other: the digest over
-// every field, each AgentProfile digest, every task × profile cell present with
-// its repetitions, profile totals equal to the sum of their cells, zero harness
-// failures, and each adjacent pair in the ranking ordered by a comparison whose
-// interval clears its minimum effect. A record that fails any check throws, and
-// the throw stops the site build.
-//
-// Version 2 makes the record the chart library's input as written: profiles are
-// `RateRow`s, cells are `MatrixCell`s and comparisons are `ComparisonRow`s, so
-// the pages pass them to @tangle-network/charts without an adapter.
+// The producer rechecks sealed source evidence before exporting an admitted campaign.
+// This consumer verifies the record digest and internal consistency, not those source artifacts.
+// Both modes require complete observations, receipt-backed costs and the registered statistical floors.
+// Descriptive profiles follow the sealed roster without ranks or frontier claims.
+// Ranked profiles also need a supported comparison for every adjacency.
+// Records use the chart library's inputs; this consumer runs no second statistical model.
 
 export const TIERS = ['F', 'C', 'B', 'A', 'S'] as const;
 export type Tier = (typeof TIERS)[number];
@@ -34,7 +24,7 @@ export type EgressStatus = 'proven-no-egress' | 'proven-provider-only' | 'native
 
 export interface BoardProfile extends RateRow {
   id: string;
-  rank: number;
+  rank: number | null;
   label: string;
   harness: string;
   model: string;
@@ -54,7 +44,7 @@ export interface BoardProfile extends RateRow {
   cost: { totalUsd: number; meanUsd: number; perSolvedUsd: number | null; basis: 'receipts'; receipts: number };
   medianWallMs: number;
   /** On the producer's cost frontier: no profile has both a higher solve rate and a lower cost per solved task. */
-  onFront: boolean;
+  onFront: boolean | null;
 }
 
 export interface BoardCell extends MatrixCell {
@@ -81,6 +71,10 @@ export interface BoardComparison extends ComparisonRow {
   minimumEffect: number;
   interval: BoardInterval;
   exactInterval: BoardInterval;
+  direction: 'treatment-better' | 'control-better';
+  supported: boolean;
+  designAdequate: boolean;
+  requiredPairs: number;
 }
 
 export type BoardGrader =
@@ -88,7 +82,8 @@ export type BoardGrader =
   | { kind: 'verification'; pass: string };
 
 export interface BoardRecord {
-  version: 2;
+  version: 3;
+  mode: 'ranked' | 'descriptive';
   digest: string;
   suite: { id: string; name: string; description: string };
   campaign: { id: string; completedAt: string; repetitions: number; shots: number };
@@ -108,6 +103,7 @@ export interface BoardRecord {
     funnel: Array<{ id: string; entering: number; excluded: number; remaining: number }>;
   };
   decision: {
+    roster: string[];
     planSeal: string;
     manifest: string;
     results: string;
@@ -186,7 +182,11 @@ export function boardRecordProblems(value: unknown): string[] {
   const problems: string[] = [];
   const problem = (text: string) => problems.push(text);
 
-  if (value.version !== 2) problem('version is not 2');
+  if (value.version !== 3) problem('version is not 3');
+  if (value.mode !== 'ranked' && value.mode !== 'descriptive') problem('mode must be ranked or descriptive');
+  const descriptive = value.mode === 'descriptive';
+  const registeredAlpha = isRecord(value.decision) && isAmount(value.decision.alpha) && value.decision.alpha > 0 && value.decision.alpha <= 0.05
+    ? value.decision.alpha : null;
   if (typeof value.digest !== 'string' || !SHA256.test(value.digest)) {
     problem('digest is not a sha256 digest');
   } else {
@@ -274,7 +274,11 @@ export function boardRecordProblems(value: unknown): string[] {
     const id = profile.id;
     if (ids.has(id)) problem(`profile ${id} repeats`);
     ids.add(id);
-    if (profile.rank !== index + 1) problem(`profile ${id} is listed at position ${index + 1} with rank ${String(profile.rank)}`);
+    if (descriptive) {
+      if (profile.rank !== null) problem(`descriptive profile ${id} must have no rank`);
+    } else if (profile.rank !== index + 1) {
+      problem(`profile ${id} is listed at position ${index + 1} with rank ${String(profile.rank)}`);
+    }
     if (!isText(profile.label) || !isText(profile.harness) || !isText(profile.model)) problem(`profile ${id} needs a label, a harness and a model`);
     if (!['proven-no-egress', 'proven-provider-only', 'native-web-permitted'].includes(profile.egress as string)) {
       problem(`profile ${id} has no egress status`);
@@ -313,12 +317,21 @@ export function boardRecordProblems(value: unknown): string[] {
       profile.rate > profile.interval.upper + TOLERANCE) {
       problem(`profile ${id} interval is not a task-clustered bootstrap that contains its rate within [0, 1]`);
     }
-    if (typeof profile.onFront !== 'boolean') problem(`profile ${id} does not say whether it is on the cost frontier`);
+    if (isInterval(profile.interval, 'task-cluster-bootstrap') && registeredAlpha !== null && profile.interval.level + TOLERANCE < 1 - registeredAlpha) {
+      problem(`profile ${id} interval confidence is below the registered alpha floor`);
+    }
+    if (descriptive ? profile.onFront !== null : typeof profile.onFront !== 'boolean') {
+      problem(`profile ${id} has an invalid cost frontier marker for ${String(value.mode)} mode`);
+    }
     const cost = profile.cost;
     if (!isRecord(cost) || !isAmount(cost.totalUsd) || !isAmount(cost.meanUsd) || !isCount(cost.receipts) || cost.basis !== 'receipts') {
       problem(`profile ${id} needs a receipt-backed cost`);
     } else {
-      if (!close(cost.totalUsd, costUsd)) problem(`profile ${id} cost ${cost.totalUsd} is not the sum of its cells (${costUsd})`);
+      // Cell costs and the raw profile total are rounded independently to six decimals.
+      const costTolerance = (own.length + 1) * 0.5e-6 + Number.EPSILON * Math.max(1, cost.totalUsd, costUsd) * own.length;
+      if (!Number.isFinite(costUsd) || Math.abs(cost.totalUsd - costUsd) > costTolerance) {
+        problem(`profile ${id} cost ${cost.totalUsd} is not the sum of its cells (${costUsd})`);
+      }
       if (attempts > 0 && !close(cost.meanUsd, cost.totalUsd / attempts)) problem(`profile ${id} mean cost is not total over attempts`);
       const perSolved = solved > 0 ? cost.totalUsd / solved : null;
       if (perSolved === null ? cost.perSolvedUsd !== null : typeof cost.perSolvedUsd !== 'number' || !close(cost.perSolvedUsd, perSolved)) {
@@ -336,30 +349,58 @@ export function boardRecordProblems(value: unknown): string[] {
     }
     if (!isAmount(profile.medianWallMs)) problem(`profile ${id} has no median wall time`);
   });
-  for (const profile of cellsByProfile.keys()) if (!ids.has(profile)) problem(`cells name profile ${profile}, which the board does not rank`);
+  for (const profile of cellsByProfile.keys()) if (!ids.has(profile)) problem(`cells name profile ${profile}, which the record does not include`);
   for (const reason of frontierProblems(profiles)) problem(reason);
 
   const comparisons = Array.isArray(value.comparisons) ? value.comparisons : [];
   const supported = new Set<string>();
+  const comparisonIds = new Set<string>();
+  if (comparisons.length === 0) problem('the board needs at least one registered comparison');
   for (const comparison of comparisons) {
     if (!isRecord(comparison) || !isText(comparison.id) || !ids.has(comparison.favored as string) ||
       !ids.has(comparison.other as string) || comparison.favored === comparison.other || !isCount(comparison.pairs) ||
       typeof comparison.minimumEffect !== 'number' || comparison.minimumEffect <= 0 || comparison.minimumEffect >= 1 ||
       !isInterval(comparison.interval, 'task-cluster-bootstrap') || !isInterval(comparison.exactInterval, 'mcnemar-exact')) {
-      problem('a comparison needs two ranked profiles, its pairs, a minimum effect and both intervals');
+      problem('a comparison needs two registered profiles, its pairs, a minimum effect and both intervals');
       continue;
+    }
+    if (comparisonIds.has(comparison.id)) problem(`comparison ${comparison.id} repeats`);
+    comparisonIds.add(comparison.id);
+    if (comparison.pairs !== labels.size * reps) {
+      problem(`comparison ${comparison.id} has ${comparison.pairs} pairs for ${labels.size * reps} complete task repetitions`);
+    }
+    if (registeredAlpha !== null && (comparison.interval.level + TOLERANCE < 1 - registeredAlpha / comparisons.length || comparison.exactInterval.level + TOLERANCE < 1 - registeredAlpha / comparisons.length)) {
+      problem(`comparison ${comparison.id} interval confidence is below the registered alpha floor`);
     }
     if (!(COMPARISON_KINDS as readonly unknown[]).includes(comparison.kind)) {
       problem(`comparison ${comparison.id} has no known kind`);
       continue;
     }
-    if (comparison.interval.lower <= comparison.minimumEffect || comparison.exactInterval.lower <= comparison.minimumEffect) {
-      problem(`comparison ${comparison.id} does not clear its minimum effect of ${comparison.minimumEffect}`);
-      continue;
+    if (!['treatment-better', 'control-better'].includes(comparison.direction as string)) {
+      problem(`comparison ${comparison.id} has no registered direction`);
     }
-    supported.add(`${comparison.favored as string}\u0000${comparison.other as string}`);
+    if (comparison.designAdequate !== true || !isCount(comparison.requiredPairs) || comparison.requiredPairs < 1 || comparison.pairs < comparison.requiredPairs) {
+      problem(`comparison ${comparison.id} has no adequate paired design`);
+    }
+    if (comparison.interval.lower < -1 || comparison.interval.upper > 1 || comparison.exactInterval.lower < -1 || comparison.exactInterval.upper > 1) {
+      problem(`comparison ${comparison.id} difference interval is outside [-1, 1]`);
+    }
+    const favored = profiles.find((profile) => isRecord(profile) && profile.id === comparison.favored);
+    const other = profiles.find((profile) => isRecord(profile) && profile.id === comparison.other);
+    if (isRecord(favored) && isRecord(other) && typeof favored.rate === 'number' && typeof other.rate === 'number') {
+      const difference = favored.rate - other.rate;
+      if (difference + TOLERANCE < comparison.exactInterval.lower || difference - TOLERANCE > comparison.exactInterval.upper) {
+        problem(`comparison ${comparison.id} exact interval does not contain its observed difference`);
+      }
+    }
+    const clearsEffect = comparison.interval.lower > comparison.minimumEffect && comparison.exactInterval.lower > comparison.minimumEffect;
+    if (comparison.supported !== clearsEffect) problem(`comparison ${comparison.id} support does not match both intervals`);
+    if (!clearsEffect && !descriptive) {
+      problem(`comparison ${comparison.id} does not clear its minimum effect of ${comparison.minimumEffect}`);
+    }
+    if (clearsEffect) supported.add(`${comparison.favored as string}\u0000${comparison.other as string}`);
   }
-  for (let index = 1; index < profiles.length; index++) {
+  for (let index = 1; !descriptive && index < profiles.length; index++) {
     const upper = profiles[index - 1];
     const lower = profiles[index];
     if (isRecord(upper) && isRecord(lower) && !supported.has(`${String(upper.id)}\u0000${String(lower.id)}`)) {
@@ -382,6 +423,13 @@ export function boardRecordProblems(value: unknown): string[] {
   }
 
   const decision = value.decision;
+  const roster = isRecord(decision) && Array.isArray(decision.roster) ? decision.roster : [];
+  if (roster.length !== profiles.length || new Set(roster).size !== roster.length || roster.some((id) => !isText(id) || !ids.has(id))) {
+    problem('decision roster must contain each registered profile exactly once');
+  }
+  if (descriptive && profiles.some((profile, index) => !isRecord(profile) || profile.id !== roster[index])) {
+    problem('descriptive profiles must follow the sealed roster order');
+  }
   if (!isRecord(decision) || typeof decision.planSeal !== 'string' || !(HEX64.test(decision.planSeal) || SHA256.test(decision.planSeal)) ||
     typeof decision.manifest !== 'string' || !SHA256.test(decision.manifest) ||
     typeof decision.results !== 'string' || !SHA256.test(decision.results) ||
