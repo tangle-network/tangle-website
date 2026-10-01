@@ -204,9 +204,6 @@ if (auditTargets.length === 0) {
   process.exit(2);
 }
 
-// ─── Extract visible copy from HTML ──────────────────────────────────
-// Strip scripts, styles, attributes, SVG inner content. Keep text in
-// a way that preserves the page's narrative flow.
 // ─── LLM rubric ──────────────────────────────────────────────────────
 const MARKETING_SYSTEM_PROMPT = `You are a senior developer-product copy editor reviewing a public Tangle page. The reader has never heard of Tangle. Judge the complete page holistically against the standard of clear, restrained product writing from Linear, Stripe, and Vercel.
 
