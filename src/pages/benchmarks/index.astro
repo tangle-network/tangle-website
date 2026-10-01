@@ -1,11 +1,17 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchmarkReport from '../../components/BenchmarkReport.astro';
+import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
+import { boardChartIdentities, boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
 import { boards } from '../../data/benchmarks/index';
 
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
-const usd = (value: number | null) => value === null ? '—' : `$${value.toFixed(value < 1 ? 3 : 2)}`;
-const seconds = (value: number) => `${(value / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}s`;
+const board = boards[0];
+const input = board ? boardReportInput(board) : null;
+const figures = input ? numberFigures(reportFigures(input, { orientation: 'vertical', identities: boardChartIdentities(board) })) : null;
+const suiteNames: Record<string, string> = {
+  'meilisearch-apps': 'Meilisearch',
+  'typesense-apps': 'Typesense',
+};
 
 const standard = [
   {
@@ -31,65 +37,24 @@ const standard = [
   title="Agent benchmarks"
   description="Compare coding agents on the same tasks by success rate, model cost, and runtime."
 >
-  <BenchmarkReport>
+  <BenchmarkReport wide>
     <Fragment slot="hero">
       <h1 class="bench-h1">Agent benchmarks</h1>
-      <p class="bench-lede">
-        Compare coding agents on the same tasks by success rate, model cost, and runtime.
-      </p>
+
       {boards.length === 0 && <p class="bench-status">No results have passed publication review yet.</p>}
     </Fragment>
 
-    {boards.length > 0 && (
+    {board && input && figures && (
       <section class="bench-section" id="boards">
-        <h2 class="bench-h2">Results</h2>
-        {boards.map((board) => (
-          <article class="bench-suite">
-            <h3 class="bench-h3"><a href={`/benchmarks/${board.suite.id}/`}>{board.suite.name}</a></h3>
-            <p class="bench-small">
-              {board.campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks · {board.campaign.repetitions} runs per task
-              · {board.grader.kind === 'app-grade' ? `Pass: App Grade ${board.grader.passTier} or better` : `Pass: ${board.grader.pass}`}
-              {' · '}<a href={`/benchmarks/${board.suite.id}.json`} download title={board.digest}>Download data</a>
-            </p>
-            <div class="bench-table bench-board-desktop">
-              <table class="tgc-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Configuration</th>
-                    <th scope="col" class="tgc-n">Passed / attempts</th>
-                    <th scope="col" class="tgc-n">Success rate</th>
-                    <th scope="col" class="tgc-n">Cost per pass</th>
-                    <th scope="col" class="tgc-n">Median run</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {board.profiles.map((profile) => (
-                    <tr>
-                      <th scope="row">{profile.label}</th>
-                      <td class="tgc-n">{profile.solved} / {profile.attempts}</td>
-                      <td class="tgc-n">{pct(profile.rate)}</td>
-                      <td class="tgc-n">{usd(profile.cost.perSolvedUsd)}</td>
-                      <td class="tgc-n">{seconds(profile.medianWallMs)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <ul class="bench-board-list">
-              {board.profiles.map((profile) => (
-                <li>
-                  <p class="bench-configuration">{profile.label}</p>
-                  <dl class="bench-metrics">
-                    <div><dt>Passed / attempts</dt><dd>{profile.solved} / {profile.attempts}</dd></div>
-                    <div><dt>Success rate</dt><dd>{pct(profile.rate)}</dd></div>
-                    <div><dt>Cost per pass</dt><dd>{usd(profile.cost.perSolvedUsd)}</dd></div>
-                    <div><dt>Median run</dt><dd>{seconds(profile.medianWallMs)}</dd></div>
-                  </dl>
-                </li>
-              ))}
-            </ul>
-          </article>
-        ))}
+        <nav class="benchmark-suites" aria-label="Benchmarks">
+          {boards.map((suite) => <a href={`/benchmarks/${suite.suite.id}/`} aria-current={suite.suite.id === board.suite.id ? 'page' : undefined}>{suiteNames[suite.suite.id] ?? suite.suite.name}</a>)}
+        </nav>
+        <p class="bench-meta">
+          {board.campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks · {board.campaign.repetitions} runs per task
+          · {board.grader.kind === 'app-grade' ? `Pass: browser-tested app, grade ${board.grader.passTier} or better` : `Pass: ${board.grader.pass}`}
+        </p>
+        <BenchmarkExplorer input={input} figures={figures} />
+        <p class="bench-small"><a href={`/benchmarks/${board.suite.id}/`}>Task inputs and source data</a></p>
       </section>
     )}
 
@@ -121,11 +86,11 @@ const standard = [
   </BenchmarkReport>
 </BaseLayout>
 
+
+
 <style>
-  .bench-suite + .bench-suite { margin-top: 40px; }
-  .bench-suite .bench-h3 { margin-top: 0; }
-  .bench-board-list .bench-configuration { color: var(--text-primary); font-weight: 600; }
-  .bench-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 0; }
-  .bench-metrics dt { color: var(--text-secondary); font-size: 12px; line-height: 18px; }
-  .bench-metrics dd { margin: 2px 0 0; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 16px; }
+  .benchmark-suites { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .benchmark-suites a { padding: 8px 12px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 13px; text-decoration: none; }
+  .benchmark-suites a[aria-current="page"] { color: var(--text-primary); background: var(--depth-3); border-color: var(--accent-text); }
+  .bench-meta { margin-bottom: 20px; }
 </style>

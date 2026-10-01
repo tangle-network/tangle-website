@@ -8,6 +8,7 @@ import {
   type Figure,
   type MatrixCell,
   type RateRow,
+  type RankedRatesOptions,
   type Refusal,
   type Tier,
 } from '@tangle-network/charts';
@@ -42,11 +43,14 @@ export interface ReportFigures {
 export const MEASURE = 'pass rate';
 
 /** Every figure a report page shows, in page order. */
-export function reportFigures(input: ReportInput): ReportFigures {
+export function reportFigures(
+  input: ReportInput,
+  options: Pick<RankedRatesOptions, 'orientation' | 'identities'> = {},
+): ReportFigures {
   const passTier = input.passTier ? { passTier: input.passTier } : {};
   return {
     board: [
-      rankedRates(input.rows, { measure: input.measure, ...passTier, ...(input.mode === 'descriptive' ? { order: 'input' as const } : {}), id: 'ranking' }),
+      rankedRates(input.rows, { measure: input.measure, ...passTier, ...(input.mode === 'descriptive' ? { order: 'input' as const } : {}), id: 'ranking', ...options }),
       costFrontier(input.rows, { measure: input.measure, id: 'cost' }),
       comparisonIntervals(input.comparisons, input.rows, { measure: input.measure, id: 'order' }),
     ],
@@ -69,6 +73,32 @@ export function boardReportInput(board: BoardRecord): ReportInput {
     cells: board.cells,
     comparisons: board.comparisons,
   };
+}
+
+/** Identity marks come from the registered provider and harness, never a model-name guess. */
+export function boardChartIdentities(board: BoardRecord): RankedRatesOptions['identities'] {
+  const providers: Record<string, { label: string; src: string }> = {
+    openai: { label: 'OpenAI', src: '/images/models/openai.svg' },
+    anthropic: { label: 'Anthropic', src: '/images/models/anthropic.svg' },
+    google: { label: 'Google', src: '/images/models/google.svg' },
+    zhipu: { label: 'Zhipu', src: '/images/models/zhipu.svg' },
+  };
+  const harnesses: Record<string, { label: string; src: string }> = {
+    opencode: { label: 'OpenCode', src: '/images/harness/opencode.svg' },
+    codex: { label: 'Codex', src: '/images/harness/codex.png' },
+    'claude-code': { label: 'Claude Code', src: '/images/harness/claude-code.svg' },
+    pi: { label: 'Pi', src: '/images/harness/pi.svg' },
+  };
+  return Object.fromEntries(board.profiles.map((profile) => {
+    const model = profile.agentProfile.model;
+    const provider = typeof model === 'object' && model !== null && 'provider' in model && typeof model.provider === 'string'
+      ? model.provider
+      : undefined;
+    return [profile.id, {
+      ...(provider && providers[provider] ? { model: { ...providers[provider], label: profile.model } } : {}),
+      ...(harnesses[profile.harness] ? { harness: harnesses[profile.harness] } : {}),
+    }];
+  }));
 }
 
 /** A drawn figure with its note number, or the library's reason for not drawing it. */

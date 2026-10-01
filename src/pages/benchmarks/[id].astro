@@ -1,11 +1,10 @@
 ---
-import { renderNotes } from '@tangle-network/charts';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchmarkReport from '../../components/BenchmarkReport.astro';
 import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
 import { boards, boardById } from '../../data/benchmarks/index';
 import type { EgressStatus } from '../../data/benchmarks/board-record';
-import { boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
+import { boardChartIdentities, boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
 import { gradingSourceFor, taskPromptsFor } from '../../data/benchmarks/task-sources';
 
 export function getStaticPaths() {
@@ -16,37 +15,27 @@ const board = boardById(Astro.params.id!)!;
 const { campaign, grader, integrity, decision } = board;
 const descriptive = board.mode === 'descriptive';
 const suiteTitles: Record<string, string> = {
-  'meilisearch-apps': 'Coding agents building Meilisearch apps',
-  'typesense-apps': 'Coding agents building Typesense apps',
+  'meilisearch-apps': 'Meilisearch app benchmark',
+  'typesense-apps': 'Typesense app benchmark',
 };
 const title = suiteTitles[board.suite.id] ?? board.suite.name;
 const tasks = taskPromptsFor(board);
 const input = boardReportInput(board);
-const figures = numberFigures(reportFigures(input));
-// A verified board always has a ranking and a task grid to draw; a refusal
+const figures = numberFigures(reportFigures(input, { orientation: 'vertical', identities: boardChartIdentities(board) }));
+// A verified board always has a rate chart and a task grid to draw; a refusal
 // there means the record and the library disagree, so the build stops.
 for (const slot of [figures.board[0]!, figures.tasks[0]!]) {
   if ('refusal' in slot) throw new Error(`benchmark board ${board.suite.id}: ${slot.refusal.id} not drawn: ${slot.refusal.refused}`);
 }
 
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 const usd = (value: number) => (value >= 1 ? `$${value.toFixed(2)}` : `$${value.toFixed(3)}`);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 const first = input.rows[0]!;
-const firstProfile = board.profiles[0]!;
-const finding = descriptive
-  ? board.comparisons.every((comparison) => !comparison.supported)
-    ? `${board.profiles.map((profile) => `${profile.model} passed ${pct(profile.rate)}`).join('; ')}. Neither setup showed a reliable advantage.`
-    : 'Compare measured success, cost, and runtime. Configurations are shown without a ranking.'
-  : firstProfile.cost.perSolvedUsd === null
-  ? `${first.label} passes ${first.solved} of ${first.attempts} attempts on ${board.suite.name}.`
-  : `${first.label} passes ${pct(first.rate)} of attempts on ${board.suite.name} at ${usd(firstProfile.cost.perSolvedUsd)} per pass.`;
-const passRule = grader.kind === 'app-grade' ? `pass at App Grade ${grader.passTier} or better` : 'pass by runner verification';
+const passRule = grader.kind === 'app-grade' ? `Pass: browser-tested app, grade ${grader.passTier} or better` : 'pass by runner verification';
 const meta = [
   campaign.completedAt.slice(0, 10),
   `${plural(board.tasks.length, 'task')} × ${plural(board.profiles.length, 'setup')} × ${plural(campaign.repetitions, 'run')}`,
-  `${plural(campaign.shots, 'shot')} per run`,
   passRule,
 ].join(' · ');
 const gradedBy = grader.kind === 'app-grade'
@@ -91,33 +80,23 @@ const egress: Record<EgressStatus, string> = {
   'native-web-permitted': "The harness's own web access",
 };
 
-const contents = [
-  { id: 'board', number: '01', label: 'Results', items: [
-    { id: 'fig-ranking', label: 'Success rate' },
-    { id: 'fig-cost', label: 'Cost' },
-    { id: 'fig-order', label: 'Comparisons' },
-  ] },
-  { id: 'view-tasks', number: '02', label: 'Task results' },
-  { id: 'method', number: '03', label: 'Methodology' },
-  { id: 'reproduce', number: '04', label: 'Data and source' },
-  { id: 'notes', label: 'Chart notes' },
-];
 ---
 
 <BaseLayout
-  title={`${title} benchmark`}
+  title={title}
   description={`${board.suite.name}: ${board.profiles.length} agent setups over ${board.tasks.length} held-out tasks, ${campaign.repetitions} runs each, ${descriptive ? 'measured' : 'ranked'} by pass rate with task-clustered intervals and receipt-backed cost.`}
 >
-  <BenchmarkReport contents={contents}>
+  <BenchmarkReport wide>
     <Fragment slot="hero">
       <a class="bench-back" href="/benchmarks/">All benchmarks</a>
       <h1 class="bench-h1">{title}</h1>
-      <p class="bench-lede">{finding}</p>
-      <p class="bench-meta">{meta}</p>
+      <p class="bench-meta">{grader.kind === 'app-grade' && <>Coding agents build search apps. App Grade tests them in a browser.<br /></>}{meta}</p>
+      <nav class="benchmark-suites" aria-label="Benchmarks">
+        {boards.map((suite) => <a href={`/benchmarks/${suite.suite.id}/`} aria-current={suite.suite.id === board.suite.id ? 'page' : undefined}>{suiteTitles[suite.suite.id]?.replace(' app benchmark', '') ?? suite.suite.name}</a>)}
+      </nav>
     </Fragment>
 
     <section class="bench-section" id="board">
-      <h2 class="bench-h2">Compare configurations</h2>
       <BenchmarkExplorer input={input} figures={figures}>
         {tasks.length > 0 && (
           <div slot="tasks" class="bench-table">
@@ -236,13 +215,13 @@ const contents = [
       </details>
     </details>
 
-    <details class="bench-section bench-details" id="notes">
-      <summary>Chart notes</summary>
-      <Fragment set:html={renderNotes(figures.drawn)} />
-    </details>
+
   </BenchmarkReport>
 </BaseLayout>
 
 <style>
+  .benchmark-suites { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+  .benchmark-suites a { padding: 8px 12px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 13px; text-decoration: none; }
+  .benchmark-suites a[aria-current="page"] { color: var(--text-primary); background: var(--depth-3); border-color: var(--accent-text); }
   .bench-task-prompt { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
