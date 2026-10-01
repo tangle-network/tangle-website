@@ -1,118 +1,57 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchmarkReport from '../../components/BenchmarkReport.astro';
+import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
+import BenchmarkTaskPrompts from '../../components/BenchmarkTaskPrompts.astro';
+import { boardChartIdentities, boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
 import { boards } from '../../data/benchmarks/index';
+import { taskPromptsFor } from '../../data/benchmarks/task-sources';
 
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
-const published = boards.map((board) => {
-  const first = board.profiles[0]!;
-  return {
-    board,
-    first,
-    interval: `${pct(first.interval.level)} task-cluster bootstrap · n=${board.tasks.length} tasks · ${pct(first.interval.lower)}–${pct(first.interval.upper)}`,
-  };
-});
+const board = boards[0];
+const tasks = board ? taskPromptsFor(board) : [];
+const input = board ? boardReportInput(board) : null;
+const figures = input ? numberFigures(reportFigures(input, { orientation: 'vertical', identities: boardChartIdentities(board) })) : null;
+const suiteNames: Record<string, string> = {
+  'meilisearch-apps': 'Meilisearch',
+  'typesense-apps': 'Typesense',
+};
 
-const standard = [
-  {
-    title: 'Sealed before the first attempt',
-    body: 'Each configuration fixes its harness, model, and tools. Tasks, grades, and comparisons are registered before the run.',
-  },
-  {
-    title: 'Every cell repeated and graded',
-    body: 'Every task runs at least twice with each configuration. The registered grader checks each attempt: runner tests, or App Grade operating the app in a browser. Missing or disputed grades prevent publication.',
-  },
-  {
-    title: 'Costed from receipts',
-    body: 'Results are ordered by task success. Cost per pass divides total model spend, including unsuccessful attempts, by successful attempts. Sandbox charges are excluded.',
-  },
-  {
-    title: 'Every rank step backed by a comparison',
-    body: 'Adjacent configurations need a comparison registered before the run. Its task-clustered bootstrap and exact paired-result intervals must support the registered improvement, at 95% confidence or higher.',
-  },
-];
 ---
 
 <BaseLayout
   title="Agent benchmarks"
   description="Compare coding agents on the same tasks by success rate, model cost, and runtime."
 >
-  <BenchmarkReport>
+  <BenchmarkReport wide>
     <Fragment slot="hero">
-      <h1 class="bench-h1">Agent benchmarks</h1>
-      <p class="bench-lede">
-        Compare coding agents on the same tasks by success rate, model cost, and runtime.
-      </p>
+      <h1 class="bench-h1">Coding agent benchmarks</h1>
+
       {boards.length === 0 && <p class="bench-status">No results have passed publication review yet.</p>}
     </Fragment>
 
-    {boards.length > 0 && (
+    {board && input && figures && (
       <section class="bench-section" id="boards">
-        <h2 class="bench-h2">Boards</h2>
-        <div class="bench-table bench-board-desktop">
-          <table class="tgc-table">
-            <thead>
-              <tr>
-                <th scope="col">Suite</th>
-                <th scope="col" class="tgc-n">Completed</th>
-                <th scope="col" class="tgc-n">Tasks × setups × runs</th>
-                <th scope="col">First</th>
-                <th scope="col" class="tgc-n">Pass rate and interval</th>
-              </tr>
-            </thead>
-            <tbody>
-              {published.map(({ board, first, interval }) => (
-                  <tr>
-                    <th scope="row"><a href={`/benchmarks/${board.suite.id}/`}>{board.suite.name}</a></th>
-                    <td class="tgc-n">{board.campaign.completedAt.slice(0, 10)}</td>
-                    <td class="tgc-n">{board.tasks.length} × {board.profiles.length} × {board.campaign.repetitions}</td>
-                    <td>{first.label}</td>
-                    <td class="bench-rate">
-                      <span class="bench-mono">{pct(first.rate)}</span>
-                      <span class="bench-rate-detail">{interval}</span>
-                    </td>
-                  </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <ul class="bench-board-list">
-          {published.map(({ board, first, interval }) => (
-            <li>
-              <a href={`/benchmarks/${board.suite.id}/`}>{board.suite.name}</a>
-              <p class="bench-board-value">{pct(first.rate)} pass rate</p>
-              <p>First: {first.label}</p>
-              <p class="bench-board-interval">{interval}</p>
-              <p class="bench-board-meta">
-                {board.campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks × {board.profiles.length} setups × {board.campaign.repetitions} runs
-              </p>
-            </li>
-          ))}
-        </ul>
+        <nav class="benchmark-suites" aria-label="Benchmarks">
+          {boards.map((suite) => <a href={`/benchmarks/${suite.suite.id}/`} aria-current={suite.suite.id === board.suite.id ? 'page' : undefined}>{suiteNames[suite.suite.id] ?? suite.suite.name}</a>)}
+        </nav>
+        <p class="bench-meta">
+          Compare coding agents by success rate and model cost on search-app tasks.<br />
+          {board.campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks · {board.campaign.repetitions} runs per task
+          · {board.grader.kind === 'app-grade' ? board.grader.passTier === 'B' ? 'Pass: basic browser checks passed, with no failed user flows or app reviews.' : `Pass: browser-tested app, grade ${board.grader.passTier} or better` : `Pass: ${board.grader.pass}`}
+        </p>
+        <BenchmarkExplorer figures={figures}>
+          <BenchmarkTaskPrompts slot="tasks" tasks={tasks} />
+        </BenchmarkExplorer>
       </section>
     )}
 
-    <details class="bench-section bench-details" id="standard">
-      <summary>Methodology</summary>
-      <ol class="bench-steps">
-        {standard.map((item, index) => (
-          <li>
-            <span class="bench-num">{String(index + 1).padStart(2, '0')} </span>
-            <div>
-              <h3>{item.title}</h3>
-              <p>{item.body}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-    </details>
-
-    <details class="bench-section bench-details" id="check">
-      <summary>Verify the data</summary>
-      <p class="bench-prose">
-        Each board publishes its record as JSON, and the record's digest covers every field.
-        The <a href="https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/board-record.ts">verifier</a> recomputes every total at build time and stops the build on any mismatch.
-      </p>
-    </details>
   </BenchmarkReport>
 </BaseLayout>
+
+
+<style>
+  .benchmark-suites { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .benchmark-suites a { padding: 10px 16px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 17px; text-decoration: none; }
+  .benchmark-suites a[aria-current="page"] { color: var(--text-primary); background: var(--depth-3); border-color: var(--accent-text); }
+  .bench-meta { margin-bottom: 20px; }
+</style>
