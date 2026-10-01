@@ -6,6 +6,7 @@ import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
 import { boards, boardById } from '../../data/benchmarks/index';
 import type { EgressStatus } from '../../data/benchmarks/board-record';
 import { boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
+import { gradingSourceFor, taskPromptsFor } from '../../data/benchmarks/task-sources';
 
 export function getStaticPaths() {
   return boards.map((board) => ({ params: { id: board.suite.id } }));
@@ -14,6 +15,12 @@ export function getStaticPaths() {
 const board = boardById(Astro.params.id!)!;
 const { campaign, grader, integrity, decision } = board;
 const descriptive = board.mode === 'descriptive';
+const suiteTitles: Record<string, string> = {
+  'meilisearch-apps': 'Coding agents building Meilisearch apps',
+  'typesense-apps': 'Coding agents building Typesense apps',
+};
+const title = suiteTitles[board.suite.id] ?? board.suite.name;
+const tasks = taskPromptsFor(board);
 const input = boardReportInput(board);
 const figures = numberFigures(reportFigures(input));
 // A verified board always has a ranking and a task grid to draw; a refusal
@@ -30,7 +37,7 @@ const first = input.rows[0]!;
 const firstProfile = board.profiles[0]!;
 const finding = descriptive
   ? board.comparisons.every((comparison) => !comparison.supported)
-    ? 'These runs did not establish a winner.'
+    ? `${board.profiles.map((profile) => `${profile.model} passed ${pct(profile.rate)}`).join('; ')}. Neither setup showed a reliable advantage.`
     : 'Compare measured success, cost, and runtime. Configurations are shown without a ranking.'
   : firstProfile.cost.perSolvedUsd === null
   ? `${first.label} passes ${first.solved} of ${first.attempts} attempts on ${board.suite.name}.`
@@ -43,8 +50,11 @@ const meta = [
   passRule,
 ].join(' · ');
 const gradedBy = grader.kind === 'app-grade'
-  ? `App Grade serves the production build each agent made, operates it in a real browser against the real vendor, and grades it from the browser, vendor and build evidence it records. An attempt passes at tier ${grader.passTier} or above.`
+  ? `App Grade tests the generated app in a real browser against the search provider. ${board.suite.description}`
   : `The runner's own verification decides a pass: ${grader.pass}.`;
+const gradingSource = grader.kind === 'app-grade'
+  ? gradingSourceFor(grader.graderCommit)
+  : null;
 
 const method = [
   `Each task and setup ran ${plural(campaign.repetitions, 'time')} with ${plural(campaign.shots, 'shot')} per run, so each setup has ${first.attempts} attempts.`,
@@ -76,8 +86,8 @@ const provenance = [
 ];
 const nameOf = new Map(input.rows.map((row) => [row.id, row.label]));
 const egress: Record<EgressStatus, string> = {
-  'proven-no-egress': 'None; the egress record proves it',
-  'proven-provider-only': 'The mounted search provider only; the egress record proves it',
+  'proven-no-egress': 'Disabled',
+  'proven-provider-only': 'Search provider only',
   'native-web-permitted': "The harness's own web access",
 };
 
@@ -95,25 +105,53 @@ const contents = [
 ---
 
 <BaseLayout
-  title={`${board.suite.name} benchmark`}
+  title={`${title} benchmark`}
   description={`${board.suite.name}: ${board.profiles.length} agent setups over ${board.tasks.length} held-out tasks, ${campaign.repetitions} runs each, ${descriptive ? 'measured' : 'ranked'} by pass rate with task-clustered intervals and receipt-backed cost.`}
 >
   <BenchmarkReport contents={contents}>
     <Fragment slot="hero">
       <a class="bench-back" href="/benchmarks/">All benchmarks</a>
-      <h1 class="bench-h1">{board.suite.name}</h1>
+      <h1 class="bench-h1">{title}</h1>
       <p class="bench-lede">{finding}</p>
       <p class="bench-meta">{meta}</p>
     </Fragment>
 
     <section class="bench-section" id="board">
       <h2 class="bench-h2">Compare configurations</h2>
-      <BenchmarkExplorer input={input} figures={figures} />
+      <BenchmarkExplorer input={input} figures={figures}>
+        {tasks.length > 0 && (
+          <div slot="tasks" class="bench-table">
+            <table class="tgc-table">
+              <thead><tr><th scope="col">Task</th><th scope="col">Prompt</th></tr></thead>
+              <tbody>
+                {tasks.map((task) => (
+                  <tr>
+                    <th scope="row">{task.label}</th>
+                    <td>
+                      <details class="bench-details">
+                        <summary>{task.name}</summary>
+                        <p class="bench-prose bench-task-prompt">{task.prompt}</p>
+                      </details>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </BenchmarkExplorer>
     </section>
 
     <details class="bench-section bench-details" id="method">
       <summary>Methodology</summary>
       <p class="bench-prose">{gradedBy}</p>
+      {gradingSource && grader.kind === 'app-grade' && ['B', 'A', 'S'].includes(grader.passTier) && (
+        <p class="bench-prose">
+          A pass requires a served app, no failed or unmeasured basic checks, no failed user journeys, and no refuted product reviews.
+          {grader.passTier === 'B' && ' Grade B allows unresolved reviews and incomplete engineering checks.'}
+          {' '}<a href={gradingSource}>Grading rubric</a>.
+        </p>
+      )}
       {method.map((sentence) => <p class="bench-prose">{sentence}</p>)}
       <h3 class="bench-h3">Web access</h3>
       <div class="bench-table">
@@ -171,7 +209,8 @@ const contents = [
       <summary>Data and source</summary>
       <p class="bench-prose">
         <a href={`/benchmarks/${board.suite.id}.json`} download>Download the results (JSON)</a>.
-        The <a href="https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/board-record.ts">verifier</a> recomputes its digest and every total at build time.
+        {tasks.length > 0 && <Fragment>{' '}<a href={`/benchmarks/inputs/${board.suite.id}.tasks.json`} download>Download the task inputs (JSON)</a>.</Fragment>}
+        The <a href="https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/board-record.ts">verifier</a> checks the result record's digest and totals.
       </p>
       <div class="bench-table">
         <table class="tgc-table">
@@ -203,3 +242,7 @@ const contents = [
     </details>
   </BenchmarkReport>
 </BaseLayout>
+
+<style>
+  .bench-task-prompt { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
