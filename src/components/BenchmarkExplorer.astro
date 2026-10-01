@@ -1,0 +1,168 @@
+---
+import FigureSlots from './FigureSlots.astro';
+import type { ReportInput, numberFigures } from '../data/benchmarks/figures';
+
+interface Props {
+  input: ReportInput;
+  figures: ReturnType<typeof numberFigures>;
+}
+
+const { input, figures } = Astro.props;
+const views = [
+  { id: 'success', label: 'Success rate', slots: [figures.board[0]!] },
+  { id: 'cost', label: 'Cost per pass', slots: [figures.board[1]!] },
+  { id: 'tasks', label: 'Task results', slots: figures.tasks },
+  { id: 'comparisons', label: 'Comparisons', slots: [figures.board[2]!] },
+];
+const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
+const cost = (value: number | null) => value === null ? 'Unknown' : `$${value.toFixed(value < 1 ? 3 : 2)}`;
+const time = (value: number | null) => value === null ? 'Unknown' : `${(value / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}s`;
+---
+
+<div class="benchmark-explorer">
+  <div class="explorer-views" aria-label="Benchmark views">
+    {views.map((view) => <button type="button" data-view={view.id}>{view.label}</button>)}
+  </div>
+  {views.map((view) => (
+    <section class="explorer-panel" id={`view-${view.id}`} data-panel={view.id} aria-label={view.label}>
+      <FigureSlots slots={view.slots} />
+    </section>
+  ))}
+
+  <section class="explorer-configurations" aria-labelledby="configuration-heading">
+    <h3 class="bench-h3" id="configuration-heading">Configurations</h3>
+    <div class="explorer-controls">
+      <label>
+        <span>Search configurations</span>
+        <input type="search" placeholder="Harness or model" data-search />
+      </label>
+      <label>
+        <span>Sort by</span>
+        <select data-sort>
+          <option value="order">Recorded order</option>
+          <option value="rate">Success rate</option>
+          <option value="cost">Cost per pass</option>
+          <option value="time">Median time</option>
+        </select>
+      </label>
+    </div>
+    <div class="bench-table">
+      <table class="tgc-table explorer-table">
+        <thead>
+          <tr>
+            <th scope="col">Configuration</th>
+            <th scope="col" class="tgc-n">Passed / attempts</th>
+            <th scope="col" class="tgc-n">Success rate</th>
+            <th scope="col" class="tgc-n">Cost per pass</th>
+            <th scope="col" class="tgc-n">Median time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {input.rows.map((row, index) => (
+            <tr data-order={index} data-rate={row.rate} data-cost={row.cost.basis === 'unknown' ? undefined : row.cost.perSolvedUsd ?? undefined} data-time={row.medianWallMs ?? undefined}>
+              <th scope="row">{row.label}</th>
+              <td class="tgc-n">{row.solved} / {row.attempts}</td>
+              <td class="tgc-n">{percent(row.rate)}</td>
+              <td class="tgc-n">{row.cost.basis === 'estimated' && row.cost.perSolvedUsd !== null ? '~' : ''}{cost(row.cost.basis === 'unknown' ? null : row.cost.perSolvedUsd)}</td>
+              <td class="tgc-n">{time(row.medianWallMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <p class="explorer-empty" role="status" hidden>No matching configurations.</p>
+  </section>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('.benchmark-explorer').forEach((explorer) => {
+    const tabs = [...explorer.querySelectorAll<HTMLButtonElement>('[data-view]')];
+    const panels = [...explorer.querySelectorAll<HTMLElement>('[data-panel]')];
+    const tablist = explorer.querySelector<HTMLElement>('.explorer-views')!;
+    tablist.setAttribute('role', 'tablist');
+    const activate = (id: string, focus = false) => {
+      tabs.forEach((tab) => {
+        const selected = tab.dataset.view === id;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected && focus) tab.focus();
+      });
+      panels.forEach((panel) => { panel.hidden = panel.dataset.panel !== id; });
+    };
+    tabs.forEach((tab, index) => {
+      tab.id = `tab-${tab.dataset.view}`;
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-controls', `view-${tab.dataset.view}`);
+      tab.addEventListener('click', () => activate(tab.dataset.view!));
+      tab.addEventListener('keydown', (event) => {
+        let next: number;
+        if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        activate(tabs[next]!.dataset.view!, true);
+      });
+    });
+    panels.forEach((panel) => {
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', `tab-${panel.dataset.panel}`);
+      panel.tabIndex = 0;
+    });
+    activate('success');
+    const followHash = () => {
+      const target = document.getElementById(location.hash.slice(1));
+      const panel = target?.closest<HTMLElement>('[data-panel]');
+      if (panel && explorer.contains(panel)) {
+        activate(panel.dataset.panel!);
+        panel.focus({ preventScroll: true });
+        target!.scrollIntoView({ block: 'start' });
+      }
+    };
+    window.addEventListener('hashchange', followHash);
+    followHash();
+
+    const search = explorer.querySelector<HTMLInputElement>('[data-search]')!;
+    const sort = explorer.querySelector<HTMLSelectElement>('[data-sort]')!;
+    const body = explorer.querySelector<HTMLTableSectionElement>('.explorer-table tbody')!;
+    const rows = [...body.querySelectorAll<HTMLTableRowElement>('tr')];
+    const empty = explorer.querySelector<HTMLElement>('.explorer-empty')!;
+    const update = () => {
+      const query = search.value.trim().toLowerCase();
+      const field = sort.value;
+      const ordered = [...rows].sort((a, b) => {
+        const av = a.dataset[field];
+        const bv = b.dataset[field];
+        if (av === undefined || bv === undefined) return av === bv ? Number(a.dataset.order) - Number(b.dataset.order) : av === undefined ? 1 : -1;
+        const difference = Number(av) - Number(bv);
+        return (field === 'rate' ? -difference : difference) || Number(a.dataset.order) - Number(b.dataset.order);
+      });
+      ordered.forEach((row) => {
+        row.hidden = !row.querySelector('th')!.textContent!.toLowerCase().includes(query);
+        body.append(row);
+      });
+      empty.hidden = ordered.some((row) => !row.hidden);
+    };
+    search.addEventListener('input', update);
+    sort.addEventListener('change', update);
+  });
+</script>
+
+<style>
+  .explorer-views { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 6px; margin: 24px 0; border: 1px solid var(--chart-rule); border-radius: 12px; }
+  .explorer-views button { color: var(--text-secondary); background: transparent; border: 0; border-radius: 7px; padding: 12px 8px; font: inherit; font-size: 14px; cursor: pointer; }
+  .explorer-views button[aria-selected='true'] { color: var(--text-primary); background: var(--depth-3); }
+  .explorer-views button:focus-visible, input:focus-visible, select:focus-visible, .explorer-panel:focus-visible { outline: 2px solid var(--chart-accent, #7871ed); outline-offset: 3px; }
+  .explorer-panel[hidden], tr[hidden], .explorer-empty[hidden] { display: none; }
+  .explorer-configurations { margin-top: 40px; }
+  .explorer-controls { display: grid; grid-template-columns: 1fr 190px; gap: 16px; margin: 16px 0; }
+  .explorer-controls label { display: grid; gap: 8px; color: var(--text-secondary); font-size: 13px; }
+  .explorer-controls input, .explorer-controls select { min-width: 0; width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--chart-rule); border-radius: 8px; background: var(--depth-2); color: var(--text-primary); font: inherit; }
+  .explorer-table { min-width: 600px; }
+  .explorer-empty { color: var(--text-secondary); font-size: 14px; }
+  @media (max-width: 560px) {
+    .explorer-views { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .explorer-controls { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
