@@ -8,6 +8,7 @@ import {
   type Figure,
   type MatrixCell,
   type RateRow,
+  type RankedRatesOptions,
   type Refusal,
   type Tier,
 } from '@tangle-network/charts';
@@ -19,6 +20,8 @@ import type { BoardRecord } from './board-record';
 
 /** What a report page draws, in the chart library's input types. */
 export interface ReportInput {
+  /** Descriptive results preserve the registered roster without implying rank. */
+  mode?: 'ranked' | 'descriptive';
   /** The measure, lower case. */
   measure: string;
   /** The App Grade tier a pass needs, or null when the runner's verification decides a pass. */
@@ -40,11 +43,14 @@ export interface ReportFigures {
 export const MEASURE = 'pass rate';
 
 /** Every figure a report page shows, in page order. */
-export function reportFigures(input: ReportInput): ReportFigures {
+export function reportFigures(
+  input: ReportInput,
+  options: Pick<RankedRatesOptions, 'orientation' | 'identities'> = {},
+): ReportFigures {
   const passTier = input.passTier ? { passTier: input.passTier } : {};
   return {
     board: [
-      rankedRates(input.rows, { measure: input.measure, ...passTier, id: 'ranking' }),
+      rankedRates(input.rows, { measure: input.measure, ...passTier, ...(input.mode === 'descriptive' ? { order: 'input' as const } : {}), id: 'ranking', ...options }),
       costFrontier(input.rows, { measure: input.measure, id: 'cost' }),
       comparisonIntervals(input.comparisons, input.rows, { measure: input.measure, id: 'order' }),
     ],
@@ -53,12 +59,13 @@ export function reportFigures(input: ReportInput): ReportFigures {
 }
 
 /**
- * A verified board as the chart library's input. Version 2 records are the
+ * A verified board as the chart library's input. Version 3 records are the
  * library's rows as written; only a label two profiles share gets its id.
  */
 export function boardReportInput(board: BoardRecord): ReportInput {
   const shared = (label: string) => board.profiles.filter((profile) => profile.label === label).length > 1;
   return {
+    mode: board.mode,
     measure: MEASURE,
     passTier: board.grader.kind === 'app-grade' ? board.grader.passTier : null,
     rows: board.profiles.map((profile) => (shared(profile.label) ? { ...profile, label: `${profile.label} (${profile.id})` } : profile)),
@@ -68,14 +75,40 @@ export function boardReportInput(board: BoardRecord): ReportInput {
   };
 }
 
+/** Identity marks come from the registered provider and harness, never a model-name guess. */
+export function boardChartIdentities(board: BoardRecord): RankedRatesOptions['identities'] {
+  const providers: Record<string, { label: string; src: string }> = {
+    openai: { label: 'OpenAI', src: '/images/models/openai.svg' },
+    anthropic: { label: 'Anthropic', src: '/images/models/anthropic.svg' },
+    google: { label: 'Google', src: '/images/models/google.svg' },
+    zhipu: { label: 'Zhipu', src: '/images/models/zhipu.svg' },
+  };
+  const harnesses: Record<string, { label: string; src: string }> = {
+    opencode: { label: 'OpenCode', src: '/images/harness/opencode.svg' },
+    codex: { label: 'Codex', src: '/images/harness/codex.png' },
+    'claude-code': { label: 'Claude Code', src: '/images/harness/claude-code.svg' },
+    pi: { label: 'Pi', src: '/images/harness/pi.svg' },
+  };
+  return Object.fromEntries(board.profiles.map((profile) => {
+    const model = profile.agentProfile.model;
+    const provider = typeof model === 'object' && model !== null && 'provider' in model && typeof model.provider === 'string'
+      ? model.provider
+      : undefined;
+    return [profile.id, {
+      ...(provider && providers[provider] ? { model: { ...providers[provider], label: profile.model } } : {}),
+      ...(harnesses[profile.harness] ? { harness: harnesses[profile.harness] } : {}),
+    }];
+  }));
+}
+
 /** A drawn figure with its note number, or the library's reason for not drawing it. */
 export type FigureSlot = { figure: Figure; note: number } | { refusal: Refusal };
 
 /** What each figure is, for the heading of a figure the library refused to draw. */
 export const FIGURE_NAMES: Record<string, string> = {
-  ranking: 'Ranking',
+  ranking: 'Success rate',
   cost: 'Cost per pass',
-  order: 'Why the order holds',
+  order: 'Comparisons',
   tasks: 'Tasks',
 };
 

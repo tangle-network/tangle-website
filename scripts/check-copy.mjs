@@ -21,6 +21,7 @@
  * Output: per-page score 1–10, flagged phrases with line context.
  * Exits non-zero if any page scores below threshold.
  */
+import { extractCopy } from './extract-copy.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -201,53 +202,6 @@ if (!pageArgs.length) {
 if (auditTargets.length === 0) {
   console.error(`✗ No pages found${pageArgs.length ? ` matching ${pageArgs.join(', ')}` : ''}.`);
   process.exit(2);
-}
-
-// ─── Extract visible copy from HTML ──────────────────────────────────
-// Strip scripts, styles, attributes, SVG inner content. Keep text in
-// a way that preserves the page's narrative flow.
-function extractCopy(html, route = '') {
-  // Audit the article itself, not the shared navigation and footer.
-  // Those shared regions can consume the input cap and make a complete
-  // article look truncated to the reviewer.
-  const article = html.match(/<article\b[^>]*\bclass="[^"]*\bblog-article\b[^"]*"[\s\S]*?<\/article>/i)?.[0] ?? html;
-  const main = html.match(/<main\b[^>]*>[\s\S]*?<\/main>/i)?.[0] ?? html;
-  // The homepage audits the shared header and footer once. Every other
-  // route is judged on its own main content so shared copy cannot create
-  // the same deduction across the entire site.
-  const page = article !== html ? article : route === '/' ? html : main;
-  return page
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
-    .replace(/<head[\s\S]*?<\/head>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    // CSS can visually separate adjacent inline labels even though raw
-    // textContent joins them. Preserve that boundary without inserting
-    // spaces between syntax-highlighter spans, which use style attributes.
-    .replace(/<\/span>\s*(?=<span\b[^>]*\bclass=["'][^"']*\bline\b)/gi, '</span>\n')
-    .replace(/<\/span>\s*<span\b(?=[^>]*\bclass=["'][^"']*\bvbb-(?:leg|sub|profile|n|cost)\b)/gi, '</span> · <span')
-    .replace(/<\/span>\s*<em\b/gi, '</span> <em')
-    .replace(/<\/em>\s*<span\b/gi, '</em> <span')
-    .replace(/<\/em>\s*<small\b/gi, '</em> · <small')
-    .replace(/<\/button>\s*(?=<button\b)/gi, '</button> · ')
-    .replace(/<\/dt>\s*<dd\b/gi, '</dt> · <dd')
-    .replace(/<a\b[^>]*\bhref=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi, (_match, _quote, href, label) => `${label} [${href}]`)
-    .replace(/<\/(?:th|td)>/gi, ' | ')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<\/(p|h[1-6]|li|div|section|article|header|footer)>/gi, '\n')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n[ \t]+/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 // ─── LLM rubric ──────────────────────────────────────────────────────
