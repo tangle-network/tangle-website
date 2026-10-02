@@ -8,11 +8,9 @@
  *
  * Run: pnpm check:links
  *
- * CI uses lychee (see .github/workflows/check-links.yml) for the
- * authoritative check; linkinator is the local fast-feedback path so
- * contributors don't need a Rust toolchain.
+ * Linkinator provides local checks without requiring a Rust toolchain.
  *
- * Exits non-zero on any BROKEN link so it can gate scripts/CI.
+ * Exits non-zero on any BROKEN link.
  */
 import { LinkChecker } from 'linkinator';
 import { existsSync } from 'node:fs';
