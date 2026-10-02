@@ -1,5 +1,13 @@
 # Repository Agent Notes
 
+## Delivery
+
+Choose checks for the changed page or behavior; instruction-only changes need diff and link checks.
+Reuse valid results and finish authorized delivery once the relevant checks pass.
+Honor explicit CI waivers while preserving hooks and enforced protections.
+Track unrelated failures separately from the product change.
+Verify the requested served page before claiming it is live.
+
 ## Tangle Blog Skills
 
 Before auditing, rewriting, or creating blog posts in `src/content/blog`, load the relevant repo-local skill:
