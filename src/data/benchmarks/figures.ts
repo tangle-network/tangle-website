@@ -107,7 +107,7 @@ export type FigureSlot = { figure: Figure; note: number } | { refusal: Refusal }
 /** What each figure is, for the heading of a figure the library refused to draw. */
 export const FIGURE_NAMES: Record<string, string> = {
   ranking: 'Success rate',
-  cost: 'Cost per pass',
+  cost: 'Model cost / pass',
   order: 'Comparisons',
   tasks: 'Tasks',
 };
