@@ -1,57 +1,71 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchmarkReport from '../../components/BenchmarkReport.astro';
-import BenchmarkExplorer from '../../components/BenchmarkExplorer.astro';
-import BenchmarkTaskPrompts from '../../components/BenchmarkTaskPrompts.astro';
-import { boardChartIdentities, boardReportInput, numberFigures, reportFigures } from '../../data/benchmarks/figures';
 import { boards } from '../../data/benchmarks/index';
+import { benchmarkDescription } from '../../data/benchmarks/catalog';
 import { taskPromptsFor } from '../../data/benchmarks/task-sources';
 
-const board = boards[0];
-const tasks = board ? taskPromptsFor(board) : [];
-const input = board ? boardReportInput(board) : null;
-const figures = input ? numberFigures(reportFigures(input, { orientation: 'vertical', identities: boardChartIdentities(board) })) : null;
-const suiteNames: Record<string, string> = {
-  'meilisearch-apps': 'Meilisearch',
-  'typesense-apps': 'Typesense',
-};
-
+const entries = boards.map((board) => ({ board, ...benchmarkDescription(board), tasks: taskPromptsFor(board) }));
+const categories = [...new Set(entries.map((entry) => entry.category))];
 ---
 
-<BaseLayout
-  title="Agent benchmarks"
-  description="Compare coding agents on the same tasks by success rate, model cost, and runtime."
->
+<BaseLayout title="Agent benchmarks" description="Explore agent benchmarks by task. Compare success rates, model costs, and the prompts used in each evaluation.">
   <BenchmarkReport wide>
     <Fragment slot="hero">
-      <h1 class="bench-h1">Coding agent benchmarks</h1>
-
-      {boards.length === 0 && <p class="bench-status">No results have passed publication review yet.</p>}
+      <h1 class="bench-h1">Agent benchmarks</h1>
+      <p class="catalog-intro">Compare agents on real tasks.</p>
     </Fragment>
-
-    {board && input && figures && (
-      <section class="bench-section" id="boards">
-        <nav class="benchmark-suites" aria-label="Benchmarks">
-          {boards.map((suite) => <a href={`/benchmarks/${suite.suite.id}/`} aria-current={suite.suite.id === board.suite.id ? 'page' : undefined}>{suiteNames[suite.suite.id] ?? suite.suite.name}</a>)}
-        </nav>
-        <p class="bench-meta">
-          Compare coding agents for search apps by success rate and model cost per passing task.<br />
-          {board.campaign.completedAt.slice(0, 10)} · {board.tasks.length} tasks · {board.campaign.repetitions} runs per task
-          · {board.grader.kind === 'app-grade' ? `Pass: browser-tested app, App Grade ${board.grader.passTier} or better` : `Pass: ${board.grader.pass}`}
-        </p>
-        <BenchmarkExplorer figures={figures}>
-          <BenchmarkTaskPrompts slot="tasks" tasks={tasks} />
-        </BenchmarkExplorer>
+    {categories.map((category) => (
+      <section class="catalog-category" aria-labelledby={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>
+        <h2 id={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>{category}</h2>
+        <div class="catalog-grid">
+          {entries.filter((entry) => entry.category === category).map((entry) => (
+            <a class="benchmark-card" href={`/benchmarks/${entry.board.suite.id}/`}>
+              <div class="card-heading">
+                <h3>{entry.title}</h3>
+                <span class="card-arrow" aria-hidden="true">↗</span>
+              </div>
+              <p class="card-description">{entry.description}</p>
+              <div class="card-tasks">
+                <span class="task-heading">Example tasks</span>
+                <ul role="list">
+                  {entry.tasks.slice(0, 3).map((task) => <li>{task.name}</li>)}
+                </ul>
+              </div>
+              <div class="card-footer">
+                <span>{entry.board.tasks.length} tasks · {entry.board.profiles.length} agent setups</span>
+                <span class="card-action">View results <span aria-hidden="true">→</span></span>
+              </div>
+            </a>
+          ))}
+        </div>
       </section>
-    )}
-
+    ))}
+    {entries.length === 0 && <p class="catalog-intro">No benchmark results are available yet.</p>}
   </BenchmarkReport>
 </BaseLayout>
 
-
 <style>
-  .benchmark-suites { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-  .benchmark-suites a { padding: 10px 16px; border: 1px solid var(--chart-rule); border-radius: 8px; font-size: 17px; text-decoration: none; }
-  .benchmark-suites a[aria-current="page"] { color: var(--text-primary); background: var(--depth-3); border-color: var(--accent-text); }
-  .bench-meta { margin-bottom: 20px; }
+  .catalog-intro { margin: 14px 0 0; color: var(--text-secondary); font-size: 20px; line-height: 1.5; }
+  .catalog-category { margin-top: 40px; }
+  .catalog-category h2 { margin: 0 0 18px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  .catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  .benchmark-card { display: flex; flex-direction: column; min-width: 0; padding: 28px; color: var(--text-primary); background: var(--depth-2); border: 1px solid var(--chart-rule); border-radius: 16px; text-decoration: none; transition: border-color .15s, background .15s; }
+  .benchmark-card:hover { border-color: var(--accent-text); background: var(--depth-3); }
+  .benchmark-card:focus-visible { outline: 3px solid var(--accent-text); outline-offset: 4px; }
+  .card-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+  .card-heading h3 { margin: 0; font-size: 27px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em; }
+  .card-arrow { color: var(--accent-text); font-size: 28px; }
+  .card-description { margin: 16px 0 0; color: var(--text-secondary); font-size: 18px; line-height: 1.6; }
+  .card-tasks { margin: 28px 0; padding: 22px 0 0; border-top: 1px solid var(--chart-rule); }
+  .task-heading { font-size: 16px; color: var(--text-secondary); }
+  .card-tasks ul { padding: 0; margin: 12px 0 0; list-style: none; display: grid; gap: 12px; }
+  .card-tasks li { font-size: 17px; line-height: 1.5; }
+  .card-footer { margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; color: var(--text-secondary); font-size: 16px; }
+  .card-action { color: var(--accent-text); white-space: nowrap; }
+  @media (max-width: 760px) {
+    .catalog-grid { grid-template-columns: 1fr; gap: 20px; }
+    .benchmark-card { padding: 24px; }
+    .catalog-category { margin-top: 32px; }
+  }
 </style>
