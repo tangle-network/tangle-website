@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import ts from '/home/drew/code/agent-dev-container/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/lib/typescript.js';
+const dir=fileURLToPath(new URL('.',import.meta.url));
+const options={strict:true,noEmit:true,skipLibCheck:true,module:ts.ModuleKind.ESNext,moduleResolution:ts.ModuleResolutionKind.Bundler,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,types:['node'],typeRoots:['/home/drew/code/agent-dev-container/node_modules/.pnpm/@types+node@25.6.0/node_modules/@types']};
+const files=['node_modules/astro/client.d.ts','src/components/QuickstartCode.tsx','src/data/sandboxQuickstart.ts'].map(f=>dir+'site/'+f);
+const program=ts.createProgram(files,options);
+const diagnostics=ts.getPreEmitDiagnostics(program).map(d=>({file:d.file?.fileName,code:d.code,message:ts.flattenDiagnosticMessageText(d.messageText,'\n')}));
+const sources=Object.fromEntries(['src/components/QuickstartCode.tsx','src/data/sandboxQuickstart.ts','src/components/quickstart-code.css'].map(f=>[f,crypto.createHash('sha256').update(fs.readFileSync(dir+'site/'+f)).digest('hex')]));
+const receipt={checkedAt:new Date().toISOString(),typescript:ts.version,strict:true,skipLibCheck:true,astroClientTypes:true,sources,diagnostics};
+fs.writeFileSync(dir+'component-typescript-final.json',JSON.stringify(receipt,null,2)+'\n');
+console.log(JSON.stringify(receipt,null,2));
+if(diagnostics.length)process.exitCode=1;
