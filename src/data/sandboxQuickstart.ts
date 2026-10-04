@@ -1,20 +1,30 @@
-const typescript = (operation: string, imports = '', createOptions = '') => `${imports}import { Sandbox } from '@tangle-network/sandbox';
+const typescript = (operation: string, imports = '', createOptions = '') => {
+  const client = `${imports}import { Sandbox } from '@tangle-network/sandbox';
 
 const tangle = new Sandbox({
   apiKey: process.env.TANGLE_API_KEY!,
   baseUrl: 'https://sandbox.tangle.tools',
-});
-const box = await tangle.create({
+});`;
+  const create = `const box = await tangle.create({
   environment: 'universal', maxLifetimeSeconds: 900,
 ${createOptions}});
-await box.waitFor('running');
+await box.waitFor('running');`;
+  const setup = `${client}\n${create}`;
+  return {
+    snippet: operation
+      ? [imports.trim(), createOptions ? create : '', operation].filter(Boolean).join('\n\n')
+      : setup,
+    fullCode: `${setup}
 
-${operation}
+${operation || 'console.log(box.id);'}
 
-await box.delete();`;
+await box.delete();`,
+  };
+};
 
 // The Python SDK is not publicly installable; these use the hosted HTTP API.
-const python = (operation: string, imports = '', createOptions = '') => `${imports}import os
+const python = (operation: string, imports = '', createOptions = '') => {
+  const client = `${imports}import os
 import time
 from contextlib import ExitStack
 import httpx
@@ -22,8 +32,8 @@ import httpx
 with httpx.Client(
     base_url="https://sandbox.tangle.tools", timeout=180,
     headers={"Authorization": f"Bearer {os.environ['TANGLE_API_KEY']}"},
-) as tangle, ExitStack() as cleanup:
-    box = tangle.post("/v1/sandboxes", json={
+) as tangle, ExitStack() as cleanup:`;
+  const create = `    box = tangle.post("/v1/sandboxes", json={
         "environment": "universal", "maxLifetimeSeconds": 900,
 ${createOptions}    }).raise_for_status().json()
     path = f"/v1/sandboxes/{box['id']}"
@@ -36,9 +46,18 @@ ${createOptions}    }).raise_for_status().json()
         time.sleep(2)
         box = tangle.get(path).raise_for_status().json()
     else:
-        raise TimeoutError("Sandbox did not start")
+        raise TimeoutError("Sandbox did not start")`;
+  const setup = `${client}\n${create}`;
+  return {
+    snippet: operation
+      ? [imports.trim(), createOptions ? create.replace(/^ {4}/gm, '') : '', operation.replace(/^ {4}/gm, '')]
+          .filter(Boolean).join('\n\n')
+      : setup,
+    fullCode: `${setup}
 
-${operation}`;
+${operation || '    print(box["id"])'}`,
+  };
+};
 
 export const quickstartLanguages = [
   { id: 'typescript', label: 'TypeScript', syntax: 'ts', install: 'npm install @tangle-network/sandbox' },
@@ -46,6 +65,11 @@ export const quickstartLanguages = [
 ] as const;
 
 export const quickstartExamples = [
+  {
+    id: 'create', label: 'Create a sandbox',
+    typescript: typescript(''),
+    python: python(''),
+  },
   {
     id: 'run', label: 'Run code',
     typescript: typescript(`const result = await box.exec('node --version');
@@ -73,7 +97,7 @@ console.log(content);`),
     typescript: typescript(`const result = await box.prompt('Report the Node.js version.', {
   sessionId: 'quickstart',
 });
-console.log(result.response);`),
+console.log(result.success ? result.response : result.error);`),
     python: python(`    prompt = base64.b64encode(b"Report the Node.js version.").decode()
     result = tangle.post(f"{path}/runtime/agents/run", json={
         "id": "default", "sessionId": "quickstart", "timeoutMs": 60000,
@@ -157,7 +181,7 @@ const results = await Promise.all(tasks.map(([sessionId, prompt]) =>
   box.prompt(prompt, { sessionId }),
 ));
 for (const [index, result] of results.entries()) {
-  console.log(tasks[index][0], result.response ?? result.error);
+  console.log(tasks[index][0], result.success ? result.response : result.error);
 }`),
     python: python(`    # Sessions can share a workspace; these tasks only inspect it.
     tasks = [

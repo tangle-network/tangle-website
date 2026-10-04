@@ -37,13 +37,13 @@ export default function QuickstartCode() {
                 </button>
               ))}
             </div>
-            <div className="quickstart-copy-control" role="group" aria-label="Copy example">
-              <CopyButton key={`${selected.id}-${language.id}`} text={code} />
+            <div className="quickstart-copy-control" role="group" aria-label="Copy full example" title="Copy full example with setup">
+              <CopyButton key={`${selected.id}-${language.id}`} text={code.fullCode} />
             </div>
           </div>
         </div>
         <section key={`${selected.id}-${language.id}`} className="quickstart-source" aria-label={`${selected.label} in ${language.label}`} tabIndex={0}>
-          <CodeBlock code={code} language={language.id} label="" showLineNumbers className="quickstart-shared-code rounded-none border-0" />
+          <CodeBlock code={code.snippet} language={language.id} label="" showLineNumbers className="quickstart-shared-code rounded-none border-0" />
         </section>
         <div className="quickstart-install" role="group" aria-label="Install command">
           <code>{language.install}</code>
