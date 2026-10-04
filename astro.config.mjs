@@ -33,8 +33,13 @@ export default defineConfig({
   vite: {
     resolve: {
       alias: {
-        // Only the shared code components are used here. The Markdown barrel
-        // also loads a renderer with Node-only dependencies in Cloudflare SSR.
+        // The recorded run needs the maintained timeline, not the full chat UI.
+        '@tangle-network/ui/chat': fileURLToPath(new URL(
+          './node_modules/@tangle-network/ui/dist/chat/agent-timeline.js',
+          import.meta.url,
+        )),
+        // Only the shared code components are used here; keep this entry
+        // independent of the rest of the Markdown barrel.
         '@tangle-network/ui/markdown': fileURLToPath(new URL(
           './node_modules/@tangle-network/ui/dist/markdown/code-block.js',
           import.meta.url,
@@ -50,5 +55,7 @@ export default defineConfig({
     },
   },
 
-  adapter: cloudflare(),
+  // These pages are static. Render their React islands in Node at build/dev
+  // time; Cloudflare still serves the generated site through the same adapter.
+  adapter: cloudflare({ prerenderEnvironment: 'node' }),
 });
