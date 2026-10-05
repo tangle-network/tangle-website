@@ -80,7 +80,7 @@ ${operation || '    print(box["id"])'}`,
 // Each run streams its events, so a run longer than the blocking endpoint's
 // limit still returns its result.
 const pythonRunAgent = `    def run_agent(text, session_id, backend=None):
-        body = {"sessionId": session_id, "parts": [
+        body = {"id": "default", "sessionId": session_id, "parts": [
             {"type": "text", "text": base64.b64encode(text.encode()).decode()},
         ]}
         if backend:
