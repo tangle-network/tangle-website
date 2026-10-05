@@ -1,18 +1,35 @@
-const typescript = (operation: string, imports = '', createOptions = '') => {
-  const client = `${imports}import { Sandbox } from '@tangle-network/sandbox';
+import { harnessSupportsModel } from '@tangle-network/agent-interface/harness-capabilities';
+
+interface TemplateParts {
+  /** Lines placed above the client, such as standard-library imports. */
+  imports?: string;
+  /** Extra named imports from @tangle-network/sandbox (TypeScript only). */
+  sdkImports?: string;
+  /** Declarations the create call depends on, such as an AgentProfile. */
+  preamble?: string;
+  /** Create options that are the point of the example. */
+  createOptions?: string;
+  /** A comment line placed above the create call. */
+  createComment?: string;
+}
+
+const typescript = (operation: string, { imports = '', sdkImports = '', preamble = '', createOptions = '', createComment = '' }: TemplateParts = {}) => {
+  const client = `${imports}import { Sandbox${sdkImports} } from '@tangle-network/sandbox';
 
 const tangle = new Sandbox({
   apiKey: process.env.TANGLE_API_KEY!,
   baseUrl: 'https://sandbox.tangle.tools',
 });`;
-  const create = `const box = await tangle.create({
+  const create = `${createComment ? `// ${createComment}\n` : ''}const box = await tangle.create({
   environment: 'universal', maxLifetimeSeconds: 900,
 ${createOptions}});
 await box.waitFor('running');`;
-  const setup = `${client}\n${create}`;
+  const setup = [client, preamble, create].filter(Boolean).join('\n\n');
+  const shownImports = [imports.trim(), sdkImports ? `import { ${sdkImports.replace(/^, /, '')} } from '@tangle-network/sandbox';` : '']
+    .filter(Boolean).join('\n');
   return {
     snippet: operation
-      ? [imports.trim(), createOptions ? create : '', operation].filter(Boolean).join('\n\n')
+      ? [shownImports, preamble, createOptions ? create : '', operation].filter(Boolean).join('\n\n')
       : setup,
     fullCode: `${setup}
 
@@ -23,7 +40,7 @@ await box.delete();`,
 };
 
 // The Python SDK is not publicly installable; these use the hosted HTTP API.
-const python = (operation: string, imports = '', createOptions = '') => {
+const python = (operation: string, { imports = '', preamble = '', createOptions = '', createComment = '' }: TemplateParts = {}) => {
   const client = `${imports}import os
 import time
 from contextlib import ExitStack
@@ -33,7 +50,7 @@ with httpx.Client(
     base_url="https://sandbox.tangle.tools", timeout=180,
     headers={"Authorization": f"Bearer {os.environ['TANGLE_API_KEY']}"},
 ) as tangle, ExitStack() as cleanup:`;
-  const create = `    box = tangle.post("/v1/sandboxes", json={
+  const create = `${createComment ? `    # ${createComment}\n` : ''}    box = tangle.post("/v1/sandboxes", json={
         "environment": "universal", "maxLifetimeSeconds": 900,
 ${createOptions}    }).raise_for_status().json()
     path = f"/v1/sandboxes/{box['id']}"
@@ -47,10 +64,11 @@ ${createOptions}    }).raise_for_status().json()
         box = tangle.get(path).raise_for_status().json()
     else:
         raise TimeoutError("Sandbox did not start")`;
-  const setup = `${client}\n${create}`;
+  const setup = [client, preamble, create].filter(Boolean).join('\n');
+  const dedent = (code: string) => code.replace(/^ {4}/gm, '');
   return {
     snippet: operation
-      ? [imports.trim(), createOptions ? create.replace(/^ {4}/gm, '') : '', operation.replace(/^ {4}/gm, '')]
+      ? [imports.trim(), dedent(preamble), createOptions ? dedent(create) : '', dedent(operation)]
           .filter(Boolean).join('\n\n')
       : setup,
     fullCode: `${setup}
@@ -59,10 +77,101 @@ ${operation || '    print(box["id"])'}`,
   };
 };
 
+// Each run streams its events, so a run longer than the blocking endpoint's
+// limit still returns its result.
+const pythonRunAgent = `    def run_agent(text, session_id, backend=None):
+        body = {"sessionId": session_id, "parts": [
+            {"type": "text", "text": base64.b64encode(text.encode()).decode()},
+        ]}
+        if backend:
+            body["backend"] = backend
+        with tangle.stream("POST", f"{path}/runtime/agents/run/stream", json=body) as events:
+            event = None
+            for line in events.raise_for_status().iter_lines():
+                if line.startswith("event: "):
+                    event = line[len("event: "):]
+                elif line.startswith("data: ") and event == "result":
+                    return json.loads(line[len("data: "):]).get("finalText")
+                elif line.startswith("data: ") and event == "error":
+                    raise RuntimeError(line[len("data: "):])
+        raise RuntimeError("Run ended without a result")`;
+
 export const quickstartLanguages = [
   { id: 'typescript', label: 'TypeScript', syntax: 'ts', install: 'npm install @tangle-network/sandbox' },
   { id: 'python', label: 'Python', syntax: 'python', install: 'pip install httpx' },
 ] as const;
+
+// A Run is a Box (size, image, workspace, retention) plus a versioned
+// AgentProfile (harness, model, instructions) plus a Prompt. The harness ids
+// are the Sandbox backend types; model ids are provider-qualified Router ids.
+export const agentHarnesses = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'opencode', label: 'OpenCode' },
+  { id: 'pi', label: 'Pi' },
+] as const;
+
+export const agentModels = [
+  { id: 'anthropic/claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+  { id: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5' },
+  { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
+  { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
+  { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
+  { id: 'zai/glm-5.3', label: 'GLM-5.3' },
+  { id: 'google/gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+] as const;
+
+export type AgentHarness = (typeof agentHarnesses)[number]['id'];
+export type AgentModel = (typeof agentModels)[number]['id'];
+
+/** The listed models a harness can run: Claude Code takes Anthropic models, Codex OpenAI models, the rest any Router model. */
+export const modelsForHarness = (harness: AgentHarness) =>
+  agentModels.filter((model) => harnessSupportsModel(harness, model.id));
+
+export const defaultAgent = { harness: 'claude-code', model: 'anthropic/claude-sonnet-5-5' } as const;
+
+/** The Run an agent example for one harness and model. */
+export const agentExample = (harness: AgentHarness, model: AgentModel) => ({
+  typescript: typescript(`// Prompt: one run of the profile in the box.
+const result = await box.prompt('Summarize this repository in one sentence.');
+console.log(result.success ? result.response : result.error);`, {
+    sdkImports: ', sandboxResourcesForSize, type AgentProfile',
+    preamble: `// AgentProfile: the versioned agent. Harness, model and instructions.
+const reviewer = {
+  name: 'reviewer',
+  version: '1.0.0',
+  harness: '${harness}',
+  model: { default: '${model}', reasoningEffort: 'medium' },
+  prompt: { instructions: ['Read the workspace. Do not edit files.'] },
+} satisfies AgentProfile;`,
+    createComment: 'Box: size, image, workspace and retention.',
+    createOptions: `  resources: sandboxResourcesForSize('small'),
+  git: { url: 'https://github.com/octocat/Hello-World.git' },
+  backend: { type: reviewer.harness, profile: reviewer },
+`,
+  }),
+  python: python(`${pythonRunAgent}
+
+    # Prompt: one run of the profile in the box.
+    backend = {"type": profile["harness"], "profile": profile}
+    print(run_agent("Summarize this repository in one sentence.", "quickstart", backend))`, {
+    imports: 'import base64\nimport json\n',
+    preamble: `    # AgentProfile: the versioned agent. Harness, model and instructions.
+    profile = {
+        "name": "reviewer",
+        "version": "1.0.0",
+        "harness": "${harness}",
+        "model": {"default": "${model}", "reasoningEffort": "medium"},
+        "prompt": {"instructions": ["Read the workspace. Do not edit files."]},
+    }
+`,
+    createComment: 'Box: size, image, workspace and retention.',
+    createOptions: `        "resources": {"cpuCores": 2, "memoryMB": 4096, "diskGB": 20},
+        "git": {"url": "https://github.com/octocat/Hello-World.git"},
+        "backend": {"type": profile["harness"], "profile": profile},
+`,
+  }),
+});
 
 export const quickstartExamples = [
   {
@@ -93,17 +202,8 @@ console.log(content);`),
     print(result["data"]["content"])`),
   },
   {
-    id: 'agent', label: 'Run an agent',
-    typescript: typescript(`const result = await box.prompt('Report the Node.js version.', {
-  sessionId: 'quickstart',
-});
-console.log(result.success ? result.response : result.error);`),
-    python: python(`    prompt = base64.b64encode(b"Report the Node.js version.").decode()
-    result = tangle.post(f"{path}/runtime/agents/run", json={
-        "id": "default", "sessionId": "quickstart", "timeoutMs": 60000,
-        "parts": [{"type": "text", "text": prompt}],
-    }).raise_for_status().json()
-    print(result["data"]["finalText"])`, 'import base64\n'),
+    id: 'agent', label: 'Run an agent', selectsAgent: true,
+    ...agentExample(defaultAgent.harness, defaultAgent.model),
   },
   {
     id: 'preview', label: 'App preview',
@@ -117,7 +217,7 @@ console.log(ready.url);
 
 const terminal = createInterface({ input: process.stdin, output: process.stdout });
 await terminal.question('Press Enter when finished viewing the preview.');
-terminal.close();`, "import { createInterface } from 'node:readline/promises';\n"),
+terminal.close();`, { imports: "import { createInterface } from 'node:readline/promises';\n" }),
     python: python(`    tangle.post(f"{path}/runtime/files/write", json={
         "path": "/workspace/index.html", "content": "<h1>Hello from your sandbox</h1>",
     }).raise_for_status()
@@ -183,43 +283,36 @@ const results = await Promise.all(tasks.map(([sessionId, prompt]) =>
 for (const [index, result] of results.entries()) {
   console.log(tasks[index][0], result.success ? result.response : result.error);
 }`),
-    python: python(`    # Sessions can share a workspace; these tasks only inspect it.
+    python: python(`${pythonRunAgent}
+
+    # Sessions can share a workspace; these tasks only inspect it.
     tasks = [
         ("tools", "Report Node.js, Python and Git versions. Do not edit files."),
         ("workspace", "List workspace files and package managers. Do not edit files."),
     ]
-
-    def run(task):
-        session_id, prompt = task
-        result = tangle.post(f"{path}/runtime/agents/run", json={
-            "id": "default", "sessionId": session_id, "timeoutMs": 60000,
-            "parts": [{"type": "text", "text": base64.b64encode(prompt.encode()).decode()}],
-        }).raise_for_status().json()
-        return result["data"]["finalText"]
-
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(run, tasks))
+        results = list(pool.map(lambda task: run_agent(task[1], task[0]), tasks))
     for (session_id, _), result in zip(tasks, results):
-        print(session_id, result)`, 'import base64\nfrom concurrent.futures import ThreadPoolExecutor\n'),
+        print(session_id, result)`, { imports: 'import base64\nimport json\nfrom concurrent.futures import ThreadPoolExecutor\n' }),
   },
   {
     id: 'network', label: 'Network policy',
     typescript: typescript(`const result = await box.exec(
   \`node -e "fetch('https://docs.tangle.tools').then(r => console.log(r.status))"\`,
 );
-console.log(result.stdout);`, '', `  egressPolicy: {
+console.log(result.stdout);`, { createOptions: `  egressPolicy: {
     mode: 'strict', allowDomains: ['docs.tangle.tools'],
     includeImplicitDomains: false,
   },
-`),
+` }),
     python: python(`    result = tangle.post(f"{path}/runtime/terminals/commands", json={
         "command": "node -e \\"fetch('https://docs.tangle.tools').then(r => console.log(r.status))\\"",
         "timeout": 30000,
     }).raise_for_status().json()
-    print(result["result"]["stdout"])`, '', `        "egressPolicy": {
+    print(result["result"]["stdout"])`, { createOptions: `        "egressPolicy": {
             "mode": "strict", "allowDomains": ["docs.tangle.tools"],
             "includeImplicitDomains": False,
         },
-`),
+` }),
   },
 ];
