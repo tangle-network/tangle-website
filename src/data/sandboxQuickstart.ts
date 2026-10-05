@@ -116,7 +116,6 @@ export const agentModels = [
   { id: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5' },
   { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna' },
   { id: 'openai/gpt-5.5', label: 'GPT-5.5' },
-  { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
   { id: 'zai/glm-5.3', label: 'GLM-5.3' },
   { id: 'google/gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
 ] as const;
@@ -124,9 +123,23 @@ export const agentModels = [
 export type AgentHarness = (typeof agentHarnesses)[number]['id'];
 export type AgentModel = (typeof agentModels)[number]['id'];
 
-/** The listed models a harness can run: Claude Code takes Anthropic models, Codex OpenAI models, the rest any Router model. */
+// The pairs that completed a run through the Sandbox API on 2026-10-05.
+// Claude Code takes Anthropic models and Codex OpenAI models; OpenCode and Pi
+// call the Router, but Pi failed with the Anthropic, GPT-5.6 Luna and Gemini
+// models, so only its passing pairs are offered.
+const runnableModels: Record<AgentHarness, readonly AgentModel[]> = {
+  'claude-code': ['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5'],
+  codex: ['openai/gpt-5.6-luna', 'openai/gpt-5.5'],
+  opencode: [
+    'anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5', 'openai/gpt-5.6-luna', 'openai/gpt-5.5',
+    'zai/glm-5.3', 'google/gemini-3.8-flash',
+  ],
+  pi: ['openai/gpt-5.5', 'zai/glm-5.3'],
+};
+
+/** The models offered for a harness: a measured passing pair that the shared harness capability table also allows. */
 export const modelsForHarness = (harness: AgentHarness) =>
-  agentModels.filter((model) => harnessSupportsModel(harness, model.id));
+  agentModels.filter((model) => runnableModels[harness].includes(model.id) && harnessSupportsModel(harness, model.id));
 
 export const defaultAgent = { harness: 'claude-code', model: 'anthropic/claude-sonnet-5-5' } as const;
 
