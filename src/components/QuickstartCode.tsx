@@ -10,7 +10,7 @@ export default function QuickstartCode() {
   const code = selected[language.id];
 
   return (
-    <div className="quickstart-editor" data-theme="light">
+    <div className="quickstart-editor">
       <nav className="quickstart-scenarios" aria-label="Code examples">
         {quickstartExamples.map((example) => (
           <button key={example.id} type="button" aria-pressed={selected.id === example.id}
