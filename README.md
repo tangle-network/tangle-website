@@ -1,43 +1,32 @@
-# Astro Starter Kit: Minimal
+# tangle-website
+
+Source for [tangle.tools](https://tangle.tools): a static Astro site with React islands, served from Cloudflare Pages.
+
+## Develop
 
 ```sh
-npm create astro@latest -- --template minimal
+pnpm install
+pnpm dev      # http://localhost:4321
+pnpm build    # static output in dist/client
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+Pages live in `src/pages`, blog posts in `src/content/blog`, and benchmark boards in `src/data/benchmarks`.
+Brand tokens and shared components come from `@tangle-network/brand` and `@tangle-network/ui`.
 
-## 🚀 Project Structure
+## Checks
 
-Inside of your Astro project, you'll see the following folders and files:
+| Command | What it checks |
+| --- | --- |
+| `pnpm check:drift` | styling drift against `drift-baseline.json` |
+| `pnpm check:blog`, `pnpm check:blog:reader` | blog frontmatter, editorial rules and reader audit |
+| `pnpm check:copy` | model-scored copy audit of the built pages (needs `pnpm build` and a router key) |
+| `pnpm check:models` | references to deprecated model names |
+| `pnpm test:benchmarks`, `pnpm test:cta` | benchmark board records and CTA instrumentation |
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+## Deploy
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+Merging to `master` runs `.github/workflows/deploy.yml`.
+That workflow builds with the commit SHA, runs `pnpm check:version` against it, and deploys `dist/client` to the `tangle-website` Pages project.
+`.github/workflows/collect-status.yml` refreshes the public status history every six hours.
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+Agent instructions are in [AGENTS.md](AGENTS.md).
