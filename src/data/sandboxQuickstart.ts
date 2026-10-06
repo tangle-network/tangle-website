@@ -101,7 +101,7 @@ export const quickstartLanguages = [
   { id: 'python', label: 'Python', syntax: 'python', install: 'pip install httpx' },
 ] as const;
 
-// A Run is a Box (size, image, workspace, retention) plus a versioned
+// A run is a Sandbox (size, image, workspace, retention) plus a versioned
 // AgentProfile (harness, model, instructions) plus a Prompt. The harness ids
 // are the Sandbox backend types; model ids are provider-qualified Router ids.
 export const agentHarnesses = [
@@ -144,7 +144,7 @@ export const defaultAgent = { harness: 'claude-code', model: 'anthropic/claude-s
 
 /** The Run an agent example for one harness and model. */
 export const agentExample = (harness: AgentHarness, model: AgentModel) => ({
-  typescript: typescript(`// Prompt: one run of the profile in the box.
+  typescript: typescript(`// Prompt: one run of the profile in the sandbox.
 const result = await box.prompt('Summarize this repository in one sentence.');
 console.log(result.success ? result.response : result.error);`, {
     sdkImports: ', sandboxResourcesForSize, type AgentProfile',
@@ -156,7 +156,7 @@ const reviewer = {
   model: { default: '${model}', reasoningEffort: 'medium' },
   prompt: { instructions: ['Read the workspace. Do not edit files.'] },
 } satisfies AgentProfile;`,
-    createComment: 'Box: size, image, workspace and retention.',
+    createComment: 'Sandbox: size, image, workspace and retention.',
     createOptions: `  resources: sandboxResourcesForSize('small'),
   git: { url: 'https://github.com/octocat/Hello-World.git' },
   backend: { type: reviewer.harness, profile: reviewer },
@@ -164,7 +164,7 @@ const reviewer = {
   }),
   python: python(`${pythonRunAgent}
 
-    # Prompt: one run of the profile in the box.
+    # Prompt: one run of the profile in the sandbox.
     backend = {"type": profile["harness"], "profile": profile}
     print(run_agent("Summarize this repository in one sentence.", "quickstart", backend))`, {
     imports: 'import base64\nimport json\n',
@@ -177,7 +177,7 @@ const reviewer = {
         "prompt": {"instructions": ["Read the workspace. Do not edit files."]},
     }
 `,
-    createComment: 'Box: size, image, workspace and retention.',
+    createComment: 'Sandbox: size, image, workspace and retention.',
     createOptions: `        "resources": {"cpuCores": 2, "memoryMB": 4096, "diskGB": 20},
         "git": {"url": "https://github.com/octocat/Hello-World.git"},
         "backend": {"type": profile["harness"], "profile": profile},
@@ -185,7 +185,17 @@ const reviewer = {
   }),
 });
 
-export const quickstartExamples = [
+interface QuickstartCode { snippet: string; fullCode: string }
+interface QuickstartExample {
+  id: string;
+  label: string;
+  /** The example takes its harness and model from the agent selectors. */
+  selectsAgent?: boolean;
+  typescript: QuickstartCode;
+  python: QuickstartCode;
+}
+
+export const quickstartExamples: QuickstartExample[] = [
   {
     id: 'create', label: 'Create a sandbox',
     typescript: typescript(''),
