@@ -68,7 +68,7 @@ ${createOptions}    }).raise_for_status().json()
   const dedent = (code: string) => code.replace(/^ {4}/gm, '');
   return {
     snippet: operation
-      ? [imports.trim(), dedent(preamble), createOptions ? dedent(create) : '', dedent(operation)]
+      ? [imports.trim(), dedent(preamble).trimEnd(), createOptions ? dedent(create) : '', dedent(operation)]
           .filter(Boolean).join('\n\n')
       : setup,
     fullCode: `${setup}
