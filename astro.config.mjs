@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
-import cloudflare from '@astrojs/cloudflare';
 import sitemap from '@astrojs/sitemap';
 
 const buildRevision = process.env.TANGLE_BUILD_REVISION?.trim();
@@ -18,6 +17,9 @@ if (buildRevision && !/^[0-9a-f]{40}$/i.test(buildRevision)) {
 export default defineConfig({
   site: 'https://tangle.tools',
   output: 'static',
+  // Every page is prerendered; Pages serves this directory as-is. The path
+  // stays dist/client so the deploy, status and check scripts read one place.
+  outDir: './dist/client',
   // Hide the dev toolbar so it doesn't leak into design-audit screenshots.
   // The toolbar's Inspect/Audit/Settings buttons were being flagged as
   // "internal controls visible in marketing flow" on /sandbox, /browser-agent,
@@ -54,8 +56,4 @@ export default defineConfig({
       exclude: ['astro:content'],
     },
   },
-
-  // These pages are static. Render their React islands in Node at build/dev
-  // time; Cloudflare still serves the generated site through the same adapter.
-  adapter: cloudflare({ prerenderEnvironment: 'node' }),
 });
