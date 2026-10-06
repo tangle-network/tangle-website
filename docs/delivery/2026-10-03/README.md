@@ -23,7 +23,7 @@ No native interactive task recording is included.
 The headless recording is a separate SDK event rendering, not Claude Code's native terminal UI.
 
 The current branch still needs integration with current master, its focused build gate, hosted execution of each advertised example, and final UI review before deployment.
-The existing file dependency on `../brand/packages/brand` also needs a clean-consumer install check.
+The existing file dependency on `../brand/packages/brand` also needed a clean-consumer install check; on 2026-10-05 the site moved to the released npm package and the sibling checkout was removed.
 UI11.15.1 expects brand^1.10; prior local preview retained brand0.9 with local code tokens.
 No fresh frozen-install/build or production deployment is claimed for this checkpoint.
 

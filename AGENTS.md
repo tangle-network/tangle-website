@@ -7,6 +7,7 @@ Reuse valid results and finish authorized delivery once the relevant checks pass
 Honor explicit CI waivers while preserving hooks and enforced protections.
 Track unrelated failures separately from the product change.
 Verify the requested served page before claiming it is live.
+Styling changes run `pnpm check:drift`; when counts fall, commit, then lower `drift-baseline.json` with `pnpm exec tangle-drift check --surface website --repo-dir . --baseline drift-baseline.json --update-baseline`.
 
 ## Tangle Blog Skills
 
