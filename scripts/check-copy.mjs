@@ -13,7 +13,7 @@
  *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
  *                          TANGLE_ROUTER_USER_KEY pulled from
  *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default: gpt-5.6-luna via the router's direct OpenAI route
+ *   COPY_AUDIT_MODEL    — default and only accepted model: zai/glm-5.3 (the Router's flat Z.ai coding plan)
  *   COPY_AUDIT_TIMEOUT_MS — per-page provider timeout (default 45000)
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.5)
  *   COPY_AUDIT_ROOT      — rendered-site root (default dist/client)
@@ -22,6 +22,7 @@
  * Exits non-zero if any page scores below threshold.
  */
 import { extractCopy } from './extract-copy.mjs';
+import { COPY_AUDIT_MODEL, isCopyAuditModel } from './copy-audit-model.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -32,7 +33,7 @@ const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/co
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
-const DEFAULT_MODEL = 'gpt-5.6-luna';
+const DEFAULT_MODEL = COPY_AUDIT_MODEL;
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
@@ -91,8 +92,8 @@ if (!API_KEY) {
 API_BASE ??= 'https://router.tangle.tools/v1';
 MODEL ??= DEFAULT_MODEL;
 
-if (!/(^|\/)gpt-5\.6-luna$/.test(MODEL)) {
-  console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to the gpt-5.6-luna family.`);
+if (!isCopyAuditModel(MODEL)) {
+  console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to ${COPY_AUDIT_MODEL}.`);
   process.exit(2);
 }
 
@@ -396,8 +397,8 @@ async function auditPage(label, copy, attempt = 1) {
     }
 
     const json = await res.json();
-    if (typeof json.model !== 'string' || !/(^|\/)gpt-5\.6-luna$/.test(json.model)) {
-      const err = new Error(`provider model identity mismatch: expected gpt-5.6-luna, received ${json.model ?? 'null'}`);
+    if (!isCopyAuditModel(json.model)) {
+      const err = new Error(`provider model identity mismatch: expected ${COPY_AUDIT_MODEL}, received ${json.model ?? 'null'}`);
       err.attempts = attempt;
       throw err;
     }
