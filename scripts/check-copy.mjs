@@ -16,7 +16,7 @@
  *   COPY_AUDIT_MODEL    — default: gpt-5.6-luna via the router's direct OpenAI route
  *   COPY_AUDIT_TIMEOUT_MS — per-page provider timeout (default 45000)
  *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.5)
- *   COPY_AUDIT_ROOT      — rendered-site root (default dist/client)
+ *   COPY_AUDIT_ROOT      — rendered-site root (default dist)
  *
  * Output: per-page score 1–10, flagged phrases with line context.
  * Exits non-zero if any page scores below threshold.
@@ -26,7 +26,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, join, relative, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
 
-const ROOT = resolve(process.env.COPY_AUDIT_ROOT ?? 'dist/client');
+const ROOT = resolve(process.env.COPY_AUDIT_ROOT ?? 'dist');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/copy-audit.json');
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
@@ -36,7 +36,7 @@ const DEFAULT_MODEL = 'gpt-5.6-luna';
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
-  console.error('✗ dist/client/ not found — run `pnpm build` first.');
+  console.error('✗ dist/ not found — run `pnpm build` first.');
   process.exit(2);
 }
 

@@ -16,7 +16,7 @@ const expected = revisionArgument
       source: 'local-unversioned',
     };
 
-const versionUrl = new URL('../dist/client/version.json', import.meta.url);
+const versionUrl = new URL('../dist/version.json', import.meta.url);
 const body = await readFile(versionUrl, 'utf8');
 const actual = JSON.parse(body);
 

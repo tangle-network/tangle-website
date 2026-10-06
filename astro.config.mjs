@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
-import cloudflare from '@astrojs/cloudflare';
 import sitemap from '@astrojs/sitemap';
 
 const buildRevision = process.env.TANGLE_BUILD_REVISION?.trim();
@@ -54,8 +53,4 @@ export default defineConfig({
       exclude: ['astro:content'],
     },
   },
-
-  // These pages are static. Render their React islands in Node at build/dev
-  // time; Cloudflare still serves the generated site through the same adapter.
-  adapter: cloudflare({ prerenderEnvironment: 'node' }),
 });

@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path'
 
 import { buildCtaPayload, classifyDestination } from '../src/scripts/cta-observability.mjs'
 
-const ROOT = resolve(process.cwd(), 'dist/client')
+const ROOT = resolve(process.cwd(), 'dist')
 
 async function htmlFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
