@@ -57,7 +57,7 @@ interface QuickstartExample {
 }
 
 // The page shows the whole file, so what a reader copies is what they read.
-const shown = (code: string): QuickstartCode => ({ snippet: code, fullCode: code });
+const shown = (code: string): QuickstartCode => ({ snippet: code.trimEnd(), fullCode: code });
 
 const AGENT_EXAMPLE = 'fix-failing-test';
 const agentSource = sdkQuickstartExamples.find((example) => example.id === AGENT_EXAMPLE);
