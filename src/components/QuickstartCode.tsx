@@ -29,13 +29,13 @@ export default function QuickstartCode() {
     <div className="quickstart-editor">
       <nav className="quickstart-scenarios" aria-label="Code examples">
         {quickstartExamples.map((item) => (
-          <button key={item.id} type="button" aria-pressed={selected.id === item.id}
+          <button key={item.id} type="button" aria-pressed={selected.id === item.id} title={item.summary}
             onClick={() => setSelected(item)}>{item.label}</button>
         ))}
       </nav>
       <div className="quickstart-editor-main">
         <div className="quickstart-toolbar">
-          <span className="quickstart-filename">{selected.id}.{language.id === 'python' ? 'py' : 'ts'}</span>
+          <span className="quickstart-filename">{selected.id}.ts</span>
           <select className="quickstart-mobile-scenario" aria-label="Code example" value={selected.id}
             onChange={(event) => {
               const next = quickstartExamples.find((item) => item.id === event.target.value);
@@ -44,7 +44,7 @@ export default function QuickstartCode() {
             {quickstartExamples.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
           <div className="quickstart-toolbar-actions">
-            <div className="quickstart-languages" role="group" aria-label="Code language">
+            {quickstartLanguages.length > 1 && <div className="quickstart-languages" role="group" aria-label="Code language">
               {quickstartLanguages.map((item) => (
                 <button key={item.id} type="button" aria-label={item.label} aria-pressed={language.id === item.id}
                   onClick={() => setLanguage(item)}>
@@ -52,7 +52,7 @@ export default function QuickstartCode() {
                   <span className="language-short" aria-hidden="true">{item.id === 'typescript' ? 'TS' : item.label}</span>
                 </button>
               ))}
-            </div>
+            </div>}
             <div className="quickstart-copy-control" role="group" aria-label="Copy full example" title="Copy full example with setup">
               <CopyButton key={`${selected.id}-${language.id}-${harness}-${model}`} text={code.fullCode} />
             </div>
