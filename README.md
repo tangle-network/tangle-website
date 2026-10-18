@@ -2,6 +2,11 @@
 
 Source for [tangle.tools](https://tangle.tools): a static Astro site with React islands, served from Cloudflare Pages.
 
+Before changing the company narrative, product hierarchy or primary entry paths,
+read [Product direction](PRODUCT_DIRECTION.md). It separates the proposed
+research/platform/deployment story from current capability and launch claims.
+It does not authorize an automatic rebrand or replacement of working copy.
+
 ## Develop
 
 ```sh

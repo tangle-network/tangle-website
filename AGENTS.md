@@ -1,5 +1,14 @@
 # Repository Agent Notes
 
+## Product direction
+
+Before changing positioning, product hierarchy, industry claims or primary CTAs,
+read [PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md). It is the website's strategy
+entrypoint and distinguishes proposals from current delivery evidence.
+Use the existing Brand guidelines for shared visual decisions. Resolve conflicts
+explicitly; a design refresh does not itself approve new product availability,
+customer claims, a GTM-only pivot or an Intelligence-led company story.
+
 ## Delivery
 
 Choose checks for the changed page or behavior; instruction-only changes need diff and link checks.
