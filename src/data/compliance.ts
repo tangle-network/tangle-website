@@ -3,10 +3,9 @@
 // a badge off.
 //
 // Copy discipline:
-// - There is no official HIPAA certification, and Tangle's launch gate has not
-//   closed (vendor BAAs unsigned, infrastructure blockers ops-pending). The
-//   only honest HIPAA status today is 'ready'. Do not set 'compliant' without
-//   an executed decision record from the compliance program.
+// - HIPAA has no badge until every in-path vendor BAA is executed (register:
+//   company compliance/policies/hipaa-baa-inventory.md). Then add
+//   { product: 'hipaa', status: 'compliant', href: '/security/#hipaa' }.
 // - SOC 2 Type II is an attained audit (A-LIGN examination, report in
 //   issuance), so 'compliant' is accurate there.
 export type ComplianceBadgeProduct = 'hipaa' | 'soc2';
@@ -23,10 +22,5 @@ export const COMPLIANCE_BADGES: ComplianceBadgeEntry[] = [
     product: 'soc2',
     status: 'compliant',
     href: 'https://app.vanta.com/tangle.tools/trust/kzhjp5g62vhwoalztadtz',
-  },
-  {
-    product: 'hipaa',
-    status: 'ready',
-    href: '/security/#hipaa',
   },
 ];
