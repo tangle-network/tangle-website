@@ -3,11 +3,12 @@
 // a badge off.
 //
 // Copy discipline:
-// - HIPAA has no badge until every in-path vendor BAA is executed (register:
-//   company compliance/policies/hipaa-baa-inventory.md). Then add
+// - HIPAA has no badge until every in-path vendor BAA is executed, deployment
+//   safeguards are verified, and the compliance owner records approval (register:
+//   company compliance/policies/hipaa-baa-inventory.md). Only then add
 //   { product: 'hipaa', status: 'compliant', href: '/security/#hipaa' }.
-// - SOC 2 Type II is an attained audit (A-LIGN examination, report in
-//   issuance), so 'compliant' is accurate there.
+// - SOC 2 report issuance has not been verified. Keep the report-pending
+//   state until the issued report is confirmed; audit progress is not issuance.
 export type ComplianceBadgeProduct = 'hipaa' | 'soc2';
 export type ComplianceBadgeState = 'ready' | 'compliant';
 
@@ -20,7 +21,7 @@ export interface ComplianceBadgeEntry {
 export const COMPLIANCE_BADGES: ComplianceBadgeEntry[] = [
   {
     product: 'soc2',
-    status: 'compliant',
+    status: 'ready',
     href: 'https://app.vanta.com/tangle.tools/trust/kzhjp5g62vhwoalztadtz',
   },
 ];
