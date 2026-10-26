@@ -18,6 +18,7 @@ const ROOT_PATHS = new Set([
   '/benchmarks',
   '/blog',
   '/brand-kit',
+  '/data-deletion',
   '/privacy-policy',
   '/releases',
   '/research',
