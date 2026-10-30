@@ -115,7 +115,7 @@ test('a page missing a row, showing another price, or dropping a sentence fails'
   ]);
 
   const [, ...withoutLede] = [egressLede(), ...egressNotes()];
-  assert.match(renderedEgressProblems(page(rows, withoutLede)).join('\n'), /the page does not say: Egress is outbound traffic/);
+  assert.match(renderedEgressProblems(page(rows, withoutLede)).join('\n'), /the page does not say: Per calendar month/);
 
   assert.match(renderedEgressProblems(page().replace(EGRESS_TERMS_URL, 'https://example.test')).join('\n'), /does not link the published terms/);
 });
@@ -129,9 +129,6 @@ test('the copy states every approved number in its approved unit', () => {
       'Team: 2 TB per sandbox; $0.04 per GB',
     ],
   );
-  assert.deepEqual(egressNotes(), [
-    'On Pro and Team, every sandbox has its own 2 TB; allowances are not pooled across the account.',
-    "On Free, the account's sandboxes share one 100 GiB cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.",
-    'TB and GB are decimal: 1 TB is 1,000 GB, and 1 GB is 1,000,000,000 bytes. GiB is binary: 100 GiB is 107,374,182,400 bytes.',
-  ]);
+  assert.deepEqual(egressNotes(), []);
+  assert.equal(egressLede(), 'Per calendar month (UTC). Inbound is free.');
 });

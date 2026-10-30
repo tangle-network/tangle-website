@@ -53,39 +53,15 @@ export function egressRows(terms = EGRESS_TERMS) {
   });
 }
 
-/** The sentences under the table, built from the same numbers. */
-export function egressNotes(terms = EGRESS_TERMS) {
-  const ids = Object.keys(PLAN_NAMES);
-  const perSandbox = ids.filter((id) => terms.plans[id]?.scope === 'sandbox');
-  const perAccount = ids.filter((id) => terms.plans[id]?.scope === 'account');
-  const notes = [];
-  if (perSandbox.length > 0) {
-    const included = formatEgressBytes(terms.plans[perSandbox[0]].includedBytes);
-    notes.push(
-      `On ${perSandbox.map((id) => PLAN_NAMES[id]).join(' and ')}, every sandbox has its own ${included}; allowances are not pooled across the account.`,
-    );
-  }
-  for (const id of perAccount) {
-    const cap = formatEgressBytes(terms.plans[id].includedBytes);
-    notes.push(
-      `On ${PLAN_NAMES[id]}, the account's sandboxes share one ${cap} cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.`,
-    );
-  }
-  const binary = ids
-    .map((id) => terms.plans[id]?.includedBytes)
-    .find((bytes) => bytes !== undefined && bytes % TB !== 0);
-  notes.push(
-    `TB and GB are decimal: 1 TB is 1,000 GB, and 1 GB is ${terms.bytesPerGb.toLocaleString('en-US')} bytes.${
-      binary === undefined ? '' : ` GiB is binary: ${formatEgressBytes(binary)} is ${binary.toLocaleString('en-US')} bytes.`
-    }`,
-  );
-  return notes;
+/** The table carries every number; the published terms carry the definitions. */
+export function egressNotes() {
+  return [];
 }
 
-/** What is counted and when it resets, as the published terms define it. */
+/** The one line under the table: the period, as the published terms define it. */
 export function egressLede(terms = EGRESS_TERMS) {
   if (terms.period !== 'calendar-month' || terms.metered !== 'outbound') {
     throw new Error(`No copy states egress metered "${terms.metered}" per "${terms.period}"; write it before publishing.`);
   }
-  return 'Egress is outbound traffic from a sandbox, counted per calendar month (UTC). Inbound traffic is free.';
+  return 'Per calendar month (UTC). Inbound is free.';
 }

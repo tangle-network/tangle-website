@@ -44,9 +44,7 @@ export default function ExamplesEditor() {
   const header = output
     ? `RECORDED RUN · ${output.recordedAt} · ${output.sandboxOrFleetId} · ${output.durationS} s · $${output.usd.toFixed(2)}`
     : `$ npx tsx ${selected.file}`;
-  const body = output
-    ? output.lines.join('\n')
-    : `No recorded run yet.${selected.cli ? `\n\n# the same from the CLI\n$ ${selected.cli}` : ''}`;
+  const body = output ? output.lines.join('\n') : selected.cli ? `$ ${selected.cli}` : '';
 
   return (
     <div className="ex-editor">
@@ -83,7 +81,7 @@ export default function ExamplesEditor() {
             <span>{header}</span>
             <span aria-hidden="true">{open ? '▾' : '▸'}</span>
           </button>
-          {open && <pre id="ex-output-body" className="ex-output-body">{body}</pre>}
+          {open && body && <pre id="ex-output-body" className="ex-output-body">{body}</pre>}
         </div>
         <div className="ex-install" role="group" aria-label="Install command">
           <code>{selected.install}</code>
