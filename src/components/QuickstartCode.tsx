@@ -1,20 +1,22 @@
 import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
 import { useState } from 'react';
-import { quickstartExamples, quickstartLanguages } from '../data/sandboxQuickstart';
+import { sdkQuickstartExamples } from '../data/sandboxQuickstartExamples';
 import './quickstart-code.css';
 
-// Adapted from products/sandbox/web/src/pages/Landing.tsx's CodeWindow.
+// TypeScript only: the Python SDK is not published, and an example that cannot
+// be installed is worse than none. The page shows each whole file, so what a
+// reader copies is what they read.
+const INSTALL = 'npm install @tangle-network/sandbox';
+
 export default function QuickstartCode() {
-  const [selected, setSelected] = useState(quickstartExamples[0]);
-  const [language, setLanguage] = useState<(typeof quickstartLanguages)[number]>(quickstartLanguages[0]);
-  const code = selected[language.id];
+  const [selected, setSelected] = useState(sdkQuickstartExamples[0]);
 
   return (
     <div className="quickstart-editor">
       <nav className="quickstart-scenarios" aria-label="Code examples">
-        {quickstartExamples.map((item) => (
+        {sdkQuickstartExamples.map((item) => (
           <button key={item.id} type="button" aria-pressed={selected.id === item.id} title={item.summary}
-            onClick={() => setSelected(item)}>{item.label}</button>
+            onClick={() => setSelected(item)}>{item.title}</button>
         ))}
       </nav>
       <div className="quickstart-editor-main">
@@ -22,32 +24,21 @@ export default function QuickstartCode() {
           <span className="quickstart-filename">{selected.id}.ts</span>
           <select className="quickstart-mobile-scenario" aria-label="Code example" value={selected.id}
             onChange={(event) => {
-              const next = quickstartExamples.find((item) => item.id === event.target.value);
+              const next = sdkQuickstartExamples.find((item) => item.id === event.target.value);
               if (next) setSelected(next);
             }}>
-            {quickstartExamples.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            {sdkQuickstartExamples.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
           </select>
-          <div className="quickstart-toolbar-actions">
-            {quickstartLanguages.length > 1 && <div className="quickstart-languages" role="group" aria-label="Code language">
-              {quickstartLanguages.map((item) => (
-                <button key={item.id} type="button" aria-label={item.label} aria-pressed={language.id === item.id}
-                  onClick={() => setLanguage(item)}>
-                  <span className="language-full">{item.label}</span>
-                  <span className="language-short" aria-hidden="true">{item.id === 'typescript' ? 'TS' : item.label}</span>
-                </button>
-              ))}
-            </div>}
-            <div className="quickstart-copy-control" role="group" aria-label="Copy full example" title="Copy full example with setup">
-              <CopyButton key={`${selected.id}-${language.id}`} text={code.fullCode} />
-            </div>
+          <div className="quickstart-copy-control" role="group" aria-label="Copy file" title="Copy file">
+            <CopyButton key={selected.id} text={selected.code} />
           </div>
         </div>
-        <section key={`${selected.id}-${language.id}`} className="quickstart-source" aria-label={`${selected.label} in ${language.label}`} tabIndex={0}>
-          <CodeBlock code={code.snippet} language={language.id} label="" showLineNumbers className="quickstart-shared-code rounded-none border-0" />
+        <section key={selected.id} className="quickstart-source" aria-label={`${selected.title} source`} tabIndex={0}>
+          <CodeBlock code={selected.code.trimEnd()} language="ts" label="" showLineNumbers className="quickstart-shared-code rounded-none border-0" />
         </section>
         <div className="quickstart-install" role="group" aria-label="Install command">
-          <code>{language.install}</code>
-          <div className="quickstart-copy-control"><CopyButton key={language.id} text={language.install} /></div>
+          <code>{INSTALL}</code>
+          <div className="quickstart-copy-control"><CopyButton text={INSTALL} /></div>
         </div>
       </div>
     </div>
