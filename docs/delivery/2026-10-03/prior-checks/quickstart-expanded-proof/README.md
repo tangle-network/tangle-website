@@ -1,7 +1,7 @@
 # Expanded homepage quickstarts
 
 Skill: sandbox-sdk-integration.
-Source: `src/data/sandboxQuickstart.ts`.
+Source: the quickstart data file of this date (removed 2026-10-30; the home page examples now live in `src/examples/`).
 The original Run code, Files and Run an agent exported strings remain byte-for-byte unchanged.
 
 Added App preview, Pause and resume, Parallel agents and Network policy in TypeScript and Python.
