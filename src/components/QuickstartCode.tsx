@@ -9,7 +9,7 @@ import './quickstart-code.css';
 const INSTALL = 'npm install @tangle-network/sandbox';
 
 export default function QuickstartCode() {
-  const [selected, setSelected] = useState(sdkQuickstartExamples[0]);
+  const [selected, setSelected] = useState<(typeof sdkQuickstartExamples)[number]>(sdkQuickstartExamples[0]);
 
   return (
     <div className="quickstart-editor">
