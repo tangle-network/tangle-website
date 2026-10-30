@@ -53,9 +53,11 @@ export function egressRows(terms = EGRESS_TERMS) {
   });
 }
 
-/** The table carries every number; the published terms carry the definitions. */
-export function egressNotes() {
-  return [];
+/** One sentence per account-scoped plan: what the shared cap does when it is reached. */
+export function egressNotes(terms = EGRESS_TERMS) {
+  return Object.keys(PLAN_NAMES)
+    .filter((id) => terms.plans[id]?.scope === 'account')
+    .map((id) => `On ${PLAN_NAMES[id]}, the account's sandboxes share one ${formatEgressBytes(terms.plans[id].includedBytes)} cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.`);
 }
 
 /** The one line under the table: the period, as the published terms define it. */

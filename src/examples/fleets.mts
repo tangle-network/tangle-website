@@ -5,7 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Four agents on two sandboxes, under a budget the Platform enforces.
+// Four agents on one sandbox (Free runs one at a time), under a budget the Platform enforces.
 const fleet = await client.fleets.create({
   agents: [
     { agentId: "tests", task: "List the three slowest tests and why." },
@@ -13,7 +13,7 @@ const fleet = await client.fleets.create({
     { agentId: "ci", task: "Describe what CI runs on a pull request." },
     { agentId: "entry", task: "Name the entry point and the modules it loads." },
   ],
-  placement: { agentsPerSandbox: 2 },
+  placement: { agentsPerSandbox: 4 },
   defaults: {
     git: { url: "https://github.com/your-org/your-repo" },
     backend: { type: "opencode", model: { model: "glm-5.3" } },

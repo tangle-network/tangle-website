@@ -26,7 +26,7 @@ Brand tokens and shared components come from `@tangle-network/brand` and `@tangl
 | `pnpm check:blog`, `pnpm check:blog:reader` | blog frontmatter, editorial rules and reader audit |
 | `pnpm check:copy` | model-scored copy audit of the built pages (needs `pnpm build` and a router key) |
 | `pnpm check:models` | references to deprecated model names |
-| `pnpm check:examples` | the home page's `src/examples/*.ts` against the published `@tangle-network/sandbox` and `@tangle-network/agent-eval` types |
+| `pnpm check:examples` | the home page's `src/examples/*.mts` against the published `@tangle-network/sandbox` and `@tangle-network/agent-eval` types |
 | `pnpm test:benchmarks`, `pnpm test:cta` | benchmark board records and CTA instrumentation |
 
 ## Deploy
