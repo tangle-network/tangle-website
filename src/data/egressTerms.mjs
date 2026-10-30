@@ -16,8 +16,8 @@ export const EGRESS_TERMS = {
   bytesPerGb: 1_000_000_000,
   plans: {
     free: { scope: 'account', includedBytes: 107_374_182_400, overage: 'refused', usdPerGb: 0 },
-    pro: { scope: 'sandbox', includedBytes: 2_000_000_000_000, overage: 'billed', usdPerGb: 0.05 },
-    enterprise: { scope: 'sandbox', includedBytes: 2_000_000_000_000, overage: 'billed', usdPerGb: 0.04 },
+    pro: { scope: 'account', includedBytes: 2_000_000_000_000, overage: 'billed', usdPerGb: 0.05 },
+    enterprise: { scope: 'account', includedBytes: 2_000_000_000_000, overage: 'billed', usdPerGb: 0.04 },
   },
 };
 
@@ -56,19 +56,17 @@ export function egressRows(terms = EGRESS_TERMS) {
 /** The sentences under the table, built from the same numbers. */
 export function egressNotes(terms = EGRESS_TERMS) {
   const ids = Object.keys(PLAN_NAMES);
-  const perSandbox = ids.filter((id) => terms.plans[id]?.scope === 'sandbox');
-  const perAccount = ids.filter((id) => terms.plans[id]?.scope === 'account');
-  const notes = [];
-  if (perSandbox.length > 0) {
-    const included = formatEgressBytes(terms.plans[perSandbox[0]].includedBytes);
-    notes.push(
-      `On ${perSandbox.map((id) => PLAN_NAMES[id]).join(' and ')}, every sandbox has its own ${included}; allowances are not pooled across the account.`,
+  const billed = ids.filter((id) => terms.plans[id]?.overage === 'billed');
+  const notes = ids
+    .filter((id) => terms.plans[id]?.overage === 'refused')
+    .map(
+      (id) =>
+        `On ${PLAN_NAMES[id]}, the account's sandboxes share one ${formatEgressBytes(terms.plans[id].includedBytes)} cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.`,
     );
-  }
-  for (const id of perAccount) {
-    const cap = formatEgressBytes(terms.plans[id].includedBytes);
+  if (billed.length > 0) {
+    const included = formatEgressBytes(terms.plans[billed[0]].includedBytes);
     notes.push(
-      `On ${PLAN_NAMES[id]}, the account's sandboxes share one ${cap} cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.`,
+      `On ${billed.map((id) => PLAN_NAMES[id]).join(' and ')}, the account's sandboxes share one ${included} allowance; egress beyond it is billed at the plan's rate per GB.`,
     );
   }
   const binary = ids

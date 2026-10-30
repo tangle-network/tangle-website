@@ -22,8 +22,8 @@ function page(rows = egressRows(), notes = [egressLede(), ...egressNotes()]) {
 test('the stated terms are the approved terms', () => {
   assert.deepEqual(EGRESS_TERMS.plans, {
     free: { scope: 'account', includedBytes: 100 * 1024 ** 3, overage: 'refused', usdPerGb: 0 },
-    pro: { scope: 'sandbox', includedBytes: 2e12, overage: 'billed', usdPerGb: 0.05 },
-    enterprise: { scope: 'sandbox', includedBytes: 2e12, overage: 'billed', usdPerGb: 0.04 },
+    pro: { scope: 'account', includedBytes: 2e12, overage: 'billed', usdPerGb: 0.05 },
+    enterprise: { scope: 'account', includedBytes: 2e12, overage: 'billed', usdPerGb: 0.04 },
   });
 });
 
@@ -111,7 +111,7 @@ test('a page missing a row, showing another price, or dropping a sentence fails'
 
   const stale = rows.map((row) => (row.id === 'pro' ? { ...row, beyond: '$0.06 per GB' } : row));
   assert.deepEqual(renderedEgressProblems(page(stale)), [
-    'the pro row reads "Pro 2 TB per sandbox $0.06 per GB", expected "Pro 2 TB per sandbox $0.05 per GB"',
+    'the pro row reads "Pro 2 TB per account $0.06 per GB", expected "Pro 2 TB per account $0.05 per GB"',
   ]);
 
   const [, ...withoutLede] = [egressLede(), ...egressNotes()];
@@ -125,13 +125,13 @@ test('the copy states every approved number in its approved unit', () => {
     egressRows().map((row) => `${row.name}: ${row.included}; ${row.beyond}`),
     [
       'Free: 100 GiB per account; Refused, never charged',
-      'Pro: 2 TB per sandbox; $0.05 per GB',
-      'Team: 2 TB per sandbox; $0.04 per GB',
+      'Pro: 2 TB per account; $0.05 per GB',
+      'Team: 2 TB per account; $0.04 per GB',
     ],
   );
   assert.deepEqual(egressNotes(), [
-    'On Pro and Team, every sandbox has its own 2 TB; allowances are not pooled across the account.',
     "On Free, the account's sandboxes share one 100 GiB cap. Once it is reached, new sandboxes and prompts are refused until the next month, and nothing is charged.",
+    "On Pro and Team, the account's sandboxes share one 2 TB allowance; egress beyond it is billed at the plan's rate per GB.",
     'TB and GB are decimal: 1 TB is 1,000 GB, and 1 GB is 1,000,000,000 bytes. GiB is binary: 100 GiB is 107,374,182,400 bytes.',
   ]);
 });
