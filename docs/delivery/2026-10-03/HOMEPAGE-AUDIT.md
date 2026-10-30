@@ -26,7 +26,7 @@ Python examples use HTTPX and the REST API. They are not a published native Pyth
 
 ### 1. Show agent failures correctly
 
-`src/data/sandboxQuickstart.ts:76,160` prints response text without consistently consulting `success`. The SDK can return `{ success: false, error }` without throwing. A failed example can therefore print `undefined`; a parallel run with partial output can hide its error.
+The quickstart data file of this date (removed 2026-10-30; the home page examples now live in `src/examples/`) printed response text without consistently consulting `success`. The SDK can return `{ success: false, error }` without throwing. A failed example can therefore print `undefined`; a parallel run with partial output can hide its error.
 
 Use `result.success ? result.response : result.error`. Executable verification scripts should also return a failed exit status after cleanup. This needs no try/catch wrapper.
 

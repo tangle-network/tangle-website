@@ -35,11 +35,6 @@ export default defineConfig({
   vite: {
     resolve: {
       alias: {
-        // The recorded run needs the maintained timeline, not the full chat UI.
-        '@tangle-network/ui/chat': fileURLToPath(new URL(
-          './node_modules/@tangle-network/ui/dist/chat/agent-timeline.js',
-          import.meta.url,
-        )),
         // Only the shared code components are used here; keep this entry
         // independent of the rest of the Markdown barrel.
         '@tangle-network/ui/markdown': fileURLToPath(new URL(
