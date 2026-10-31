@@ -1,6 +1,5 @@
 import meilisearch from '../../../public/benchmarks/inputs/meilisearch-apps.tasks.json' with { type: 'json' };
 import typesense from '../../../public/benchmarks/inputs/typesense-apps.tasks.json' with { type: 'json' };
-import rubric from '../../../public/benchmarks/inputs/app-grade-rubric.json' with { type: 'json' };
 import type { BoardRecord } from './board-record';
 import documentation from './task-documentation.json' with { type: 'json' };
 
@@ -33,8 +32,4 @@ export function taskPromptsFor(board: BoardRecord) {
     }
     return { ...prompt, name: titles[prompt.name] ?? prompt.name, sources: docs?.tasks.find((task) => task.name === prompt.name)?.sources ?? [] };
   });
-}
-
-export function gradingSourceFor(commit: string) {
-  return commit === rubric.graderCommit ? '/benchmarks/inputs/app-grade-rubric.json' : null;
 }
