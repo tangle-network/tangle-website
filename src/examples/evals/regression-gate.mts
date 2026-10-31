@@ -19,19 +19,19 @@ const evalKit = defineAgentEval<Scenario & { task: string }, number>({
   baselineSurface: shipped,
   agent: async (prompt, scenario) => {
     const box = await client.create({
-      git: { url: "https://github.com/your-org/your-repo" },
+      git: { url: "https://github.com/tangle-network/sandbox-demo" },
       backend: { type: "claude-code" },
     });
     try {
       await box.prompt(`${scenario.task} ${String(prompt)}`);
-      return (await box.exec("npm test")).exitCode;
+      return (await box.exec(`npm test -- --test-name-pattern=${scenario.id}`)).exitCode;
     } finally {
       await box.delete();
     }
   },
   judge: {
     name: "suite",
-    dimensions: [{ key: "pass", description: "npm test exits 0 after the turn" }],
+    dimensions: [{ key: "pass", description: "the tagged test passes after the turn" }],
     score: ({ artifact }) => {
       const pass = artifact === 0 ? 1 : 0;
       return { dimensions: { pass }, composite: pass, notes: "" };

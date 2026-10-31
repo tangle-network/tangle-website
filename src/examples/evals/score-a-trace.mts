@@ -20,7 +20,7 @@ const judge = llmJudge("trace-review", "Score this agent run against its task.",
 
 const task = "List each place the API validates a request body, as file:line.";
 const box = await client.create({
-  git: { url: "https://github.com/your-org/your-repo" },
+  git: { url: "https://github.com/tangle-network/sandbox-demo" },
   backend: { type: "claude-code" },
 });
 try {

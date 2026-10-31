@@ -7,7 +7,7 @@ const client = new Sandbox({
 });
 
 const box = await client.create({
-  git: { url: "https://github.com/your-org/your-repo" },
+  git: { url: "https://github.com/tangle-network/sandbox-demo" },
   backend: { type: "claude-code" }, // or "codex", "opencode", "pi"
 });
 try {

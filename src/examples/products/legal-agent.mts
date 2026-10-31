@@ -26,10 +26,13 @@ export async function review(customerId: string, turnId: string, contract: strin
     create: { resources: { cpuCores: 1, memoryMB: 2048, diskGB: 10 } },
   });
   await instance.box.write("contracts/msa.md", contract);
-  const turn = await instance.turn(
-    "Review contracts/msa.md. List the indemnity, liability and termination risks.",
-    { thread: "main", turnId },
-  );
+  const ask = "Review contracts/msa.md. List the indemnity, liability and termination risks.";
+  let turn = await instance.turn(ask, { thread: "main", turnId });
+  // The turn keeps running in the sandbox; asking with the same turnId settles it.
+  while (turn.state === "running") {
+    await new Promise((wait) => setTimeout(wait, 3_000));
+    turn = await instance.turn(ask, { thread: "main", turnId });
+  }
   return turn.state === "completed" ? turn.text : turn.state;
 }
 

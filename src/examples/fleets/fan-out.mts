@@ -15,7 +15,7 @@ const fleet = await client.fleets.create({
   })),
   placement: "dedicated",
   defaults: {
-    git: { url: "https://github.com/your-org/your-repo" },
+    git: { url: "https://github.com/tangle-network/sandbox-demo" },
     backend: { type: "codex" },
   },
   budgetUsd: 3,
