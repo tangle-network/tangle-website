@@ -1,7 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SandboxQuickstart from '../components/SandboxQuickstart.astro';
-import RunStory from '../components/RunStory.astro';
 import { PLANS, planPrice } from '../data/plans.mjs';
 
 const canonicalUrl = 'https://tangle.tools/';
@@ -102,13 +101,11 @@ const harnesses = [
   <script type="application/ld+json" set:html={JSON.stringify(organizationJsonLd)} />
 
 
-  <!-- ============================ HERO (dark, video) ============================ -->
+  <!-- ===== HERO (dark): a field of sandboxes; each light is one agent's own machine ===== -->
   <section class="hero" aria-labelledby="hero-title" data-cta-placement="hero">
     <div class="hero-art" aria-hidden="true">
-      <canvas id="hero-knot"></canvas>
-      <img class="hero-poster" src="/images/brand/knot-poster.webp" alt="" loading="eager" />
+      <canvas id="hero-field" data-harnesses={harnesses.map((h) => h.harness).join(' ')}></canvas>
     </div>
-    <div class="hero-scrim" aria-hidden="true"></div>
 
     <div class="shell">
       <div class="hero-copy">
@@ -188,8 +185,6 @@ const harnesses = [
       </div>
     </div>
   </section>
-
-  <RunStory />
 
   <!-- ==================== TAGLINE REVEAL (paper) ==================== -->
   <section class="tagline" data-theme="website" aria-label="What Tangle gives an agent">
@@ -286,13 +281,7 @@ const harnesses = [
 </BaseLayout>
 
 <script>
-  import * as THREE from 'three';
-  import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-  import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-  import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const wide = window.matchMedia('(min-width: 861px)').matches;
 
   if (!reduced) {
     document.documentElement.classList.add('js');
@@ -398,100 +387,194 @@ const harnesses = [
     mode();
   }
 
-  // Initialize the content diagrams before the optional WebGL artwork.
-  // Hero brand object: fiber-optic torus knot, dispersion shader, bloom.
-  const knotCanvas = document.getElementById('hero-knot');
-  if (knotCanvas && !reduced && wide) {
-    const renderer = new THREE.WebGLRenderer({ canvas: knotCanvas, antialias: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    const scene = new THREE.Scene();
-    // WebGL cannot read CSS variables, so the scene resolves Brand's tokens once.
-    const brandToken = (name: string) => getComputedStyle(knotCanvas).getPropertyValue(name).trim();
-    scene.background = new THREE.Color(brandToken('--md3-surface-container-lowest'));
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(0, 0, 8.6);
-
-    const stops = ['--brand-purple', '--brand-cool', '--brand-vibrant', '--btn-primary-bg'].map((t) => new THREE.Color(brandToken(t)));
-    const uniforms = {
-      uTime: { value: 0 },
-      uC0: { value: stops[0] }, uC1: { value: stops[1] },
-      uC2: { value: stops[2] }, uC3: { value: stops[3] },
+  // Hero: a floor of sandboxes running to the horizon, one dot per machine.
+  // Agents claim machines one at a time; a fleet claims a block at once and
+  // releases it together, inside one outline. Near machines name the harness
+  // inside. Canvas 2D, batched by brightness, paused off screen and in hidden
+  // tabs; reduced motion draws one still frame.
+  const field = document.querySelector<HTMLCanvasElement>('#hero-field');
+  const ctx = field?.getContext('2d');
+  if (field && ctx) {
+    const css = getComputedStyle(field);
+    const token = (name: string) => css.getPropertyValue(name).trim();
+    const ink = [token('--text-primary'), token('--brand-cool'), token('--brand-glow')];
+    const edge = token('--brand-vibrant');
+    const mono = token('--font-mono') || 'monospace';
+    const names = (field.dataset.harnesses ?? '').split(' ').filter(Boolean);
+    const COLS = 120, ROWS = 64, GAP = 0.22, SPEED = 0.00022, LEVELS = 8; // SPEED: rows per ms
+    const born = new Float64Array(COLS * ROWS), dies = new Float64Array(COLS * ROWS);
+    const kind = new Uint8Array(COLS * ROWS), tag = new Uint8Array(COLS * ROWS);
+    const fleets: { col: number; row: number; w: number; d: number; born: number; dies: number }[] = [];
+    let seed = 20261030;
+    const random = () => { // mulberry32: a seeded, even spread, so every visit opens the same way
+      let t = (seed = (seed + 0x6d2b79f5) | 0);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    const vert = `varying vec2 vUv; varying vec3 vNormal; varying vec3 vView;
-      void main() { vUv = uv; vNormal = normalize(normalMatrix * normal);
-        vec4 mv = modelViewMatrix * vec4(position, 1.0); vView = normalize(-mv.xyz);
-        gl_Position = projectionMatrix * mv; }`;
-    const material = new THREE.ShaderMaterial({
-      uniforms,
-      vertexShader: vert,
-      fragmentShader: `uniform float uTime; uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3;
-        varying vec2 vUv; varying vec3 vNormal; varying vec3 vView;
-        vec3 ramp(float t) { t = fract(t);
-          if (t < 0.3333) return mix(uC0, uC1, smoothstep(0.0, 1.0, t / 0.3333));
-          if (t < 0.6666) return mix(uC1, uC2, smoothstep(0.0, 1.0, (t - 0.3333) / 0.3333));
-          return mix(uC2, uC3, smoothstep(0.0, 1.0, (t - 0.6666) / 0.3334)); }
-        void main() {
-          vec3 base = ramp(vUv.x + uTime * 0.03);
-          float fresnel = pow(1.0 - max(dot(vNormal, vView), 0.0), 2.2);
-          float pulse = smoothstep(0.965, 1.0, sin((vUv.x - uTime * 0.06) * 40.0) * 0.5 + 0.5);
-          vec3 color = base * (0.22 + 0.62 * fresnel) + base * pulse * 0.85;
-          gl_FragColor = vec4(color, 1.0); }`,
-    });
-    const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(1.6, 0.12, 520, 48, 2, 3), material);
-    knot.position.x = 1.7;
-    scene.add(knot);
-    const halo = new THREE.Mesh(
-      new THREE.TorusKnotGeometry(1.6, 0.22, 260, 32, 2, 3),
-      new THREE.ShaderMaterial({
-        uniforms, vertexShader: vert,
-        fragmentShader: `uniform vec3 uC1; varying vec3 vNormal; varying vec3 vView;
-          void main() { float f = pow(1.0 - max(dot(vNormal, vView), 0.0), 3.0);
-            gl_FragColor = vec4(uC1 * f * 0.28, 1.0); }`,
-        blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
-      }),
-    );
-    halo.position.x = 1.7;
-    scene.add(halo);
+    const motion = !reduced;
+    const view = { W: 0, H: 0, horizon: 0, focal: 1, height: 6, cx: 0, near: 1, narrow: false };
+    let clock = 0, depth = 0, far = ROWS - 1, nextOne = 0, nextFleet = 1800, camX = 0, aimX = 0, dpr = 1;
 
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.6, 0.42, 0.28));
+    const slot = (row: number, col: number) => (row % ROWS) * COLS + col;
+    const zOf = (row: number) => row - depth + view.near - 1;
+    const sx = (x: number, z: number) => view.cx + (view.focal * (x - camX)) / z;
+    const sy = (z: number) => view.horizon + (view.focal * view.height) / z;
+    const colAt = (px: number, z: number) => Math.floor(((px - view.cx) * z) / view.focal + camX + COLS / 2);
+    const veil = (px: number) => (view.narrow ? 1 : Math.min(1, Math.max(0, (px - view.W * 0.4) / (view.W * 0.2))));
+    const fade = (z: number) => Math.max(0, 1 - (z - view.near) / ROWS) ** 1.6;
+    const light = (row: number, col: number, start: number, end: number, k: number) => {
+      if (col < 0 || col >= COLS) return;
+      const i = slot(row, col);
+      if (k === 1 && kind[i] === 2 && clock < dies[i]) return; // a fleet's machines stay its own
+      born[i] = start; dies[i] = end; kind[i] = k; tag[i] = (row * 5 + col * 3) % Math.max(1, names.length);
+    };
+    // A fleet claims a block that touches no other fleet, lit outward from its middle.
+    const claimFleet = (lo: number, hi: number, w: number, d: number, life: number) => {
+      const { row, col } = spot(lo, hi, w, 0.52);
+      if (!fleets.every((f) => row > f.row + f.d || row + d < f.row || col > f.col + f.w || col + w < f.col)) return false;
+      for (let r = 0; r < d; r++) for (let c = 0; c < w; c++) light(row + r, col + c, clock + (Math.abs(c - w / 2) + r) * 80, clock + life, 2);
+      fleets.push({ col, row, w, d, born: clock, dies: clock + life });
+      return true;
+    };
+    const glow = (start: number, end: number, rise: number) => {
+      const up = Math.min(1, Math.max(0, (clock - start) / rise));
+      const down = clock < end ? 1 : Math.max(0, 1 - (clock - end) / 1400);
+      return (1 - (1 - up) ** 3) * down;
+    };
+    // A random machine on screen and clear of the headline, `lo`..`hi` rows from the front.
+    const spot = (lo: number, hi: number, w = 1, edge = 0.46) => {
+      const row = Math.floor(depth) + lo + Math.floor(random() ** 0.7 * (hi - lo)); // most machines are far away
+      const z = zOf(row) + 0.5;
+      const left = Math.max(colAt(view.narrow ? 0 : view.W * edge, z), 0), right = Math.min(colAt(view.W, z) - w, COLS - w);
+      return { row, col: left + Math.floor(random() * Math.max(1, right - left)) };
+    };
+
+    const step = (dt: number) => {
+      clock += dt;
+      if (motion) depth += dt * SPEED;
+      const front = Math.floor(depth);
+      while (far < front + ROWS - 1) { far++; for (let c = 0; c < COLS; c++) kind[slot(far, c)] = 0; }
+      for (; clock >= nextOne; nextOne += 8 + random() * 14) {
+        const { row, col } = spot(1, ROWS - 2);
+        light(row, col, nextOne, nextOne + 2200 + random() * 5000, 1);
+      }
+      if (clock >= nextFleet) {
+        nextFleet += 1600 + random() * 1400;
+        claimFleet(2, 26, 3 + Math.floor(random() * 6), 2 + Math.floor(random() * 4), 3400 + random() * 2600);
+      }
+      for (let i = fleets.length - 1; i >= 0; i--) if (clock > fleets[i].dies + 1400 || fleets[i].row < front) fleets.splice(i, 1);
+      camX += (aimX - camX) * Math.min(1, dt / 500);
+    };
+
+    const quad = (path: Path2D, x0: number, x1: number, z0: number, z1: number) => {
+      path.moveTo(sx(x0, z0), sy(z0)); path.lineTo(sx(x1, z0), sy(z0));
+      path.lineTo(sx(x1, z1), sy(z1)); path.lineTo(sx(x0, z1), sy(z1)); path.closePath();
+    };
+    const draw = () => {
+      const { W, H } = view;
+      if (!W || !H) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      // Light on the horizon: the field keeps going.
+      const dawn = ctx.createRadialGradient(view.cx, view.horizon, 0, view.cx, view.horizon, W * 0.55);
+      dawn.addColorStop(0, ink[1]); dawn.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 0.12; ctx.fillStyle = dawn;
+      ctx.setTransform(dpr, 0, 0, dpr * 0.22, 0, view.horizon * dpr * 0.78);
+      ctx.fillRect(0, -H * 5, W, H * 10);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Batch every quad into one path per kind and brightness level.
+      const dots = Array.from({ length: LEVELS }, () => new Path2D());
+      const halo = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
+      const core = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
+      const labels: [string, number, number, number][] = [];
+      const front = Math.floor(depth);
+      for (let row = front; row < front + ROWS; row++) {
+        const z0 = zOf(row) + GAP, z1 = zOf(row) + 1 - GAP;
+        if (z1 < view.near * 0.8) continue;
+        const zm = (z0 + z1) / 2, ym = sy(zm), size = view.focal / zm, haze = fade(z0);
+        const first = Math.max(0, colAt(-size, zm)), last = Math.min(COLS - 1, colAt(W + size, zm));
+        for (let c = first; c <= last; c++) {
+          const x0 = c - COLS / 2 + GAP, x1 = c - COLS / 2 + 1 - GAP, xm = sx((x0 + x1) / 2, zm);
+          const i = slot(row, c), shade = haze * veil(xm);
+          if (shade < 0.02) continue;
+          const b = kind[i] ? glow(born[i], dies[i], 450) : 0;
+          if (kind[i] && b <= 0 && clock > dies[i]) kind[i] = 0;
+          if (b * shade < 0.04) {
+            const r = Math.max(0.6, size * 0.03);
+            dots[Math.min(LEVELS - 1, Math.floor(shade * LEVELS))].rect(xm - r, ym - r, r * 2, r * 2);
+            continue;
+          }
+          const level = Math.min(LEVELS - 1, Math.floor(b * shade * LEVELS));
+          if (size < 40) quad(halo[kind[i]][level], x0 - 0.3, x1 + 0.3, z0 - 0.3, z1 + 0.3);
+          quad(core[kind[i]][level], x0, x1, z0, z1);
+          if (kind[i] === 1 && size > 80 && b > 0.5 && sy(z1) < H - 8 && names.length) labels.push([names[tag[i]], xm, sy(z1) - 12, b * shade]);
+        }
+      }
+      ctx.fillStyle = ink[0];
+      dots.forEach((path, level) => { ctx.globalAlpha = 0.05 + 0.25 * (level / LEVELS); ctx.fill(path); });
+      ctx.globalCompositeOperation = 'lighter';
+      for (const k of [1, 2]) {
+        ctx.fillStyle = ink[k];
+        halo[k].forEach((path, level) => { ctx.globalAlpha = 0.14 * (level + 1) / LEVELS; ctx.fill(path); });
+        core[k].forEach((path, level) => { ctx.globalAlpha = (k === 2 ? 1 : 0.6) * (level + 1) / LEVELS; ctx.fill(path); });
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.font = `500 12px ${mono}`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillStyle = ink[0];
+      for (const [name, x, y, a] of labels.slice(0, 4)) { ctx.globalAlpha = a * 0.8; ctx.fillText(name, x, y); }
+      // One outline per fleet: the machines it holds under one budget.
+      ctx.strokeStyle = edge; ctx.lineWidth = 1.5;
+      for (const fleet of fleets) {
+        const z0 = zOf(fleet.row) - 0.05, z1 = zOf(fleet.row + fleet.d) + 0.05;
+        if (z0 < view.near * 0.8) continue;
+        const x0 = fleet.col - COLS / 2 - 0.05, x1 = fleet.col + fleet.w - COLS / 2 + 0.05;
+        const outline = new Path2D();
+        quad(outline, x0, x1, z0, z1);
+        ctx.globalAlpha = glow(fleet.born, fleet.dies, 700) * fade(z0) * veil(sx((x0 + x1) / 2, z0)) * 0.9;
+        ctx.stroke(outline);
+      }
+      ctx.globalAlpha = 1;
+    };
 
     const fit = () => {
-      const w = knotCanvas.clientWidth, h = knotCanvas.clientHeight;
-      renderer.setSize(w, h, false);
-      composer.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = field.clientWidth, H = field.clientHeight, narrow = W < 860;
+      const horizon = H * (narrow ? 0.06 : 0.26), height = 6;
+      const focal = H * (narrow ? 1.1 : 0.9);
+      Object.assign(view, { W, H, narrow, horizon, height, focal, cx: W * (narrow ? 0.5 : 0.68), near: (focal * height) / (H - horizon) });
+      field.width = Math.round(W * dpr);
+      field.height = Math.round(H * dpr);
+      draw();
     };
-    new ResizeObserver(fit).observe(knotCanvas);
-    fit();
 
-    let rx = 0.42, ry = -0.28, visible = true;
-    addEventListener('pointermove', (e) => {
-      ry = -0.28 + (e.clientX / innerWidth - 0.5) * 0.35;
-      rx = 0.42 + (e.clientY / innerHeight - 0.5) * 0.25;
-    });
-    new IntersectionObserver((es) => { visible = es[0].isIntersecting; }).observe(knotCanvas);
-
-    const clock = new THREE.Clock();
-    const frame = () => {
+    let running = false, visible = true, last = 0;
+    const frame = (time: number) => {
+      if (!running) return;
+      step(last ? Math.min(50, time - last) : 16);
+      last = time;
+      draw();
       requestAnimationFrame(frame);
-      if (!visible) return;
-      const t = clock.getElapsedTime();
-      uniforms.uTime.value = t;
-      knot.rotation.z = t * 0.045;
-      knot.rotation.x += (rx - knot.rotation.x) * 0.04;
-      knot.rotation.y += (ry - knot.rotation.y) * 0.04;
-      halo.rotation.copy(knot.rotation);
-      composer.render();
     };
-    frame();
-    knotCanvas.classList.add('ready');
-  } else {
-    document.documentElement.classList.add('static-hero');
+    const play = () => {
+      if (running || !motion || !visible || document.hidden) return;
+      running = true; last = 0;
+      requestAnimationFrame(frame);
+    };
+    fit();
+    for (let t = 0; t < (motion ? 4000 : 6000); t += 20) step(20); // open on a field already at work
+    for (let tries = 0; tries < 8 && !claimFleet(4, 12, 8, 5, 6400); tries++); // then a fleet claims its block
+    if (!motion) for (let t = 0; t < 1200; t += 20) step(20);
+    draw();
+    new ResizeObserver(fit).observe(field);
+    new IntersectionObserver((entries) => {
+      visible = entries[0].isIntersecting;
+      if (visible) play(); else running = false;
+    }).observe(field);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) running = false; else play(); });
+    addEventListener('pointermove', (event) => { aimX = (event.clientX / innerWidth - 0.5) * 3; }, { passive: true });
+    play();
+    field.classList.add('ready');
   }
-
 
 </script>
 
@@ -555,21 +638,10 @@ const harnesses = [
   .grad-text {
     display: block;
     background-image: linear-gradient(92deg, var(--brand-purple) 0%, var(--brand-cool) 40%, var(--btn-primary-bg) 75%, var(--brand-purple) 100%);
-    background-size: 220% 100%;
     background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     color: var(--brand-glow); /* fallback */
-    animation: gradDrift 9s ease-in-out infinite alternate;
-  }
-
-  @keyframes gradDrift {
-    from { background-position: 0% 50%; }
-    to { background-position: 100% 50%; }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .grad-text { animation: none; }
   }
 
   .btn {
@@ -630,14 +702,14 @@ const harnesses = [
   .add { color: var(--surface-success-text); display: block; }
   .del { color: var(--surface-danger-text); display: block; }
 
-  /* ---------- hero (dark, video) ---------- */
+  /* ---------- hero (dark): the sandbox field ---------- */
   .hero {
     position: relative;
     display: flex;
     align-items: center;
-    min-height: 82vh;
+    min-height: 86vh;
     overflow: hidden;
-    background: linear-gradient(160deg, var(--md3-surface-container-lowest) 0%, var(--depth-1) 52%, var(--md3-surface-container-low) 100%);
+    background: var(--md3-surface-container-lowest);
     border-bottom: 1px solid rgba(199, 201, 238, 0.1);
   }
 
@@ -646,61 +718,37 @@ const harnesses = [
     inset: 0;
   }
 
-  #hero-knot {
+  #hero-field {
     display: block;
     width: 100%;
     height: 100%;
     opacity: 0;
-    transition: opacity 1.4s ease;
+    transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  #hero-knot.ready { opacity: 1; }
-
-  .hero-poster {
-    display: none;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: 72% center;
-    opacity: 0.92;
-  }
-
-  :global(html.static-hero) #hero-knot { display: none; }
-  :global(html.static-hero) .hero-poster { display: block; }
-
-  .hero-scrim {
-    position: absolute;
-    inset: 0;
-    background:
-      linear-gradient(90deg, rgba(8, 8, 20, 0.95) 0%, rgba(8, 8, 20, 0.9) 38%, rgba(8, 8, 20, 0.4) 58%, rgba(8, 8, 20, 0) 74%),
-      linear-gradient(180deg, rgba(8, 8, 20, 0) 60%, rgba(8, 8, 20, 0.42) 100%);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    #hero-knot { display: none; }
-    .hero-poster { display: block; }
-  }
+  #hero-field.ready { opacity: 1; }
 
   .hero-copy {
     position: relative;
     z-index: 1;
-    max-width: 46rem;
-    padding: 7.5rem 0 6rem;
+    max-width: 680px;
+    padding: 96px 0;
   }
 
   .hero-copy h1 {
     color: var(--text-primary);
-    font-size: clamp(3.2rem, 5.6vw, 5.6rem);
-    line-height: 1.04;
+    font-size: var(--font-size-display);
+    line-height: 1;
     letter-spacing: -0.036em;
   }
 
   .hero-copy > p:first-of-type {
-    max-width: 44rem;
-    margin: 1.5rem 0 0;
+    max-width: 34rem;
+    margin: 24px 0 0;
     color: rgba(240, 240, 250, 0.88);
-    font-size: clamp(1.25rem, 1.6vw, 1.55rem);
-    line-height: 1.6;
+    font-size: var(--font-size-xl);
+    line-height: 1.75rem;
+    text-wrap: pretty;
   }
 
   .hero-actions {
@@ -1004,7 +1052,7 @@ const harnesses = [
   .tagline-text { max-width: 52rem; margin: 0; font-family: var(--font-display); font-weight: 600; font-size: clamp(2rem, 4.2vw, 3.6rem); line-height: 1.12; letter-spacing: -0.032em; text-wrap: balance; color: var(--text-primary); }
   .tagline-text .w { display: inline-block; opacity: 0.28; transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
   .tagline-text .w.on { opacity: 1; }
-  :global(html:not(.js)) .tagline-text .w, :global(html.static-hero) .tagline-text .w { opacity: 1; }
+  :global(html:not(.js)) .tagline-text .w { opacity: 1; }
   @media (prefers-reduced-motion: reduce) { .tagline-text .w { opacity: 1; transition: none; } }
 
   /* ---------- one key, one bill: metered flows into one balance ---------- */
@@ -1057,17 +1105,16 @@ const harnesses = [
 
   @media (max-width: 720px) {
     .shell { width: min(92vw, 78rem); }
-    .hero { min-height: 74vh; }
-    .hero-copy { padding: 6.5rem 0 4.5rem; }
-    .hero-copy h1 { font-size: clamp(2.4rem, 10vw, 3.4rem); }
+    .hero-copy > p:first-of-type { font-size: var(--text-lead); line-height: 1.75rem; }
     .products-section { padding: 4rem 0 4.5rem; }
     .trace-list em { display: none; }
+  }
 
-    .hero-scrim {
-      background:
-        linear-gradient(180deg, rgba(8, 8, 20, 0.82) 0%, rgba(8, 8, 20, 0.62) 55%, rgba(8, 8, 20, 0.88) 100%);
-    }
-
+  /* Narrow screens stack the copy over the field so the field never sits behind text. */
+  @media (max-width: 860px) {
+    .hero { flex-direction: column; align-items: stretch; min-height: 0; }
+    .hero-art { position: relative; inset: auto; order: 2; height: 40svh; min-height: 18rem; margin-top: 24px; }
+    .hero-copy { padding: 96px 0 0; }
   }
 
   .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
