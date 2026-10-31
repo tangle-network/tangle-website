@@ -12,7 +12,7 @@ const sessionId = "upgrade-deps";
 
 if (!sandboxId) {
   const box = await client.create({
-    git: { url: "https://github.com/your-org/your-repo" },
+    git: { url: "https://github.com/tangle-network/sandbox-demo" },
     backend: { type: "codex" },
     maxLifetimeSeconds: 8 * 3600,
   });

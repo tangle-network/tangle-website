@@ -6,7 +6,7 @@ const client = new Sandbox({ apiKey, baseUrl: "https://sandbox.tangle.tools" });
 // Your loop, any Router model, and the sandbox as its tools:
 // exec, read, write, search and run code.
 const box = await client.create({
-  git: { url: "https://github.com/your-org/your-repo" },
+  git: { url: "https://github.com/tangle-network/sandbox-demo" },
 });
 const { tools, handleAssistantMessage } = openaiTools(box);
 const messages: unknown[] = [

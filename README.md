@@ -27,6 +27,7 @@ Brand tokens and shared components come from `@tangle-network/brand` and `@tangl
 | `pnpm check:copy` | model-scored copy audit of the built pages (needs `pnpm build` and a router key) |
 | `pnpm check:models` | references to deprecated model names |
 | `pnpm check:examples` | the home page's `src/examples/*/*.mts` against the published `@tangle-network/sandbox` and `@tangle-network/agent-eval` types |
+| `pnpm check:runs` | each example has a production run recorded in `src/data/runs` from its current bytes, exited 0, under 30 days old; re-record with `scripts/record-examples.mts` (the key on stdin, run from a Beelink) |
 | `pnpm test:benchmarks`, `pnpm test:cta` | benchmark board records and CTA instrumentation |
 
 ## Deploy

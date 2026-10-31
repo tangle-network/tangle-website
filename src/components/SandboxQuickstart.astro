@@ -1,9 +1,21 @@
 ---
+import { createHash } from 'node:crypto';
 import QuickstartCode, { type Subject } from './QuickstartCode';
 
 // Each cell shows one file from src/examples byte for byte; `pnpm check:examples`
 // typechecks every file against the published packages.
 const files = import.meta.glob<string>('../examples/*/*.mts', { query: '?raw', import: 'default', eager: true });
+// Each file's recorded production run (scripts/record-examples.mts). A file whose record is missing or was
+// recorded from other bytes gets no Play button; `pnpm check:runs` fails the gate for both.
+const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; sdk: Record<string, string> } }>(
+  '../data/runs/*/*.json', { import: 'default', eager: true });
+const recordUrls = import.meta.glob<string>('../data/runs/*/*.json', { query: '?url&no-inline', import: 'default', eager: true });
+const recorded = (path: string, code: string) => {
+  const record = records[path];
+  if (record?.source.sha256 !== createHash('sha256').update(code).digest('hex')) return undefined;
+  const { id, recordedAt, costUsd, sdk } = record.run;
+  return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd };
+};
 const SANDBOX = 'npm install @tangle-network/sandbox';
 const grid: [string, string, string, [string, string, string][]][] = [
   ['sandboxes', 'Sandboxes', SANDBOX, [
@@ -33,7 +45,7 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
   ideas: ideas.map(([file, title, summary]) => {
     const code = files[`../examples/${id}/${file}.mts`];
     if (!code) throw new Error(`src/examples/${id}/${file}.mts is missing`);
-    return { id: file, title, summary, code };
+    return { id: file, title, summary, code, run: recorded(`../data/runs/${id}/${file}.json`, code) };
   }),
 }));
 ---

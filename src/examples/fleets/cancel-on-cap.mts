@@ -11,11 +11,11 @@ const ideas = ["a lookup table", "a streaming parser", "fewer allocations",
   "worker threads", "WebAssembly", "a hand written tokenizer"];
 const fleet = await client.fleets.create({
   agents: ideas.map((idea) => ({
-    task: `Make bench/parse.ts faster with ${idea}. Report the speedup.`,
+    task: `Make bench/parse.js faster with ${idea}. Report the speedup.`,
   })),
   placement: "dedicated",
   defaults: {
-    git: { url: "https://github.com/your-org/your-repo" },
+    git: { url: "https://github.com/tangle-network/sandbox-demo" },
     backend: { type: "claude-code" },
   },
   budgetUsd: 5,

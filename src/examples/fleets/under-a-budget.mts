@@ -10,12 +10,12 @@ const fleet = await client.fleets.create({
   agents: [
     { agentId: "tests", task: "List the three slowest tests and why." },
     { agentId: "todos", task: "Find every TODO and group them by file." },
-    { agentId: "ci", task: "Describe what CI runs on a pull request." },
+    { agentId: "deps", task: "Say what each dependency is used for." },
     { agentId: "entry", task: "Name the entry point and the modules it loads." },
   ],
   placement: { agentsPerSandbox: 4 },
   defaults: {
-    git: { url: "https://github.com/your-org/your-repo" },
+    git: { url: "https://github.com/tangle-network/sandbox-demo" },
     backend: { type: "opencode", model: { model: "glm-5.3" } },
     maxLifetimeSeconds: 900,
   },
