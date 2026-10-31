@@ -99,11 +99,11 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
       <p className="rr-head">Recorded {date} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
         <a href={meta.url}>JSON</a></p>
       <div className="rr-bar">
-        <Button variant="ghost" size="icon-sm" autoFocus aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (now >= total) setT(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</Button>
+        <Button variant="ghost" size="icon-sm" autoFocus aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (now >= total) setT(0); setPlaying(!playing); }}><span className={`ic ic-${playing ? 'pause' : 'play'}`} aria-hidden="true" /></Button>
         <Slider className="rr-scrub" min={0} max={total} step={50} value={[now]} thumbLabels={[`Replay position ${clock(now)}`]} onValueChange={([value]) => setT(value)} />
         <span className="rr-time">{clock(now)} / {clock(total)}</span>
         <SegmentedControl aria-label="Speed" value={String(speed)} onValueChange={(value) => setSpeed(Number(value))} options={[{ value: '1', label: '1×' }, { value: '4', label: '4×' }]} />
-        <Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}><span className="ic ic-close" aria-hidden="true" /></Button>
       </div>
       {failed && <p className="rr-note">The record did not load. <a href={meta.url}>Open the JSON</a>.</p>}
       {events && <>
