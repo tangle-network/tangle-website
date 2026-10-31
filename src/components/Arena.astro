@@ -1,0 +1,210 @@
+---
+import { createHash } from 'node:crypto';
+import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
+import { Button } from '@tangle-network/ui/primitives';
+import code from '../examples/arena/fix-the-tests.mts?raw';
+import record from '../data/runs/arena/fix-the-tests.json';
+import url from '../data/runs/arena/fix-the-tests.json?url&no-inline';
+import './run-replay.css';
+import './arena.css';
+
+interface Props { harnesses: { harness: string; cmd: string; name: string; logo: string }[] }
+const { harnesses } = Astro.props;
+
+// One example file and its recorded production run (scripts/record-examples.mts), folded into a lane per sandbox:
+// every call names the sandbox it ran on, and each create call names the harness. The page renders the finished
+// race; the script below replays it on one clock once the section is on screen. `pnpm check:runs` fails the gate
+// for a stale or failed record, and a record of other bytes fails the build here.
+if (record.source.sha256 !== createHash('sha256').update(code).digest('hex')) {
+  throw new Error('src/data/runs/arena/fix-the-tests.json was recorded from another version of the file; re-record it');
+}
+type Ev = { atMs: number; kind: string; id?: number; parent?: number | null; name?: string; target?: string; args?: any[]; result?: any; durationMs?: number; type?: string; data?: any };
+type Row = { at: number; end: number; kind: string; name: string; detail: string; state: string };
+const events = record.events as Ev[];
+const calls = events.filter((e) => e.kind === 'call');
+const HOME = /\/home\/agent\/sandbox-demo\/?/g;
+const span = (e: Ev) => ({ at: e.atMs, end: e.atMs + (e.durationMs ?? 0) });
+const suite = (e: Ev): Row => {
+  const out = String(e.result?.stdout ?? '');
+  const pass = out.match(/# pass (\d+)/)?.[1], fail = Number(out.match(/# fail (\d+)/)?.[1] ?? 0);
+  return { ...span(e), kind: 'test', name: '$ npm test', detail: fail ? `${pass} pass, ${fail} fail` : `${pass} pass`, state: fail ? 'failed' : 'done' };
+};
+// A tool call's argument, as a person would read it: the command, the file or the first line of code.
+const input = (i: Record<string, unknown> = {}) => String((typeof i.command === 'string' ? i.command.replace(/^\/bin\/bash -lc ['"]?/, '') : undefined)
+  ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.code ?? '').replace(HOME, '').replace(/^cd \S* && /, '').split('\n').find((l) => l.trim()) ?? '';
+// The harness's own words, up to the first detail: a parenthesis, a log tail or a new line.
+const short = (error: unknown) => String(error ?? '').replace(/^POST \S+: /, '').split(/ \(| Log tail:|\n/)[0];
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+const lanes = calls.filter((e) => e.name === 'create').map((create) => {
+  const sandbox = String(create.result?.id);
+  const meta = harnesses.find((h) => h.harness === create.args?.[0]?.backend?.type)!;
+  const own = calls.filter((e) => e.target === sandbox);
+  const prompt = own.find((e) => e.name === 'prompt')!;
+  const tests = own.filter((e) => e.name === 'exec' && e.args?.[0] === 'npm test').map(suite);
+  const diff = String(own.find((e) => e.name === 'exec' && e.args?.[0] === 'git diff')?.result?.stdout ?? '').trimEnd();
+  const tools = new Map<string, Row>();
+  for (const e of events) {
+    const part = e.data?.part;
+    if (e.kind !== 'stream' || e.parent !== prompt.id || e.type !== 'message.part.updated' || part?.type !== 'tool') continue;
+    const row = tools.get(part.id) ?? { at: e.atMs, end: e.atMs, kind: 'tool', name: String(part.tool).toLowerCase().replace(/ cell$/, ''), detail: '', state: 'done' };
+    row.detail = input(part.state?.input) || row.detail;
+    if (['completed', 'error', 'failed'].includes(part.state?.status)) Object.assign(row, { end: e.atMs, state: part.state.status === 'completed' ? 'done' : 'failed' });
+    tools.set(part.id, row);
+  }
+  const turn = prompt.result ?? {};
+  const rows: Row[] = [tests[0], { ...span(prompt), kind: 'call', name: meta.cmd, detail: String(prompt.args?.[0]), state: turn.success ? 'done' : 'failed' }, ...tools.values(),
+    ...(turn.success ? [] : [{ at: span(prompt).end, end: span(prompt).end, kind: 'error', name: 'error', detail: short(turn.error), state: 'failed' }]), tests[1]];
+  const after = tests[1];
+  const tokens = turn.usage ? (turn.usage.inputTokens ?? 0) + (turn.usage.outputTokens ?? 0) : null;
+  const files = diff.split(/^diff --git /m).slice(1).map((chunk) => chunk.match(/^a\/(\S+)/)?.[1]);
+  return {
+    ...meta, sandbox, rows, diff, files, start: create.atMs, until: after.end, verdict: after.state === 'done' ? 'pass' : 'fail',
+    failing: Number(after.detail.match(/(\d+) fail/)?.[1] ?? 0),
+    usage: [tokens === null ? 'no usage reported' : `${Math.round(tokens / 1000)}k tokens`,
+      typeof turn.costUsd === 'number' && turn.costUsd > 0 ? `$${turn.costUsd.toFixed(4)}` : turn.costUsd === 0 ? 'reported $0' : 'no cost reported'].join(', '),
+  };
+});
+const total = Math.max(...lanes.map((lane) => lane.until)) + 500;
+const model = String(calls.find((e) => e.name === 'prompt')?.args?.[1]?.model ?? '').replace(/^\w+\//, '');
+const date = new Date(record.run.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const install = 'npm install @tangle-network/sandbox && npx tsx fix-the-tests.mts';
+---
+
+<section class="arena" aria-labelledby="arena-title" data-arena data-total={total}>
+  <div class="arena-inner">
+    <header class="arena-head">
+      <h2 id="arena-title">Nine harnesses, one failing test suite.</h2>
+      <p>
+        Each ran in its own Tangle sandbox with the same repository, the same model ({model}) and the same prompt.
+        <code>npm test</code> decides who passed.
+      </p>
+    </header>
+
+    <div class="arena-bar">
+      <div class="arena-transport">
+        <Button variant="ghost" size="icon-sm" data-play aria-label="Replay the race">▶</Button>
+        <div class="arena-track" aria-hidden="true"><i data-progress></i></div>
+        <span class="arena-time" data-time>{clock(total)} / {clock(total)}</span>
+        <div class="arena-speed" role="group" aria-label="Speed">
+          {[1, 4, 8].map((n) => <Button variant="ghost" size="sm" data-speed={n} aria-pressed={n === 4 ? 'true' : 'false'}>{n}×</Button>)}
+        </div>
+      </div>
+      <p>Recorded on production {date}. <a href={url}>Run record</a></p>
+    </div>
+
+    <ol class="arena-lanes">
+      {lanes.map((lane) => (
+        <li class="arena-lane" data-lane data-start={lane.start} data-until={lane.until} data-verdict={lane.verdict} data-state={lane.verdict}>
+          <header>
+            <i aria-hidden="true"></i>
+            <img src={lane.logo} alt="" width="24" height="24" loading="lazy" />
+            <b>{lane.name}</b>
+            <span class="arena-clock" data-clock>{clock(lane.until - lane.start)}</span>
+          </header>
+          <ol class="rr-feed" aria-label={`${lane.name} activity`}>
+            {lane.rows.map((row) => <li data-at={row.at} data-end={row.end} data-final={row.state} data-kind={row.kind} data-state={row.state}><b>{row.name}</b><span>{row.detail}</span></li>)}
+          </ol>
+          <footer>
+            <span class="arena-wait">Running</span>
+            <strong>{lane.verdict === 'pass' ? 'Tests pass' : `${lane.failing} tests still fail`}</strong>
+            <span class="arena-usage">{lane.usage}</span>
+            {lane.files.length > 0 && <Button size="sm" variant="outline" data-open={lane.harness} aria-expanded="false" aria-controls={`arena-${lane.harness}`}>Diff</Button>}
+          </footer>
+        </li>
+      ))}
+    </ol>
+
+    {lanes.filter((lane) => lane.files.length).map((lane) => (
+      <section class="arena-panel" id={`arena-${lane.harness}`} data-panel={lane.harness} aria-label={`${lane.name} diff`} hidden>
+        <header><b>{lane.name}</b><span>{lane.files.join(', ')}</span></header>
+        <CodeBlock code={lane.diff} language="diff" label="" className="arena-code rounded-none border-0" />
+      </section>
+    ))}
+    <section class="arena-panel" id="arena-file" data-panel="file" aria-label="fix-the-tests.mts source" hidden>
+      <CodeBlock code={code.trimEnd()} language="ts" label="" showLineNumbers className="arena-code rounded-none border-0" />
+    </section>
+    <div class="arena-run" role="group" aria-label="Run it yourself">
+      <Button size="sm" variant="outline" data-open="file" aria-expanded="false" aria-controls="arena-file">arena/fix-the-tests.mts</Button>
+      <code><span aria-hidden="true">$ </span>{install}</code>
+      <div class="qs-copy"><CopyButton client:visible text={install} aria-label="Copy command" /></div>
+    </div>
+  </div>
+</section>
+
+<script>
+  // Replays the race on one clock: each row shows from its start, runs until its end, then takes its final state.
+  const root = document.querySelector<HTMLElement>('[data-arena]');
+  if (root) {
+    const total = Number(root.dataset.total);
+    const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+    const lanes = [...root.querySelectorAll<HTMLElement>('[data-lane]')].map((el) => ({
+      el, start: Number(el.dataset.start), until: Number(el.dataset.until), clock: el.querySelector<HTMLElement>('[data-clock]')!,
+      feed: el.querySelector<HTMLElement>('.rr-feed')!,
+      rows: [...el.querySelectorAll<HTMLElement>('[data-at]')].map((row) => ({ row, at: Number(row.dataset.at), end: Number(row.dataset.end) })),
+    }));
+    const play = root.querySelector<HTMLButtonElement>('[data-play]')!;
+    const time = root.querySelector<HTMLElement>('[data-time]')!;
+    const progress = root.querySelector<HTMLElement>('[data-progress]')!;
+    let t = total, speed = 4, running = false, last = 0;
+    const draw = () => {
+      for (const lane of lanes) {
+        lane.el.dataset.state = t >= lane.until ? lane.el.dataset.verdict : t < lane.start ? 'queued' : 'running';
+        lane.clock.textContent = clock(Math.max(0, Math.min(t, lane.until) - lane.start));
+        let shown: HTMLElement | undefined;
+        for (const { row, at, end } of lane.rows) {
+          row.hidden = at > t;
+          row.dataset.state = t < end ? 'running' : row.dataset.final!;
+          row.toggleAttribute('data-last', false);
+          if (!row.hidden) shown = row;
+        }
+        shown?.toggleAttribute('data-last', true);
+        lane.feed.scrollTop = lane.feed.scrollHeight;
+      }
+      time.textContent = `${clock(t)} / ${clock(total)}`;
+      progress.style.transform = `scaleX(${t / total})`;
+    };
+    const label = () => { play.textContent = running ? '❚❚' : '▶'; play.setAttribute('aria-label', running ? 'Pause' : t >= total ? 'Replay the race' : 'Play'); };
+    const frame = (now: number) => {
+      if (!running) return;
+      t = Math.min(total, t + (now - last) * speed); last = now;
+      if (t >= total) running = false;
+      draw(); label();
+      if (running) requestAnimationFrame(frame);
+    };
+    const start = () => { if (t >= total) t = 0; running = true; last = performance.now(); label(); requestAnimationFrame(frame); };
+    play.addEventListener('click', () => { if (running) { running = false; label(); } else start(); });
+    root.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((button, _, all) => button.addEventListener('click', () => {
+      speed = Number(button.dataset.speed);
+      all.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
+    }));
+    // One panel at a time under the board: a lane's diff or the file itself.
+    const openers = [...root.querySelectorAll<HTMLButtonElement>('[data-open]')];
+    openers.forEach((button) => button.addEventListener('click', () => {
+      const opening = button.getAttribute('aria-expanded') !== 'true';
+      openers.forEach((other) => other.setAttribute('aria-expanded', String(opening && other === button)));
+      root.querySelectorAll<HTMLElement>('[data-panel]').forEach((panel) => { panel.hidden = !(opening && panel.dataset.panel === button.dataset.open); });
+    }));
+    draw();
+    // The race starts once, when the board is on screen; reduced motion keeps the finished race.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const seen = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { seen.disconnect(); t = 0; start(); } }, { threshold: 0.35 });
+      seen.observe(root.querySelector('.arena-lanes')!);
+    }
+  }
+</script>
+
+<style>
+  .arena { padding: 96px 0; background: var(--depth-1); color: var(--text-primary); border-top: 1px solid var(--color-border); }
+  .arena-inner { display: flex; flex-direction: column; gap: 16px; width: min(88rem, 94vw); margin: 0 auto; }
+  .arena-head { max-width: 48rem; margin-bottom: 16px; }
+  .arena h2 { margin: 0; font-family: var(--font-display); font-size: var(--font-size-hero); font-weight: 600; line-height: 1.05; letter-spacing: -0.03em; text-wrap: balance; }
+  .arena-head p { margin: 16px 0 0; color: var(--text-secondary); font-size: var(--font-size-xl); line-height: 1.75rem; text-wrap: pretty; }
+  .arena-head code { font-family: var(--font-mono); }
+  @media (max-width: 680px) {
+    .arena { padding: 64px 0; }
+    .arena-inner { width: calc(100vw - 32px); }
+    .arena-head { margin-bottom: 8px; }
+    .arena-head p { font-size: var(--font-size-lg); line-height: 1.5rem; }
+  }
+</style>
