@@ -4,8 +4,8 @@ import { useId, useState, type CSSProperties, type KeyboardEvent, type ReactNode
 import RunReplay, { type RunMeta } from './RunReplay';
 import './quickstart-code.css';
 
-export interface Idea { id: string; title: string; summary: string; code: string; run?: RunMeta }
-export interface Subject { id: string; label: string; install: string; ideas: Idea[]; dir?: string } // dir: the examples folder, when it is not the id
+export interface Idea { id: string; title: string; summary: string; code: string; run?: RunMeta; install?: string }
+export interface Subject { id: string; label: string; install: string; ideas: Idea[] }
 
 // Columns are subjects, rows are ideas; subjects with one idea each are a switcher, the summary under the tabs.
 // Every cell is one whole file from src/examples, so what a reader copies is what `pnpm check:examples` compiled.
@@ -32,7 +32,7 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
   const row = rows[col];
   const idea = subject.ideas[row];
   const cell = `${subject.id}-${idea.id}`;
-  const run = `${subject.install} && npx tsx ${idea.id}.mts`;
+  const run = `${idea.install ?? subject.install} && npx tsx ${idea.id}.mts`;
   const playing = replay === cell && idea.run;
   const switcher = subjects.every((item) => item.ideas.length === 1); // one file per tab: no list
 
@@ -65,7 +65,7 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
         </div>
         <div className={`qs-main${playing ? ' is-replaying' : ''}`} id={`${uid}-panel`} role="tabpanel" aria-labelledby={switcher ? `qs-col-${subject.id}` : `qs-row-${cell}`} aria-describedby={switcher ? `${uid}-note` : undefined}>
           <div className="qs-toolbar">
-            <span className="qs-file">{subject.dir ?? subject.id}/<b>{idea.id}.mts</b></span>
+            <span className="qs-file">{subject.id}/<b>{idea.id}.mts</b></span>
             <select className="qs-pick" aria-label={`${subject.label} example`} value={row} onChange={(event) => setRow(Number(event.target.value))}>
               {subject.ideas.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}
             </select>
