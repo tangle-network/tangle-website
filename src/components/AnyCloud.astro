@@ -1,0 +1,92 @@
+---
+import { harnessTypeSchema } from '@tangle-network/agent-interface/harness';
+import { createHash } from 'node:crypto';
+import code from '../examples/runtime/any-cloud.mts?raw';
+import record from '../data/runs/runtime/any-cloud.json';
+import QuickstartCode from './QuickstartCode';
+
+// A profile's `harness` is typed against this registry; cli-base runs no agent.
+const lead = ['claude-code', 'codex', 'opencode', 'pi'];
+const registry: string[] = harnessTypeSchema.options.filter((name) => name !== 'cli-base');
+const harnesses = [...lead.filter((name) => registry.includes(name)), ...registry.filter((name) => !lead.includes(name))];
+
+// The file in the editor and its recorded production run (scripts/record-examples.mts), the only live run on this page.
+// A record made from other bytes is dropped, as in the examples editor; `pnpm check:runs` fails the gate for it.
+const [url] = Object.values(import.meta.glob<string>('../data/runs/runtime/any-cloud.json', { query: '?url&no-inline', import: 'default', eager: true }));
+const sha = record.source.sha256;
+const run = sha === createHash('sha256').update(code).digest('hex')
+  ? { url, recordedAt: record.run.recordedAt, runId: record.run.id, sha, sdk: record.run.sdk['@tangle-network/sandbox'], costUsd: record.run.costUsd }
+  : undefined;
+const subjects = [{
+  id: 'runtime', label: 'Runtime', install: 'npm install @tangle-network/sandbox @tangle-network/agent-runtime @tangle-network/agent-provider-tangle',
+  ideas: [{ id: 'any-cloud', title: 'Run a harness on Tangle', summary: '', code, run }],
+}];
+// Each adapter is published to npm. A cloud counts as run live only with a recorded run.
+const clouds: [string, string, typeof run][] = [
+  ['Tangle', 'agent-provider-tangle', run],
+  ['E2B', 'agent-provider-e2b', undefined],
+  ['Daytona', 'agent-provider-daytona', undefined],
+  ['ComputeSDK', 'agent-provider-computesdk', undefined],
+];
+const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+---
+
+<section class="anycloud" data-theme="website" aria-labelledby="anycloud-title">
+  <div class="anycloud-inner">
+    <h2 id="anycloud-title">Run agents on the harnesses you already use, on any cloud.</h2>
+    <dl>
+      <dt>Harnesses</dt>
+      <dd>
+        <ul class="harnesses">{harnesses.map((name) => <li>{name}</li>)}</ul>
+        <p>Names from <a href="https://www.npmjs.com/package/@tangle-network/agent-interface">@tangle-network/agent-interface</a>. A profile sets one in <code>harness</code>, and a cloud runs the ones it installs.</p>
+      </dd>
+      <dt>Clouds</dt>
+      <dd>
+        <ul class="clouds">
+          {clouds.map(([name, pkg, live]) => (
+            <li>
+              <b>{name}</b>
+              <a href={`https://www.npmjs.com/package/@tangle-network/${pkg}`}><code>@tangle-network/{pkg}</code></a>
+              {live ? <a class="live" data-live href={live.url}>Run recorded {day(live.recordedAt)}</a> : <span class="live">No live run yet</span>}
+            </li>
+          ))}
+        </ul>
+        <p>Tangle runs the harness a profile names from its own catalog. The other adapters run the command you give them.</p>
+      </dd>
+      <dt>On Tangle</dt>
+      <dd>
+        <QuickstartCode client:visible subjects={subjects} />
+        <p>Reads <code>TANGLE_API_KEY</code>. <a href="https://id.tangle.tools">Create a key</a>.</p>
+      </dd>
+    </dl>
+  </div>
+</section>
+
+<style>
+  .anycloud { background: var(--bg-root); color: var(--text-primary); padding: 5.5rem 0 6rem; }
+  .anycloud-inner { width: min(78rem, 90vw); margin: 0 auto; }
+  .anycloud h2 { max-width: 56rem; margin: 0; font-family: var(--font-display); font-size: clamp(2.2rem, 3.6vw, 3.3rem); font-weight: 600; line-height: 1.1; letter-spacing: -0.032em; text-wrap: balance; }
+  .anycloud dl { display: grid; grid-template-columns: 9rem minmax(0, 1fr); margin: 3.5rem 0 0; border-top: 1px solid var(--md3-outline-variant); }
+  .anycloud dt, .anycloud dd { margin: 0; padding: 1.75rem 0; border-bottom: 1px solid var(--md3-outline-variant); }
+  .anycloud dt { color: var(--text-muted); font-size: var(--font-size-lg); line-height: 1.5rem; }
+  .anycloud dt:last-of-type, .anycloud dd:last-child { border-bottom: 0; }
+  .anycloud dd > p { max-width: 40rem; margin: 1.25rem 0 0; color: var(--text-secondary); font-size: var(--font-size-lg); line-height: 1.5rem; text-wrap: pretty; }
+  .anycloud a { color: var(--accent-text); text-underline-offset: 0.2em; }
+  .anycloud a:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
+  .anycloud code { font-family: var(--font-mono); }
+  .harnesses, .clouds { margin: 0; padding: 0; list-style: none; }
+  .harnesses { display: flex; flex-wrap: wrap; gap: 0.5rem 1.75rem; font: var(--font-size-xl)/1.75rem var(--font-mono); }
+  .clouds li { display: grid; grid-template-columns: 8rem minmax(0, 22rem) minmax(0, 1fr); gap: 0.25rem 1.5rem; align-items: baseline; padding: 0.75rem 0; font-size: var(--font-size-lg); line-height: 1.5rem; }
+  .clouds li + li { border-top: 1px solid var(--md3-outline-variant); }
+  .clouds code { font-size: var(--font-size-label); overflow-wrap: anywhere; }
+  .live { color: var(--text-muted); }
+  .live::before { content: ''; display: inline-block; width: 0.5rem; height: 0.5rem; margin-right: 0.6rem; border: 1.5px solid var(--text-muted); border-radius: 50%; }
+  .live[data-live]::before { border-color: var(--accent-text); background: var(--accent-text); }
+  @media (max-width: 860px) {
+    .anycloud { padding: 4rem 0 4.5rem; }
+    .anycloud dl { grid-template-columns: minmax(0, 1fr); margin-top: 2.5rem; }
+    .anycloud dt { padding: 1.5rem 0 0; border-bottom: 0; }
+    .anycloud dd { padding-top: 0.75rem; }
+    .clouds li { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
