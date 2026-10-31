@@ -1,4 +1,5 @@
 import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
+import { Button } from '@tangle-network/ui/primitives';
 import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import RunReplay, { type RunMeta } from './RunReplay';
 import './quickstart-code.css';
@@ -75,8 +76,8 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
             <select className="qs-pick" aria-label={`${subject.label} example`} value={row} onChange={(event) => setRow(Number(event.target.value))}>
               {subject.ideas.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}
             </select>
-            {idea.run && <button id="qs-play" type="button" className="qs-play" aria-expanded={!!playing} aria-controls="qs-replay"
-              onClick={() => setReplay(playing ? null : cell)}>{playing ? 'Close' : 'Play'}</button>}
+            {idea.run && <Button id="qs-play" size="sm" variant={playing ? 'default' : 'outline'} className="qs-play" aria-expanded={!!playing} aria-controls="qs-replay"
+              onClick={() => setReplay(playing ? null : cell)}>{playing ? 'Close' : '▶ Play'}</Button>}
             <div className="qs-copy"><CopyButton key={cell} text={idea.code} aria-label="Copy file" /></div>
           </div>
           {playing && <RunReplay key={`replay-${cell}`} meta={idea.run!} onClose={() => { setReplay(null); document.getElementById('qs-play')?.focus(); }} />}

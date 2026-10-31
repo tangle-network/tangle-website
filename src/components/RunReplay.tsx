@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Button, SegmentedControl, Slider } from '@tangle-network/ui/primitives';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './run-replay.css';
 
 // Replays a run that scripts/record-examples.mts recorded against production at its recorded timing.
@@ -73,13 +74,11 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   }, [meta.url]);
   useEffect(() => {
     if (!playing || !events) return;
-    let last = performance.now(), raf = 0;
-    const tick = (now: number) => {
+    let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
       setT((value) => Math.min(total, value + (now - last) * speed));
       last = now;
       raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
+    });
     return () => cancelAnimationFrame(raf);
   }, [playing, events, speed, total]);
   useEffect(() => { if (t >= total && events) setPlaying(false); }, [t, total, events]);
@@ -90,19 +89,18 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   // Each line lights while its call runs and stays marked once it returns.
   const lit = [...state.lines].map(([line, s]) => `.qs-code code > span:nth-child(${line}){opacity:1${s === 'running' ? ';background:var(--accent-surface-strong)' : ''}}`).join('');
   const date = new Date(meta.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-  const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
 
   return (
-    <aside id="qs-replay" className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={escape}>
+    <aside id="qs-replay" className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
       <style>{lit}</style>
       <p className="rr-head">Recorded {date} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
         <a href={meta.url}>JSON</a></p>
       <div className="rr-bar">
-        <button type="button" autoFocus aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (now >= total) setT(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</button>
-        <input type="range" min={0} max={total} step={50} value={now} aria-label="Replay position" aria-valuetext={clock(now)} onChange={(e) => setT(Number(e.target.value))} />
+        <Button variant="ghost" size="icon-sm" autoFocus aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (now >= total) setT(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</Button>
+        <Slider className="rr-scrub" min={0} max={total} step={50} value={[now]} thumbLabels={[`Replay position ${clock(now)}`]} onValueChange={([value]) => setT(value)} />
         <span className="rr-time">{clock(now)} / {clock(total)}</span>
-        {[1, 4].map((x) => <button key={x} type="button" aria-pressed={speed === x} onClick={() => setSpeed(x)}>{x}×</button>)}
-        <button type="button" aria-label="Close the replay" onClick={onClose}>✕</button>
+        <SegmentedControl aria-label="Speed" value={String(speed)} onValueChange={(value) => setSpeed(Number(value))} options={[{ value: '1', label: '1×' }, { value: '4', label: '4×' }]} />
+        <Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button>
       </div>
       {failed && <p className="rr-note">The record did not load. <a href={meta.url}>Open the JSON</a>.</p>}
       {events && <>
