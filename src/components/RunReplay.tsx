@@ -7,6 +7,7 @@ export interface RunMeta { url: string; recordedAt: string; runId: string; sha: 
 type Ev = { atMs: number; kind: string; durationMs?: number; line?: number; label?: string; assign?: string; result?: any; error?: any; type?: string; data?: any; text?: string; args?: any[] };
 type Row = { key: string; atMs: number; kind: string; text: string; detail?: string; state?: string };
 
+const IDLE_MS = 10_000, JUMP_MS = 800; // a stretch over IDLE_MS with no event starting and no call ending plays in JUMP_MS, the clock sweeping its real length
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const usd = (n: unknown) => (typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '');
 const FIELDS = ['id', 'fleetId', 'exitCode', 'state', 'outcome', 'composite', 'costUsd', 'spentUsd', 'interrupted', 'traceId', 'status'];
@@ -15,10 +16,11 @@ const brief = (v: Ev['result'], quote = true): string => v === null || typeof v 
   : Array.isArray(v) ? `${v.length} × ${[...new Set(v.map((x) => x?.status ?? typeof x))].join(', ')}`
   : FIELDS.filter((k) => v[k] !== undefined).slice(0, 3).map((k) => `${k} ${k.endsWith('Usd') ? usd(v[k]) : brief(v[k], false)}`).join('  ') || `{ ${Object.keys(v).slice(0, 3).join(', ')} … }`;
 const summary = (input: Record<string, unknown> = {}) => String(input.description ?? input.command ?? input.file_path ?? input.query ?? input.url ?? '');
+const elapsed = (ms: number) => { const s = Math.round(ms / 1000), m = Math.round(s / 60); return s < 60 ? `${s} s` : m < 60 ? `${m} min` : `${+(m / 60).toFixed(1)} h`; };
 const done = (e: Ev, t: number) => e.atMs + (e.durationMs ?? 0) <= t;
 
 /** The record's state at `t`: values assigned, agents, spend, the activity feed and the source lines in flight. */
-function frame(events: Ev[], t: number) {
+function frame(events: Ev[], t: number, ticks: number[]) {
   const values = new Map<string, { value: string; count: number }>();
   const agents = new Map<string, { state: string; cost?: number }>();
   const rows = new Map<string, Row>();
@@ -52,6 +54,7 @@ function frame(events: Ev[], t: number) {
       rows.set(p.id, { ...(rows.get(p.id) ?? { key: p.id, atMs: e.atMs }), kind: 'tool', text: p.tool, detail: summary(p.state?.input), state: p.state?.status });
     }
   });
+  ticks.forEach((at, i) => { if (at < t && ticks[i + 1] - at > IDLE_MS) rows.set(`+${at}`, { key: `+${at}`, atMs: at, kind: 'jump', text: `+${elapsed(ticks[i + 1] - at)}` }); });
   return { values, agents, spend, lines, rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }
 
@@ -63,7 +66,7 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   const [speed, setSpeed] = useState(1);
   const feed = useRef<HTMLOListElement>(null);
   const follow = useRef(true);
-  const total = useMemo(() => Math.max(0, ...(events ?? []).map((e) => e.atMs + (e.durationMs ?? 0))), [events]);
+  const ticks = useMemo(() => [...new Set([0, ...(events ?? []).flatMap((e) => [e.atMs, e.atMs + (e.durationMs ?? 0)])])].sort((a, b) => a - b), [events]), total = ticks[ticks.length - 1];
 
   useEffect(() => {
     fetch(meta.url).then((r) => r.json()).then((record) => {
@@ -75,16 +78,16 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   useEffect(() => {
     if (!playing || !events) return;
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
-      setT((value) => Math.min(total, value + (now - last) * speed));
+      setT((value) => { const i = ticks.findLastIndex((x) => x <= value), gap = ticks[i + 1] - ticks[i]; return Math.min(ticks[i + 1] ?? total, value + (now - last) * speed * (gap > IDLE_MS ? gap / JUMP_MS : 1)); });
       last = now;
       raf = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(raf);
-  }, [playing, events, speed, total]);
+  }, [playing, events, speed, total, ticks]);
   useEffect(() => { if (t >= total && events) setPlaying(false); }, [t, total, events]);
 
   const now = Math.min(t, total);
-  const state = useMemo(() => frame(events ?? [], now), [events, now]);
+  const state = useMemo(() => frame(events ?? [], now, ticks), [events, now, ticks]);
   useEffect(() => { if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, [state.rows.length]);
   // Each line lights while its call runs and stays marked once it returns.
   const lit = [...state.lines].map(([line, s]) => `.qs-code code > span:nth-child(${line}){opacity:1${s === 'running' ? ';background:var(--accent-surface-strong)' : ''}}`).join('');
