@@ -3,6 +3,9 @@
 //   record: dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
 //   check:  node scripts/record-examples.mts --check   (pnpm check:runs)
 //
+// Every example needs a fresh, matching, successful run except the files NO_RUN lists with their reason; check mode
+// prints that list, and a listed file with a record fails the gate so the list only shrinks.
+//
 // The key arrives on stdin and reaches each example only as TANGLE_API_KEY; it is never printed or written.
 // Each example runs byte for byte from a copy beside scripts/examples-typecheck/node_modules, under this same
 // file as an --import preload that wraps the SDK's methods, fetch and stdout. Every call carries the example
@@ -21,6 +24,12 @@ const EXAMPLES = join(ROOT, "src/examples");
 const RUNS = join(ROOT, "src/data/runs");
 const HARNESS = join(ROOT, "scripts/examples-typecheck");
 const MAX_AGE_DAYS = 30;
+// Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
+const NO_RUN: Record<string, string> = {
+  "runtime/any-cloud-e2b": "no credential in vault",
+  "runtime/any-cloud-daytona": "no credential in vault",
+  "runtime/any-cloud-computesdk": "no credential in vault",
+};
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
@@ -84,9 +93,11 @@ async function instrument(out: string, file: string) {
   const isStream = (value: unknown): value is AsyncIterator<unknown> & AsyncIterable<unknown> =>
     !!value && typeof value === "object" && Symbol.asyncIterator in value && "next" in value;
 
-  const stream = (iterator: AsyncIterator<unknown> & AsyncIterable<unknown>, id: number) => {
+  const stream = (iterator: AsyncIterator<unknown> & AsyncIterable<unknown>, id: number, own = false) => {
     const step = (method: "next" | "return" | "throw", arg?: unknown) => als.run({ id, streaming: true }, async () => {
       const item = await (iterator[method] as (value?: unknown) => Promise<IteratorResult<unknown>>).call(iterator, arg);
+      // A call that returns its stream (streamPrompt) runs until the stream ends, so the line stays lit that long.
+      if (item.done && own) emit({ kind: "return", id, result: "stream" });
       if (!item.done) {
         const value = item.value as { type?: unknown; data?: unknown } | undefined;
         emit({ kind: "stream", parent: id, type: String(value?.type ?? "value"), data: snap(value?.data ?? value) });
@@ -115,7 +126,7 @@ async function instrument(out: string, file: string) {
     const fail = (error: unknown) => { emit({ kind: "return", id, error: snap(error) }); throw error; };
     let result: unknown;
     try { result = als.run({ id, streaming: false }, () => fn.apply(this, args)); } catch (error) { fail(error); }
-    if (isStream(result)) { emit({ kind: "return", id, result: "stream" }); return stream(result, id); }
+    if (isStream(result)) { emit({ kind: "return", id, result: "stream" }); return stream(result, id, true); }
     if (result instanceof Promise) return result.then(settle, fail);
     return settle(result);
   };
@@ -146,7 +157,11 @@ async function instrument(out: string, file: string) {
     return value;
   }
 
-  // agent-eval hands the example plain objects from factories; route its imports through a wrapping shim.
+  // agent-eval and agent-runtime hand the example plain objects from factories; route those imports through a wrapping shim.
+  const FACTORIES: Record<string, string[]> = {
+    "@tangle-network/agent-eval": ["defineAgentEval", "llmJudge"],
+    "@tangle-network/agent-runtime/kernel": ["providerAsSandboxClient"],
+  };
   const factories: Record<string, (...args: unknown[]) => unknown> = {};
   (globalThis as Record<string, unknown>).__tangleRecordFactory = (name: string, fn: (...args: unknown[]) => unknown) =>
     (factories[name] ??= (...args: unknown[]) => instrumentValue(fn(...args)));
@@ -154,9 +169,10 @@ async function instrument(out: string, file: string) {
   registerHooks({
     resolve(specifier, context, next) {
       const found = next(specifier, context);
-      if (context.parentURL !== fileUrl || !specifier.startsWith("@tangle-network/agent-eval")) return found;
+      const names = Object.entries(FACTORIES).find(([prefix]) => specifier.startsWith(prefix))?.[1];
+      if (context.parentURL !== fileUrl || !names) return found;
       const shim = `import * as m from ${JSON.stringify(found.url)}; export * from ${JSON.stringify(found.url)};\n` +
-        ["defineAgentEval", "llmJudge"].map((n) => `export const ${n} = globalThis.__tangleRecordFactory("${n}", m.${n});`).join("\n");
+        names.map((n) => `export const ${n} = globalThis.__tangleRecordFactory("${n}", m.${n});`).join("\n");
       return { url: `data:text/javascript,${encodeURIComponent(shim)}`, shortCircuit: true };
     },
   });
@@ -259,6 +275,7 @@ function collect(record: Event[]) {
   const traces = new Set<string>();
   let costUsd: number | undefined;
   let fleetSpend: number | undefined;
+  let streamCost: number | undefined;
   const visit = (value: unknown, key = ""): void => {
     if (!value || typeof value !== "object") {
       if (typeof value === "string" && /^(id|sandboxId|fleetId)$/.test(key)) ids.add(value);
@@ -273,11 +290,14 @@ function collect(record: Event[]) {
     const result = event.result as Record<string, unknown> | undefined;
     if (event.kind === "call" && result && typeof result.costUsd === "number" && /prompt|turn|run$|result/.test(String(event.name))) costUsd = (costUsd ?? 0) + result.costUsd;
     if (event.kind === "call" && result && typeof result.spentUsd === "number") fleetSpend = Math.max(fleetSpend ?? 0, result.spentUsd);
+    // A turn the example streams itself has no result object; its terminal `done` event carries the cost the run reports.
+    const turnCost = event.kind === "stream" && event.type === "done" ? (event.data as { totalCostUsd?: unknown } | undefined)?.totalCostUsd : undefined;
+    if (typeof turnCost === "number") streamCost = (streamCost ?? 0) + turnCost;
     const spend = (event.data as { spend?: { spentUsd?: number } } | undefined)?.spend?.spentUsd;
     if (typeof spend === "number") fleetSpend = Math.max(fleetSpend ?? 0, spend);
   }
   // null: no call in the run reported a cost (Router chat replies and some harness turns carry usage only).
-  const cost = fleetSpend ?? costUsd;
+  const cost = fleetSpend ?? costUsd ?? streamCost;
   // The run id is the first sandbox, fleet or platform run the file made.
   const id = [...ids].find((value) => /^(sandbox|fleet|wfrun|run)[-_]/.test(value)) ?? [...ids][0] ?? null;
   return { id, ids: [...ids], traceIds: [...traces], costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
@@ -336,7 +356,7 @@ async function record(key: string, target: string) {
   const events = compact(fold(source.split("\n"), raw));
   const { id, ids, traceIds, costUsd } = collect(events);
   const exitCode = phases.every((p) => p.exitCode === 0) ? 0 : phases.at(-1)!.exitCode;
-  const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval"].map((name) =>
+  const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval", "@tangle-network/agent-runtime", "@tangle-network/agent-provider-tangle"].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sha256(source) },
@@ -355,7 +375,12 @@ async function record(key: string, target: string) {
 function check() {
   const failures: string[] = [];
   const files = new Set(examples());
+  for (const [target, reason] of Object.entries(NO_RUN)) {
+    if (!files.has(target)) failures.push(`${target}: listed in NO_RUN (${reason}) but has no example file`);
+    else if (existsSync(join(RUNS, `${target}.json`))) failures.push(`${target}: has a record, so it is no longer exempt (${reason}); remove it from NO_RUN`);
+  }
   for (const target of files) {
+    if (target in NO_RUN) continue;
     const path = join(RUNS, `${target}.json`);
     if (!existsSync(path)) { failures.push(`${target}: no record at ${relative(ROOT, path)}`); continue; }
     const record = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
@@ -377,7 +402,8 @@ function check() {
   }
   for (const failure of failures) console.error(`check:runs: ${failure}`);
   if (failures.length) process.exit(1);
-  console.log(`check:runs: ${files.size} examples have fresh, matching, successful recorded runs`);
+  const exempt = Object.entries(NO_RUN).map(([target, reason]) => `${target} (${reason})`);
+  console.log(`check:runs: ${files.size - exempt.length} examples have fresh, matching, successful recorded runs; no run, by exemption: ${exempt.join(", ") || "none"}`);
 }
 
 const preload = process.env.TANGLE_RECORD_EVENTS;
@@ -395,7 +421,7 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
 } else {
   const key = readFileSync(0, "utf8").trim();
   if (!key) throw new Error("Pipe the production key on stdin.");
-  const targets = process.argv.slice(2).length ? process.argv.slice(2) : examples();
+  const targets = process.argv.slice(2).length ? process.argv.slice(2) : examples().filter((target) => !(target in NO_RUN));
   const concurrency = Number(process.env.RECORD_CONCURRENCY ?? 4);
   const queue = [...targets];
   const codes: Record<string, number> = {};
