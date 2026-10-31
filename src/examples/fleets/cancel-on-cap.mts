@@ -6,7 +6,7 @@ const client = new Sandbox({
 });
 
 // Six agents try six ideas. The Platform refuses any charge past $5;
-// this script stops every agent at $4, whichever process started them.
+// this script stops every agent at $1, whichever process started them.
 const ideas = ["a lookup table", "a streaming parser", "fewer allocations",
   "worker threads", "WebAssembly", "a hand written tokenizer"];
 const fleet = await client.fleets.create({
@@ -21,7 +21,7 @@ const fleet = await client.fleets.create({
   budgetUsd: 5,
 });
 
-const softCapUsd = 4;
+const softCapUsd = 1;
 async function checkSpend() {
   const { spentUsd } = await fleet.spend();
   if (spentUsd < softCapUsd) return;
