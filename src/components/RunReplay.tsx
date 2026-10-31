@@ -58,7 +58,7 @@ function frame(events: Ev[], t: number, ticks: number[]) {
   return { values, agents, spend, lines, rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }
 
-export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: () => void }) {
+export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClose: () => void; id: string }) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [t, setT] = useState(0);
@@ -90,11 +90,11 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   const state = useMemo(() => frame(events ?? [], now, ticks), [events, now, ticks]);
   useEffect(() => { if (follow.current && feed.current) feed.current.scrollTop = feed.current.scrollHeight; }, [state.rows.length]);
   // Each line lights while its call runs and stays marked once it returns.
-  const lit = [...state.lines].map(([line, s]) => `.qs-code code > span:nth-child(${line}){opacity:1${s === 'running' ? ';background:var(--accent-surface-strong)' : ''}}`).join('');
+  const lit = [...state.lines].map(([line, s]) => `[id="${id}"] ~ .qs-code code > span:nth-child(${line}){opacity:1${s === 'running' ? ';background:var(--accent-surface-strong)' : ''}}`).join('');
   const date = new Date(meta.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
   return (
-    <aside id="qs-replay" className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
+    <aside id={id} className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
       <style>{lit}</style>
       <p className="rr-head">Recorded {date} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
         <a href={meta.url}>JSON</a></p>
