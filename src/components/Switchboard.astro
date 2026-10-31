@@ -1,0 +1,207 @@
+---
+import { createHash } from 'node:crypto';
+import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
+import { Button } from '@tangle-network/ui/primitives';
+import code from '../examples/arena/fix-the-tests.mts?raw';
+import record from '../data/runs/arena/fix-the-tests.json';
+import url from '../data/runs/arena/fix-the-tests.json?url&no-inline';
+import './run-replay.css';
+import './switchboard.css';
+
+interface Props { harnesses: { harness: string; cmd: string; name: string; logo: string }[] }
+const { harnesses } = Astro.props;
+
+// Harness by cloud. The Tangle column is the arena file's recorded production run (scripts/record-examples.mts), one
+// lane per sandbox: every call names the sandbox it ran on, and each create call names the harness. The other clouds
+// are agent-runtime adapter files that run a command you supply; none has a recorded run, so their cells hold the file.
+// `pnpm check:runs` fails the gate for a stale or failed record, and a record of other bytes fails the build here.
+if (record.source.sha256 !== createHash('sha256').update(code).digest('hex')) {
+  throw new Error('src/data/runs/arena/fix-the-tests.json was recorded from another version of the file; re-record it');
+}
+type Ev = { atMs: number; kind: string; id?: number; parent?: number | null; name?: string; target?: string; args?: any[]; result?: any; durationMs?: number; type?: string; data?: any };
+type Row = { at: number; end: number; kind: string; name: string; detail: string; state: string };
+const events = record.events as Ev[];
+const calls = events.filter((e) => e.kind === 'call');
+const HOME = /\/home\/agent\/sandbox-demo\/?/g;
+const span = (e: Ev) => ({ at: e.atMs, end: e.atMs + (e.durationMs ?? 0) });
+const suite = (e: Ev): Row => {
+  const out = String(e.result?.stdout ?? '');
+  const pass = out.match(/# pass (\d+)/)?.[1], fail = Number(out.match(/# fail (\d+)/)?.[1] ?? 0);
+  return { ...span(e), kind: 'test', name: '$ npm test', detail: fail ? `${pass} pass, ${fail} fail` : `${pass} pass`, state: fail ? 'failed' : 'done' };
+};
+// A tool call's argument, as a person would read it: the command, the file or the first line of code.
+const input = (i: Record<string, unknown> = {}) => String((typeof i.command === 'string' ? i.command.replace(/^\/bin\/bash -lc ['"]?/, '') : undefined)
+  ?? i.file_path ?? i.filePath ?? i.path ?? i.pattern ?? i.code ?? '').replace(HOME, '').replace(/^cd \S* && /, '').split('\n').find((l) => l.trim()) ?? '';
+// The harness's own words, up to the first detail: a parenthesis, a log tail or a new line.
+const short = (error: unknown) => String(error ?? '').replace(/^POST \S+: /, '').split(/ \(| Log tail:|\n/)[0];
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+
+const lanes = calls.filter((e) => e.name === 'create').map((create) => {
+  const sandbox = String(create.result?.id);
+  const meta = harnesses.find((h) => h.harness === create.args?.[0]?.backend?.type)!;
+  const own = calls.filter((e) => e.target === sandbox);
+  const prompt = own.find((e) => e.name === 'prompt')!;
+  const tests = own.filter((e) => e.name === 'exec' && e.args?.[0] === 'npm test').map(suite);
+  const diff = String(own.find((e) => e.name === 'exec' && e.args?.[0] === 'git diff')?.result?.stdout ?? '').trimEnd();
+  const tools = new Map<string, Row>();
+  for (const e of events) {
+    const part = e.data?.part;
+    if (e.kind !== 'stream' || e.parent !== prompt.id || e.type !== 'message.part.updated' || part?.type !== 'tool') continue;
+    const row = tools.get(part.id) ?? { at: e.atMs, end: e.atMs, kind: 'tool', name: String(part.tool).toLowerCase().replace(/ cell$/, ''), detail: '', state: 'done' };
+    row.detail = input(part.state?.input) || row.detail;
+    if (['completed', 'error', 'failed'].includes(part.state?.status)) Object.assign(row, { end: e.atMs, state: part.state.status === 'completed' ? 'done' : 'failed' });
+    tools.set(part.id, row);
+  }
+  const turn = prompt.result ?? {};
+  const rows: Row[] = [tests[0], { ...span(prompt), kind: 'call', name: meta.cmd, detail: String(prompt.args?.[0]), state: turn.success ? 'done' : 'failed' }, ...tools.values(),
+    ...(turn.success ? [] : [{ at: span(prompt).end, end: span(prompt).end, kind: 'error', name: 'error', detail: short(turn.error), state: 'failed' }]), tests[1]];
+  const after = tests[1];
+  const tokens = turn.usage ? (turn.usage.inputTokens ?? 0) + (turn.usage.outputTokens ?? 0) : null;
+  const files = diff.split(/^diff --git /m).slice(1).map((chunk) => chunk.match(/^a\/(\S+)/)?.[1]);
+  return {
+    ...meta, sandbox, rows, diff, files, start: create.atMs, until: after.end, verdict: after.state === 'done' ? 'pass' : 'fail',
+    failing: Number(after.detail.match(/(\d+) fail/)?.[1] ?? 0),
+    usage: [tokens === null ? 'no usage reported' : `${Math.round(tokens / 1000)}k tokens`,
+      typeof turn.costUsd === 'number' && turn.costUsd > 0 ? `$${turn.costUsd.toFixed(4)}` : turn.costUsd === 0 ? 'reported $0' : 'no cost reported'].join(', '),
+  };
+});
+const model = String(calls.find((e) => e.name === 'prompt')?.args?.[1]?.model ?? '').replace(/^\w+\//, '');
+const date = new Date(record.run.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const install = 'npm install @tangle-network/sandbox && npx tsx fix-the-tests.mts';
+const runtime = import.meta.glob<string>('../examples/runtime/*.mts', { query: '?raw', import: 'default', eager: true });
+const RUNTIME = 'npm install @tangle-network/agent-runtime';
+const clouds = [
+  { id: 'e2b', label: 'E2B', file: 'any-cloud-e2b', install: `${RUNTIME} @tangle-network/agent-provider-e2b e2b`,
+    summary: 'The E2B adapter runs a command you supply, claude -p here, in an E2B sandbox. Reads E2B_API_KEY.' },
+  { id: 'daytona', label: 'Daytona', file: 'any-cloud-daytona', install: `${RUNTIME} @tangle-network/agent-provider-daytona @daytonaio/sdk`,
+    summary: 'The Daytona adapter runs a command you supply, claude -p here, in a Daytona sandbox. Reads DAYTONA_API_KEY.' },
+  { id: 'computesdk', label: 'ComputeSDK', file: 'any-cloud-computesdk', install: `${RUNTIME} @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b`,
+    summary: 'The ComputeSDK adapter runs a command you supply, claude -p here, on the cloud ComputeSDK is set to, E2B here. Reads E2B_API_KEY.' },
+].map((cloud) => ({ ...cloud, code: runtime[`../examples/runtime/${cloud.file}.mts`] }));
+const first = lanes.find((lane) => lane.verdict === 'pass')!;
+
+---
+
+<section class="board" aria-labelledby="board-title" data-board>
+  <div class="board-inner">
+    <header class="board-head">
+      <h2 id="board-title">Nine harnesses on Tangle. Three more clouds through agent-runtime.</h2>
+      <p>
+        Tangle runs the harness a profile names. The E2B, Daytona and ComputeSDK adapters run a command you give them.
+        Pick a cell to see its file and, where there is one, its recorded run.
+      </p>
+    </header>
+
+    <div class="board-grid">
+      <div class="board-matrix">
+        <table>
+          <thead><tr><th scope="col"><span class="sr-only">Harness</span></th><th scope="col">Tangle</th>{clouds.map((cloud) => <th scope="col">{cloud.label}</th>)}</tr></thead>
+          <tbody>
+            {lanes.map((lane) => (
+              <tr>
+                <th scope="row"><img src={lane.logo} alt="" width="20" height="20" loading="lazy" />{lane.name}</th>
+                <td><Button variant="ghost" size="sm" data-cell={`tangle-${lane.harness}`} data-verdict={lane.verdict} aria-pressed={lane === first ? 'true' : 'false'}
+                  aria-label={`${lane.name} on Tangle: ${lane.verdict === 'pass' ? 'tests pass' : 'tests still fail'}`}><i aria-hidden="true"></i>{lane.verdict === 'pass' ? clock(lane.until - lane.start) : 'fail'}</Button></td>
+                {clouds.map((cloud) => lane.harness === 'claude-code'
+                  ? <td><Button variant="ghost" size="sm" data-cell={cloud.id} data-verdict="file" aria-pressed="false" aria-label={`${lane.name} on ${cloud.label}: example file`}><i aria-hidden="true"></i>file</Button></td>
+                  : <td><span class="board-none" aria-label="No example">–</span></td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p class="board-key">Filled: a production run recorded {date}. Outline: an example file you run with your own account. A dash: no example yet.</p>
+      </div>
+
+      <div class="board-panes">
+        {lanes.map((lane) => (
+          <div class="board-pane" data-pane={`tangle-${lane.harness}`} hidden={lane !== first}>
+            <div class="arena-lane" data-lane data-start={lane.start} data-until={lane.until} data-verdict={lane.verdict} data-state={lane.verdict}>
+              <header>
+                <i aria-hidden="true"></i>
+                <img src={lane.logo} alt="" width="24" height="24" loading="lazy" />
+                <b>{lane.name} on Tangle</b>
+                <span class="arena-clock" data-clock>{clock(lane.until - lane.start)}</span>
+              </header>
+              <ol class="rr-feed" aria-label={`${lane.name} activity`}>
+                {lane.rows.map((row) => <li data-at={row.at} data-end={row.end} data-final={row.state} data-kind={row.kind} data-state={row.state}><b>{row.name}</b><span>{row.detail}</span></li>)}
+              </ol>
+              <footer>
+                <span class="arena-wait">Running</span>
+                <strong>{lane.verdict === 'pass' ? 'Tests pass' : `${lane.failing} tests still fail`}</strong>
+                <span class="arena-usage">{lane.usage}</span>
+              </footer>
+            </div>
+            {lane.diff && <CodeBlock code={lane.diff} language="diff" label="" className="board-code rounded-none border-0" />}
+            <p class="board-note">One lane of <code>arena/fix-the-tests.mts</code>: nine harnesses, one prompt, the same model ({model}), run at once on production {date}. <a href={url}>Run record</a></p>
+            <div class="board-run">
+              <code><span aria-hidden="true">$ </span>{install}</code>
+              <div class="qs-copy"><CopyButton client:visible text={install} aria-label="Copy command" /></div>
+            </div>
+          </div>
+        ))}
+        {clouds.map((cloud) => (
+          <div class="board-pane" data-pane={cloud.id} hidden>
+            <header class="board-file"><i aria-hidden="true"></i><b>Claude Code on {cloud.label}</b><span>runtime/{cloud.file}.mts</span></header>
+            <p class="board-note">{cloud.summary}</p>
+            <CodeBlock code={cloud.code.trimEnd()} language="ts" label="" showLineNumbers className="board-code rounded-none border-0" />
+            <div class="board-run">
+              <code><span aria-hidden="true">$ </span>{cloud.install} && npx tsx {cloud.file}.mts</code>
+              <div class="qs-copy"><CopyButton client:visible text={`${cloud.install} && npx tsx ${cloud.file}.mts`} aria-label="Copy command" /></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  // A Tangle cell replays its lane from the start; a file cell shows the file.
+  const root = document.querySelector<HTMLElement>('[data-board]');
+  if (root) {
+    const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let raf = 0;
+    const replay = (lane: HTMLElement) => {
+      cancelAnimationFrame(raf);
+      const start = Number(lane.dataset.start), until = Number(lane.dataset.until);
+      const rows = [...lane.querySelectorAll<HTMLElement>('[data-at]')];
+      const feed = lane.querySelector<HTMLElement>('.rr-feed')!;
+      const draw = (t: number) => {
+        lane.dataset.state = t >= until ? lane.dataset.verdict : 'running';
+        lane.querySelector('[data-clock]')!.textContent = clock(Math.max(0, Math.min(t, until) - start));
+        for (const row of rows) { row.hidden = Number(row.dataset.at) > t; row.dataset.state = t < Number(row.dataset.end) ? 'running' : row.dataset.final!; }
+        feed.scrollTop = feed.scrollHeight;
+      };
+      if (reduced) return draw(until);
+      let t = start; let last = performance.now();
+      const frame = (now: number) => { t = Math.min(until, t + (now - last) * 4); last = now; draw(t); if (t < until) raf = requestAnimationFrame(frame); };
+      raf = requestAnimationFrame(frame);
+    };
+    const cells = [...root.querySelectorAll<HTMLButtonElement>('[data-cell]')];
+    const pick = (cell: HTMLButtonElement) => {
+      cells.forEach((other) => other.setAttribute('aria-pressed', String(other === cell)));
+      root.querySelectorAll<HTMLElement>('[data-pane]').forEach((pane) => { pane.hidden = pane.dataset.pane !== cell.dataset.cell; });
+      const lane = root.querySelector<HTMLElement>(`[data-pane="${cell.dataset.cell}"] [data-lane]`);
+      if (lane) replay(lane);
+    };
+    cells.forEach((cell) => cell.addEventListener('click', () => pick(cell)));
+    if (!reduced) {
+      const seen = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { seen.disconnect(); pick(root.querySelector<HTMLButtonElement>('[aria-pressed="true"]')!); } }, { threshold: 0.35 });
+      seen.observe(root.querySelector('.board-grid')!);
+    }
+  }
+</script>
+
+<style>
+  .board { padding: 96px 0; background: var(--depth-1); color: var(--text-primary); border-top: 1px solid var(--color-border); }
+  .board-inner { width: min(88rem, 94vw); margin: 0 auto; }
+  .board-head { max-width: 60rem; margin-bottom: 32px; }
+  .board h2 { margin: 0; font-family: var(--font-display); font-size: var(--font-size-hero); font-weight: 600; line-height: 1.05; letter-spacing: -0.03em; text-wrap: balance; }
+  .board-head p { max-width: 48rem; margin: 16px 0 0; color: var(--text-secondary); font-size: var(--font-size-xl); line-height: 1.75rem; text-wrap: pretty; }
+  @media (max-width: 680px) {
+    .board { padding: 64px 0; }
+    .board-inner { width: calc(100vw - 32px); }
+    .board-head p { font-size: var(--font-size-lg); line-height: 1.5rem; }
+  }
+</style>
