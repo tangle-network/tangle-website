@@ -121,7 +121,9 @@ async function instrument(out: string, file: string) {
       return store && !store.streaming && isStream(inner) ? stream(inner, store.id) : inner;
     }
     const id = nextId++;
-    emit({ kind: "call", id, parent: store?.id ?? null, line: where.line, on: owner, name, args: snap(args), ...(where.direct ? {} : { delegated: true }) });
+    // The sandbox a method ran on, so a file that drives several at once (arena/fix-the-tests) replays one lane per sandbox.
+    const target = (() => { try { const own = (this as { id?: unknown } | undefined)?.id; return typeof own === "string" ? own : undefined; } catch { return undefined; } })();
+    emit({ kind: "call", id, parent: store?.id ?? null, line: where.line, on: owner, name, args: snap(args), ...(target ? { target } : {}), ...(where.direct ? {} : { delegated: true }) });
     const settle = (value: unknown) => { emit({ kind: "return", id, result: snap(value) }); return instrumentValue(value); };
     const fail = (error: unknown) => { emit({ kind: "return", id, error: snap(error) }); throw error; };
     let result: unknown;
@@ -225,7 +227,7 @@ function fold(lines: string[], raw: Event[]): Event[] {
       const names = [...text.matchAll(/(\w+)\(/g)].map((m) => m[1]);
       const assign = ASSIGN.exec(text)?.[1];
       const call: Event = { atMs: event.atMs, kind: "call", id: event.id, parent: event.parent, line: event.line,
-        name: event.name, label: LABEL(text, String(event.name)), args: event.args, ...(event.delegated ? { delegated: true } : {}) };
+        name: event.name, label: LABEL(text, String(event.name)), args: event.args, ...(event.target ? { target: event.target } : {}), ...(event.delegated ? { delegated: true } : {}) };
       // The outermost recorded call on an assignment line (rightmost in a chain) produces the assigned value.
       if (assign && names.lastIndexOf(String(event.name)) === Math.max(...names.map((n, i) => (sdkCalls.has(n) ? i : -1)))) call.assign = assign;
       calls.set(Number(event.id), call);
