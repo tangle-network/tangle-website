@@ -1,33 +1,45 @@
 ---
 import { harnessTypeSchema } from '@tangle-network/agent-interface/harness';
 import { createHash } from 'node:crypto';
-import code from '../examples/runtime/any-cloud.mts?raw';
-import record from '../data/runs/runtime/any-cloud.json';
-import QuickstartCode from './QuickstartCode';
+import QuickstartCode, { type Subject } from './QuickstartCode';
 
 // A profile's `harness` is typed against this registry; cli-base runs no agent.
 const lead = ['claude-code', 'codex', 'opencode', 'pi'];
 const registry: string[] = harnessTypeSchema.options.filter((name) => name !== 'cli-base');
 const harnesses = [...lead.filter((name) => registry.includes(name)), ...registry.filter((name) => !lead.includes(name))];
 
-// The file in the editor and its recorded production run (scripts/record-examples.mts), the only live run on this page.
-// A record made from other bytes is dropped, as in the examples editor; `pnpm check:runs` fails the gate for it.
-const [url] = Object.values(import.meta.glob<string>('../data/runs/runtime/any-cloud.json', { query: '?url&no-inline', import: 'default', eager: true }));
-const sha = record.source.sha256;
-const run = sha === createHash('sha256').update(code).digest('hex')
-  ? { url, recordedAt: record.run.recordedAt, runId: record.run.id, sha, sdk: record.run.sdk['@tangle-network/sandbox'], costUsd: record.run.costUsd }
-  : undefined;
-const subjects = [{
-  id: 'runtime', label: 'Runtime', install: 'npm install @tangle-network/sandbox @tangle-network/agent-runtime @tangle-network/agent-provider-tangle',
-  ideas: [{ id: 'any-cloud', title: 'Run a harness on Tangle', summary: '', code, run }],
-}];
-// Each adapter is published to npm. A cloud counts as run live only with a recorded run.
-const clouds: [string, string, typeof run][] = [
-  ['Tangle', 'agent-provider-tangle', run],
-  ['E2B', 'agent-provider-e2b', undefined],
-  ['Daytona', 'agent-provider-daytona', undefined],
-  ['ComputeSDK', 'agent-provider-computesdk', undefined],
+// One file per cloud from src/examples/runtime, byte for byte, with its recorded production run (scripts/record-examples.mts)
+// when it has one. A cloud counts as run live only with that record; `pnpm check:runs` fails the gate for a stale or
+// missing one unless the file is on its exemption list, and the other three clouds are, so they read "No live run yet".
+const files = import.meta.glob<string>('../examples/runtime/*.mts', { query: '?raw', import: 'default', eager: true });
+const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; sdk: Record<string, string> } }>(
+  '../data/runs/runtime/*.json', { import: 'default', eager: true });
+const recordUrls = import.meta.glob<string>('../data/runs/runtime/*.json', { query: '?url&no-inline', import: 'default', eager: true });
+const AGENT = 'npm install @tangle-network/agent-runtime';
+// Each adapter is published to npm; `summary` says what the file does.
+const table = [
+  { label: 'Tangle', pkg: 'agent-provider-tangle', file: 'any-cloud', summary: 'Runs the harness the profile names, claude-code here, on Tangle. Reads TANGLE_API_KEY.',
+    install: 'npm install @tangle-network/sandbox @tangle-network/agent-runtime @tangle-network/agent-provider-tangle' },
+  { label: 'E2B', pkg: 'agent-provider-e2b', file: 'any-cloud-e2b', summary: 'Runs a command you supply, claude -p here, in an E2B sandbox. Reads E2B_API_KEY.',
+    install: `${AGENT} @tangle-network/agent-provider-e2b e2b` },
+  { label: 'Daytona', pkg: 'agent-provider-daytona', file: 'any-cloud-daytona', summary: 'Runs a command you supply, claude -p here, in a Daytona sandbox. Reads DAYTONA_API_KEY.',
+    install: `${AGENT} @tangle-network/agent-provider-daytona @daytonaio/sdk` },
+  { label: 'ComputeSDK', pkg: 'agent-provider-computesdk', file: 'any-cloud-computesdk', summary: 'Runs a command you supply, claude -p here, on the cloud ComputeSDK is set to, E2B here. Reads E2B_API_KEY.',
+    install: `${AGENT} @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b` },
 ];
+const clouds = table.map((cloud) => {
+  const code = files[`../examples/runtime/${cloud.file}.mts`];
+  if (!code) throw new Error(`src/examples/runtime/${cloud.file}.mts is missing`);
+  const key = `../data/runs/runtime/${cloud.file}.json`;
+  const record = records[key];
+  const run = record?.source.sha256 === createHash('sha256').update(code).digest('hex')
+    ? { url: recordUrls[key], recordedAt: record.run.recordedAt, runId: record.run.id, sha: record.source.sha256, sdk: record.run.sdk['@tangle-network/sandbox'], costUsd: record.run.costUsd }
+    : undefined;
+  return { ...cloud, code, run };
+});
+const subjects: Subject[] = clouds.map(({ label, file, summary, install, code, run }) => ({
+  id: label.toLowerCase(), label, install, dir: 'runtime', ideas: [{ id: file, title: label, summary, code, run }],
+}));
 const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 ---
 
@@ -43,20 +55,20 @@ const day = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 
       <dt>Clouds</dt>
       <dd>
         <ul class="clouds">
-          {clouds.map(([name, pkg, live]) => (
+          {clouds.map(({ label, pkg, run }) => (
             <li>
-              <b>{name}</b>
+              <b>{label}</b>
               <a href={`https://www.npmjs.com/package/@tangle-network/${pkg}`}><code>@tangle-network/{pkg}</code></a>
-              {live ? <a class="live" data-live href={live.url}>Run recorded {day(live.recordedAt)}</a> : <span class="live">No live run yet</span>}
+              {run ? <a class="live" data-live href={run.url}>Run recorded {day(run.recordedAt)}</a> : <span class="live">No live run yet</span>}
             </li>
           ))}
         </ul>
         <p>Tangle runs the harness a profile names from its own catalog. The other adapters run the command you give them.</p>
       </dd>
-      <dt>On Tangle</dt>
+      <dt>Examples</dt>
       <dd>
         <QuickstartCode client:visible subjects={subjects} />
-        <p>Reads <code>TANGLE_API_KEY</code>. <a href="https://id.tangle.tools">Create a key</a>.</p>
+        <p><a href="https://id.tangle.tools">Create a Tangle key</a>. The other files use your own account with that cloud.</p>
       </dd>
     </dl>
   </div>

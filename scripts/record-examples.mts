@@ -3,6 +3,9 @@
 //   record: dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
 //   check:  node scripts/record-examples.mts --check   (pnpm check:runs)
 //
+// Every example needs a fresh, matching, successful run except the files NO_RUN lists with their reason; check mode
+// prints that list, and a listed file with a record fails the gate so the list only shrinks.
+//
 // The key arrives on stdin and reaches each example only as TANGLE_API_KEY; it is never printed or written.
 // Each example runs byte for byte from a copy beside scripts/examples-typecheck/node_modules, under this same
 // file as an --import preload that wraps the SDK's methods, fetch and stdout. Every call carries the example
@@ -21,6 +24,12 @@ const EXAMPLES = join(ROOT, "src/examples");
 const RUNS = join(ROOT, "src/data/runs");
 const HARNESS = join(ROOT, "scripts/examples-typecheck");
 const MAX_AGE_DAYS = 30;
+// Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
+const NO_RUN: Record<string, string> = {
+  "runtime/any-cloud-e2b": "no credential in vault",
+  "runtime/any-cloud-daytona": "no credential in vault",
+  "runtime/any-cloud-computesdk": "no credential in vault",
+};
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
@@ -366,7 +375,12 @@ async function record(key: string, target: string) {
 function check() {
   const failures: string[] = [];
   const files = new Set(examples());
+  for (const [target, reason] of Object.entries(NO_RUN)) {
+    if (!files.has(target)) failures.push(`${target}: listed in NO_RUN (${reason}) but has no example file`);
+    else if (existsSync(join(RUNS, `${target}.json`))) failures.push(`${target}: has a record, so it is no longer exempt (${reason}); remove it from NO_RUN`);
+  }
   for (const target of files) {
+    if (target in NO_RUN) continue;
     const path = join(RUNS, `${target}.json`);
     if (!existsSync(path)) { failures.push(`${target}: no record at ${relative(ROOT, path)}`); continue; }
     const record = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
@@ -388,7 +402,8 @@ function check() {
   }
   for (const failure of failures) console.error(`check:runs: ${failure}`);
   if (failures.length) process.exit(1);
-  console.log(`check:runs: ${files.size} examples have fresh, matching, successful recorded runs`);
+  const exempt = Object.entries(NO_RUN).map(([target, reason]) => `${target} (${reason})`);
+  console.log(`check:runs: ${files.size - exempt.length} examples have fresh, matching, successful recorded runs; no run, by exemption: ${exempt.join(", ") || "none"}`);
 }
 
 const preload = process.env.TANGLE_RECORD_EVENTS;
@@ -406,7 +421,7 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
 } else {
   const key = readFileSync(0, "utf8").trim();
   if (!key) throw new Error("Pipe the production key on stdin.");
-  const targets = process.argv.slice(2).length ? process.argv.slice(2) : examples();
+  const targets = process.argv.slice(2).length ? process.argv.slice(2) : examples().filter((target) => !(target in NO_RUN));
   const concurrency = Number(process.env.RECORD_CONCURRENCY ?? 4);
   const queue = [...targets];
   const codes: Record<string, number> = {};
