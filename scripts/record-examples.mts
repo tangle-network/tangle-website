@@ -196,7 +196,7 @@ async function instrument(out: string, file: string) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Record: run each example and fold its events into src/data/runs/<subject>/<idea>.json.
-const ASSIGN = /^\s*(?:const|let)\s+(\w+|\{[^}]*\})\s*=\s*\(?await\b/;
+const ASSIGN = /^\s*(?:(?:const|let)\s+)?(\w+|\{[^}]*\})\s*=\s*\(?await\b/;
 const LABEL = (line: string, name: string) => line.match(new RegExp(`([\\w.]+(?:\\([\\w]*\\))?)\\.${name}\\(`))?.[1]?.concat(`.${name}`) ?? name;
 
 function fold(lines: string[], raw: Event[]): Event[] {
@@ -278,7 +278,9 @@ function collect(record: Event[]) {
   }
   // null: no call in the run reported a cost (Router chat replies and some harness turns carry usage only).
   const cost = fleetSpend ?? costUsd;
-  return { ids: [...ids], traceIds: [...traces], costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
+  // The run id is the first sandbox, fleet or platform run the file made.
+  const id = [...ids].find((value) => /^(sandbox|fleet|wfrun|run)[-_]/.test(value)) ?? [...ids][0] ?? null;
+  return { id, ids: [...ids], traceIds: [...traces], costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
 }
 
 // An agent can print its sandbox's environment: redact credential-shaped assignments and proxy tokens, then refuse
@@ -286,7 +288,8 @@ function collect(record: Event[]) {
 function save(path: string, record: RunRecord, key?: string) {
   const json = JSON.stringify(record, null, 1)
     .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s"\\]+)/g, "$1=[redacted]")
-    .replace(/proxy-[a-z-]+-token\.[\w-]+/g, "[redacted]");
+    .replace(/proxy-[a-z-]+-token\.[\w-]+/g, "[redacted]")
+    .replace(/"keyId": "[^"]+"/g, '"keyId": "[redacted]"');
   if ((key && json.includes(key)) || /sk-tan-[A-Za-z0-9]{8,}|eyJ[A-Za-z0-9_-]{20,}\./.test(json)) throw new Error(`${path}: the record holds a credential; not written.`);
   writeFileSync(path, json + "\n");
 }
@@ -331,13 +334,13 @@ async function record(key: string, target: string) {
     args = follow[1].trim().split(/\s+/);
   }
   const events = compact(fold(source.split("\n"), raw));
-  const { ids, traceIds, costUsd } = collect(events);
+  const { id, ids, traceIds, costUsd } = collect(events);
   const exitCode = phases.every((p) => p.exitCode === 0) ? 0 : phases.at(-1)!.exitCode;
   const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval"].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sha256(source) },
-    run: { id: ids[0] ?? null, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
+    run: { id, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
       sdk: versions, node: process.version, host: hostname(), baseUrl: "https://sandbox.tangle.tools" },
     events,
   };
@@ -386,7 +389,8 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
   for (const target of examples().filter((t) => existsSync(join(RUNS, `${t}.json`)))) {
     const path = join(RUNS, `${target}.json`);
     const kept = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
-    save(path, { ...kept, events: compact(kept.events) });
+    const events = compact(kept.events);
+    save(path, { ...kept, run: { ...kept.run, ...collect(events) }, events });
   }
 } else {
   const key = readFileSync(0, "utf8").trim();

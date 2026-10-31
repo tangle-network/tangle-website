@@ -9,11 +9,11 @@ type Row = { key: string; atMs: number; kind: string; text: string; detail?: str
 
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const usd = (n: unknown) => (typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '');
-const FIELDS = ['id', 'exitCode', 'state', 'outcome', 'costUsd', 'spentUsd', 'interrupted', 'traceId', 'status'];
+const FIELDS = ['id', 'fleetId', 'exitCode', 'state', 'outcome', 'composite', 'costUsd', 'spentUsd', 'interrupted', 'traceId', 'status'];
 const brief = (v: Ev['result'], quote = true): string => v === null || typeof v !== 'object'
   ? (typeof v === 'string' && quote ? JSON.stringify(v.length > 56 ? `${v.slice(0, 56)}…` : v) : String(v))
   : Array.isArray(v) ? `${v.length} × ${[...new Set(v.map((x) => x?.status ?? typeof x))].join(', ')}`
-  : FIELDS.filter((k) => v[k] !== undefined).slice(0, 3).map((k) => `${k} ${k.endsWith('Usd') ? usd(v[k]) : brief(v[k], false)}`).join('  ') || '{…}';
+  : FIELDS.filter((k) => v[k] !== undefined).slice(0, 3).map((k) => `${k} ${k.endsWith('Usd') ? usd(v[k]) : brief(v[k], false)}`).join('  ') || `{ ${Object.keys(v).slice(0, 3).join(', ')} … }`;
 const summary = (input: Record<string, unknown> = {}) => String(input.description ?? input.command ?? input.file_path ?? input.query ?? input.url ?? '');
 const done = (e: Ev, t: number) => e.atMs + (e.durationMs ?? 0) <= t;
 
