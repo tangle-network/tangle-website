@@ -79,7 +79,7 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
     if (!playing || !events) return;
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
       const dt = (now - last) * speed; last = now; // React may run the updater after this frame, when `last` has moved on
-      setT((value) => { const i = ticks.findLastIndex((x) => x <= value), gap = ticks[i + 1] - ticks[i]; return Math.min(ticks[i + 1] ?? total, value + dt * (gap > IDLE_MS ? gap / JUMP_MS : 1)); });
+      setT((value) => { const i = ticks.findLastIndex((x) => x <= value), gap = ticks[i + 1] - ticks[i], skip = gap > IDLE_MS; return Math.min(skip ? ticks[i + 1] : total, value + dt * (skip ? gap / JUMP_MS : 1)); });
       raf = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(raf);
