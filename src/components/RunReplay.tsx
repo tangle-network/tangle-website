@@ -66,7 +66,7 @@ export default function RunReplay({ meta, onClose }: { meta: RunMeta; onClose: (
   const [speed, setSpeed] = useState(1);
   const feed = useRef<HTMLOListElement>(null);
   const follow = useRef(true);
-  const ticks = useMemo(() => [...new Set([0, ...(events ?? []).flatMap((e) => [e.atMs, e.atMs + (e.durationMs ?? 0)])])].sort((a, b) => a - b), [events]), total = ticks[ticks.length - 1];
+  const ticks = useMemo(() => { const from = (e: Ev) => (events ?? []).filter((x) => x.kind === 'call' && x.line === e.line), poll = (e: Ev) => e.kind === 'call' && !!e.line && from(e).length > 4 && e !== from(e)[0] && e !== from(e).at(-1); return [...new Set([0, ...(events ?? []).filter((e) => !poll(e)).flatMap((e) => [e.atMs, e.atMs + (e.durationMs ?? 0)])])].sort((a, b) => a - b); }, [events]), total = ticks[ticks.length - 1]; // a call repeated from one source line is a poll: only its first and last count as activity
 
   useEffect(() => {
     fetch(meta.url).then((r) => r.json()).then((record) => {
