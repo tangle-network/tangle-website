@@ -7,7 +7,7 @@ const client = new Sandbox({
 
 // One task, one model, one repository, one sandbox per harness, all at once.
 const task = "`npm test` fails. Find the cause and fix it.";
-const harnesses = ["claude-code", "codex", "opencode", "pi", "kimi-code", "hermes", "openclaw", "nanoclaw", "prime"] as const;
+const harnesses = ["claude-code", "codex", "opencode", "pi", "kimi-code", "hermes", "openclaw", "prime"] as const;
 
 async function attempt(harness: (typeof harnesses)[number]) {
   const box = await client.create({
