@@ -1,0 +1,204 @@
+---
+import { createHash } from 'node:crypto';
+import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
+import { Button } from '@tangle-network/ui/primitives';
+import './fleet.css';
+
+// Three fleet example files and their recorded production runs (scripts/record-examples.mts), drawn as the
+// machines each fleet held: the page renders each finished run, and the script below replays the chosen one.
+// A record of other bytes than the file shows nothing; `pnpm check:runs` fails the gate for it.
+const files = import.meta.glob<string>('../examples/fleets/*.mts', { query: '?raw', import: 'default', eager: true });
+const records = import.meta.glob<any>('../data/runs/fleets/*.json', { import: 'default', eager: true });
+const urls = import.meta.glob<string>('../data/runs/fleets/*.json', { query: '?url&no-inline', import: 'default', eager: true });
+const SHOWN: [string, string, string, number][] = [
+  ['cancel-on-cap', 'Stop at $1', 'Six Claude Code agents try six ways to speed up one parser. The script cancels the fleet when spend reaches $1.', 30],
+  ['fan-out', 'Fan out', 'Five Codex reviewers, one per package, each in its own sandbox.', 4],
+  ['under-a-budget', 'Share a machine', 'Four OpenCode agents on four tasks in one sandbox, under a $1 cap.', 4],
+];
+type Ev = { atMs: number; kind: string; name?: string; args?: any[]; result?: any; durationMs?: number; type?: string; data?: any };
+const money = (n: number) => `$${n.toFixed(2)}`;
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+const fleets = SHOWN.map(([id, label, summary, speed]) => {
+  const code = files[`../examples/fleets/${id}.mts`], record = records[`../data/runs/fleets/${id}.json`];
+  if (record?.source.sha256 !== createHash('sha256').update(code).digest('hex')) return null;
+  const events = record.events as Ev[];
+  const create = events.find((e) => e.kind === 'call' && e.name === 'create')!;
+  const spec = create.args![0];
+  const end = (e: Ev) => e.atMs + (e.durationMs ?? 0);
+  const done = events.find((e) => e.type === 'fleet.finished')!;
+  // Per-agent cost as the fleet metered it: runAll's results, when the file collects them that way.
+  const results: any[] = events.find((e) => e.kind === 'call' && e.name === 'runAll')?.result ?? [];
+  const agents = events.filter((e) => e.type === 'agent.started').map((e) => {
+    const id = e.data.agentId, finished = events.find((f) => f.type === 'agent.finished' && f.data.result.agentId === id)!;
+    const index = spec.agents.findIndex((a: any, i: number) => (a.agentId ?? `agent-${i}`) === id);
+    return { id, machine: e.data.machineId, harness: e.data.harness, task: spec.agents[index].task, start: e.atMs, until: finished.atMs,
+      status: finished.data.result.status, cost: results.find((r) => r.agentId === id)?.costUsd as number | undefined,
+      response: String(finished.data.result.result?.response ?? '').trim() };
+  });
+  const machines = [...new Set(agents.map((a) => a.machine))].map((machine) => agents.filter((a) => a.machine === machine));
+  // The spend line: every fleet.spend the file read, then what the fleet reported when it finished.
+  const spend = [{ at: 0, spent: 0, inflight: 0 },
+    ...events.filter((e) => e.kind === 'call' && e.name === 'spend' && e.result).map((e) => ({ at: end(e), spent: e.result.spentUsd, inflight: e.result.inFlightUsd ?? 0 })),
+    { at: done.atMs, spent: record.run.costUsd, inflight: 0 }];
+  const cancel = events.find((e) => e.kind === 'call' && e.name === 'cancel');
+  const cap = spec.budgetUsd as number;
+  return { id, label, summary, speed, code, cap, agents, machines, spend, total: done.atMs + 500, url: urls[`../data/runs/fleets/${id}.json`],
+    cancel: cancel ? { at: cancel.atMs, spent: spend.filter((s) => s.at <= cancel.atMs).at(-1)!.spent } : null,
+    soft: Number(code.match(/softCapUsd = ([\d.]+)/)?.[1] ?? NaN), install: `npm install @tangle-network/sandbox && npx tsx ${id}.mts`,
+    date: new Date(record.run.recordedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) };
+}).filter((fleet) => fleet !== null);
+---
+
+<section class="fleet" aria-labelledby="fleet-title" data-fleets>
+  <div class="fleet-inner">
+    <header class="fleet-head">
+      <h2 id="fleet-title">Fleets run under one budget.</h2>
+      <p>A fleet is many agents with one spending cap. The Platform refuses any charge past the cap, and your code can stop the fleet sooner.</p>
+    </header>
+
+    <div class="fleet-bar">
+      <div class="fleet-tabs" role="group" aria-label="Recorded fleets">
+        {fleets.map((fleet, i) => <Button variant="ghost" data-pick={fleet.id} aria-pressed={i === 0 ? 'true' : 'false'}>{fleet.label}</Button>)}
+      </div>
+      <div class="fleet-transport">
+        <Button variant="ghost" size="icon-sm" data-play aria-label="Replay the fleet">▶</Button>
+        <div class="fleet-track" aria-hidden="true"><i data-progress></i></div>
+        <span data-time></span>
+        <span data-speed-label></span>
+      </div>
+    </div>
+
+    {fleets.map((fleet, i) => (
+      <div class="fleet-run" data-fleet={fleet.id} data-total={fleet.total} data-speed={fleet.speed} data-cap={fleet.cap} hidden={i > 0}>
+        <p class="fleet-summary">{fleet.summary}</p>
+        <div class="fleet-floor">
+          <ol class="fleet-machines">
+            {fleet.machines.map((machine) => (
+              <li class="fleet-machine">
+                {machine.map((agent) => (
+                  <div class="fleet-agent" data-agent={agent.id} data-start={agent.start} data-until={agent.until} data-final={agent.status} data-state={agent.status}>
+                    <header><i aria-hidden="true"></i><b>{agent.id}</b><span data-clock>{clock(agent.until - agent.start)}</span></header>
+                    <p>{agent.task}</p>
+                    <footer>
+                      <span class="fleet-status">{agent.status}{agent.cost !== undefined && `, ${money(agent.cost)}`}</span>
+                      <span class="fleet-wait">running</span>
+                      {agent.response && <Button size="sm" variant="outline" data-open={`${fleet.id}-${agent.id}`} aria-expanded="false" aria-controls={`fleet-${fleet.id}-${agent.id}`}>Answer</Button>}
+                    </footer>
+                  </div>
+                ))}
+              </li>
+            ))}
+          </ol>
+          <div class="fleet-budget">
+            <div class="fleet-meter" aria-hidden="true">
+              <i data-inflight></i><i data-spent></i>
+              {fleet.soft < fleet.cap && <b style={`left: ${(fleet.soft / fleet.cap) * 100}%`}></b>}
+            </div>
+            <p>
+              <strong data-spent-label>{money(fleet.spend.at(-1)!.spent)}</strong> spent of a {money(fleet.cap)} cap.
+              {fleet.soft < fleet.cap && <span> The script stops the fleet at {money(fleet.soft)}.</span>}
+              {fleet.cancel && <span data-cancel data-at={fleet.cancel.at}> It cancelled at {money(fleet.cancel.spent)}.</span>}
+            </p>
+            <script type="application/json" data-spend set:html={JSON.stringify(fleet.spend.map((s) => [s.at, s.spent, s.inflight]))} />
+          </div>
+        </div>
+        {fleet.agents.filter((agent) => agent.response).map((agent) => (
+          <section class="fleet-panel" id={`fleet-${fleet.id}-${agent.id}`} data-panel={`${fleet.id}-${agent.id}`} aria-label={`${agent.id}'s answer`} hidden>
+            <header><b>{agent.id}</b><span>{agent.status}{agent.cost !== undefined && `, ${money(agent.cost)}`}</span></header>
+            <pre>{agent.response}</pre>
+          </section>
+        ))}
+        <section class="fleet-panel" id={`fleet-${fleet.id}-file`} data-panel={`${fleet.id}-file`} aria-label={`${fleet.id}.mts source`} hidden>
+          <CodeBlock code={fleet.code.trimEnd()} language="ts" label="" showLineNumbers className="fleet-code rounded-none border-0" />
+        </section>
+        <div class="fleet-foot">
+          <Button size="sm" variant="outline" data-open={`${fleet.id}-file`} aria-expanded="false" aria-controls={`fleet-${fleet.id}-file`}>fleets/{fleet.id}.mts</Button>
+          <code><span aria-hidden="true">$ </span>{fleet.install}</code>
+          <div class="qs-copy"><CopyButton client:visible text={fleet.install} aria-label="Copy command" /></div>
+        </div>
+        <p class="fleet-record">Recorded on production {fleet.date}. <a href={fleet.url}>Run record</a></p>
+      </div>
+    ))}
+
+  </div>
+</section>
+
+<script>
+  // Replays the chosen fleet: each agent lights from its start to its end, then takes its final state; the meter
+  // follows every spend the file read. One clock, sped up so a fleet plays in seconds.
+  const root = document.querySelector<HTMLElement>('[data-fleets]');
+  if (root) {
+    const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+    const play = root.querySelector<HTMLButtonElement>('[data-play]')!;
+    const time = root.querySelector<HTMLElement>('[data-time]')!;
+    const progress = root.querySelector<HTMLElement>('[data-progress]')!;
+    const speedLabel = root.querySelector<HTMLElement>('[data-speed-label]')!;
+    let run = root.querySelector<HTMLElement>('[data-fleet]:not([hidden])')!;
+    let t = 0, total = 0, speed = 1, running = false, last = 0;
+    const draw = () => {
+      const cap = Number(run.dataset.cap);
+      for (const agent of run.querySelectorAll<HTMLElement>('[data-agent]')) {
+        const start = Number(agent.dataset.start), until = Number(agent.dataset.until);
+        agent.dataset.state = t >= until ? agent.dataset.final! : t < start ? 'queued' : 'running';
+        agent.querySelector('[data-clock]')!.textContent = clock(Math.max(0, Math.min(t, until) - start));
+      }
+      const points: [number, number, number][] = JSON.parse(run.querySelector('[data-spend]')!.textContent!);
+      const [, spent, inflight] = points.filter(([at]) => at <= t).at(-1)!;
+      run.querySelector<HTMLElement>('[data-spent]')!.style.width = `${(spent / cap) * 100}%`;
+      run.querySelector<HTMLElement>('[data-inflight]')!.style.width = `${Math.min(1, (spent + inflight) / cap) * 100}%`;
+      run.querySelector('[data-spent-label]')!.textContent = `$${spent.toFixed(2)}`;
+      const cancel = run.querySelector<HTMLElement>('[data-cancel]');
+      if (cancel) cancel.hidden = t < Number(cancel.dataset.at);
+      time.textContent = `${clock(t)} / ${clock(total)}`;
+      progress.style.transform = `scaleX(${t / total})`;
+    };
+    const label = () => { play.textContent = running ? '❚❚' : '▶'; play.setAttribute('aria-label', running ? 'Pause' : 'Replay the fleet'); };
+    const frame = (now: number) => {
+      if (!running) return;
+      t = Math.min(total, t + (now - last) * speed); last = now;
+      if (t >= total) running = false;
+      draw(); label();
+      if (running) requestAnimationFrame(frame);
+    };
+    const start = () => { if (t >= total) t = 0; running = true; last = performance.now(); label(); requestAnimationFrame(frame); };
+    const choose = (next: HTMLElement) => {
+      run = next; total = Number(run.dataset.total); speed = Number(run.dataset.speed); t = total;
+      speedLabel.textContent = `${speed}× speed`;
+      draw();
+    };
+    play.addEventListener('click', () => { if (running) { running = false; label(); } else start(); });
+    const picks = [...root.querySelectorAll<HTMLButtonElement>('[data-pick]')];
+    picks.forEach((button) => button.addEventListener('click', () => {
+      picks.forEach((other) => other.setAttribute('aria-pressed', String(other === button)));
+      root.querySelectorAll<HTMLElement>('[data-fleet]').forEach((el) => { el.hidden = el.dataset.fleet !== button.dataset.pick; });
+      choose(root.querySelector<HTMLElement>(`[data-fleet="${button.dataset.pick}"]`)!);
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) { t = 0; start(); }
+    }));
+    // One panel at a time under the floor: an agent's answer or the file.
+    root.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-open]');
+      if (!button) return;
+      const opening = button.getAttribute('aria-expanded') !== 'true';
+      root.querySelectorAll<HTMLButtonElement>('[data-open]').forEach((other) => other.setAttribute('aria-expanded', String(opening && other === button)));
+      root.querySelectorAll<HTMLElement>('[data-panel]').forEach((panel) => { panel.hidden = !(opening && panel.dataset.panel === button.dataset.open); });
+    });
+    choose(run);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const seen = new IntersectionObserver(([entry]) => { if (entry.isIntersecting) { seen.disconnect(); t = 0; start(); } }, { threshold: 0.35 });
+      seen.observe(root.querySelector('.fleet-floor')!);
+    }
+  }
+</script>
+
+<style>
+  .fleet { padding: 96px 0; background: var(--depth-1); color: var(--text-primary); border-top: 1px solid var(--color-border); }
+  .fleet-inner { display: flex; flex-direction: column; gap: 16px; width: min(88rem, 94vw); margin: 0 auto; }
+  .fleet-head { max-width: 60rem; margin-bottom: 8px; }
+  .fleet h2 { margin: 0; font-family: var(--font-display); font-size: var(--font-size-hero); font-weight: 600; line-height: 1.05; letter-spacing: -0.03em; text-wrap: balance; }
+  .fleet-head p { max-width: 48rem; margin: 16px 0 0; color: var(--text-secondary); font-size: var(--font-size-xl); line-height: 1.75rem; text-wrap: pretty; }
+  @media (max-width: 680px) {
+    .fleet { padding: 64px 0; }
+    .fleet-inner { width: calc(100vw - 32px); }
+    .fleet-head p { font-size: var(--font-size-lg); line-height: 1.5rem; }
+  }
+</style>
