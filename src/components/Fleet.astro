@@ -33,8 +33,13 @@ const fleets = SHOWN.map(([id, label, summary, speed]) => {
     const index = spec.agents.findIndex((a: any, i: number) => (a.agentId ?? `agent-${i}`) === id);
     return { id, machine: e.data.machineId, harness: e.data.harness, task: spec.agents[index].task, start: e.atMs, until: finished.atMs,
       status: finished.data.result.status, cost: results.find((r) => r.agentId === id)?.costUsd as number | undefined,
-      response: String(finished.data.result.result?.response ?? '').trim() };
+      response: String(finished.data.result.result?.response ?? '').trim(), title: '' };
   });
+  // What differs between the agents' tasks: six ideas for one parser read better as the six ideas.
+  const tasks = agents.map((a) => a.task);
+  const same = (pick: (task: string, i: number) => string) => { let n = 0; while (tasks.every((task) => pick(task, n) === pick(tasks[0], n)) && n < tasks[0].length) n++; return n; };
+  const head = same((task, i) => task[i]), tail = same((task, i) => task[task.length - 1 - i]);
+  for (const agent of agents) agent.title = head + tail > 24 && agents.length > 1 ? agent.task.slice(head, agent.task.length - tail).trim() : agent.task;
   const machines = [...new Set(agents.map((a) => a.machine))].map((machine) => agents.filter((a) => a.machine === machine));
   // The spend line: every fleet.spend the file read, then what the fleet reported when it finished.
   const spend = [{ at: 0, spent: 0, inflight: 0 },
@@ -78,7 +83,7 @@ const fleets = SHOWN.map(([id, label, summary, speed]) => {
                 {machine.map((agent) => (
                   <div class="fleet-agent" data-agent={agent.id} data-start={agent.start} data-until={agent.until} data-final={agent.status} data-state={agent.status}>
                     <header><i aria-hidden="true"></i><b>{agent.id}</b><span data-clock>{clock(agent.until - agent.start)}</span></header>
-                    <p>{agent.task}</p>
+                    <p title={agent.task}>{agent.title}</p>
                     <footer>
                       <span class="fleet-status">{agent.status}{agent.cost !== undefined && `, ${money(agent.cost)}`}</span>
                       <span class="fleet-wait">running</span>
@@ -95,7 +100,7 @@ const fleets = SHOWN.map(([id, label, summary, speed]) => {
               {fleet.soft < fleet.cap && <b style={`left: ${(fleet.soft / fleet.cap) * 100}%`}></b>}
             </div>
             <p>
-              <strong data-spent-label>{money(fleet.spend.at(-1)!.spent)}</strong> spent of a {money(fleet.cap)} cap.
+              <strong data-spent-label>{money(fleet.spend.at(-1)!.spent)}</strong> spent<span data-inflight-label hidden></span> of a {money(fleet.cap)} cap.
               {fleet.soft < fleet.cap && <span> The script stops the fleet at {money(fleet.soft)}.</span>}
               {fleet.cancel && <span data-cancel data-at={fleet.cancel.at}> It cancelled at {money(fleet.cancel.spent)}.</span>}
             </p>
@@ -147,6 +152,8 @@ const fleets = SHOWN.map(([id, label, summary, speed]) => {
       run.querySelector<HTMLElement>('[data-spent]')!.style.width = `${(spent / cap) * 100}%`;
       run.querySelector<HTMLElement>('[data-inflight]')!.style.width = `${Math.min(1, (spent + inflight) / cap) * 100}%`;
       run.querySelector('[data-spent-label]')!.textContent = `$${spent.toFixed(2)}`;
+      const held = run.querySelector<HTMLElement>('[data-inflight-label]')!;
+      held.hidden = !(inflight > 0); held.textContent = ` and $${inflight.toFixed(2)} in flight`;
       const cancel = run.querySelector<HTMLElement>('[data-cancel]');
       if (cancel) cancel.hidden = t < Number(cancel.dataset.at);
       time.textContent = `${clock(t)} / ${clock(total)}`;
