@@ -5,7 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// One task, one repository, one sandbox per harness, all at once.
+// One task, one model, one repository, one sandbox per harness, all at once.
 const task = "`npm test` fails. Find the cause and fix it.";
 const harnesses = ["claude-code", "codex", "opencode", "pi", "kimi-code", "hermes", "openclaw", "nanoclaw", "prime"] as const;
 
@@ -16,7 +16,7 @@ async function attempt(harness: (typeof harnesses)[number]) {
   });
   try {
     const before = await box.exec("npm test");
-    const run = await box.prompt(task, { timeoutMs: 600_000 });
+    const run = await box.prompt(task, { model: "zai/glm-5.3", timeoutMs: 600_000 });
     // The test suite decides, not the agent's own report.
     const after = await box.exec("npm test");
     const diff = await box.exec("git diff");
