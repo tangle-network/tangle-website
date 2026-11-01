@@ -137,7 +137,7 @@ function auditPost(file) {
   const firstHalf = body.slice(0, Math.floor(body.length / 2)).toLowerCase()
   const headings = extractHeadings(body)
   const bodyWordCount = wordCount(body)
-  const codeBlockCount = Math.floor(countMatches(body, /```/g) / 2)
+  const codeBlockCount = Math.floor(countMatches(body, /```/g) / 2) + countMatches(body, /<Example\b/g)
   const internalLinks = countMatches(body, /\]\(\/(blog|research|status|security|blueprints|agent|sandbox|router|images)\//g)
   const externalLinks = countMatches(body, /\]\(https?:\/\//g)
   const hasFaq = /^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body)

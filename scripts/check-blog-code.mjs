@@ -9,7 +9,7 @@ const root = new URL('..', import.meta.url).pathname;
 const harness = join(root, 'scripts/examples-typecheck');
 const out = join(harness, 'blog');
 const posts = process.argv.slice(2).length
-  ? process.argv.slice(2).map((p) => (p.startsWith('/') ? p : join(process.cwd(), p)))
+  ? process.argv.slice(2).map((p) => (p.startsWith('/') ? p : p.endsWith('.mdx') ? join(process.cwd(), p) : join(root, 'src/content/blog', `${p}.mdx`)))
   : readdirSync(join(root, 'src/content/blog')).filter((f) => f.endsWith('.mdx')).map((f) => join(root, 'src/content/blog', f));
 
 rmSync(out, { recursive: true, force: true });
