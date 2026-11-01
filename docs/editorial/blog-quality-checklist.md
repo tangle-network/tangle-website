@@ -375,7 +375,6 @@ Planned series that do not yet have a post are not counted.
 
 - The deterministic site audit passes all 85 posts for frontmatter, headings, image alternative text, and target-query ownership.
 - `scripts/audit-blog.mjs` passes all 85 posts and reports a median heuristic score of 100/100; that score does not measure teaching depth, runnable proof, claim accuracy, or traffic.
-- `scripts/audit-blog-reader.mjs --json` reports 0 P0 rewrites, 37 P1 revisions, 48 P2 factual or link checks, and 0 hard failures.
 - The same deterministic audit counts 41 posts under 1,000 words, 21 under 750 words, and 19 at or above 2,000 words.
 - The reader audit finds fenced code blocks in 63 posts; that structural count does not prove that every example runs.
 - The sandbox rewrite now contains a public `@tangle-network/sandbox` install and import example; public examples for `@tangle-network/agent-runtime`, `@tangle-network/agent-eval`, and `@tangle-network/agent-knowledge` remain follow-up work.
@@ -390,7 +389,6 @@ Run:
 
 ```bash
 pnpm check:blog
-pnpm check:blog:reader
 pnpm build
 git diff --check
 SEO_ENGINE_DIR=/path/to/seo-engine

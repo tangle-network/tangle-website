@@ -48,12 +48,32 @@ const organizationJsonLd = {
 // Harness commands and launch IDs are separate: Prime's CLI is prime-agent,
 // while the Sandbox launch API accepts prime.
 // Prime mark: https://github.com/PrimeIntellect-ai.png?size=256
-// What one key meters into one balance, drawn by the pricing section.
-const bills = [
-  { id: 'sandboxes', name: 'Sandboxes', unit: 'sandbox hours', y: 45 },
-  { id: 'router', name: 'Router', unit: 'tokens per turn', y: 115 },
-  { id: 'intelligence', name: 'Intelligence', unit: 'traces', y: 185 },
-];
+// Receipts for the pricing section, read from the recorded production runs the editor replays.
+import runCode from '../data/runs/sandboxes/run-code.json';
+import fixATest from '../data/runs/sandboxes/fix-a-test.json';
+import cancelOnCap from '../data/runs/fleets/cancel-on-cap.json';
+import benchmarks from '../data/benchmarks/sandbox.json';
+const rate = benchmarks.rate_card;
+
+const usd = (n: number | null) => (n === null ? '$0.00' : `$${n.toFixed(n < 1 ? 4 : 2)}`);
+const clock = (ms: number) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; };
+const tokens = (events: { kind: string; result?: { usage?: { inputTokens?: number; outputTokens?: number } } }[]) => {
+  const usage = events.find((e) => e.kind === 'call' && e.result?.usage?.inputTokens)?.result?.usage;
+  return usage ? `${((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)).toLocaleString('en-US')}` : null;
+};
+const receipts = [
+  { title: 'Run code', what: 'One sandbox, one command, no model.', record: runCode },
+  { title: 'Fix a failing test', what: 'One sandbox, claude-code, one prompt.', record: fixATest },
+  { title: 'Cancel on a cap', what: `${cancelOnCap.events.filter((e) => e.type === 'agent.started').length} agents under one ${usd(cancelOnCap.events.find((e) => e.type === 'fleet.finished')?.data?.spend?.capUsd ?? null).replace(/\.00$/, '')} cap.`, record: cancelOnCap },
+].map(({ title, what, record }) => ({
+  title, what,
+  time: clock(record.run.durationMs),
+  tokens: tokens(record.events as never),
+  cost: usd(record.run.costUsd),
+  date: record.run.recordedAt.slice(0, 10),
+  id: record.run.id,
+}));
+const perHour = (n: number) => `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
 
 const harnesses = [
   { cmd: 'claude', harness: 'claude-code', name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
@@ -101,120 +121,66 @@ const harnesses = [
 
   <SandboxQuickstart />
 
-  <!-- ========= SANDBOX (dark): harnesses run, traces emit ========= -->
-  <section class="sb-section" aria-labelledby="sb-title">
-    <div class="sb-flow static">
-      <div class="sb-sticky">
-        <div class="shell">
-          <div class="sb-head">
-            <h2 id="sb-title">Every harness, instantly at your fingertips.</h2>
-            <p>
-              Run them interactively or in the background.
-            </p>
-          </div>
-
-          <div class="sb-diagram">
-          <div class="sb-rail" style={`--harness-columns: ${harnesses.length}`} aria-label="Coding harnesses preinstalled in every sandbox">
-            {harnesses.map((h, i) => (
-              <a
-                class="sb-tile"
-                data-i={i}
-                style={`--bank-row: ${i < 5 ? i + 1 : i - 4}; --list-row: ${i + 1}; --bank-column: ${i < 5 ? 1 : 3}`}
-                href={`https://sandbox.tangle.tools/dashboard/new?harness=${h.harness}`}
-                aria-label={`Create a sandbox for ${h.name}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img class="sb-logo" src={h.logo} alt={`${h.name} mark`} width="48" height="48" loading="lazy" />
-                <span class="sb-name">{h.name}</span>
-                <code class="mono sb-cmd">$ {h.cmd}</code>
-                <span class="sb-run mono">Start <span aria-hidden="true">↗</span></span>
-              </a>
-            ))}
-          </div>
-
-          <svg class="sb-lines" aria-hidden="true">
-            <defs>
-              <linearGradient id="sb-grad" gradientUnits="userSpaceOnUse" x1="0%" y1="0%" x2="0%" y2="100%">
-                <stop offset="0%" style="stop-color: var(--brand-glow)" />
-                <stop offset="100%" style="stop-color: var(--btn-primary-bg)" />
-              </linearGradient>
-            </defs>
-            {harnesses.map(() => (
-              <path
-                class="sb-line"
-                fill="none"
-                stroke="url(#sb-grad)"
-                stroke-width="2"
-                stroke-linecap="round"
-                pathLength="1"
-                vector-effect="non-scaling-stroke"
-              />
-            ))}
-
-          </svg>
-          <div class="sb-node"><img src="/brand/tangle-icon-filled.svg" width="36" height="36" alt="" /><span>Intelligence</span></div>
-          </div>
-        </div>
+  <!-- ========= HARNESSES (dark): each one starts in its own sandbox ========= -->
+  <section class="rail" aria-labelledby="rail-title">
+    <div class="shell">
+      <div class="rail-head">
+        <h2 id="rail-title">Pick a harness. It gets its own machine.</h2>
+        <p>Every sandbox has these installed and keyed. A tile starts that harness in a fresh sandbox, to work in or to leave running.</p>
+      </div>
+      <div class="rail-grid" aria-label="Coding harnesses preinstalled in every sandbox">
+        {harnesses.map((h) => (
+          <a class="rail-tile" href={`https://sandbox.tangle.tools/dashboard/new?harness=${h.harness}`} aria-label={`Create a sandbox for ${h.name}`} target="_blank" rel="noopener noreferrer">
+            <img class="rail-logo" src={h.logo} alt="" width="40" height="40" loading="lazy" />
+            <span class="rail-name">{h.name}</span>
+            <code class="mono rail-cmd">$ {h.cmd}</code>
+          </a>
+        ))}
       </div>
     </div>
   </section>
 
-
-  <!-- ==================== PRICING + CLOSE (paper) ==================== -->
+  <!-- ==================== WHAT A RUN COSTS (paper) ==================== -->
   <section class="pricing" data-theme="website" id="pricing" aria-labelledby="pricing-title" data-cta-placement="pricing">
     <div class="shell">
-      <div class="pricing-top">
-        <div class="pricing-head reveal">
-          <h2 id="pricing-title">One key. <span class="statement-grad">One bill.</span></h2>
-          <p>Sandboxes, models and traces share one API key and one balance. Every turn is metered, and a fleet runs under a cap you set.</p>
-        </div>
-        <figure class="bill reveal" aria-label="One API key meters sandboxes, models and traces into one balance">
-          <svg class="bill-svg" viewBox="0 0 560 230" role="img" aria-hidden="true">
-            <defs>
-              <linearGradient id="bill-grad" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" style="stop-color: var(--accent-text)" />
-                <stop offset="100%" style="stop-color: var(--brand-glow)" />
-              </linearGradient>
-            </defs>
-            {bills.map((bill) => (
-              <g class="bill-flow" data-flow={bill.id}>
-                <path class="bill-path" d={`M 118 115 C 180 115, 180 ${bill.y}, 236 ${bill.y}`} />
-                <path class="bill-path" d={`M 400 ${bill.y} C 450 ${bill.y}, 450 115, 472 115`} />
-                <rect class="bill-node" x="236" y={bill.y - 19} width="164" height="38" rx="10" />
-                <text class="bill-label" x="318" y={bill.y + 5}>{bill.name}</text>
-                <text class="bill-unit" x="318" y={bill.y + 39}>{bill.unit}</text>
-              </g>
-            ))}
-            <g class="bill-key">
-              <rect x="14" y="96" width="104" height="38" rx="19" />
-              <text class="bill-label" x="66" y="120">sk-tan-…</text>
-              <text class="bill-unit" x="66" y="154">one API key</text>
-            </g>
-            <g class="bill-balance">
-              <circle cx="508" cy="115" r="36" />
-              <text class="bill-label bill-dollar" x="508" y="122">$</text>
-              <text class="bill-unit" x="508" y="176">one balance</text>
-            </g>
-          </svg>
-        </figure>
+      <div class="pricing-head">
+        <h2 id="pricing-title">What a run costs.</h2>
+        <p>One API key meters sandbox time, model tokens and egress to one balance. These receipts are read from the records of three runs you can replay above.</p>
       </div>
-      <div class="plans reveal" data-plans>
+      <div class="receipts">
+        {receipts.map((r) => (
+          <article class="receipt">
+            <h3>{r.title}</h3>
+            <p class="receipt-what">{r.what}</p>
+            <dl>
+              <div><dt>sandbox time</dt><dd>{r.time}</dd></div>
+              <div><dt>tokens</dt><dd>{r.tokens ?? '0'}</dd></div>
+              <div><dt>model cost</dt><dd>{r.cost}</dd></div>
+            </dl>
+            <p class="receipt-meta mono">{r.date} · {r.id}</p>
+          </article>
+        ))}
+      </div>
+      <dl class="meters">
+        <div><dt>Sandbox time</dt><dd>From {perHour(rate.minChargeHourUsd)} an hour while it runs: {perHour(rate.cpuCoreHourUsd)} per vCPU, {perHour(rate.memoryGBHourUsd)} per GB of memory and {perHour(rate.diskGBHourUsd)} per GB of disk, each per hour. A stopped sandbox keeps its disk and nothing else is metered.</dd></div>
+        <div><dt>Model tokens</dt><dd>Each prompt is metered at the price the <a href="https://router.tangle.tools/v1/models" target="_blank" rel="noopener noreferrer">Router lists</a> for that model, and every turn reports its own cost, as the receipts show.</dd></div>
+        <div><dt>Egress</dt><dd>Each plan includes an amount of outbound traffic each month; the plans below say what happens past it.</dd></div>
+      </dl>
+      <div class="plans" data-plans>
         {PLANS.map((plan) => (
           <article class={`plan${plan.popular ? ' plan-popular' : ''}`} data-plan={plan.id}>
             <h3>{plan.name}</h3>
             <p class="plan-price"><span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}</p>
-            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `Includes ${planPrice(plan)} of usage each month` : 'Pay as you go'}</p>
+            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `Your ${planPrice(plan)} comes back as credit each month` : 'No included credit'}</p>
             <ul class="plan-features">
               {plan.features.map((feature) => <li>{feature}</li>)}
             </ul>
           </article>
         ))}
       </div>
-      <div class="pricing-actions reveal">
+      <div class="pricing-actions">
         <a class="btn btn-primary" href="https://sandbox.tangle.tools/dashboard/new" target="_blank" rel="noopener noreferrer">Create a sandbox</a>
         <a class="btn btn-ghost" href="https://id.tangle.tools/app/plans" target="_blank" rel="noopener noreferrer">See plans</a>
-        <a class="pricing-contact" href="mailto:hello@tangle.tools">Bigger workload? hello@tangle.tools</a>
       </div>
     </div>
   </section>
@@ -224,86 +190,7 @@ const harnesses = [
 <script>
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  if (!reduced) {
-    document.documentElement.classList.add('js');
-    const io = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add('in-view');
-          io.unobserve(entry.target);
-        }
-      }
-    }, { threshold: 0.14 });
-    document.querySelectorAll('.reveal').forEach((element) => io.observe(element));
-  }
 
-
-
-  const sb = document.querySelector<HTMLElement>('.sb-flow');
-  if (sb) {
-    const diagram = sb.querySelector<HTMLElement>('.sb-diagram')!;
-    const node = sb.querySelector<HTMLElement>('.sb-node')!;
-    const svg = sb.querySelector<SVGSVGElement>('.sb-lines')!;
-    const tiles = [...sb.querySelectorAll<HTMLElement>('.sb-tile')];
-    const lines = [...sb.querySelectorAll<SVGPathElement>('.sb-line')];
-    const wide = matchMedia('(min-width: 1381px)');
-    const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
-    const motion = matchMedia('(min-width: 1381px) and (min-height: 760px) and (prefers-reduced-motion: no-preference)');
-    const connect = () => {
-      const bounds = diagram.getBoundingClientRect();
-      const destination = node.getBoundingClientRect();
-      svg.setAttribute('viewBox', `0 0 ${bounds.width} ${bounds.height}`);
-      tiles.forEach((tile, index) => {
-        const source = tile.getBoundingClientRect();
-        if (wide.matches) {
-          const x = source.left + source.width / 2 - bounds.left;
-          const y = source.bottom - bounds.top;
-          const endX = destination.left + destination.width / 2 - bounds.left;
-          const endY = destination.top - bounds.top;
-          const midY = y + (endY - y) * 0.6;
-          lines[index].setAttribute('d', `M ${x} ${y} C ${x} ${midY}, ${endX} ${midY}, ${endX} ${endY}`);
-        } else {
-          const left = source.left < destination.left;
-          const x = (left ? source.right : source.left) - bounds.left;
-          const y = source.top + source.height / 2 - bounds.top;
-          const endX = (left ? destination.left : destination.right) - bounds.left;
-          const endY = destination.top + destination.height / 2 - bounds.top;
-          const midX = x + (endX - x) * 0.6;
-          lines[index].setAttribute('d', `M ${x} ${y} C ${midX} ${y}, ${midX} ${endY}, ${endX} ${endY}`);
-        }
-      });
-    };
-    let queued = false;
-    const update = () => {
-      queued = false;
-      const rect = sb.getBoundingClientRect();
-      const progress = motion.matches
-        ? Math.min(1, Math.max(0, -rect.top / (sb.offsetHeight - innerHeight)))
-        : 1;
-      tiles.forEach((tile, index) => tile.classList.toggle('on', progress > 0.06 + index * 0.055));
-      lines.forEach((line, index) => {
-        const drawn = Math.min(1, Math.max(0, (progress - (0.12 + index * 0.055)) / 0.32));
-        line.style.strokeDashoffset = String(1 - drawn);
-      });
-      sb.classList.toggle('done', progress > 0.88);
-    };
-    const mode = () => {
-      sb.classList.toggle('static', !motion.matches);
-      connect();
-      update();
-    };
-    const geometry = new ResizeObserver(connect);
-    geometry.observe(diagram);
-    geometry.observe(node);
-    window.addEventListener('scroll', () => {
-      if (!queued) { queued = true; requestAnimationFrame(update); }
-    }, { passive: true });
-    motion.addEventListener('change', mode);
-    wide.addEventListener('change', mode);
-    motionPreference.addEventListener('change', mode);
-    window.addEventListener('resize', update, { passive: true });
-    mode();
-  }
 
   // Hero: a floor of sandboxes running to the horizon, one dot per machine.
   // Agents claim machines one at a time; a fleet claims a block at once and
@@ -525,17 +412,6 @@ const harnesses = [
     line-height: 1.1;
   }
 
-  :global(html.js) .reveal {
-    opacity: 0;
-    transform: translateY(32px);
-    transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  :global(html.js) .reveal.in-view {
-    opacity: 1;
-    transform: none;
-  }
-
   .grad-text {
     display: block;
     background-image: linear-gradient(92deg, var(--brand-purple) 0%, var(--brand-cool) 40%, var(--btn-primary-bg) 75%, var(--brand-purple) 100%);
@@ -632,180 +508,42 @@ const harnesses = [
     margin-top: 2rem;
   }
 
-  /* ---------- gradient word (pricing) ---------- */
-  .statement-grad {
-    background-image: linear-gradient(92deg, var(--brand-cool) 0%, var(--brand-vibrant) 50%, var(--btn-primary-bg) 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: var(--accent-text); /* fallback */
-  }
 
-  @supports not (background-clip: text) {
-    .statement-grad { color: var(--accent-text); -webkit-text-fill-color: currentColor; }
-  }
+  /* ---------- harness rail (dark) ---------- */
+  .rail { padding: 5rem 0; background: linear-gradient(180deg, var(--depth-1) 0%, var(--md3-surface-container-low) 100%); border-top: 1px solid rgba(199, 201, 238, 0.08); }
+  .rail-head { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 2.5rem; align-items: start; }
+  .rail-head h2 { color: var(--text-primary); letter-spacing: -0.032em; }
+  .rail-head p { margin: 0; color: rgba(237, 237, 244, 0.8); font-size: clamp(1.15rem, 1.5vw, 1.4rem); line-height: 1.6; max-width: 40rem; }
+  .rail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; margin-top: 2.4rem; }
+  .rail-tile { display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto; gap: 0.1rem 0.8rem; align-items: center; padding: 0.9rem 1rem; border: 1px solid rgba(199, 201, 238, 0.14); border-radius: 12px; background: var(--md3-surface-container-low); text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease; }
+  .rail-tile:hover, .rail-tile:focus-visible { border-color: rgba(129, 140, 248, 0.6); background: var(--md3-surface-container); }
+  .rail-tile:focus-visible { outline: 2px solid var(--brand-glow); outline-offset: 2px; }
+  .rail-logo { grid-row: 1 / 3; width: 40px; height: 40px; border-radius: 9px; object-fit: cover; box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14); }
+  .rail-name { color: var(--text-primary); font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+  .rail-cmd { color: rgba(198, 200, 226, 0.66); font-size: 0.82rem; white-space: nowrap; }
 
-  /* ---------- sandbox chapter (dark, scroll-driven) ---------- */
-  .sb-section {
-    background: linear-gradient(180deg, var(--depth-1) 0%, var(--md3-surface-container-low) 100%);
-    border-top: 1px solid rgba(199, 201, 238, 0.08);
-  }
-
-  .sb-flow {
-    position: relative;
-    height: 180vh;
-  }
-
-  .sb-sticky {
-    position: sticky;
-    top: 0;
-    display: flex;
-    align-items: center;
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  .sb-head {
-    display: grid;
-    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
-    gap: 2.5rem;
-    align-items: start;
-  }
-
-  .sb-head h2 {
-    color: var(--text-primary);
-    font-size: clamp(2rem, 3vw, 2.9rem);
-    letter-spacing: -0.032em;
-  }
-
-  .sb-head p {
-    margin: 0;
-    color: rgba(237, 237, 244, 0.8);
-    font-size: clamp(1.2rem, 1.5vw, 1.45rem);
-    line-height: 1.6;
-    max-width: 46rem;
-  }
-
-  .sb-diagram { position: relative; margin-top: 2.6rem; }
-
-  .sb-rail {
-    display: grid;
-    grid-template-columns: repeat(var(--harness-columns), minmax(0, 1fr));
-    gap: 0.7rem;
-    position: relative;
-    z-index: 2;
-  }
-
-  .sb-tile {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.45rem;
-    padding: 1.1rem 0.6rem 0.9rem;
-    border: 1px solid rgba(199, 201, 238, 0.12);
-    border-radius: 12px;
-    background: var(--md3-surface-container-low);
-    text-align: center;
-    opacity: 0.38;
-    transition: opacity 0.45s ease, border-color 0.45s ease, box-shadow 0.45s ease, transform 0.45s ease;
-  }
-
-  .sb-tile.on {
-    opacity: 1;
-    border-color: rgba(129, 140, 248, 0.45);
-    box-shadow: 0 10px 40px rgba(99, 102, 241, 0.16);
-  }
-
-  .sb-logo {
-    width: 48px;
-    height: 48px;
-    border-radius: 10px;
-    object-fit: cover;
-    box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14);
-  }
-
-  .sb-name {
-    color: var(--text-primary);
-    font-size: 0.98rem;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .sb-cmd {
-    white-space: nowrap;
-    color: rgba(198, 200, 226, 0.66);
-    font-size: 0.85rem;
-  }
-
-  .sb-run {
-    color: var(--brand-glow);
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    opacity: 0;
-    transition: opacity 0.4s ease;
-  }
-
-  .sb-tile.on .sb-run { opacity: 1; }
-
-  .sb-lines {
-    display: block;
-    width: 100%;
-    position: absolute;
-    inset: 0;
-    height: 100%;
-    pointer-events: none;
-  }
-
-  .sb-line {
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-  }
-
-  .sb-node {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 0.65rem;
-    width: fit-content;
-    margin: 8rem auto 0;
-    z-index: 2;
-    padding: 0.7rem 1.2rem;
-    position: relative;
-    border: 1px solid var(--md3-outline-variant);
-    border-radius: 12px;
-    background: var(--md3-surface-container-low);
-    color: var(--text-primary);
-    font-size: 1.15rem;
-    font-weight: 600;
-    opacity: 0;
-    transition: opacity 0.5s ease;
-  }
-  .sb-node img { width: 36px; height: 36px; }
-  .sb-flow.done .sb-node { opacity: 1; }
-
-  /* static fallback */
-  .sb-flow.static { height: auto; }
-  .sb-flow.static .sb-sticky { position: static; height: auto; padding: 4.5rem 0; }
-  .sb-flow.static .sb-tile, .sb-flow.static .sb-node { opacity: 1; }
-  .sb-flow.static .sb-line { stroke-dashoffset: 0; }
-  .sb-flow.static .sb-tile .sb-run { opacity: 0; }
-  .sb-flow.static .sb-node { opacity: 1; }
-  .sb-flow.static .sb-line { stroke-dasharray: none; stroke-dashoffset: 0; }
-
-  @media (prefers-reduced-motion: reduce) {
-    .sb-tile, .sb-node { transition: none; }
-  }
-
-  /* ---------- pricing (paper) ---------- */
+  /* ---------- what a run costs (paper) ---------- */
   .pricing { background: var(--bg-root); color: var(--text-primary); padding: 5.5rem 0 6.5rem; }
   .pricing-head { max-width: 46rem; }
   .pricing-head h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.032em; color: var(--text-primary); font-size: clamp(2.3rem, 3.6vw, 3.5rem); line-height: 1.05; }
   .pricing-head p { margin: 1.1rem 0 0; color: var(--text-secondary); font-size: clamp(1.15rem, 1.4vw, 1.35rem); line-height: 1.6; }
+  .receipts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 2.4rem; }
+  .receipt { padding: 1.3rem 1.4rem 1.2rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
+  .receipt h3 { margin: 0; font-family: var(--font-display); font-size: 1.1rem; font-weight: 600; letter-spacing: -0.015em; }
+  .receipt-what { margin: 0.3rem 0 0; color: var(--text-secondary); font-size: 0.95rem; }
+  .receipt dl { margin: 1rem 0 0; padding-top: 0.8rem; border-top: 1px dashed var(--md3-outline-variant); }
+  .receipt dl div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.25rem 0; font-size: 0.98rem; }
+  .receipt dt { color: var(--text-secondary); }
+  .receipt dd { margin: 0; font-family: var(--font-mono); font-feature-settings: 'tnum'; color: var(--text-primary); }
+  .receipt dl div:last-child dd { font-weight: 600; }
+  .receipt-meta { margin: 0.9rem 0 0; color: var(--text-muted); font-size: 0.74rem; }
+  .meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.6rem; margin: 2.4rem 0 0; }
+  .meters dt { font-weight: 600; color: var(--text-primary); }
+  .meters dd { margin: 0.35rem 0 0; color: var(--text-secondary); font-size: 0.96rem; line-height: 1.55; }
+  .meters a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 0.15em; }
   .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 2.6rem; }
-  .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.5s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
-  .plan:hover { transform: translateY(-4px); border-color: var(--accent-text); box-shadow: 0 22px 60px rgba(25, 28, 60, 0.14); }
-  .plan-popular { border-color: var(--accent-text); box-shadow: 0 18px 50px rgba(25, 28, 60, 0.12); }
+  .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
+  .plan-popular { border-color: var(--accent-text); }
   .plan h3 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text-primary); }
   .plan-price { margin: 0.9rem 0 0; color: var(--text-primary); }
   .plan-amount { font-family: var(--font-display); font-size: clamp(2.2rem, 3vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
@@ -814,52 +552,18 @@ const harnesses = [
   .plan-features { margin: 1.2rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.5; }
   .plan-features li { padding-left: 1.1rem; position: relative; }
   .plan-features li::before { content: ''; position: absolute; left: 0; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent-text); }
-  @media (max-width: 980px) { .plans { grid-template-columns: minmax(0, 1fr); } }
-
-
-  /* ---------- one key, one bill: metered flows into one balance ---------- */
-  .pricing-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 3rem; align-items: center; }
-  .bill { margin: 0; }
-  .bill-svg { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); }
-  .bill-path { fill: none; stroke: var(--md3-outline-variant); stroke-width: 2; stroke-linecap: round; transition: stroke 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
-  .bill-node, .bill-key rect, .bill-balance circle { fill: var(--bg-card); stroke: var(--md3-outline-variant); stroke-width: 1.5; transition: stroke 0.3s cubic-bezier(0.22, 1, 0.36, 1), fill 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
-  .bill-label { fill: var(--text-primary); font-size: 15px; font-weight: 600; text-anchor: middle; }
-  .bill-dollar { font-size: 22px; }
-  .bill-unit { fill: var(--text-muted); font-size: 12px; text-anchor: middle; }
-  .bill-key rect { stroke: var(--accent-text); }
-  .bill-balance circle { stroke: var(--accent-text); stroke-width: 2; }
-  .reveal.in-view .bill-path { stroke: url(#bill-grad); stroke-dasharray: 5 9; animation: billFlow 1.4s linear infinite; }
-  .bill-flow:hover .bill-path { stroke: var(--accent-text); stroke-width: 3; }
-  .bill-flow:hover .bill-node { fill: var(--accent-surface-strong); stroke: var(--accent-text); }
-  @keyframes billFlow { to { stroke-dashoffset: -28; } }
-  @media (prefers-reduced-motion: reduce) { .reveal.in-view .bill-path { animation: none; stroke-dasharray: none; } }
-  @media (max-width: 980px) { .pricing-top { grid-template-columns: minmax(0, 1fr); gap: 2rem; } }
+  .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
+  .pricing .btn-ghost { background: var(--bg-card); border-color: var(--md3-outline-variant); color: var(--text-primary); }
 
   /* ---------- responsive ---------- */
-  @media (max-width: 1380px) {
-    .sb-flow { height: auto; }
-    .sb-sticky { position: static; height: auto; padding: 4.5rem 0; overflow: visible; }
-    .sb-rail { grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.85fr) minmax(0, 1fr); gap: 0.65rem; }
-    .sb-tile { grid-column: var(--bank-column); grid-row: var(--bank-row); display: grid; grid-template-columns: 36px 1fr auto; grid-template-rows: auto auto; gap: 0.05rem 0.7rem; padding: 0.7rem 0.8rem; text-align: left; border-radius: 9px; }
-    .sb-logo { grid-row: 1 / 3; width: 36px; height: 36px; border-radius: 7px; }
-    .sb-name { font-size: 0.95rem; }
-    .sb-cmd { grid-column: 2; font-size: 0.75rem; }
-    .sb-run { grid-column: 3; grid-row: 1 / 3; font-size: 0; }
-    .sb-run span { font-size: 1.05rem; }
-    .sb-node { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; flex-direction: column; gap: 0.3rem; padding: 0.8rem; font-size: 0.95rem; }
-    .sb-node img { width: 36px; height: 36px; }
+  @media (max-width: 980px) {
+    .rail-grid, .receipts, .meters, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rail-head { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
   }
-
-  @media (max-width: 700px) {
-    .sb-rail { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 0.55rem; }
-    .sb-tile { grid-column: 1; grid-row: var(--list-row); padding: 0.6rem; gap: 0.05rem 0.55rem; }
-    .sb-node { left: auto; right: 0; transform: translateY(-50%); }
-    .sb-name { font-size: 0.9rem; }
-  }
-
   @media (max-width: 720px) {
     .shell { width: min(92vw, 78rem); }
     .hero-copy > p:first-of-type { font-size: var(--text-lead); line-height: 1.75rem; }
+    .rail-grid, .receipts, .meters, .plans { grid-template-columns: minmax(0, 1fr); }
   }
 
   /* Narrow screens stack the copy over the field so the field never sits behind text. */
@@ -868,12 +572,4 @@ const harnesses = [
     .hero-art { position: relative; inset: auto; order: 2; height: 40svh; min-height: 18rem; margin-top: 24px; }
     .hero-copy { padding: 96px 0 0; }
   }
-
-  .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
-  .pricing-contact { color: var(--accent-text); font-weight: 600; text-decoration: underline; text-underline-offset: 0.18em; }
-  @media (max-width: 860px) {
-    .sb-head { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
-    .sb-head > * { min-width: 0; }
-  }
-
 </style>

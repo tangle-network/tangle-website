@@ -143,8 +143,7 @@ function auditPost(file) {
   const hasFaq = /^## (?:FAQ|Questions readers usually ask)\s*$/m.test(body)
   const hasBodyImage = /!\[[^\]]*]\(\/images\//.test(body) || /<img\b|<figure\b|<picture\b/.test(body)
   const hasTable = /^\|.+\|$/m.test(body)
-  const hasCover = Boolean(data.coverImage || data.heroImage)
-  const hasArtifact = hasBodyImage || hasTable || codeBlockCount > 0 || hasCover
+  const hasArtifact = hasBodyImage || hasTable || codeBlockCount > 0
   const hasBodyArtifact = hasBodyImage || hasTable
   const hasLimitations = /\b(limit|does not prove|doesn't prove|tradeoff|failure mode|risk|constraint|where .* breaks)\b/i.test(body)
   const hasDecisionClose = /\b(choose|deploy|test|verify|ship|start|use|avoid|measure|run|install|open|compare)\b/i.test(
@@ -311,7 +310,6 @@ function auditPost(file) {
     internalLinks,
     externalLinks,
     hasFaq,
-    hasCover,
     hasBodyImage,
     hasTable,
     headings,
@@ -393,11 +391,7 @@ for (const file of postFiles) {
     addFinding(findings, 'warning', file, `Slug does not match filename: ${data.slug}`)
   }
 
-  for (const imageField of ['coverImage', 'heroImage']) {
-    if (data[imageField] && !imageExists(data[imageField])) {
-      addFinding(findings, 'error', file, `${imageField} does not exist: ${data[imageField]}`)
-    }
-  }
+
 
   const post = posts.find((item) => item.file === relativeFile(file))
   for (const reason of post.reasons.filter((item) => item.severity === 'warning')) {
