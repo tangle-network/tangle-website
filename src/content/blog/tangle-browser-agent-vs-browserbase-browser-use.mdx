@@ -5,6 +5,7 @@ summary: >-
   Compare Tangle Browser Agent, Browserbase, and Browser Use by task evidence,
   browser sessions, workspace control, and API surface.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -13,6 +14,8 @@ tags:
 series: Agent Intent Infrastructure
 seriesOrder: 10
 ---
+
+import Example from '../../components/Example.astro'
 
 A checkout test can end with a green sentence and still leave the team guessing.
 Did the browser click the right button?
@@ -52,9 +55,8 @@ It includes the URL at each important step, the visible page state, the DOM evid
 A browser session is one isolated browser instance running for a task.
 Browserbase describes a session as its fundamental unit and lets callers configure its region, viewport, recording, logging, identity, proxy, and browser context.
 A browser agent is the software that decides what to do next from the page and the task.
-A browser automation library is the lower-level code that sends navigation, click, type, and assertion commands.
 
-Those distinctions make the first choice clearer:
+Pick by layer:
 
 - **Browserbase:** Start with a managed browser session. Supply your own controller and assertions; inspect the session through its recordings, logs, and Live View.
 - **Browser Use:** Start with a natural-language task. Its cloud API creates a run and returns a result; add the checks and approval rules your application needs.
@@ -72,7 +74,7 @@ The Session Inspector can expose recordings, logs, network activity, and live co
 
 A minimal session creation shape from the current SDK documentation looks like this:
 
-```typescript
+```js
 import { Browserbase } from '@browserbasehq/sdk'
 
 const browserbase = new Browserbase({
@@ -125,7 +127,6 @@ This is the right abstraction for an early workflow where the output is a page o
 It is less complete as a release decision until you specify what evidence to keep, how to validate the total, and what happens when the agent reaches a login, wallet, CAPTCHA, or payment step.
 
 Browser Use can also be paired with browser infrastructure and application-specific checks.
-The comparison should not pretend that a natural-language agent cannot produce evidence.
 The relevant question is which evidence and control rules are part of your product contract, and which ones you must add.
 
 ## Inspect a Tangle browser run
@@ -152,50 +153,24 @@ bad run \
   --observation-mode hybrid
 ```
 
-The command shape is documented in the [public driver repository](https://github.com/tangle-network/browser-agent-driver).
-The model, target URL, and task should be replaced with the site and policy you are testing.
 
-The SDK exposes the same idea for a test runner:
+The verified Tangle example runs the browser inside a sandbox instead of on your machine.
+It is not the `bad` driver. A Claude Code agent in the sandbox installs Playwright and Chromium, opens one allowed site, and writes its results to files.
+`client.create` starts the machine with an egress policy that allows only the Playwright download hosts and the one site the task reads.
+`box.prompt` gives the agent the goal, `box.read` returns the JSON it wrote, and `box.fs.download` saves the screenshot for review.
 
-```typescript
-import { chromium } from 'playwright'
-import {
-  BrowserAgent,
-  PlaywrightDriver,
-} from '@tangle-network/browser-agent-driver'
+<Example path="sandboxes/browser-task" />
 
-const browser = await chromium.launch()
-const page = await browser.newPage()
-const agent = new BrowserAgent({
-  driver: new PlaywrightDriver(page),
-  config: {
-    model: 'gpt-5.4',
-    observationMode: 'hybrid',
-  },
-})
-
-const result = await agent.run({
-  goal: 'Sign in to the preview app and verify that the dashboard loads',
-  startUrl: 'https://preview.example.com',
-})
-
-if (!result.success) {
-  throw new Error(result.reason)
-}
-
-console.log(result.turns)
-await browser.close()
-```
-
-The example uses a fictional preview URL and an illustrative application flow.
-It uses the public driver’s Playwright integration and config shape, not a private application credential.
+`box.prompt` returns when the agent reports completion, and `run.success` is that agent's own flag, so the code reads back the artifacts it asked for before it prints anything.
+The output proves that the agent produced a five-item JSON array and a screenshot from the allowed site on that run.
+It does not prove that the titles are the correct ones or that the screenshot shows the page a reviewer expects; the test still needs its own assertions against the saved artifacts.
 
 The CLI writes a versioned `report.json` to the configured output directory.
 Its [suite result type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/test-runner.ts) defines `schemaVersion`, `results[]`, and a summary.
 Each result has `agentResult.success`, an optional `reason`, and `agentResult.turns[]`.
 The [turn type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/turn.ts) records an action, duration, and optional error.
 Its [page state](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/page.ts) records `url`, `title`, and `snapshot`; `screenshot` is optional.
-The example above selects `full-evidence` and `hybrid` observation.
+The `bad run` command above selects `full-evidence` and `hybrid` observation.
 Check the chosen capture settings and the actual report before promising an image for every turn.
 
 Here, evidence means the material a reviewer can inspect.
@@ -207,7 +182,6 @@ Together, those artifacts let a reviewer distinguish “the goal was reached” 
 
 That documented output is the reason to evaluate Tangle for a reviewable browser task.
 It does not mean Browserbase cannot record sessions or Browser Use cannot return useful run data.
-The choice depends on which review fields your application needs and who owns them.
 
 ## Compare the same flow, not the same marketing page
 
@@ -236,7 +210,6 @@ For the checkout example, stop before payment and require:
 ```
 
 The JSON is an application test contract, not a vendor-specific schema.
-It gives each product the same target and gives the reviewer the same questions.
 
 <table className="product-comparison">
   <thead>
@@ -312,9 +285,6 @@ For example, a mismatched total should fail the run and preserve the action imme
 An unknown account should stop the release without describing the browser actions as incorrect.
 A missing screenshot should leave the task incomplete even when the DOM assertion passed.
 
-The same adjudication rule can be used across Browserbase, Browser Use, and Tangle Browser Agent.
-That keeps the product comparison focused on the layer each vendor supplies rather than allowing each run to define success in a different way.
-
 ## Failure modes the comparison must expose
 
 Browser automation has failure modes that a final text answer hides.
@@ -335,7 +305,6 @@ Browserbase’s Live View documentation explicitly describes human control for c
 Browser Use’s task API describes long-running sessions and polling.
 The public [driver report schema](https://github.com/tangle-network/browser-agent-driver#report-schema) documents `report.json` with a schema version and per-test results.
 The [result type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/result.ts) includes `success`, `reason`, and `turns`; a captured screenshot depends on the selected observation mode.
-The appropriate recovery path depends on which product owns the session and which one owns the agent loop.
 
 None of these products makes a browser task inherently trustworthy.
 A screenshot can be authentic and still show the wrong account.
@@ -346,7 +315,6 @@ Evidence supports review; it does not replace the assertion.
 ## Use it in a larger test
 
 The browser driver can run on its own or inside an isolated [Tangle Sandbox](https://docs.tangle.tools/sandbox) when the task also needs code, fixtures, and workspace files.
-Your test still needs explicit assertions, artifact retention, and a rule for human review at payment or authentication boundaries.
 The [browser testing guide](/blog/ai-browser-testing-evidence-traces) covers that workflow.
 
 Combine products only when each supplies a distinct missing layer in the same tested workflow.

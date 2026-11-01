@@ -4,11 +4,14 @@ slug: self-improving-stack-evaluation-gates
 summary: >-
   Evaluation gates decide whether a change ships by comparing candidate and baseline on protected tasks, deterministic checks, cost, and trace evidence.
 date: '2026-06-01'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'evals', 'systems', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 7
 ---
+
+import Example from '../../components/Example.astro'
 
 A coding agent edits the right file, passes the visible test, and still breaks the release workflow.
 Its judge gives the patch a high score because the explanation is clear.
@@ -24,15 +27,13 @@ A **candidate** is a proposed replacement.
 A **holdout set** is a protected set of cases that the improvement process cannot inspect while searching.
 A **trace** is the run record that contains the task, model turns, tool calls, artifacts, checks, costs, and outcome.
 A **judge** is a scorer for qualities that a deterministic test cannot fully capture.
-A **validator** is a deterministic or policy check that can block a release when an artifact is invalid.
 A **harness** is the software around the model that provides tools, state, checks, and trace capture.
 A **promotion gate** is the fixed rule that turns all of that evidence into promote, reject, hold, or human-review.
 
-The short answer to “what are evaluation gates?” is this:
-they decide whether a candidate is better enough, safe enough, and evidenced enough to replace the baseline.
-
 The gate is not the last administrative step.
 It is the boundary that defines what the optimizer is allowed to learn.
+
+On Tangle, the gate is an `evaluate` call on a `defineAgentEval` kit. The kit runs the same cases through the agent once with the shipped prompt and once with the candidate, and returns the mean judge score per judge. The regression gate exits with status 1 when the candidate mean is lower, so the CI job fails before the prompt ships. The reader observes two means and one exit code.
 
 ## A leaderboard is not a release rule
 
@@ -104,7 +105,6 @@ A candidate can also overfit more subtly by learning a particular judge’s phra
 Keep case identifiers, evaluator versions, and split membership in the run record so a later audit can reconstruct what the optimizer could see.
 
 The [HELM evaluation framework from Stanford](https://crfm.stanford.edu/helm/index.html) evaluates language models across scenarios and metrics, showing why an agent evaluation should expose more than one headline number.
-Its structure encourages readers to ask which scenario, adaptation, and metric produced a result.
 Agent gates need the same discipline plus runtime context, tool calls, and artifact checks.
 
 ## Deterministic checks outrank model judges
@@ -123,7 +123,6 @@ calibrated semantic judge
 aggregate quality score
 ```
 
-The exact order can vary by product, but the principle is stable.
 A soft opinion cannot rescue hard evidence that the task was not completed.
 
 OpenAI’s public write-up about its in-house data agent shows the pattern clearly.
@@ -226,40 +225,19 @@ Mixed real and stub rows need quarantine or explicit exclusion.
 An authentication failure is a harness failure until the system can prove that the agent received a valid task execution.
 Failing closed here protects both the candidate and the baseline from false conclusions.
 
-## A public TypeScript evaluation shape
+## A regression gate in CI
 
-The public [Tangle agent-eval repository](https://github.com/tangle-network/agent-eval) includes an offline example built around defineAgentEval.
-The following shortened shape keeps the same idea while using a tiny deterministic judge:
+The file below is a runnable regression gate. It runs against real sandboxes.
+It calls `defineAgentEval` with two scenarios and the shipped prompt as `baselineSurface`.
+Each `agent` call creates a Sandbox with a Claude Code backend, prompts it, runs the failing test with `box.exec`, and deletes the box.
+The judge scores 1 when the test exits 0.
+`evaluate({ surface })` scores one prompt, and the gate compares `aggregates.byJudge.suite.mean` for the shipped and candidate prompts.
 
-```ts
-import { defineAgentEval } from '@tangle-network/agent-eval/contract'
+<Example path="evals/regression-gate" title="Refuse a prompt that passes fewer cases" />
 
-const evalKit = defineAgentEval({
-  scenarios: [
-    { id: 'refund', question: 'Can this ticket be refunded?' },
-    { id: 'shipping', question: 'Where is this ticket?' },
-  ],
-  agent: async (surface, scenario) =>
-    surface.includes('ticket-id') ? scenario.id + ': checked' : 'checked',
-  judge: {
-    name: 'ticket-id-present',
-    dimensions: [{ key: 'present', description: 'The answer names the case id.' }],
-    score: ({ artifact, scenario }) => {
-      const present = artifact.includes(scenario.id) ? 1 : 0
-      return { dimensions: { present }, composite: present, notes: '' }
-    },
-  },
-  baselineSurface: 'Answer politely.',
-  expectUsage: 'off',
-})
-
-await evalKit.evaluate()
-await evalKit.evaluate({ surface: 'Answer politely and include the ticket-id.' })
-```
-
-This is an illustrative adaptation of the repository’s public offline example.
-It proves the mechanics of comparing two surfaces on the same cases.
-It does not prove that a production judge is calibrated or that a support policy is correct.
+Both prompts see the same cases through the same harness and judge; only the prompt string changes.
+The judge reads only the test exit code, so it is deterministic.
+Two scenarios do not show that the gate represents production traffic.
 
 ## Failure taxonomies make the next experiment possible
 
@@ -300,7 +278,6 @@ An **attestation** is signed evidence about a trusted execution environment’s 
 None of those terms means “the answer was correct.”
 The trace and evaluation gate still need to verify the task result.
 The [Tangle x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) states that a paid request being accepted and enqueued is not the same as the job having completed.
-That distinction is exactly the one a release gate needs.
 
 ## What a gate should do when evidence is missing
 
@@ -339,6 +316,7 @@ Promotion is a product decision, not a ranking exercise.
 ## What should a first gate contain?
 
 Start with one baseline, one candidate surface, a protected case set, a deterministic check, a semantic score only where necessary, explicit cost fields, and a fail-closed decision when the record is incomplete.
+The regression gate above is that first gate: run it on any prompt change, and let a lower mean stop the release.
 
 ## Primary sources and next checks
 

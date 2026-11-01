@@ -4,23 +4,25 @@ slug: self-improving-stack-harness-evolution
 summary: >-
   Harness evolution changes the software around an agent when prompts and skills cannot add tools, isolation, checks, traces, or rollback.
 date: '2026-06-04'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'systems', 'architecture', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 10
 ---
 
+import Example from '../../components/Example.astro'
+
 The agent keeps saying it inspected the repository before proposing a change.
 The run record shows no file reads.
 The prompt says “run the tests,” but the runtime has no shell or test adapter.
 
 Adding another instruction will not create either capability.
-This is the moment to change the agent harness, the software around the model that starts work and manages tools.
+This is the moment to change the harness.
 
 The **harness** is the software around the model that starts work, exposes tools, manages state and budgets, captures artifacts, runs checks, and decides what can continue.
 A **trace** is the record of the whole execution, including the final answer and the steps that produced it.
 A **validator** is a deterministic or semantic check that turns an artifact into evidence.
-A **replay record** keeps enough input, output, and environment information to inspect a run again.
 A **candidate** is a proposed harness or profile change.
 A **runtime** is the software that starts model and tool work, manages limits, and records events.
 An **agent profile** is the versioned bundle of model, prompt, tools, permissions, skills, runtime settings, and evaluator identity for a run.
@@ -32,8 +34,9 @@ A **sandbox** is an isolated execution boundary that limits files, networks, cre
 A **mutable surface** is the part of the system a candidate is allowed to change.
 
 Harness evolution changes tools, workers, validators, traces, isolation, or release controls around the model.
-It can add a tool adapter, a worker driver, a deterministic check, a trace sink, a sandbox boundary, a replay path, or an isolated candidate lifecycle.
 Because those changes affect execution, evidence capture, permissions, and rollback, they need broader tests than a prompt or skill edit.
+
+On Tangle, a candidate harness runs as an agent profile through `providerAsSandboxClient` on a Tangle sandbox. Each run reports its cost on the `done` event (`totalCostUsd`), a check's exit code from `box.exec`, and the trace the runtime records.
 
 ## Find the missing action
 
@@ -62,8 +65,6 @@ It is to turn repeated operational behavior into a named mechanism with a check.
 Let h be the current harness and M be the set of mutations it can express.
 The system can search only the behaviors reachable through M.
 If M edits prompt text, it cannot produce a new worker process, an isolated workspace, or a raw provider capture sink.
-
-The distinction is easiest to see in a table:
 
 | Surface | Search can change | Search cannot create by itself |
 | --- | --- | --- |
@@ -121,7 +122,7 @@ The smoke case is a cost control.
 It should catch a missing dependency, broken adapter, malformed schema, or absent trace before the expensive campaign starts.
 The protected run is a control boundary.
 It should not be writable by the candidate.
-The rollback handle is an operational requirement, not a comment in a ticket.
+The rollback handle is an operational requirement.
 
 Parallel candidate generation requires isolation.
 Two variants that share a mutable directory can overwrite each other, pass because one consumed the other’s artifacts, or leave a mixed result whose parent is impossible to identify.
@@ -161,6 +162,12 @@ candidate code cannot rewrite the gate that promotes it
 If the product needs to evolve the evaluator, that change must be a separate candidate with its own test set, owner, and review.
 Otherwise the same system can lower the bar and declare itself improved.
 
+In CI, the regression gate applies this rule. The candidate prompt arrives in `CANDIDATE_PROMPT`; the scenarios, judge, and shipped baseline are fixed in the file, and the build fails when the candidate scores lower.
+
+<Example path="evals/regression-gate" />
+
+The output is two means and an exit code. It proves that the candidate does not score lower on these two cases under one judge. It does not prove production gain; two cases are a smoke test, not a holdout set.
+
 The [evaluation gates article](/blog/self-improving-stack-evaluation-gates) describes paired holdout comparisons, deterministic checks, cost limits, and judge calibration.
 The [governance article](/blog/self-improving-stack-governance) explains why the control surface must remain outside the optimized surface.
 
@@ -168,12 +175,16 @@ The [governance article](/blog/self-improving-stack-governance) explains why the
 
 The public [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) describes one runtime used for chat turns, one-shot tasks, teams, and agent improvement.
 Its README separates the execution loop from the scoring and shipping decision provided by [agent-eval](https://github.com/tangle-network/agent-eval) and from sandboxed execution.
-Execution runs separately from scoring and from the decision to ship a candidate.
+`providerAsSandboxClient` sets the harness in the default profile. `box.streamPrompt` yields `result` and `done` events, and `done` carries `totalCostUsd`.
+
+<Example path="runtime/any-cloud" />
+
+The output is the final answer and one cost line: the harness is a profile field, and the run is metered. It does not show a changed harness scores better; the regression gate above does.
 
 The public README also exposes a simple improvement shape.
-The following is illustrative TypeScript adapted to that public contract; `baseProfile`, `executionRef`, `method`, `findings`, the scenario sets, `judge`, and `runProfile` are application-provided.
+The following is an illustration, not runnable code; `baseProfile`, `executionRef`, `method`, `findings`, the scenario sets, `judge`, and `runProfile` are application-provided.
 
-```ts
+```text
 import { improve } from '@tangle-network/agent-runtime'
 
 const result = await improve(baseProfile, {
@@ -196,16 +207,12 @@ if (result.decision === 'ship') {
 }
 ```
 
-This snippet follows the repository’s public README shape.
-It is not a complete product integration because the application supplies the profile, method, scenarios, judge, agent adapter, and activation path.
-The important boundary is that improvement is a measured candidate operation, not an instruction for the live agent to rewrite itself in place.
+This snippet follows the repository’s public README shape. It is not a product integration: the application supplies the profile, method, scenarios, judge, agent adapter, and activation path. Improvement is a measured candidate operation, so the live agent does not rewrite itself in place.
 
-When the changed surface is harness code, the same principles apply with a different candidate representation.
-Run the code in an isolated workspace, record the exact change, execute the real backend, and evaluate the resulting behavior against the frozen baseline.
+When the changed surface is harness code, run the code in an isolated workspace, record the exact change, execute the real backend, and evaluate the resulting behavior against the frozen baseline.
 
 ## The research lineage
 
-The idea predates current coding agents.
 The [Gödel machine paper](https://arxiv.org/abs/cs/0309048) describes a self-referential solver that rewrites its own code after proving a utility improvement.
 Practical systems usually replace proof with empirical evaluation.
 
@@ -235,28 +242,22 @@ A failed hypothesis tells the next search which mechanism did not cause the obse
 
 ## Profiles and traces keep comparisons honest
 
-An **agent profile** is the identity of the run conditions.
+The profile is the identity of the run conditions.
 It should capture the model, prompt, tools, skills, permissions, runtime topology, harness revision, and evaluator identity that can affect behavior.
 
 If the candidate changes three of those at once, the score cannot attribute the gain to one mechanism.
 If the candidate changes a harness but the profile still says “baseline,” the comparison record is incomplete.
 
 The trace should connect the profile to every child branch, tool call, artifact, validator, and final decision.
-An **execution span** is one timed operation in that trace, such as a model call, tool call, or check.
-OpenTelemetry’s [trace model](https://opentelemetry.io/docs/concepts/signals/traces/) is a useful general vocabulary for parent spans, child spans, and distributed context.
+An **execution span** is one timed operation in that trace.
+OpenTelemetry’s [trace model](https://opentelemetry.io/docs/concepts/signals/traces/) gives the parent and child span vocabulary.
 Agent traces need domain fields on top: task identity, profile identity, tool arguments, artifact hashes, evaluator results, and cost.
 
 ## Keep service deployment controls outside candidate promotion
 
-If the evolved harness runs inside a Tangle service, a **Blueprint** is the reusable service template.
-A **Service** is a live instance created from that template.
-An **operator** is the party that runs its live Service.
-A **Router** maps a service job to the handler that executes it.
-Those outer objects do not prove that an internal harness variant is safe.
+If the evolved harness runs inside a Tangle Blueprint service, the Blueprint, its Service, the operator, and the Router do not prove that an internal harness variant is safe.
 
-An **x402** request authorizes and settles an optional HTTP payment before a job is enqueued.
-An **attestation** is signed evidence about code and hardware in a trusted execution environment.
-Neither proves that a changed harness produced a correct result.
+An **x402** payment and an **attestation** (signed evidence about code and hardware in a trusted execution environment) prove payment and code identity, not a correct harness result.
 The evaluator still needs the trace, deterministic checks, and task evidence.
 
 This is also why a harness candidate should not silently change payment, permissions, or isolation mode.
@@ -278,7 +279,6 @@ Those are separate risk dimensions that belong in the profile and the promotion 
 
 **Complexity debt** happens when the new mechanism adds more failure modes than it removes.
 
-The right response to complexity debt is not to hide it.
 Measure the new branch count, latency, operator work, and failure surface.
 If the simpler baseline performs as well, keep the simpler baseline.
 
@@ -297,7 +297,6 @@ Evolve the harness when the trace shows that the current system cannot:
 Do not evolve it merely because a prompt feels inelegant.
 The [optimization theory article](/blog/self-improving-stack-optimization-theory) explains how to choose the causal mutable surface.
 
-The durable lesson is narrow.
 Every optimizer searches a representation.
 Prompt search explores strings.
 Skill search explores reusable procedures.

@@ -12,8 +12,7 @@ const posts = process.argv.slice(2).length
   ? process.argv.slice(2).map((p) => (p.startsWith('/') ? p : p.endsWith('.mdx') ? join(process.cwd(), p) : join(root, 'src/content/blog', `${p}.mdx`)))
   : readdirSync(join(root, 'src/content/blog')).filter((f) => f.endsWith('.mdx')).map((f) => join(root, 'src/content/blog', f));
 
-rmSync(out, { recursive: true, force: true });
-mkdirSync(out, { recursive: true });
+rmSync(out, { recursive: true, force: true }); mkdirSync(out, { recursive: true });
 const fences = new Map(); // file name in the harness -> { post, line }
 for (const post of posts) {
   const text = readFileSync(post, 'utf8');
@@ -27,11 +26,10 @@ for (const post of posts) {
     fences.set(name, { post: post.replace(`${root}`, ''), line });
   }
 }
-if (fences.size === 0) {
-  console.log('check:blog-code: no ts fences to check');
-  process.exit(0);
-}
+if (fences.size === 0) { console.log('check:blog-code: no ts fences to check'); process.exit(0); }
 
+// The scratch files are deleted at exit: astro check and the examples harness would otherwise typecheck them too.
+process.on('exit', () => rmSync(out, { recursive: true, force: true }));
 const tsc = spawnSync('npx', ['--no-install', 'tsc', '-p', 'tsconfig.blog.json', '--pretty', 'false'], { cwd: harness, encoding: 'utf8' });
 if (tsc.error) throw tsc.error;
 const problems = new Map();
