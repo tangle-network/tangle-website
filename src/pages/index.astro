@@ -48,43 +48,14 @@ const organizationJsonLd = {
 // Harness commands and launch IDs are separate: Prime's CLI is prime-agent,
 // while the Sandbox launch API accepts prime.
 // Prime mark: https://github.com/PrimeIntellect-ai.png?size=256
-// Receipts for the pricing section, read from the recorded production runs the editor replays.
-import runCode from '../data/runs/sandboxes/run-code.json';
-import fixATest from '../data/runs/sandboxes/fix-a-test.json';
-import cancelOnCap from '../data/runs/fleets/cancel-on-cap.json';
 import benchmarks from '../data/benchmarks/sandbox.json';
 const rate = benchmarks.rate_card;
-
-const usd = (n: number | null) => (n === null ? '$0.00' : `$${n.toFixed(n < 1 ? 4 : 2)}`);
-const clock = (ms: number) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; };
-type Usage = { inputTokens?: number; outputTokens?: number };
-// A single turn reports usage on its call result; a fleet reports it per finished agent (cancelled agents report none).
-const tokens = (events: { kind: string; type?: string; result?: { usage?: Usage }; data?: { result?: { result?: { usage?: Usage } } } }[]) => {
-  const usages = [
-    ...events.filter((e) => e.kind === 'call' && e.result?.usage?.inputTokens).map((e) => e.result!.usage!),
-    ...events.filter((e) => e.type === 'agent.finished').map((e) => e.data?.result?.result?.usage).filter((u): u is Usage => !!u),
-  ];
-  const total = usages.reduce((n, u) => n + (u.inputTokens ?? 0) + (u.outputTokens ?? 0), 0);
-  return total ? total.toLocaleString('en-US') : null;
-};
-const receipts = [
-  { title: 'Run code', record: runCode },
-  { title: 'Fix a failing test', record: fixATest },
-  { title: `${cancelOnCap.events.filter((e) => e.type === 'agent.started').length} agents, one ${usd(cancelOnCap.events.find((e) => e.type === 'fleet.finished')?.data?.spend?.capUsd ?? null).replace(/\.00$/, '')} cap, stopped early`, record: cancelOnCap },
-].map(({ title, record }) => ({
-  title,
-  time: clock(record.run.durationMs),
-  tokens: tokens(record.events as never),
-  cost: usd(record.run.costUsd),
-  date: record.run.recordedAt.slice(0, 10),
-  id: record.run.id,
-}));
 const perHour = (n: number) => `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
 // What one key meters into one balance, drawn by the pricing figure.
 const bills = [
-  { id: 'sandboxes', name: 'Sandboxes', unit: `from ${perHour(rate.minChargeHourUsd)} an hour, plus egress`, y: 45 },
-  { id: 'router', name: 'Router', unit: 'tokens, at the listed price', y: 115 },
-  { id: 'intelligence', name: 'Intelligence', unit: 'traces and evals', y: 185 },
+  { id: 'compute', name: 'Compute', unit: `sandboxes, from ${perHour(rate.minChargeHourUsd)} an hour`, y: 45 },
+  { id: 'inference', name: 'Inference', unit: 'model tokens, at the listed price', y: 115 },
+  { id: 'observability', name: 'Observability', unit: 'traces and evals', y: 185 },
 ];
 
 const harnesses = [
@@ -154,9 +125,9 @@ const harnesses = [
       <div class="pricing-top">
         <div class="pricing-head">
           <h2 id="pricing-title">One key. <span class="grad-text">One bill.</span></h2>
-          <p>Every turn reports what it cost. A fleet stops at the cap you set.</p>
+          <p>Compute, inference and observability, on one balance.</p>
         </div>
-        <figure class="bill" aria-label="One API key meters sandboxes, models and traces into one balance">
+        <figure class="bill" aria-label="One API key meters compute, inference and observability into one balance">
           <svg class="bill-svg" viewBox="0 0 560 230" role="img" aria-hidden="true">
             <defs>
               <linearGradient id="bill-grad" x1="0" y1="0" x2="1" y2="0">
@@ -184,20 +155,6 @@ const harnesses = [
           </svg>
         </figure>
       </div>
-      <table class="ledger">
-        <thead><tr><th scope="col">run</th><th scope="col">sandbox time</th><th scope="col">tokens</th><th scope="col">model cost</th><th scope="col">record</th></tr></thead>
-        <tbody>
-          {receipts.map((r) => (
-            <tr>
-              <th scope="row">{r.title}</th>
-              <td class="mono">{r.time}</td>
-              <td class="mono">{r.tokens ?? '0'}</td>
-              <td class="mono ledger-cost">{r.cost}</td>
-              <td class="mono ledger-id">{r.date} · {r.id}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
       <div class="plans" data-plans>
         {PLANS.map((plan) => (
           <article class={`plan${plan.popular ? ' plan-popular' : ''}`} data-plan={plan.id}>
@@ -577,13 +534,6 @@ const harnesses = [
   .bill-flow:hover .bill-node { fill: var(--accent-surface-strong); stroke: var(--accent-text); }
   @keyframes billFlow { to { stroke-dashoffset: -28; } }
   @media (prefers-reduced-motion: reduce) { .bill-path { animation: none; stroke-dasharray: none; } }
-  .ledger { width: 100%; margin-top: 4rem; border-collapse: collapse; }
-  .ledger th, .ledger td { padding: 0.8rem 0.75rem 0.8rem 0; text-align: left; border-top: 1px solid var(--md3-outline-variant); vertical-align: baseline; }
-  .ledger thead th { border-top: 0; padding-top: 0; color: var(--text-muted); font-size: 0.82rem; font-weight: 500; }
-  .ledger tbody th { font-weight: 600; color: var(--text-primary); }
-  .ledger td { color: var(--text-primary); font-size: 0.98rem; white-space: nowrap; }
-  .ledger-cost { font-weight: 600; }
-  .ledger-id { color: var(--text-muted); font-size: 0.78rem; }
   .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 4rem; }
   .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
   .plan-popular { border-color: var(--accent-text); }
@@ -602,7 +552,6 @@ const harnesses = [
   @media (max-width: 980px) {
     .rail-grid, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .rail-head, .pricing-top { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
-    .ledger-id { display: none; }
   }
   @media (max-width: 720px) {
     .shell { width: min(92vw, 78rem); }
