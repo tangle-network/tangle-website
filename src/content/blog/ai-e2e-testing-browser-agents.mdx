@@ -5,6 +5,7 @@ summary: >-
   Follow a full browser journey across routes and backend state, using controlled
   test data and a final condition that proves the user's task finished.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - browser-agent
@@ -14,17 +15,19 @@ series: Browser Agent
 seriesOrder: 5
 ---
 
+import Example from '../../components/Example.astro'
+
 A customer does not experience a unit test, an application programming interface (API) response, and a browser page as separate systems.
 They see a signup form, an invitation, a dashboard, and an email or status message that tells them whether the job finished.
 
 AI E2E testing targets that complete journey.
-E2E means end-to-end: the test begins at a user-facing entry point, crosses the boundaries the user crosses, and checks the final state the user can see.
-An AI E2E test adds a natural-language goal and page interpretation to browser controls, while preserving enough evidence for a failure to be fixed.
-The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
+E2E means end-to-end: the test starts at a user-facing entry point, crosses the boundaries the user crosses, and checks the final state the user can see.
+An AI E2E test adds a natural-language goal and page interpretation to browser controls, while keeping enough evidence to fix a failure.
 
-Tangle Browser Agent is Tangle’s browser driver for these goal-based sessions with screenshots and DOM evidence.
-Its `bad` command is the command-line interface (CLI) for starting a run from a terminal.
-This article shows where the approach belongs in a test stack, how to write one release-worthy case, and why a green model summary cannot serve as the result by itself.
+Tangle Browser Agent is Tangle's browser driver for these goal-based sessions, with screenshots and DOM (the page's element tree) evidence.
+Its `bad` command starts a run from a terminal.
+In the sandboxed example in this article, `client.create` starts a [Tangle Sandbox](https://docs.tangle.tools/sandbox) machine, `box.prompt` returns a run whose `success` and `error` the test checks, and `box.read` and `box.fs.download` retrieve what the agent wrote.
+
 For prompt design, read [Natural Language Test Automation That Leaves Proof](/blog/natural-language-test-automation-browser-agents).
 
 ## A full journey has more than one assertion
@@ -45,7 +48,6 @@ A useful E2E case follows the user-visible journey:
 The browser has to see the route changes, form validation, loading states, and final list.
 The backend has to accept the request.
 The final page has to represent the result accurately.
-The test should capture the boundary where each of those claims becomes visible.
 
 The goal can stay in ordinary language:
 
@@ -72,16 +74,13 @@ The test case has to make five things visible.
 | evidence | One summary sentence | Screenshots, page observations, actions, and stop reason |
 
 The final condition must be observable.
-“The invite worked” is weaker than “the members screen shows qa@example.test with a Pending status.”
-The latter gives the test a string, a location, and a state to check.
+“The invite worked” is weaker than “the members screen shows qa@example.test with a Pending status,” which gives the test a string, a location, and a state to check.
 
-An evaluation is the step that compares this expected condition with the observed result.
-The evaluation can use a selector, an API response, a screenshot, or several pieces of evidence.
+An evaluation compares this expected condition with the observed result.
+It can use a selector, an API response, a screenshot, or several pieces of evidence.
 The agent’s explanation can help a reviewer, but it should not replace the condition being checked.
 
 ## Put AI E2E testing in the right layer
-
-A healthy test stack gives each layer a narrow job.
 
 | Layer | What it establishes | Typical owner |
 | --- | --- | --- |
@@ -96,14 +95,12 @@ Its [current documentation](https://playwright.dev/docs/intro) describes isolati
 The [WebDriver standard](https://www.w3.org/TR/webdriver2/) defines the broader remote-control interface used by browser automation tools.
 
 An AI case earns its place when page structure, copy, extensions, or conditional state make a fixed selector path expensive to maintain.
-A selector is a page query that identifies an element by its text, role, attributes, or position.
 It should still hand its result to deterministic checks where a known invariant matters.
 For example, an agent can navigate a billing page while a typed assertion checks that the displayed plan identifier matches the expected test plan.
 
 ## Write a case a reviewer can rerun
 
-A case needs more than a goal sentence.
-It needs enough context to explain whether a failure came from the application, the fixture, the browser, the network, or the agent.
+A case needs enough context to explain whether a failure came from the application, the fixture, the browser, the network, or the agent.
 
 ~~~json
 {
@@ -144,7 +141,6 @@ Two runs with different profiles may take different paths even when the goal is 
 ## Keep fixtures from becoming the bug
 
 End-to-end tests cross enough services that setup failures can dominate the result.
-Make the starting state deliberate.
 
 | Fixture | Control to establish before the browser opens |
 | --- | --- |
@@ -161,11 +157,16 @@ A seeded database can make the run repeatable.
 It cannot prove the product handles a real empty state.
 Keep both the fixture description and the observed setup in the trace.
 
-The runtime is the place where the test process, browser, files, and model calls execute.
-For a local run it may be a developer machine or continuous-integration worker.
-Continuous integration, or CI, is the automated process that runs checks for a change.
-[Tangle Sandbox](https://docs.tangle.tools/sandbox) is Tangle’s isolated workspace for files, processes, and artifacts around an agent session.
-The runtime boundary affects network access, browser version, secret exposure, and reproducibility.
+The runtime is where the browser, files, and model calls execute: a developer machine, a continuous-integration (CI) worker, or a sandbox.
+The example below uses a sandbox. The agent installs Playwright and Chromium itself, egress allows only the browser download and one site, and the machine has 2 CPU cores and 4 GB of memory.
+The test checks the run's `success` flag and the files it wrote, not the agent's description of them.
+
+<Example path="sandboxes/browser-task" title="An agent drives a browser inside a sandbox" />
+
+The run proves that a sandboxed agent installed Chromium, loaded a live page, and wrote the requested files.
+It does not prove that the same steps succeed behind a login, on another day, or with a different network policy.
+
+The runtime sets network access, browser version, secret exposure, and reproducibility, so record it with the fixture.
 
 ## Turn a run into a release decision
 
@@ -180,12 +181,11 @@ An AI E2E rule should be small enough to inspect and important enough to matter.
 | wallet | selected account and chain appear in the application | stop at signing unless test-wallet permission is explicit |
 | support path | the reported customer journey reaches the expected page | preserve the input class and redact sensitive values |
 
-A few narrow cases are easier to own than many goals whose final conditions all mean “looks okay.”
-Choose the smallest set that covers the release risk and review every case’s evidence.
+Narrow cases are easier to own than many goals whose final conditions all mean “looks okay.”
+Choose the smallest set that covers the release risk, and review every case’s evidence.
 
 A passing rule means the specified condition was observed under the specified fixture and runtime.
-It does not mean every path through the product is healthy.
-It does not mean the model will follow the same route after a copy change.
+It does not mean every path through the product is healthy, or that the model will follow the same route after a copy change.
 
 ## Trace the first wrong step
 
@@ -201,8 +201,16 @@ The first wrong step matters more than the final error because later actions may
 | 5 | Final condition absent | Stop and save screenshot | fail with service error | actionable |
 
 The last row is the evaluation result.
-The earlier rows explain whether engineering should inspect the page, the backend, the fixture, or the test environment.
-If the run only returns “project creation failed,” someone has to rerun it to recover that context.
+The earlier rows show whether engineering should inspect the page, the backend, the fixture, or the environment.
+“Project creation failed” alone forces a rerun to recover that context.
+
+A model judge can grade the same trace, but it grades against the condition the case states, not against the agent’s own summary.
+The example below scores a code-review run's answer and every tool call on two dimensions.
+
+<Example path="evals/score-a-trace" title="A model judge scores the run's trace" />
+
+The judge returns dimension scores and the trace identifier for storage beside the screenshots.
+A score is still a model’s grade, so it cannot replace the final condition.
 
 Useful terminal states are:
 
@@ -215,11 +223,10 @@ Useful terminal states are:
 
 Do not turn blocked or inconclusive into pass because the agent used all available steps.
 Do not turn a fixture outage into an application defect.
-The status vocabulary should make those distinctions visible to the release owner.
 
 ## Parallel cases need separate worlds
 
-Running several browser cases at once can shorten a suite, but concurrency does not make shared state safe.
+Concurrency does not make shared state safe.
 Each case needs its own account, browser context, wallet fixture, and data namespace unless the application explicitly supports isolation.
 
 The public driver README documents a cases-file entry point and a concurrency option:
@@ -228,27 +235,16 @@ The public driver README documents a cases-file entry point and a concurrency op
 bad run --cases ./browser-cases.json --concurrency 4
 ~~~
 
-The command is useful when the four cases cannot affect one another.
-It is dangerous when two cases share a wallet nonce, mutate the same workspace, or rely on one email inbox.
-A parallel run should record the case identifier and fixture identifier with every artifact.
-Otherwise a screenshot from one account can be mistaken for a result from another.
-
-Use serial execution for stateful wallet flows, shared test accounts, and cases that intentionally verify ordering.
-Use parallel execution for independent read-only pages or isolated disposable accounts.
-The right choice follows the state boundary, not the number of available browser slots.
+The command is safe when the four cases cannot affect one another, and dangerous when two cases share a wallet nonce, mutate the same workspace, or rely on one email inbox.
+Record the case and fixture identifiers with every artifact, so a screenshot from one account is not mistaken for another's result.
+Use serial execution for stateful wallet flows, shared accounts, and cases that verify ordering. The state boundary decides, not the number of browser slots.
 
 ## Keep the execution owner visible
 
-Browser Agent can run as a package or CLI without the rest of Tangle.
-If a team turns these cases into a service, a [Blueprint](/blog/blueprint-protocol-operator-services) is the reusable service definition and an operator is the provider that runs it.
-That packaging can describe who executes a job, which inputs it accepts, and which artifacts it returns.
-It cannot validate a browser result on its own.
-
-Keep the final condition and its evidence in the test record, even when another service schedules or pays for the run.
+If a team turns these cases into a service, a [Blueprint](/blog/blueprint-protocol-operator-services) defines the job's inputs and returned artifacts, and an operator runs it.
+That packaging cannot validate a browser result on its own, so keep the final condition and its evidence in the test record.
 
 ## Failure modes worth designing first
-
-The hardest failures are often ordinary product states.
 
 An invitation can be created twice because the page retried after the request succeeded.
 A wallet can show one account while the application keeps another account in memory.
@@ -269,10 +265,6 @@ One end-to-end run establishes one goal under one fixture, browser, model profil
 It does not prove every edge case, device, locale, account role, or network condition.
 It does not replace unit tests, API contracts, transaction simulations, or deterministic browser assertions.
 It does not make a production credential appropriate for an agent.
-
-The strongest use is a product-boundary check that complements lower-level tests.
-The weakest use is a vague release ritual whose only output is a model saying “looks good.”
-
 
 ## What is AI E2E testing?
 
