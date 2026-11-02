@@ -18,11 +18,11 @@ for (const post of posts) {
   const text = readFileSync(post, 'utf8');
   const slug = basename(post, '.mdx');
   let n = 0;
-  for (const match of text.matchAll(/^```(?:ts|typescript)\b[^\n]*\n([\s\S]*?)^```/gm)) {
+  for (const match of text.matchAll(/^(```|~~~)(?:ts|typescript)\b[^\n]*\n([\s\S]*?)^\1/gm)) {
     n += 1;
     const name = `${slug}.${n}.mts`;
     const line = text.slice(0, match.index).split('\n').length + 1;
-    writeFileSync(join(out, name), match[1]);
+    writeFileSync(join(out, name), match[2]);
     fences.set(name, { post: post.replace(`${root}`, ''), line });
   }
 }

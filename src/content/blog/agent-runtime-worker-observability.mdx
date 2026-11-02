@@ -4,6 +4,7 @@ slug: agent-runtime-worker-observability
 summary: >-
   AI agent observability should expose live progress and tool requests, while leaving completion and duration unknown when the remote stream omits them.
 date: '2026-08-01'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-runtime
@@ -14,10 +15,10 @@ series: Agent Runtime Infrastructure
 seriesOrder: 3
 ---
 
+import Example from '../../components/Example.astro'
+
 An automated coding worker is one running process of the agent, and it can run for several minutes while its screen shows nothing.
 The person waiting for it now has to guess whether the model is thinking, a command is running, the provider is disconnected, or the job already ended.
-
-That guess changes product behavior.
 A parent program may restart useful work, leave a dead worker running, or tell a reviewer that a tool succeeded when it never ran.
 
 AI agent observability starts with the decisions the surrounding system needs to make.
@@ -25,12 +26,18 @@ For a worker, those decisions are usually whether to wait, steer, stop, restart,
 The shared bridge, an adapter between the runtime and a remote service, in Tangle's public agent-runtime source now exposes enough live activity and requested-tool evidence to make those decisions narrower.
 It still leaves tool completion and duration unknown when the remote stream never reports them.
 
+On Tangle, a worker runs in a sandbox and `box.streamPrompt` yields its events while it works.
+The example reads two of them: a `result` event with the answer, and a `done` event whose `data.totalCostUsd` is the run's cost.
+
+<Example path="runtime/any-cloud" title="A streamed worker in a Tangle sandbox" />
+
+The stream here reports an answer and a cost, not a tool event, so the tool facts below depend on what the stream carries.
+
 > Good observability records what the system knows, what it does not know, and which decision each fact supports.
 
 ## Define the run before adding a dashboard
 
-An **agent** is a program that uses a language model and tools to complete a task.
-A **worker** is one running copy of that program.
+A **worker** is one running copy of an agent program.
 An **agent runtime** is the software that starts, controls, and records the worker.
 
 A **parent** is the program that starts the worker and decides whether to wait, steer, stop, or restart it.
@@ -59,9 +66,6 @@ It had to make decisions from the absence of a response.
 | The remote run was cancelled | Silence | The system reports a false timeout |
 | The worker failed at the provider | Empty or incomplete result | The caller treats a failed run as a valid answer |
 
-The bridge cannot solve all of these cases with one boolean called running.
-It needs separate facts with separate owners.
-
 ## Three sources of truth
 
 The public [bridge implementation](https://github.com/tangle-network/agent-runtime/blob/main/src/runtime/supervise/runtime.ts) separates local activity, remote terminal state, and tool outcomes.
@@ -74,8 +78,7 @@ The public [bridge implementation](https://github.com/tangle-network/agent-runti
 | Tool completion | A tool-result event from the execution boundary | Not available on this bridge stream | No success or latency claim |
 
 The local mirror contains the turn count, the current tool, turn or steering activity, queued steering messages, and the model information the executor derived from the worker declaration.
-A progress read uses those facts immediately.
-It does not wait for a new network request.
+A progress read uses those facts without a network request.
 
 The remote service owns one fact the local worker cannot derive on its own.
 Has the remote run become terminal?
@@ -83,11 +86,16 @@ The bridge schedules a status request to the source-specific endpoint `GET /v1/r
 
 That endpoint shape belongs to the bridge implementation described by the public change.
 It is not a universal Tangle endpoint that every agent application can call.
-The design lesson is the separation between a local read and a remote refresh.
+
+The Sandbox SDK answers the same question for a prompt it started.
+`box.dispatchPrompt` returns an `executionId`, and any process that holds the sandbox id and that execution id can collect the result later.
+
+<Example path="sandboxes/worker" title="Collect a running prompt from another process" />
+
+The collecting process reads the outcome from the service, not from memory.
 
 ## Give every observation a freshness rule
 
-A fact is not useful merely because it has a field name.
 The parent also needs to know where the fact came from and how old it may be.
 The local mirror can be read immediately, but it may be stale if the stream has stopped.
 The remote status can be authoritative for terminal state, but it is refreshed at a bounded interval.
@@ -120,13 +128,12 @@ Consider a run with these events:
 | 12:00:04 | Stream disconnects | New activity is no longer observed; prior facts remain prior facts |
 | 12:00:05 | Remote refresh reports cancelled | The remote run is terminal and recovery can begin |
 
-This sample timeline shows why the client should not turn the 12:00:02 request into success because activity alone is not completion evidence.
-It should not call the worker dead merely because the local mirror has not advanced after a sample interval of 1 second.
+Activity alone is not completion evidence, so the 12:00:02 request is not a success.
+A mirror that has not advanced after one sample interval of 1 second does not mean the worker is dead.
 Freshness tells the parent when to wait, when to refresh, and when to degrade to unknown.
 
 Polling more often does not create stronger evidence.
-It can increase load while returning the same remote state.
-The public bridge's one-refresh-per-second limit is therefore part of the implementation boundary, not a promise that a remote run changes state every second.
+The one-refresh-per-second limit is an implementation boundary, not a promise that remote state changes every second.
 
 An illustrative status record can make the boundary clear:
 
@@ -150,8 +157,7 @@ The value of the record is that it does not turn an absent field into a positive
 ## Record the request without inventing the result
 
 The bridge now sends each incoming partial tool-call event through the same decoder used by the other stream sources.
-If one delta contains multiple calls, the trace records each call.
-It does not keep only the first.
+If one delta contains multiple calls, the trace records each one, not only the first.
 
 The record can safely include:
 
@@ -174,7 +180,6 @@ Marking every request as successful would make a failed tool look healthy.
 Assigning an end time equal to the request time would create a false zero-millisecond duration.
 Both errors would leak into later success-rate and latency reports.
 
-This is a small data-model decision with a large consequence.
 Unknown is a real state.
 It tells the next layer to collect evidence at the tool boundary if it needs a result.
 
@@ -187,9 +192,15 @@ The local progress mirror can say that a tool request is active.
 The settled trace can preserve the request and its arguments.
 Neither one can say the tool succeeded unless the execution layer sends a result that the bridge captures.
 
+The eval example sends the answer and `run.toolInvocations` to a model judge on the Router.
+
+<Example path="evals/score-a-trace" title="Score a run and every tool call it made" />
+
+Each invocation has an optional `result` and `isError`.
+A call that never reports a result is recorded without one, not as a success.
+
 The distinction matters when a run becomes an evaluation input.
 An **evaluation** is a structured check of a run or result against a stated criterion.
-For example, an evaluator can check that a requested file was changed, that tests passed, or that a response cites the right source.
 It must not treat a request-only tool span as a successful tool execution.
 
 The [CodeTraceBench benchmark article](/blog/codetracebench-benchmark-measured-wrong-capability) follows the same boundary at the analyst layer.
@@ -197,8 +208,6 @@ A score can count whether an analyst named a labeled step.
 It does not automatically prove that the analyst's evidence or repair was useful.
 
 ## What the parent can decide now
-
-Once the bridge exposes separate observations, the parent can use rules that match the evidence.
 
 | Observation | Reasonable parent action |
 | --- | --- |
@@ -215,7 +224,7 @@ The product decides how long to wait, whether to retry, whether a partial trace 
 
 A common mistake is to make the telemetry path a new failure path.
 If a progress read waits on a remote status request, a slow status service can block the parent from stopping a worker.
-The public change avoids that coupling by reading local state immediately and refreshing remote state separately.
+The public change avoids that coupling.
 
 Another mistake is to make an unknown field look like an ordinary zero value.
 The code that calculates latency or success rate must preserve the distinction:
@@ -253,7 +262,6 @@ These combinations are why one `running` flag is too small for the parent’s de
 
 The table is a policy model rather than a claim about a universal status API.
 It gives the product separate labels for “the process exists,” “events are arriving,” and “the service says the run ended.”
-Those labels lead to different actions.
 
 Health checks should also be allowed to fail without killing the work.
 If a progress endpoint times out, the parent can keep the worker alive while marking progress unavailable.
@@ -266,8 +274,6 @@ Join the facts later by run and call identifiers.
 Do not use a convenient status field to stand in for evidence owned by another boundary.
 
 ## Failure cases belong in the contract
-
-Observability changes should include failure tests alongside a busy success path.
 
 | Failure case | Record that remains honest |
 | --- | --- |
@@ -283,16 +289,13 @@ An empty argument object can be a valid request.
 No tool event at all is a different observation.
 
 The [WHATWG Server-Sent Events specification](https://html.spec.whatwg.org/multipage/server-sent-events.html) defines the event transport used by the stream.
-It defines how events travel.
-It does not add a tool-completion event to a service that never sends one.
+It defines transport, not a tool-completion event for a service that never sends one.
 
 ## The shared route made deletion possible
 
-The follow-up [execution-path deletion](/blog/agent-runtime-generic-executor-deletion) made the coding-agent program that previously had a special route use the shared bridge.
-That cleanup removed the special executor and tool-connection path so the program uses the shared bridge like the other supported workers.
+The follow-up [execution-path deletion](/blog/agent-runtime-generic-executor-deletion) removed the coding-agent program's special executor and tool-connection path, so it uses the shared bridge like the other supported workers.
 
 The deletion was safe only for the capabilities the bridge could expose.
-It did not turn request-only tool evidence into completion evidence.
 It did not add a per-worker environment channel.
 The accepted losses remain part of the route's contract.
 

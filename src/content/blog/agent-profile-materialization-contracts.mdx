@@ -4,6 +4,7 @@ slug: agent-profile-materialization-contracts
 summary: >-
   An AI agent profile lists the model, tools, files, and policies a run needs. A delivery contract rejects unsupported settings before the worker starts.
 date: '2026-08-01'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-runtime
@@ -14,17 +15,19 @@ series: Agent Runtime Infrastructure
 seriesOrder: 1
 ---
 
+import Example from '../../components/Example.astro'
+
 An AI agent profile can say, “Use this model, these tools, this prompt, and these files.”
 The run can still start when the selected execution path knows how to carry only the model and prompt.
 The answer may look plausible, so the missing tools are easy to blame on the model or the prompt.
 
-The failure happened earlier.
-The runtime accepted a profile that the chosen path could not deliver.
+The failure happened earlier: the runtime accepted a profile that the chosen path could not deliver.
 
-This article explains how a delivery contract moves that failure to the point where it can still be fixed.
-The example comes from Tangle’s public agent-runtime source, but the rule applies to any system that saves agent settings and sends them through more than one execution path.
+The example comes from Tangle’s public agent-runtime source. The rule applies to any system that saves agent settings and sends them through more than one execution path.
 
 > An AI agent profile is safe to launch only when the selected path can account for every requested setting.
+
+On Tangle, the profile is an argument to `client.instances.ensure`, the Sandbox SDK call that returns one customer's sandbox. Its `profile` object carries `version`, `backend.type`, `backend.profile.name`, and `backend.profile.prompt.systemPrompt`. The caller reads the outcome from `turn.state` and `turn.text`. A turn runs in a session bound to the profile version, so a changed version takes effect on the next turn.
 
 ## The profile describes intent
 
@@ -36,10 +39,7 @@ A **worker** is one running copy of the agent.
 A **runtime** is the software that starts the worker, sends it inputs, observes its events, and records its result.
 An **execution path** is the particular route the runtime uses to create and control that worker.
 
-Materializing a profile means turning the saved description into the concrete inputs that a worker receives.
-The materialized result might be a prompt, a model request, a mounted directory, a tool registry, and a set of process limits.
-It is no longer a description.
-It is the configuration that can affect the run.
+Materializing a profile means turning the saved description into the concrete inputs a worker receives: a prompt, a model request, a mounted directory, a tool registry, and process limits. Only those inputs can affect the run.
 
 That distinction matters because execution paths do not all have the same interface.
 A prompt-and-model worker may accept two kinds of input.
@@ -49,7 +49,7 @@ A remote service may expose a model request but no per-worker environment channe
 MCP, the Model Context Protocol, is an open protocol for connecting language-model applications to external data sources and tools.
 An MCP connection is therefore more than text in a prompt.
 It needs a path that can carry its server details, authorization boundary, and lifecycle.
-The [MCP specification](https://modelcontextprotocol.io/specification/latest) describes the protocol's tools, resources, prompts, and capability negotiation.
+The [MCP specification](https://modelcontextprotocol.io/specification/latest) defines the protocol.
 
 ## A saved profile can outgrow its route
 
@@ -77,17 +77,14 @@ If the product sends the profile unchanged to both routes, the first route has t
 | Reject the whole profile | The run fails before work begins | The route exposed its limit |
 | Pretend the fields worked | The model talks about tickets but cannot update one | The system created false capability |
 
-The first behavior is difficult to diagnose.
-The second is easy to correct.
-The third is dangerous because the user cannot tell that the worker lacks authority.
+The first is hard to diagnose, the second is easy to correct, and the third is dangerous because the user cannot tell that the worker lacks authority.
 
 The contract is the mechanism that makes the second behavior the default.
 It says which profile settings the path accepts and gives the runtime enough information to reject the rest before the worker starts.
 
 ## Treat delivery as a set comparison
 
-The runtime does not need to compare two giant configuration objects as opaque blobs.
-It can compare the changed settings with the selected path's supported settings.
+The runtime can compare the changed settings with the path's supported settings.
 
 The core operation is small:
 
@@ -122,6 +119,14 @@ Treating all falsy values as absent silently changes the user's request.
 The check belongs before worker creation.
 Once a worker has started, it is too late to explain that a connection was discarded during setup.
 
+## Pin the profile version to one customer's sandbox
+
+The `legal-agent` product gives each customer one isolated sandbox. `client.instances.ensure` takes the key `customer:<id>` and the profile, then returns that customer's sandbox running. The example writes the contract into the sandbox and polls the same `turnId` until the turn leaves `running`.
+
+<Example path="products/legal-agent" title="One customer's contract review, pinned to a profile version" />
+
+The output proves that the platform accepted the `contracts-v1` profile for this key and returned a settled turn. It does not prove that the model followed the system prompt or cited the right clause. The citation rule is an instruction, so an evaluation has to check it.
+
 ## Validate the effective profile
 
 The profile saved by a product is not always the profile that a worker should receive.
@@ -152,7 +157,6 @@ A useful materialization record keeps the three states apart:
 ~~~
 
 This record is illustrative rather than a promised API shape.
-Its purpose is to show why a rejected request is better than a silently shortened one.
 The requested state is what the caller asked for.
 The effective state is what defaults and inheritance produced.
 The materialized state is the concrete setup passed to the worker.
@@ -192,14 +196,12 @@ For the support example, the route may support the `ticket.update` tool while th
 The correct result is not to delete the tool from the profile and pretend the route delivered everything.
 The runtime should record that the tool is available but the requested action is denied by policy.
 
-This distinction also helps with audits.
-A materialization record can show that the tool registry was installed.
-A policy decision can show that the write operation was refused.
+For audits, a materialization record can show that the tool registry was installed.
+A policy decision can show that the write was refused.
 A trace can show whether the worker requested the operation.
 An evaluation can check whether the ticket remained unchanged.
 
 One record should not collapse those facts into “tools: true.”
-The more consequential the side effect, the more important it is to preserve the boundary between capability, permission, request, and outcome.
 
 ## The public source names different contracts
 
@@ -207,7 +209,6 @@ The public [profile-materialization module](https://github.com/tangle-network/ag
 It expands compound areas such as model and resources into the individual settings that a route must either carry or reject.
 
 The contract names are implementation details, not a score and not proof that the paths behave identically.
-Three representative shapes make the design easier to understand.
 
 | Contract shape | What it is meant to carry | A reasonable use |
 | --- | --- | --- |
@@ -215,8 +216,7 @@ Three representative shapes make the design easier to understand.
 | Prompt-and-model execution | Instructions, model selection, agent program, and metadata | A deliberately narrow remote model route |
 | Isolated worktree command execution | Coding settings plus files, commands, permissions, and lifecycle controls | A local coding worker in its own worktree |
 
-The supported fields are part of the public source contract.
-They can change as the runtime adds a new worker or removes an old route, so a builder should read the versioned source or package documentation rather than hard-code the list in a separate application.
+The supported fields can change as the runtime adds a new worker or removes an old route, so a builder should read the versioned source or package documentation rather than hard-code the list in a separate application.
 
 The profile areas themselves are ordinary product concepts:
 
@@ -232,9 +232,6 @@ The profile areas themselves are ordinary product concepts:
 | Resources | Files, skills, commands, or instructions | The worker starts without the material it needs |
 | Lifecycle | Hooks, timeouts, or run mode | Cleanup or cancellation behaves differently |
 | Records | Metadata, privacy, and run extensions | The work cannot be joined to its review record |
-
-The table is a debugging map.
-It tells a builder what to inspect when a profile appears to work but one capability is absent.
 
 ## A mismatch should be actionable
 
@@ -257,10 +254,8 @@ An actionable error can look like this:
 }
 ~~~
 
-This response is illustrative.
-Its job is to show the information a caller needs, not to promise a particular error spelling.
+This response is illustrative, not a promised error format.
 
-The error should identify the path and the unsupported settings.
 Listing every supported setting can help when the caller needs to choose a different route.
 Returning only “profile invalid” forces the caller to repeat the run with guesses.
 
@@ -279,8 +274,6 @@ It does not answer three others.
 2. Does the model provider expose the requested capability?
 3. Did the run produce the result the user wanted?
 
-Keep those boundaries visible.
-
 | Evidence | Narrow claim it supports | Claim it does not support |
 | --- | --- | --- |
 | Contract check passed | The route accepted the requested profile surface | Every tool will work |
@@ -296,8 +289,7 @@ It can catch a missing ticket update, but it cannot retroactively make an unsupp
 
 ## Do not confuse delivery with Tangle's service layers
 
-The profile contract sits below several other Tangle concepts.
-Those concepts solve different problems.
+The profile contract sits below other Tangle concepts.
 
 A **router** is a model-access layer that chooses or forwards an inference request to a provider.
 It can decide which model answers, but it does not automatically provide a filesystem or ticket tool.
@@ -321,9 +313,7 @@ They do not replace the delivery check.
 
 ## Source and package versions are separate evidence
 
-The public repository is a source record.
-An installable package is the version an application installs.
-Those records can differ while a change is moving through release automation.
+The public repository is a source record. The installable package is what an application gets, and the two can differ during release automation.
 
 The [published package](https://www.npmjs.com/package/@tangle-network/agent-runtime) and its release notes determine what an application can install.
 Check that package version and the source version your application pins before depending on a new contract.
@@ -336,7 +326,7 @@ Changing the prompt will not make an old runtime reject an unsupported setting.
 
 Use a delivery contract when any profile can run through more than one path.
 Compare the changed settings with the selected path before starting a worker.
-Reject the candidate with the missing settings when the comparison fails.
+Reject the candidate when the comparison fails.
 
 Then test the next boundary.
 If the route accepts the profile, record the materialized inputs and run a task that exercises the new capability.
