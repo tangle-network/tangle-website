@@ -4,6 +4,7 @@ slug: blueprint-sdk-x402-payments-runnable-jobs
 summary: >-
   An x402 payment authorizes one Tangle Blueprint job over HTTP; this guide covers settlement, quote expiry, retries, and evidence after execution.
 date: '2026-03-18'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - x402
@@ -16,54 +17,46 @@ seriesOrder: 1
 ---
 
 The problem appears when an AI agent calls an unfamiliar endpoint because it needs one job done now.
-The endpoint does not offer an account, a monthly plan, or a human approval button.
-It answers with `402 Payment Required`, describing the token, network, amount, and recipient it accepts.
+The endpoint offers no account, monthly plan, or human approval button.
+It answers `402 Payment Required` and describes the token, network, amount, and recipient it accepts.
 
-The agent signs a payment authorization and tries again.
+The agent signs a payment authorization and retries.
 The service verifies the authorization, settles it, and admits one job.
-In Tangle's asynchronous Blueprint, a reusable service definition, gateway, that admission returns `202 Accepted`; the runner produces the result through the service's documented result path.
+In a Tangle Blueprint, a reusable service definition, the gateway's admission returns `202 Accepted`; the runner produces the result later through the service's documented result path.
 
-That is the promise of a Blueprint, a reusable service definition, using x402, an HTTP payment protocol, for paid job admission.
-The payment arrives through Hypertext Transfer Protocol (HTTP), but the paid request must still become a durable, typed job that a Tangle operator, the service provider, can run and recover.
+The surface this post rests on is the public Tangle x402 gateway in the Blueprint SDK (`crates/x402/src/gateway.rs`).
+A client observes it from outside: a `402` with `PAYMENT-REQUIRED` before payment, then a `202` with `PAYMENT-RESPONSE` and a call identifier once the job is admitted.
+The payment arrives over Hypertext Transfer Protocol (HTTP), but the paid request must still become a durable, typed job that a Tangle operator, the party running the service, can run and recover.
 
 ## Payment first, job second
 
-x402 is an open Hypertext Transfer Protocol (HTTP) payment protocol for machine-to-machine requests.
-It defines how a server says “payment is required,” how a client presents payment authorization, and how the server reports the payment response.
+x402 is an open HTTP payment protocol for machine-to-machine requests.
+It defines how a server says payment is required, how a client presents a payment authorization, and how the server reports the payment response.
 
-A Tangle Blueprint is a public service definition with named jobs and an operator-facing runtime.
 In a paid Blueprint, x402 is the admission layer and the Blueprint runner is the execution layer.
 The gateway should verify and settle the payment before it invokes an expensive paid job, then enqueue exactly one admitted job with a traceable identifier.
 
 The payment proves that a client authorized a particular transfer under particular conditions.
-It does not prove that the model was correct, that the operator used the best hardware, or that the result deserves to be trusted.
-Those are separate verification questions.
+It does not prove that the model was correct, that the operator used the best hardware, or that the result deserves trust.
 
 ## Terms for the handoff
 
-A **Blueprint** is a reusable service definition that tells Tangle what jobs exist and how operators can run them.
-
-An **operator** is the person or team that supplies a machine and runs one service instance.
+A **job router** maps a job type to its handler.
+It is the service's dispatch table, not the model-routing service or the network component that sends packets between hosts.
 
 A **runtime** is the process and environment that executes the handler, including its dependencies, model, permissions, and timeout.
 
-A **GPU**, or graphics processing unit, is an accelerator that may be required for model inference.
+An **agent profile** is the client's policy for calling a service: endpoint, accepted chain and token, recipient, budget, timeout, retry rule, and the evaluation checks used to judge the result.
 
-A **job router** maps a job type to its handler.
-It is the service’s dispatch table, not the model-routing service or the network component that sends packets between hosts.
+An **evaluation** is a defined check against an expected condition, such as "the response has a valid schema and the model version is the approved one."
+It is evidence about one run, not a universal guarantee.
 
-An **agent profile** is the client’s policy for calling a service.
-It can include the endpoint, accepted chain and token, recipient, budget, timeout, retry rule, and the evaluation checks used to judge the result.
-
-An **evaluation** is a defined check against an expected condition, such as “the response has a valid schema and the model version is the approved one.”
-An evaluation is evidence about one run, not a universal guarantee.
-
-A **trace** is the timeline joining the HTTP request, payment proof, admitted job, runtime attempt, and result.
-The trace is what lets an operator explain a timeout without exposing the user’s private input.
+A **trace** joins the HTTP request, payment proof, admitted job, runtime attempt, and result.
+It lets an operator explain a timeout without exposing the user's private input.
 
 ## The five-message mental model
 
-The generic x402 flow is easiest to understand as two HTTP requests and three named headers.
+The generic x402 flow is two HTTP requests and three named headers.
 The [x402 repository](https://github.com/x402-foundation/x402) documents `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`.
 The Tangle Blueprint gateway adds an asynchronous job boundary: a settled payment produces an admitted `JobCall`, not an inline job result.
 
@@ -83,18 +76,17 @@ client                         Blueprint gateway                 operator runtim
   |------ follow documented result path ------------------------------->|
 ```
 
-The server may verify and settle locally or call a facilitator.
-A **facilitator** is a service that checks whether a payment authorization is valid and, when asked, submits or completes settlement on the network.
-It is a payment utility, not the job runner and not a judge of the output.
+The server may verify and settle locally or call a facilitator, a service that checks payment authorizations and, when asked, submits settlement on the network.
+A facilitator is a payment utility, not the job runner and not a judge of the output.
 
 The payment response belongs to the completed payment operation.
 The job admission belongs to the Blueprint gateway, and the job result belongs to the Blueprint runtime.
-Keeping those facts separate prevents a common error: returning a success status because payment settled even though the job never ran.
+Keeping those apart prevents a common error: returning success because payment settled even though the job never ran.
 
 ## A concrete request and response
 
 Assume a Blueprint exposes `summarize_document` and accepts USDC, the USD Coin token, on one supported network.
-The following 402 response is illustrative, but it shows the fields an agent needs before signing anything.
+This 402 response is illustrative. It shows the fields an agent needs before it signs anything.
 
 ```http
 HTTP/1.1 402 Payment Required
@@ -113,11 +105,11 @@ PAYMENT-REQUIRED: <base64-encoded-payment-requirements>
 }
 ```
 
-The client should compare this information with its agent profile.
+The client should compare this with its agent profile.
 It should refuse to sign if the network, token contract, recipient, amount, job, or expiration is outside policy.
 
 The retry carries a payment authorization.
-The exact encoding and scheme depend on the supported x402 network and token, so clients should use the current [x402 client documentation](https://docs.x402.org/getting-started/quickstart-for-buyers) and the token’s official documentation.
+The exact encoding and scheme depend on the supported x402 network and token, so use the current [x402 client documentation](https://docs.x402.org/getting-started/quickstart-for-buyers) and the token's official documentation.
 
 ```http
 POST /jobs HTTP/1.1
@@ -132,8 +124,8 @@ PAYMENT-SIGNATURE: <base64-encoded-payment-authorization>
 ```
 
 The `PAYMENT-SIGNATURE` payload can carry x402's optional payment-identifier extension when the server advertises it.
-That extension is the protocol's current idempotency mechanism; an application may also keep its own job key, but `Idempotency-Key` is not an x402 header requirement.
-See the [payment-identifier extension](https://docs.x402.org/extensions/payment-identifier) before implementing retry deduplication.
+That extension is the protocol's current idempotency mechanism. An application may also keep its own job key, but `Idempotency-Key` is not an x402 header requirement.
+Read the [payment-identifier extension](https://docs.x402.org/extensions/payment-identifier) before implementing retry deduplication.
 
 For the Tangle Blueprint gateway, successful payment and job admission can return `202 Accepted`:
 
@@ -156,18 +148,15 @@ A real service should choose a stable public trace identifier, document its resu
 
 ## How the Blueprint integration fits
 
-The software development kit (SDK) keeps payment ingress from becoming a second job implementation.
-The x402 path should produce the same kind of typed work that another producer can submit.
+The SDK keeps payment ingress from becoming a second job implementation.
+The x402 path should produce the same kind of typed work that any other producer can submit.
 
-In plain language, a **producer** turns an external event into a job for the runner.
-An x402 producer turns a settled payment request into a job.
-An on-chain producer can turn a Tangle job event into a job.
-The job router then selects the same handler for both sources when the service’s policy allows it.
+A **producer** turns an external event into a job for the runner.
+An x402 producer turns a settled payment request into a job, and an on-chain producer turns a Tangle job event into one.
+The job router then selects the same handler for both sources when the service's policy allows it.
 
-The public [Tangle x402 gateway](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) is implemented as a background service that pairs with a producer.
-The public [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the source to check for current Rust APIs and configuration names.
-
-The architectural boundary looks like this:
+The public [Tangle x402 gateway](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/gateway.rs) is a background service that pairs with a producer.
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the source to check for current Rust APIs and configuration names.
 
 ```text
 HTTP request
@@ -187,7 +176,7 @@ Blueprint runner: queue, route, execute, submit result
 
 The gateway should not know how a model summarizes a document.
 The model handler should not know how a wallet signed a payment.
-The job record is the boundary between them: it contains the approved job identity, payment reference, input reference, deadline, and trace ID.
+The job record is the boundary between them: it holds the approved job identity, payment reference, input reference, deadline, and trace ID.
 
 ## Why settle before execution?
 
@@ -197,7 +186,7 @@ With **settle before execution**, the gateway confirms that payment can complete
 With **execute before settlement**, the service performs work first and asks the payment system to settle afterward.
 
 The current Tangle gateway exposes a settle-before-execution path.
-That is a sensible default for GPU inference or long jobs because it limits unpaid compute.
+That is a sensible default for GPU (graphics processing unit) inference or long jobs, because it limits unpaid compute.
 
 The tradeoff is that settlement creates an obligation before the runtime returns an answer.
 If the worker then crashes, the service needs a durable recovery policy.
@@ -216,7 +205,7 @@ payment required -> payment verified -> payment settled -> job admitted
 
 Do not collapse `verified` and `settled`.
 Verification asks whether the authorization is acceptable.
-Settlement asks whether the transfer was completed or submitted according to the network and facilitator rules.
+Settlement asks whether the transfer was completed or submitted under the network and facilitator rules.
 An authorization that looks valid can still fail to settle because of balance, gas, network, nonce, or token conditions.
 
 ## Quotes expire for a reason
@@ -225,19 +214,19 @@ An x402 payment requirement is a temporary offer to perform a specific request u
 It should be bound to the job, token, network, recipient, amount, and expiration.
 
 The public Tangle gateway also has a quote registry for tracking quote state.
-The [quote registry source](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) shows the important lifecycle properties: a quote can expire, it can be consumed, and old entries can be garbage-collected.
-The current registry is held in gateway memory, so it helps with admission and replay checks but is not a durable payment ledger.
+The [quote registry source](https://github.com/tangle-network/blueprint/blob/main/crates/x402/src/quote_registry.rs) shows the lifecycle: a quote can expire, it can be consumed, and old entries can be garbage-collected.
+The registry lives in gateway memory, so it helps with admission and replay checks but is not a durable payment ledger.
 Persist the settlement reference and job outcome separately if a paid job must survive a gateway restart.
 
-That registry is not a substitute for on-chain payment replay protection.
-It is an application-level record that helps the gateway reject an already-used or expired quote before queueing work.
+The registry does not replace on-chain payment replay protection.
+It is an application-level record that lets the gateway reject an already-used or expired quote before queueing work.
 
 Use a short lifetime for volatile prices and slower client flows only when the user experience requires it.
 An example five-minute lifetime is a policy choice, not a universal x402 default.
 
-The cost of a longer lifetime is price and capacity risk.
+A longer lifetime adds price and capacity risk.
 If a GPU is full or a token exchange rate moves, an old quote can become unprofitable.
-The cost of a shorter lifetime is more retries and more opportunities for a client to abandon the flow.
+A shorter lifetime means more retries and more chances for a client to abandon the flow.
 
 ## Worked pricing example
 
@@ -252,19 +241,19 @@ smallest units at six decimals = 3,060,000
 ```
 
 These numbers are an example, not a current market rate.
-An operator must source and timestamp the rate used by its deployment and define what happens when the rate is stale.
+An operator must source and timestamp the rate its deployment uses, and define what happens when that rate is stale.
 
 The client should see the final token amount before signing.
-It should not infer the amount from an internal native-unit price because conversion rules, decimals, rounding, and markup are part of the server’s payment requirements.
+It should not infer the amount from an internal native-unit price, because conversion rules, decimals, rounding, and markup are part of the server's payment requirements.
 
 ## Facilitators reduce integration work, not trust to zero
 
-The x402 standard allows a resource server to verify and settle itself or use a facilitator.
-The facilitator normally sees payment authorization and settlement metadata required for its job.
+The x402 standard lets a resource server verify and settle itself or use a facilitator.
+A facilitator normally sees the payment authorization and the settlement metadata its job needs.
 It should not need the private document or model output.
 
-The [Coinbase facilitator documentation](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator) describes the facilitator’s verify and settle role.
-The [x402 production guidance](https://github.com/x402-foundation/x402) also makes clear that teams can choose a production facilitator, self-host one, or handle verification and settlement locally where the scheme allows it.
+The [Coinbase facilitator documentation](https://docs.cdp.coinbase.com/x402/core-concepts/facilitator) describes the facilitator's verify and settle role.
+The [x402 production guidance](https://github.com/x402-foundation/x402) also says teams can choose a production facilitator, self-host one, or handle verification and settlement locally where the scheme allows it.
 
 A service still has to decide:
 
@@ -273,16 +262,15 @@ A service still has to decide:
 - How verification and settlement timeouts are handled.
 - How settlement retries avoid duplicate payment effects.
 - Which metadata is retained and which is deleted.
-- What happens when the facilitator says “unknown” rather than “failed.”
+- What happens when the facilitator says "unknown" rather than "failed."
 
 The safest default for unknown payment state is no execution.
 The service can retry a status check if the protocol supports it, but it should not treat an unreachable facilitator as approval.
 
 ## Retry rules are part of the interface
 
-An agent will retry when it receives a network timeout.
-That retry is not malicious; it is normal distributed-systems behavior.
-The service needs to distinguish these cases:
+An agent retries after a network timeout, which is normal distributed-systems behavior.
+The service must distinguish these cases:
 
 | Case | Safe result |
 | --- | --- |
@@ -318,11 +306,11 @@ queued_at / started_at / finished_at
 evaluation_result
 ```
 
-The trace should answer “where did the time go?”
-In this sample trace, payment verification took 400 ms, queueing took 2 seconds, and model execution took 18 seconds, so the user needs a different fix than if the entire trace stops after settlement.
+The trace should answer "where did the time go?"
+In this sample trace, payment verification took 400 ms, queueing took 2 seconds, and model execution took 18 seconds, so the user needs a different fix than if the trace stopped after settlement.
 
-The trace should also answer “what did we promise?”
-Keep the exact token, network, amount, recipient, expiration, and job policy associated with the payment record.
+The trace should also answer "what did we promise?"
+Keep the exact token, network, amount, recipient, expiration, and job policy attached to the payment record.
 
 ## What x402 does not prove
 
@@ -350,7 +338,6 @@ Use the Blueprint runner when that capability needs an operator-run job lifecycl
 The durable implementation is small in concept: payment requirements, payment authorization, settlement result, one admitted job, one runtime attempt, and one trace.
 If any of those objects is missing, the service can collect money without being able to explain what happened next.
 
-
 ## Is x402 the same thing as a Blueprint?
 
 No.
@@ -364,7 +351,7 @@ That reduces unpaid compute but requires a recovery policy for a worker failure 
 
 ## Can any operator run an x402-paid job?
 
-That depends on the service’s routing and operator policy.
+That depends on the service's routing and operator policy.
 The HTTP gateway admits a paid request, while the Blueprint runner and network rules determine which operator instance receives and executes it.
 
 ## What should an x402 client verify?
@@ -375,7 +362,7 @@ It should also use an idempotency key and know how to retrieve a result after a 
 ## Does the gateway need to expose the model input to the facilitator?
 
 No.
-The payment service should send only the metadata required for payment verification and settlement.
+The payment service should receive only the metadata required for payment verification and settlement.
 Keep private job inputs inside the service path.
 
 ## Public sources
