@@ -33,7 +33,6 @@ const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/co
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
-const DEFAULT_MODEL = COPY_AUDIT_MODEL;
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
@@ -49,14 +48,12 @@ let API_BASE = process.env.COPY_AUDIT_API_BASE;
 if (!API_KEY && process.env.TANGLE_API_KEY) {
   API_KEY = process.env.TANGLE_API_KEY;
   API_BASE = 'https://router.tangle.tools/v1';
-  MODEL ??= DEFAULT_MODEL;
 }
 
 if (!API_KEY) {
   API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
   if (API_KEY) {
     API_BASE = 'https://router.tangle.tools/v1';
-    MODEL ??= DEFAULT_MODEL;
   }
 }
 if (!API_KEY && existsSync(SECRETS_PATH)) {
@@ -65,7 +62,6 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
     if (k) {
       API_KEY = k;
       API_BASE = 'https://router.tangle.tools/v1';
-      MODEL ??= DEFAULT_MODEL;
     }
   }
   catch {
@@ -76,7 +72,6 @@ if (!API_KEY && existsSync(SECRETS_PATH)) {
       API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
       if (API_KEY) {
         API_BASE = 'https://router.tangle.tools/v1';
-        MODEL ??= DEFAULT_MODEL;
       }
     }
     catch {
@@ -90,8 +85,8 @@ if (!API_KEY) {
 }
 
 API_BASE ??= 'https://router.tangle.tools/v1';
-MODEL ??= DEFAULT_MODEL;
 
+MODEL ??= COPY_AUDIT_MODEL;
 if (!isCopyAuditModel(MODEL)) {
   console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to ${COPY_AUDIT_MODEL}.`);
   process.exit(2);
@@ -218,7 +213,7 @@ RUBRIC:
 
 3. EVIDENCE AND LINKS: Reward measured conditions, explicit limitations, public sources, inspectable examples, and links whose destinations appear in brackets. Do not demand unpublished metrics, customer data, internal security configuration, or invented service levels.
 
-4. HUMAN PROSE: Penalize hollow adjectives, generic developer-tool clichés, decorative labels, repeated slogans, canned contrasts, and excessive fragments. An occasional short sentence or em dash is not an automatic deduction.
+4. HUMAN PROSE: Penalize hollow adjectives, generic developer-tool clichés, decorative labels, repeated slogans, canned contrasts, excessive fragments, headings about Tangle's own process or proof instead of what the reader gets ("ran on production", "built with"), sublines that restate their heading, and counts offered as quality. An occasional short sentence or em dash is not an automatic deduction.
 
 5. INFORMATION SHAPE: Headings should name concrete topics. Numeric headings are legitimate when the number is real benchmark scope, a measured finding, a price, or a procedure. Penalize only templated promotional counting such as "Three pillars" when the count carries no information.
 

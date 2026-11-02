@@ -5,7 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Search the whole workspace without an agent. Matches stream back as they are found.
+// No agent. Matches stream back as they are found.
 const box = await client.create({
   git: { url: "https://github.com/tangle-network/sandbox-demo" },
 });

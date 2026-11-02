@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Six agents try six ideas. The Platform refuses any charge past $5;
-// this script stops every agent at $1, whichever process started them.
+// The Platform refuses any charge past $5; this script stops everyone at $1.
 const ideas = ["a lookup table", "a streaming parser", "fewer allocations",
   "worker threads", "WebAssembly", "a hand written tokenizer"];
 const fleet = await client.fleets.create({

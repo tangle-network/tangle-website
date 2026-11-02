@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// One hosted instance per customer. A thread keeps its history between calls,
-// between processes, and across your deploys.
+// One hosted instance per customer. The thread keeps its history across calls and deploys.
 const instance = await client.instances.ensure({
   key: "customer:4821",
   profile: {

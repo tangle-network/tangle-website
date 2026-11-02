@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Branching copies a live sandbox. Each child starts with the parent's
-// files and memory, then goes its own way.
+// Each child starts as a copy of the parent, files and memory included.
 const parent = await client.create();
 try {
   await parent.exec("echo 'shared setup' > base.txt");
