@@ -4,14 +4,14 @@ slug: self-improving-stack-test-time-compute
 summary: >-
   Test-time compute adds samples, branches, retries, or checks; an execution shape matters only when it beats a simple baseline at equal cost.
 date: '2026-06-03'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'evals', 'reasoning', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 9
-coverImage: /images/covers/editorial/self-improving-stack-v2.webp
-heroImage: /images/covers/editorial/self-improving-stack-v2.webp
-imageAlt: 'An editorial still life about how an agent system improves'
 ---
+
+import Example from '../../components/Example.astro'
 
 Suppose an agent team reviews a pull request with eight agent processes, a debate round, and a final judge.
 The single-pass baseline reviews it once.
@@ -25,7 +25,6 @@ It includes extra samples, longer reasoning, retries, tool calls, search branche
 A **compute budget** is the limit on that work, measured across dimensions such as model calls, tokens, time, tools, dollars, sandbox minutes, or risk.
 An **execution shape** is the arrangement of calls, branches, tools, and stopping decisions used to spend that budget.
 A **runtime** is the software that supplies tools, controls turns, spends the budget, and records the run.
-An **agent profile** is the model, instructions, tools, skills, permissions, and limits assigned to one run.
 A **trace** is the record of the run’s calls, decisions, tool actions, costs, and result.
 An **evaluation** compares those traces and outcomes on a stated task set.
 A **selection rule** is the rule or component that chooses which candidate result to return.
@@ -40,8 +39,7 @@ The first bar for an agent execution shape is simple:
 Beat the best simple way to spend the same budget.
 ```
 
-Random sampling is not a straw man.
-It is the control that tells you whether the new structure adds useful guidance or merely purchases more attempts.
+Random sampling is the control that tells you whether the new structure adds useful guidance or only buys more attempts.
 
 ## Extra work has a shape
 
@@ -72,7 +70,15 @@ Two strategies can spend the same output tokens while one makes more tool calls.
 They can use the same number of model calls while one runs a costly browser or sandbox action.
 They can have the same dollar estimate while one creates a much longer wait for the user.
 
-A fair comparison fixes the dimensions that matter to the product or reports the tradeoff plainly.
+On Tangle, the dollar term is a platform limit rather than a figure the agent reports about itself.
+`client.fleets.create` takes `budgetUsd`, and the Platform refuses any charge past it, mid-turn included.
+`fleet.spend()` returns `capUsd`, `spentUsd` and `remainingUsd`, so the cost of a policy is readable while it runs.
+The fleet below runs four agents under one $1 cap.
+
+<Example path="fleets/under-a-budget" title="Four agents, one budget the Platform enforces" />
+
+It shows each agent’s status and spend, not whether the four answers are correct or whether one agent would do as well for $1.
+The generation step of [When Does Best-of-Five Sampling Pay for AI Code Generation?](/blog/when-best-of-five-sampling-pays) uses the same fleet call.
 
 | Strategy | How it spends work | What can make it look better than it is |
 | --- | --- | --- |
@@ -83,13 +89,9 @@ A fair comparison fixes the dimensions that matter to the product or reports the
 | Tree search | Expands and prunes partial solutions | Partial states are hard to evaluate |
 | Multi-agent fanout | Gives one task to several workers | The merger has no reliable winner rule |
 
-The execution shape is a policy for spending the budget.
-It is not proof of quality by itself.
-
 ## The baseline ladder
 
-Start with the ordinary one-shot result so the product behavior remains visible.
-Then climb the baseline ladder before introducing a more complicated execution shape.
+Climb this ladder before adding a more complicated execution shape.
 
 ### The single-sample baseline
 
@@ -154,7 +156,6 @@ The gap between “a good answer appeared” and “the system returned the good
 selection_loss = P(good candidate appears) - P(selector returns a good candidate)
 ```
 
-When a good candidate appears often but the selector returns it rarely, the generator has coverage but the deployed system is not reliable.
 
 ## Why random is a hard baseline
 
@@ -164,10 +165,10 @@ Self-consistency, Tree of Thoughts, Large Language Monkeys, and compute-optimal 
 [Large Language Monkeys](https://arxiv.org/abs/2407.21787) studies what repeated sampling can achieve as attempts increase.
 [Compute-optimal test-time scaling](https://arxiv.org/abs/2408.03314) shows that the best allocation depends on task difficulty, model, and checker rather than one universal strategy.
 
-An architecture diagram does not establish that the execution shape is a better allocation of compute.
+An architecture diagram does not establish that the execution shape allocates compute better.
 A supervisor, debate loop, or specialist fanout can lose to the same model sampled repeatedly at equal cost.
 If that happens, the execution shape may still be valuable for interpretability, latency, fault isolation, or a different task mix.
-The quality claim needs to be narrowed to what the data supports.
+The quality claim then needs to be narrowed to what the data supports.
 
 OpenAI’s public [reasoning-model report](https://openai.com/index/learning-to-reason-with-llms/) also describes performance improving with more reinforcement-learning compute and more time spent thinking at inference.
 That observation establishes test-time work as a real scaling axis.
@@ -219,8 +220,7 @@ If the checker is overconfident, early stopping can lock in a fluent failure.
 
 ## The checker becomes the bottleneck
 
-Each added candidate increases the selector’s ranking burden and the opportunity to choose a polished failure.
-The checker must distinguish a correct artifact from a polished imitation.
+Each added candidate increases the selector’s ranking burden and the chance of choosing a polished failure.
 
 Possible checkers include:
 
@@ -272,33 +272,30 @@ The adaptive policy must report how often it stopped early and how often it exha
 
 The trace should show branches, calls, tools, test output, selected artifact, approval state, cost, and cancellation.
 The metrics report should show pass rate, median (p50) and 95th-percentile (p95) latency, token use, sandbox time, and failure class.
-Those distributions expose tail latency, rare failures, and tasks that exhaust the budget.
 
 ## Tangle’s execution boundary
 
 The public [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) documents bounded rounds, `refine` and `fanout` combinators, validators, and budget limits as separate runtime concepts.
-Bounded rounds, `fanout`, `refine`, validators, and budget limits schedule and cap the additional model calls.
+Those schedule and cap the additional model calls.
 Each candidate profile carries the model, tools, instructions, skills, permissions, and limits that shape its work.
-The resulting trace records the branches, decisions, tool calls, costs, and result.
-The evaluation compares those traces and outcomes under the stated task set.
+The resulting trace records the branches, decisions, tool calls, costs, and result, and the evaluation compares those traces and outcomes under the stated task set.
 
-The public TypeScript packages document this installation path:
+The public packages install with:
 
 ```bash
 pnpm add @tangle-network/agent-runtime @tangle-network/agent-eval @tangle-network/sandbox
 ```
 
-If this workflow is offered as a Tangle service, a **Blueprint** is the reusable service template and an **operator** is the party that runs a live service instance from it.
+If this workflow is offered as a Tangle service, a **Blueprint** is the reusable service template and an **operator** runs a live instance of it.
 A Tangle **router** sends a typed job to its handler.
 An **x402** request is a paid web invocation whose payment is verified before the job enters the runner.
 An **attestation** can provide evidence that a required confidential-computing environment was used.
-None of those facts is a quality score for the agent’s selected patch.
-The product still needs a checker and an evaluation that examine the result.
+None of those facts scores the agent’s selected patch; a checker and an evaluation do that.
 
 ## Equal budget does not mean identical experience
 
 Budget matching is necessary, not sufficient.
-An eight-call strategy can still be worse for a user if its calls run serially while a four-call strategy runs concurrently.
+An eight-call strategy can be worse for a user if its calls run serially while a four-call strategy runs concurrently.
 A fast strategy can be worse if it creates more dangerous side effects.
 A cheap strategy can be worse if it requires expensive human review.
 
@@ -371,11 +368,9 @@ That is the first bar for [runtime execution](/blog/self-improving-stack-agent-r
 - [Learning to reason with LLMs](https://openai.com/index/learning-to-reason-with-llms/)
 - [Let's Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf)
 
-
 ## What is test-time compute?
 
-Test-time compute is extra work spent after the model is selected and the task is known.
-It includes repeated sampling, refinement, search, tool use, checker calls, retries, and multi-agent fanout.
+Test-time compute is the extra work defined at the top of this post: repeated sampling, refinement, search, tool use, checker calls, retries, and multi-agent fanout.
 
 ## Why compare against random at equal cost?
 
@@ -390,5 +385,7 @@ Usually not by itself.
 ## Where does this fit in Tangle’s agent stack?
 
 Test-time compute belongs in the runtime and evaluation layers.
-Tangle’s runtime can provide bounded rounds and execution shapes, while evaluation must compare quality, cost, latency, hard checks, and traces before a new policy replaces the baseline.
+`evals/regression-gate` runs a baseline and a candidate on the same scenarios and exits non-zero when the candidate scores lower.
+It cannot show that extra work was worth its price unless both arms ran under the same `budgetUsd`.
+Ship a candidate only when it clears that gate under the same budget, and report its spend beside its score.
 For the runtime and tooling changes that make those execution shapes possible, continue with [agent-runtime harness evolution](/blog/self-improving-stack-harness-evolution).

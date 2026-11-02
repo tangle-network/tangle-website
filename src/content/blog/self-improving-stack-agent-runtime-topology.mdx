@@ -4,14 +4,14 @@ slug: self-improving-stack-agent-runtime-topology
 summary: >-
   Agent runtime topology determines whether prompts produce parallel work, reviews, retries, cancellation, and evidence, or only describe them.
 date: '2026-06-05'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'runtime', 'systems', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 11
-coverImage: /images/covers/editorial/self-improving-stack-v2.webp
-heroImage: /images/covers/editorial/self-improving-stack-v2.webp
-imageAlt: 'An editorial still life about how an agent system improves'
 ---
+
+import Example from '../../components/Example.astro'
 
 Ask an AI coding assistant to “have three specialists work in parallel, compare their patches, and stop the losing attempts.”
 The assistant may still make one model call, describe three imaginary specialists, and return the first patch it wrote.
@@ -29,26 +29,15 @@ A **judge** is a scorer for qualities that a deterministic validator cannot full
 A **winner rule** is the rule that chooses among valid branch results.
 A **promotion gate** is a fixed rule that decides whether a candidate may replace the baseline.
 A **sandbox** is an isolated execution boundary that limits access to files, networks, credentials, or processes.
-A **Blueprint** is Tangle’s reusable template for software that runs as a service.
-A **Blueprint Runner** is Tangle’s runtime for dispatching a Blueprint job to the handler registered for that job.
-A **trusted execution environment**, or **TEE**, is a hardware-backed area intended to isolate code and secrets from the host.
 
 The rule is simple:
 a prompt can request a behavior, but the runtime must own any behavior that needs to be enforced, measured, cancelled, or repeated.
 
+In Tangle's Sandbox SDK, a parallel review is one fleet call. `client.fleets.create` starts one sandboxed agent per task under a `budgetUsd` cap, and `fleet.run()` yields an `agent.finished` event as each agent ends. The reader sees each agent's status and response, the spend, and any charge refused past the cap.
+
 ## A request is not an action
 
-For a person, “work in parallel” implies several details:
-
-- Independent attempts.
-- Separate state or files.
-- A limit on concurrent work.
-- A way to collect results.
-- A rule for comparing them.
-- A cancellation path.
-- A record of what each attempt did.
-
-For software, each detail is a capability.
+Each detail a prompt implies is a runtime capability.
 
 | Desired behavior | Runtime capability |
 | --- | --- |
@@ -65,14 +54,6 @@ The result may read like a team report while one worker did all the work.
 That is a control-flow failure, not a wording failure.
 
 ## Topology is an execution shape
-
-The word topology is useful here only as shorthand for the shape of execution.
-It answers four questions:
-
-1. Which worker or tool runs?
-2. In what order or at the same time?
-3. What state does each branch see?
-4. Which condition ends or escalates the run?
 
 A serial refinement run looks like:
 
@@ -113,17 +94,26 @@ The model can suggest a next step, but the runtime should enforce the boundaries
 | Replay | A summary cannot recover an omitted tool call |
 | Promotion | The candidate should not decide whether it replaces itself |
 
-The boundary also improves experiments.
-When the driver, worker profile, validator, and budget are explicit, a team can compare serial refinement with fanout while holding the model and task set fixed.
+## Fanout that the runtime counts
+
+Fanout needs a runtime that starts the branches, caps their spend, and reports each one: in the Sandbox SDK, a fleet.
+
+<Example path="fleets/fan-out" />
+
+The five reviews use dedicated placement. The run proves each finding came from an agent that finished, not that the finding is correct; a person or validator still checks each `file:line`.
+
+<Example path="fleets/under-a-budget" />
+
+Here four agents share one sandbox and one $1 budget. The Platform refuses any charge past the cap, mid-turn included. `fleet.spend()` reports the cap, the amount spent, and the remainder; it does not say whether the four answers are right.
 
 ## A public runtime example
 
 Tangle’s public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) exposes a TypeScript kernel for bounded agent rounds.
 Its public quickstart shows a driver that reads the previous worker output, composes the next prompt, stops when a validator passes or a shot limit is reached, and returns a recorded decision.
 
-The shape is:
+The shape, with the application's adapters left as placeholders, is:
 
-```ts
+```text
 import { runAgentRounds } from '@tangle-network/agent-runtime/kernel'
 
 const result = await runAgentRounds({
@@ -155,12 +145,52 @@ The example is adapted from the repository’s public offline quickstart.
 The output parser, validator, and worker are adapters supplied by the application.
 The important property is that refinement is represented as executable driver state rather than as a promise in the prompt.
 
-The public repository also documents supervision and improvement calls.
-Use those interfaces as the source of truth for current names and options because runtime APIs change faster than an article.
+## A supervisor drives its workers
+
+A supervisor is a manager agent that spawns workers, waits for them to settle, and stops them. `supervise` from `@tangle-network/agent-runtime/kernel` runs that loop with the budget and a deliverable check the supervisor cannot waive:
+
+```ts
+import { type ExecutorConfig, supervise } from '@tangle-network/agent-runtime/kernel'
+
+const routerBaseUrl = 'https://router.tangle.tools/v1'
+const routerKey = process.env.TANGLE_API_KEY!
+const backend: ExecutorConfig = {
+  backend: 'router-tools',
+  routerBaseUrl,
+  routerKey,
+  tools: [],
+  executeToolCall: (name) => Promise.resolve(`unknown tool ${name}`),
+}
+
+const result = await supervise(
+  {
+    name: 'supervisor',
+    harness: 'cli-base',
+    model: { provider: 'tangle-router', default: 'glm-5.3' },
+    tools: { agent_runtime_coordination_spawn_worker: true, agent_runtime_coordination_stop: true },
+    prompt: {
+      systemPrompt: 'Delegate the task to one worker with spawn_worker. Wait until it settles, then call stop.',
+    },
+  },
+  'Produce the exact line: READY',
+  {
+    budget: { maxIterations: 50, maxTokens: 500_000, maxUsd: 0.5 },
+    router: { routerBaseUrl, routerKey },
+    backend,
+    deliverable: {
+      check: (out) => String((out as { content?: unknown })?.content ?? out).includes('READY'),
+      describe: 'output is READY',
+    },
+  },
+)
+
+console.log(result.kind === 'winner' ? result.out : `no winner: ${result.reason}`)
+```
+
+`winner` means the check passed on the worker's output; otherwise the run returns a typed `reason`. This check tests one word, so the run proves the control path, not a real task.
 
 ## Do not confuse agent routing with Blueprint routing
 
-Tangle uses the word Router in more than one nearby context.
 A **Router** in the Blueprint Runner is a traffic director that maps a job identifier to the handler for that job and validates its inputs.
 It is not automatically the planner that decides which AI worker should act next.
 
@@ -237,8 +267,6 @@ The [multi-agent coordination article](/blog/self-improving-stack-multi-agent-co
 
 ## Failure behavior must be explicit
 
-Every topology needs policies for the unhappy path.
-
 If a branch times out, the runtime can retry, ignore it, stop the run, or ask for review.
 If a validator fails, the runtime can refine the same branch, open a new branch, or return a failure with evidence.
 If the winner rule receives no valid candidate, the result should be “no candidate passed,” not the first malformed output.
@@ -278,7 +306,6 @@ The public [agent-runtime repository](https://github.com/tangle-network/agent-ru
 The public [agent-eval repository](https://github.com/tangle-network/agent-eval) provides the comparison layer for candidate behavior.
 The [Blueprint Runner documentation](https://docs.tangle.tools/developers/blueprint-runner/introduction) describes the outer service lifecycle, job producers, Router, handlers, and consumers.
 
-These are related but not interchangeable.
 The Blueprint Runner routes a service job.
 The agent runtime executes the internal workflow.
 The evaluation system decides whether a new profile or topology earned promotion.
@@ -304,7 +331,6 @@ It is a trace that shows the requested workers existed, saw the intended state, 
 If a prompt says “parallel” and the trace contains one worker, the system did not parallelize.
 If the system cannot show why a branch won, it did not yet select a winner.
 If the service accepted payment but the job has not completed, it did not yet deliver a result.
-
 
 ## Can a better prompt create true parallelism?
 

@@ -4,6 +4,7 @@ slug: llm-sandbox-environment-agent-runtime
 summary: >-
   An LLM sandbox environment isolates tools, records side effects, survives reconnects, and gives reviewers enough evidence to approve or reject an agent run.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - sandbox-sdk
@@ -11,13 +12,11 @@ tags:
   - agent-runtime
 series: Agent Runtime Infrastructure
 seriesOrder: 5
-coverImage: /images/covers/editorial/agent-runtime-v2.webp
-heroImage: /images/covers/editorial/agent-runtime-v2.webp
-imageAlt: 'An editorial still life about the software that runs an agent'
 ---
 
-An LLM is a large language model that produces text or structured requests from an input.
-That output is harmless while it stays in a chat box.
+import Example from '../../components/Example.astro'
+
+Model output is harmless while it stays in a chat box.
 The risk changes when the model can run a shell command, install a package, edit a repository, or send a request to an outside service.
 
 Consider a dependency update.
@@ -30,7 +29,7 @@ An **agent runtime** is the software that starts the agent, controls its tools, 
 A **side effect** is a change outside the model's text, such as a file edit, process, network request, or database write.
 A **trace** is the record of the inputs, actions, tool events, outputs, and failures from the run.
 
-Tangle Sandbox provides a public [software development kit (SDK)](https://docs.tangle.tools/sandbox/quickstart) for creating a machine, running commands, dispatching an agent prompt, reconnecting to a durable session, and deleting the machine.
+The Tangle Sandbox [software development kit (SDK)](https://docs.tangle.tools/sandbox/quickstart) provides the calls this post relies on: `client.create` makes a machine, `box.exec` runs a command and returns its exit code, `box.prompt` runs an agent turn and returns `costUsd`, `box.dispatchPrompt` starts a prompt that another process can collect, and `box.delete` removes the machine.
 The SDK is the starting boundary.
 The application still has to decide which tools, files, credentials, network routes, and acceptance checks belong inside it.
 
@@ -73,57 +72,18 @@ npm install @tangle-network/sandbox
 export TANGLE_API_KEY=sk-tan-...
 ~~~
 
-The following example uses the current public client methods for a short command run:
+The example clones a repository, asks an agent to fix a failing test, and then checks the claim itself.
+A reply that says the fix is done is not evidence.
+The exit code of `box.exec("npm test")` is evidence, and the patch is written from `git diff` only after that check passes.
+The agent's edits and the test command share one machine, so the check runs against the files the agent changed.
 
-~~~typescript
-import { Sandbox } from '@tangle-network/sandbox'
+The example runs on a server; do not place the API key in browser JavaScript.
 
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
-})
+<Example path="sandboxes/fix-a-test" title="Fix a failing test, then check the claim" />
 
-const box = await client.create({
-  name: 'dependency-review',
-  image: 'node:20',
-  backend: { type: 'opencode' },
-  resources: {
-    cpuCores: 2,
-    memoryMB: 4096,
-    diskGB: 20,
-  },
-  maxLifetimeSeconds: 1800,
-  idleTimeoutSeconds: 900,
-})
-
-try {
-  const before = await box.exec('node --version')
-  const tests = await box.exec('npm test', {
-    cwd: '/workspace',
-    timeoutMs: 60000,
-  })
-
-  console.log({
-    node: before.stdout,
-    testExitCode: tests.exitCode,
-    testOutput: tests.stdout,
-    testError: tests.stderr,
-  })
-} finally {
-  await box.delete()
-}
-~~~
-
-The Sandbox client and methods in this example are documented in the public [quickstart](https://docs.tangle.tools/sandbox/quickstart) and [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference).
-The example is a server-side call.
-Do not place the API key in browser JavaScript.
-
-The first command and the test command share the same machine.
-If the test fails, the process output and the files it changed can remain available for the next action before cleanup.
-The cleanup block makes deletion happen when the command throws as well as when it succeeds.
-
-That lifecycle is more useful than a generic success string.
-It gives the application an exit code, output, and a point at which it can choose to retry, ask for review, or stop.
+The `finally` block deletes the machine when the check throws as well as when it passes.
+The output is a patch, an exit code, and a metered cost (`run.costUsd`), which a reviewer or the next action can use.
+The example proves only what `npm test` covers. If the suite does not cover the bug, the check passes anyway.
 
 ## A stream needs a durable identity
 
@@ -134,24 +94,13 @@ The API worker can deploy.
 The laptop can lose its network.
 
 The [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) separates an ordinary prompt stream from a durable session.
-Dispatch the prompt with a server-derived session identifier, then reconnect to that session from another process.
+The worker example dispatches a long prompt in one process and prints the command that collects it later.
 
-~~~typescript
-const { sessionId, alreadyExisted } = await box.dispatchPrompt(
-  'Inspect the failing test and explain the smallest safe fix.',
-  { sessionId: serverDerivedSessionId },
-)
+<Example path="sandboxes/worker" title="Start a long prompt, collect it later" />
 
-console.log({ sessionId, alreadyExisted })
-
-for await (const event of box.session(sessionId).events()) {
-  console.log(event)
-}
-
-const result = await box.session(sessionId).result()
-const status = await box.session(sessionId).status()
-console.log({ result, status })
-~~~
+Run the file once to start the work; it prints a collect command with the sandbox ID and execution ID.
+Run it again with those values from any process to print the status and response, then delete the machine.
+The example fixes the session name for brevity. A production caller should derive it on the server.
 
 The same session identifier is idempotent in the current SDK.
 If the caller repeats the dispatch, the service returns the in-flight or completed session instead of executing the prompt twice.
@@ -159,7 +108,6 @@ That behavior matters for retries triggered by webhooks, payments, or browser re
 
 Idempotency does not mean the task is correct.
 It means the product can retry the request without silently duplicating the side effect.
-The trace must still say whether the command ran, whether the model changed files, and whether the final check passed.
 
 ## Classify side effects before allowing tools
 
@@ -204,23 +152,19 @@ A useful trace has enough detail to separate a proposal from an action.
 | Review decision | Whether a person or product accepted the result |
 
 The record should not claim more than its source provides.
+The fix example shows this in code: `box.exec` returns the test's exit code before the patch is written, so a failed check stops the run first.
 A model message saying “tests passed” is not a test result.
 A command request is not a command completion.
 A file diff is not proof that the application works.
 
 An **evaluation** is a structured assessment against a criterion.
 For the dependency update, the criterion might be that the test command exits zero and the lockfile contains the intended version.
-A **baseline** is the current implementation or result used for comparison.
-A **candidate** is the proposed change being tested.
-Those terms become important when many sandbox runs compare prompts, models, tools, or code versions.
 
-The [Tangle AI documentation](https://docs.tangle.tools/ai) describes Intelligence as the product that receives run traces and supports evaluation of agent behavior.
+The [Tangle AI documentation](https://docs.tangle.tools/ai) describes Intelligence, which receives run traces and supports evaluation.
 The sandbox records what ran.
 The evaluator decides what the record means for the task.
 
 ## Default to narrow authority
-
-Start with the smallest environment that can complete the task.
 
 | Capability | Starting policy |
 | --- | --- |
@@ -263,9 +207,7 @@ If the agent starts a fresh machine at step three, the product loses evidence ab
 
 Snapshots can help when a task needs to resume from a known filesystem state.
 The current SDK reference documents restoring a sandbox from a snapshot and stopping or resuming a machine.
-Use those features deliberately.
 Do not assume that deleting a sandbox preserves its files.
-Copy the diff, logs, and review packet to durable storage before cleanup.
 
 ## Model retries are not operational retries
 
@@ -295,9 +237,7 @@ Unknown is safer than a second side effect whose first outcome was merely not ob
 
 ## When a sandbox becomes a service
 
-An LLM sandbox can be a product boundary by itself.
-It can also sit inside a service offered to other applications.
-Tangle uses several terms for that larger path.
+An LLM sandbox can also sit inside a service offered to other applications.
 
 A **Blueprint** is a reusable service template with a job interface and execution requirements.
 A **service instance** is one live deployment of that template.
@@ -329,19 +269,13 @@ The terms describe different claims:
 | The HTTP request was paid | x402 settlement |
 | The result was correct | Task-specific tests, evaluation, and review |
 
-Keeping those claims separate prevents a payment receipt or machine identity report from being mistaken for a quality result.
-
 ## What a sandbox does not prove
 
 A sandbox narrows the execution boundary.
-It does not make the model truthful.
-It does not prove that the command was the right command.
-It does not prove that the test suite covered the changed behavior.
-It does not prove that a credential could not leave through an allowed network path.
-It does not prove that the final diff is safe to merge.
+It does not make the model truthful, prove that a command was the right one, or prove that the tests covered the change.
+It does not stop a credential from leaving through an allowed network path, and it does not make the final diff safe to merge.
 
-The reviewer needs a recovery path for each of those limits.
-That can be a rejected command, a redacted artifact, a failed evaluation, an approval step, or a request to rerun with narrower authority.
+The reviewer needs a recovery path for each limit: a rejected command, a redacted artifact, a failed evaluation, an approval step, or a narrower rerun.
 
 The [AI dev container guide](/blog/ai-dev-container-production-agent-runtime) focuses on the production control plane around this boundary.
 The [AI agent sandbox guide](/blog/ai-agent-sandbox) shows the smaller create, execute, inspect, and delete workflow.

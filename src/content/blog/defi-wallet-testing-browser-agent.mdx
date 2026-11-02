@@ -5,6 +5,7 @@ summary: >-
   Separate a DeFi flow into the dapp page, wallet prompt, chain state, and approval
   boundary using controlled test data and a disposable wallet.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - browser-agent
@@ -12,10 +13,9 @@ tags:
   - wallet-testing
 series: Browser Agent
 seriesOrder: 7
-coverImage: /images/covers/editorial/browser-agent-v2.webp
-heroImage: /images/covers/editorial/browser-agent-v2.webp
-imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
+
+import Example from '../../components/Example.astro'
 
 The swap page says “Connected,” but the wallet prompt shows a different account on a different chain.
 The test clicks through the page, reports success, and never inspects the prompt where the user would have noticed the problem.
@@ -26,12 +26,13 @@ A token allowance is a limit on how much a contract may spend from an account.
 A wallet extension manages keys and displays the approval prompts.
 The browser page can request work from the wallet, but it does not own the key or the final approval.
 
-Tangle is the platform around these tools: it provides a way to run agent workflows and inspect the evidence they produce.
+This post’s Tangle surface is the Sandbox SDK.
+`client.create()` starts an isolated Linux machine, `box.prompt()` gives the agent in it a goal, and the returned run reports `success`, `error`, and `usage`.
+The agent installs Chromium inside that machine and drives it, so a reviewer checks the screenshot and JSON it wrote, not the model’s description.
+
 Tangle Browser Agent is the browser-facing tool that opens pages, observes Document Object Model state, and executes bounded browser actions toward a stated goal.
 After installing the public driver, run `bad --help` to inspect the Browser Agent commands available from a terminal.
-The public driver repository documents wallet and DeFi testing support alongside screenshots, page observations, and browser actions.
 The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
-The rest of this article uses one toy run to show how page, wallet, provider, and chain evidence fit into one timeline.
 For the narrower MetaMask fixture and release workflow, read [MetaMask Automated Testing For Wallet Flows](/blog/metamask-automated-testing-wallet-flows).
 
 ## Track application, wallet, provider, and chain state
@@ -47,7 +48,7 @@ RPC, or remote procedure call, is the request-and-response interface used to ask
 | provider and RPC client | requests between the page, wallet, and chain client | The request is rejected or points at a disconnected chain. |
 | chain and contract | balances, allowances, transaction execution, and confirmation | The transaction reverts or the UI reports success too early. |
 
-A dapp is a web application that calls smart contracts through wallet and provider interfaces from a web page.
+A dapp is a web application that calls smart contracts through wallet and provider interfaces.
 A spender is the contract allowed to use tokens under that allowance.
 
 The test should name which state it is checking at each step.
@@ -69,7 +70,7 @@ Forbidden actions: production-network (mainnet) signing, real-value transfer, un
 or accepting a prompt whose account or chain does not match the case.
 ~~~
 
-The following is a deliberately fake run on a local test chain, not a production result.
+The following is a deliberately fake local-chain run, not a production result.
 The addresses are toy identifiers chosen to make the evidence legible.
 
 | Time | Observation | Evidence | Outcome |
@@ -82,8 +83,7 @@ The addresses are toy identifiers chosen to make the evidence legible.
 | 09:00:07 | The page keeps the quote, shows “Approval cancelled,” and offers retry. | Final app screenshot and stop reason | The run passes: it did not claim a transaction that never happened. |
 
 This timeline gives every claim an owner: the page owns its displayed state, the wallet owns the prompt, the provider owns the response, and a receipt or chain-state check establishes confirmation.
-For a different flow, keep the same fields: phase, application state, wallet state, provider or chain observation, outcome, and stop reason.
-This avoids creating a new checklist for every action.
+Use the same fields for any other flow: phase, application state, wallet state, provider or chain observation, outcome, and stop reason.
 
 Store sensitive values according to the test environment’s retention policy.
 Redact private keys, seed phrases, session cookies, and personal addresses that the reviewer does not need.
@@ -110,8 +110,12 @@ The following illustrative TypeScript provider listener makes the app-side evide
 
 ~~~typescript
 type ProviderError = Error & { code?: number; data?: unknown }
+type Eip1193Provider = {
+  on(event: string, listener: (value: any) => void): void
+  request(args: { method: string }): Promise<unknown>
+}
 
-const provider = window.ethereum
+const provider = (window as Window & { ethereum?: Eip1193Provider }).ethereum
 
 if (!provider) {
   throw new Error('No injected wallet provider was found')
@@ -141,8 +145,7 @@ try {
 
 This is an illustrative browser-side example based on EIP-1193.
 The [MetaMask Connect](https://docs.metamask.io/metamask-connect/) software development kit is MetaMask’s connection software for choosing supported wallet environments.
-An application using MetaMask Connect or another wallet library may expose a different integration object.
-The test should observe the public behavior that the application relies on, not assume that every wallet uses one implementation.
+Another wallet library may expose a different integration object, so the test should observe the public behavior the app relies on.
 
 ## Test rejected, pending, reverted, and stale states
 
@@ -161,10 +164,8 @@ Create a small matrix before adding many actions.
 | stale allowance | show the requested spender and allowance change | approval prompt and post-action state |
 
 Asset symbols and shortened addresses can hide a wrong contract target.
-An asset symbol in the app can differ from the contract address the transaction targets.
-A shortened address can hide the wrong contract.
-A friendly route name can conceal a different path after the quote expires.
-Capture the raw identifiers where a reviewer needs them, and show the human-readable prompt where the user makes the decision.
+An app symbol can differ from the contract the transaction targets, and a friendly route name can conceal a different path after the quote expires.
+Capture raw identifiers for the reviewer and the human-readable prompt for the user.
 
 ## Separate approval from settlement
 
@@ -174,7 +175,7 @@ A signature can be returned without a transaction being broadcast.
 A broadcast transaction can remain pending.
 A mined transaction can still revert.
 
-Keep those states distinct in the case:
+Keep these states distinct:
 
 | State | Meaning | Evidence |
 | --- | --- | --- |
@@ -209,20 +210,23 @@ The URL and wallet are illustrative.
 Run against a staging app, local chain, or another environment with test funds.
 Do not pass a production storage state or seed phrase to an exploratory agent.
 
+The example below runs the same pattern on a public news page; for DeFi, swap in the wallet case above.
+
+<Example path="sandboxes/browser-task" title="A browser agent running inside a sandbox" />
+
 The runtime is the environment that contains the browser process, model calls, files, network access, and wallet fixture.
 Record its browser version, extension version, chain endpoint, account class, and reset method.
 An agent profile is the named model, observation mode, permissions, turn limit, and stop policy used for the run.
-Record the model, observation mode, permissions, turn limit, and stop policy beside every run.
-Compare runs with identical settings before attributing prompt differences to the application.
+Record the profile with every run, and compare runs with identical profiles before attributing differences to the application.
 
 ## Separate page, wallet, provider, and chain evidence
 
-The public [driver README](https://github.com/tangle-network/browser-agent-driver) shows package and CLI usage without the service-packaging layer described by Tangle Blueprints; verify installation details against that README as the driver evolves.
-If a team offers wallet testing as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) can define the job inputs, runtime requirements, and returned artifacts, while an operator is the provider that runs the job.
-The Blueprint records Job inputs, runtime requirements, returned artifacts, and operator responsibility.
+The [driver README](https://github.com/tangle-network/browser-agent-driver) shows package and CLI usage without the Blueprint service layer; verify installation details there.
+If a team offers wallet testing as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) defines the job inputs, runtime requirements, and returned artifacts, while an operator runs the job.
 It does not validate a wallet prompt, a contract, or a chain result.
 
 Return application state, wallet state, provider responses, and chain confirmations as separate evidence fields so a reviewer can see which boundary produced each claim.
+Score each run with `evals/score-a-trace`: a model judge on the Router reads the answer and every tool call.
 
 ## What browser wallet testing does not prove
 

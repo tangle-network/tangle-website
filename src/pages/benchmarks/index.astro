@@ -1,71 +1,114 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import BenchmarkReport from '../../components/BenchmarkReport.astro';
-import { boards } from '../../data/benchmarks/index';
-import { benchmarkDescription } from '../../data/benchmarks/catalog';
-import { taskPromptsFor } from '../../data/benchmarks/task-sources';
+import Board, { type BoardRow } from '../../components/Board.astro';
+import BenchHead from '../../components/BenchHead.astro';
+import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds } from '../../data/benchmarks/sandbox';
+import '../../styles/bench.css';
 
-const entries = boards.map((board) => ({ board, ...benchmarkDescription(board), tasks: taskPromptsFor(board) }));
-const categories = [...new Set(entries.map((entry) => entry.category))];
+const run = (l: { run_id: string; started_at: string; served_sha: string }) => `run ${l.run_id}, ${day(l.started_at)}, serving ${l.served_sha.slice(0, 12)}`;
+
+// Coding agents by the id the facts feed uses.
+const agents: Record<string, { name: string; logo?: string }> = {
+  'claude-code': { name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
+  codex: { name: 'Codex', logo: '/images/harness/codex.png' },
+  opencode: { name: 'OpenCode', logo: '/images/harness/opencode.svg' },
+  hermes: { name: 'Hermes', logo: '/images/harness/hermes.png' },
+  openclaw: { name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
+  'kimi-code': { name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
+  pi: { name: 'Pi', logo: '/images/harness/pi.svg' },
+  prime: { name: 'Prime Agent', logo: '/images/harness/prime-agent.png' },
+  'factory-droids': { name: 'Factory Droid' },
+  acp: { name: 'ACP' },
+};
+const agentRows: BoardRow[] = firstText.rows.map((r) => ({ ...r, label: agents[r.label]?.name ?? r.label, logo: agents[r.label]?.logo }));
+const fastest = agentRows.slice(0, 3);
+
+// The public 100-at-once board with Tangle's rows placed by median.
+const board = burst100.computesdk;
+const names: Record<string, string> = { e2b: 'E2B', 'cloud-run': 'Cloud Run', computesdk: 'ComputeSDK' };
+const providerName = (id: string) => names[id] ?? id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const boardRows: BoardRow[] = [
+  ...board.rows.map((r): BoardRow => ({ label: providerName(r.provider), value: r.median_ms, whisker: r.p95_ms, extra: `${Math.round(r.success_rate * 100)}%`, n: board.iterations })),
+  ...burst100.tangle.map((t): BoardRow => ({ label: 'Tangle', sub: `${t.date}, serving ${t.served_sha.slice(0, 8)}`, value: t.p50_ms, whisker: t.p95_ms, extra: t.passed ? '100%' : 'not all', n: 100, highlight: true, flagged: !t.passed })),
+].sort((a, b) => a.value - b.value);
+const place = boardRows.findIndex((r) => r.highlight) + 1;
+const leader = boardRows[0];
+
+const lead = `As of ${day(firstCommand.run.started_at)}: a sandbox in ${seconds(firstCommand.create.p50_ms!)}, its first command ${seconds(firstCommand.exec.p50_ms!)} later. ${fastest[0].label} streams a coding agent's first text in ${seconds(fastest[0].value)}. 100 at once: Tangle is #${place} of ${boardRows.length} on ComputeSDK's board.`;
 ---
 
-<BaseLayout title="Agent benchmarks" description="Explore agent benchmarks by task. Compare success rates, model costs, and the prompts used in each evaluation.">
-  <BenchmarkReport wide>
-    <Fragment slot="hero">
-      <h1 class="bench-h1">Agent benchmarks</h1>
-      <p class="catalog-intro">Compare agents on real tasks.</p>
-    </Fragment>
-    {categories.map((category) => (
-      <section class="catalog-category" aria-labelledby={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>
-        <h2 id={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>{category}</h2>
-        <div class="catalog-grid">
-          {entries.filter((entry) => entry.category === category).map((entry) => (
-            <a class="benchmark-card" href={`/benchmarks/${entry.board.suite.id}/`}>
-              <div class="card-heading">
-                <h3>{entry.title}</h3>
-                <span class="card-arrow" aria-hidden="true">↗</span>
-              </div>
-              <p class="card-description">{entry.description}</p>
-              <div class="card-tasks">
-                <span class="task-heading">Example tasks</span>
-                <ul role="list">
-                  {entry.tasks.slice(0, 3).map((task) => <li>{task.name}</li>)}
-                </ul>
-              </div>
-              <div class="card-footer">
-                <span>{entry.board.tasks.length} tasks · {entry.board.profiles.length} agent setups</span>
-                <span class="card-action">View results <span aria-hidden="true">→</span></span>
-              </div>
-            </a>
-          ))}
-        </div>
-      </section>
-    ))}
-    {entries.length === 0 && <p class="catalog-intro">No benchmark results are available yet.</p>}
-  </BenchmarkReport>
-</BaseLayout>
+<BaseLayout paper title="Sandbox leaderboard" description={`Time to a sandbox, its first command and a coding agent's first text on Tangle, with snapshot, branch, delete and 100 at once against the public board. ${lead}`}>
+  <article class="bench">
+    <BenchHead regime="stack" title="Sandbox leaderboard">
+      <p>How long a sandbox takes to exist, run a command, stream a coding agent's first words, snapshot, branch and delete, alone and 100 at once beside the public board. Measured on the production fleet by the public SDK; every row names its run.</p>
+      <p class="lead">{lead}</p>
+    </BenchHead>
 
-<style>
-  .catalog-intro { margin: 14px 0 0; color: var(--text-secondary); font-size: 20px; line-height: 1.5; }
-  .catalog-category { margin-top: 40px; }
-  .catalog-category h2 { margin: 0 0 18px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-  .catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
-  .benchmark-card { display: flex; flex-direction: column; min-width: 0; padding: 28px; color: var(--text-primary); background: var(--depth-2); border: 1px solid var(--chart-rule); border-radius: 16px; text-decoration: none; transition: border-color .15s, background .15s; }
-  .benchmark-card:hover { border-color: var(--accent-text); background: var(--depth-3); }
-  .benchmark-card:focus-visible { outline: 3px solid var(--accent-text); outline-offset: 4px; }
-  .card-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-  .card-heading h3 { margin: 0; font-size: 27px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em; }
-  .card-arrow { color: var(--accent-text); font-size: 28px; }
-  .card-description { margin: 16px 0 0; color: var(--text-secondary); font-size: 18px; line-height: 1.6; }
-  .card-tasks { margin: 28px 0; padding: 22px 0 0; border-top: 1px solid var(--chart-rule); }
-  .task-heading { font-size: 16px; color: var(--text-secondary); }
-  .card-tasks ul { padding: 0; margin: 12px 0 0; list-style: none; display: grid; gap: 12px; }
-  .card-tasks li { font-size: 17px; line-height: 1.5; }
-  .card-footer { margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; color: var(--text-secondary); font-size: 16px; }
-  .card-action { color: var(--accent-text); white-space: nowrap; }
-  @media (max-width: 760px) {
-    .catalog-grid { grid-template-columns: 1fr; gap: 20px; }
-    .benchmark-card { padding: 24px; }
-    .catalog-category { margin-top: 32px; }
-  }
-</style>
+    <div class="lb-cards">
+      <article class="lb-card">
+        <span class="pill">Create</span>
+        <strong class="lb-big">{seconds(firstCommand.create.p50_ms!)}</strong>
+        <p>p95 {seconds(firstCommand.create.p95_ms!)}, n {firstCommand.create.n}. Cold provision {seconds(firstCommand.cold.p50_ms!)}, warm claim {seconds(firstCommand.warm.p50_ms!)}.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">First command</span>
+        <strong class="lb-big">{seconds(firstCommand.exec.p50_ms!)}</strong>
+        <p>After create. Create to first command {seconds(firstCommand.together.p50_ms!)} end to end.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">First agent text</span>
+        <strong class="lb-big">{seconds(fastest[0].value)}</strong>
+        <p>{fastest.map((a, i) => `${i === 0 ? '' : i === 1 ? ', then ' : ' and '}${a.label} (${seconds(a.value)})`).join('')}.</p>
+        <div class="lb-marks">{fastest.filter((a) => a.logo).map((a) => <img src={a.logo} alt={a.label} loading="lazy" />)}</div>
+      </article>
+      <article class="lb-card">
+        <span class="pill">100 at once</span>
+        <strong class="lb-big">#{place}</strong>
+        <p>Tangle median {seconds(boardRows[place - 1].value)} against {boardRows.length - burst100.tangle.length} clouds; {leader.label} leads at {seconds(leader.value)}.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">Snapshot, branch</span>
+        <strong class="lb-big">{seconds(lifecycle.rows[1].value)}</strong>
+        <p>A whole-disk snapshot. Branch a child in {seconds(lifecycle.rows[5].value)}; restore in {seconds(lifecycle.rows[4].value)}.</p>
+      </article>
+    </div>
+
+    <section aria-labelledby="agents">
+      <div class="bench-sec-head"><h2 id="agents">Coding agents: create to first text</h2><p>{run(firstText.run)}. One prompt on one fresh sandbox per agent.</p></div>
+      <Board rows={agentRows} head="agent" />
+    </section>
+
+    <section aria-labelledby="board">
+      <div class="bench-sec-head"><h2 id="board">Clouds: 100 sandboxes at once</h2><p>ComputeSDK's <a href={board.source}>burst board</a> read {day(board.timestamp)}; Tangle rows by the same method on production.</p></div>
+      <Board rows={boardRows} head="cloud" value="median" extraHead="reached" caption={`Each row creates ${board.iterations} sandboxes at once and reports the median and p95 time to interactive. Failed checks on the Tangle rows: ${[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}.`} />
+    </section>
+
+    <section aria-labelledby="verbs">
+      <div class="bench-sec-head"><h2 id="verbs">One sandbox, every verb</h2><p>{run(lifecycle.run)}. Created, snapshotted, stopped, resumed, restored, branched, then everything deleted.</p></div>
+      <Board rows={lifecycle.rows} head="verb" ranked={false} />
+      <details>
+        <summary>The same journey on the desktop shape</summary>
+        <Board rows={lifecycle.desktop} head="verb" ranked={false} />
+      </details>
+    </section>
+
+    <section aria-labelledby="many">
+      <div class="bench-sec-head"><h2 id="many">Many at once</h2><p>{run(bursts.run)}; branches from {run(branches.run)}.</p></div>
+      <div class="bench-grid">
+        <Board rows={bursts.rows} head="creates in a burst" spread="p90" ranked={false} caption="Each sandbox timed to its first command; n = sandboxes that reached one." />
+        <Board rows={[...branches.rows, ...forks.rows]} head="branch or fork" ranked={false} caption="Branch: the call to the slowest child's first command. Fork: a new sandbox from a saved snapshot or a running checkpoint." />
+      </div>
+    </section>
+
+    <section aria-labelledby="first-call">
+      <div class="bench-sec-head"><h2 id="first-call">First Router call from a fresh sandbox</h2><p>{run(firstCall.run)}. Each sandbox carries its own key; the path is how the command reached it.</p></div>
+      <Board rows={firstCall.rows} head="path" />
+    </section>
+
+    <footer class="bench-method">
+      <p>{feed.cohort}</p>
+      <p>{feed.percentiles}</p>
+      <p>Each run names the orchestrator revision it hit, so a change in a number reads against a deploy. The production benchmark workflow refreshes the <a href={feed.source}>facts feed</a> after every run; this page is rebuilt from a snapshot pulled {day(feed.published_at)}.</p>
+    </footer>
+  </article>
+</BaseLayout>

@@ -20,7 +20,7 @@ const evalKit = defineAgentEval<Scenario & { task: string }, number>({
   agent: async (prompt, scenario) => {
     const box = await client.create({
       git: { url: "https://github.com/tangle-network/sandbox-demo" },
-      backend: { type: "claude-code" },
+      backend: { type: "claude-code", model: { model: "glm-5.3" } },
     });
     try {
       await box.prompt(`${scenario.task} ${String(prompt)}`);

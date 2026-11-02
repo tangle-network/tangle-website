@@ -4,6 +4,7 @@ slug: ai-dev-container-production-agent-runtime
 summary: >-
   An AI dev container needs isolation, command execution, durable sessions, trace export, and explicit failure handling before an agent touches a real repository.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - sandbox-sdk
@@ -11,17 +12,15 @@ tags:
   - ai-infrastructure
 series: Agent Runtime Infrastructure
 seriesOrder: 4
-coverImage: /images/covers/editorial/agent-runtime-v2.webp
-heroImage: /images/covers/editorial/agent-runtime-v2.webp
-imageAlt: 'An editorial still life about the software that runs an agent'
 ---
+
+import Example from '../../components/Example.astro'
 
 An agent opens a repository, edits two files, runs the test suite, and waits for the result.
 The browser tab closes while the test is still running.
 When the developer returns, the product needs to reconnect to the same work, show the failed command, and explain which files changed.
 
 That workflow is why an AI dev container is more than a Docker image with a model attached.
-The container is one execution boundary.
 The production agent runtime, the software that controls an agent session, also has to own session identity, command results, cleanup, credentials, and the record a reviewer sees after the run.
 
 An **AI dev container** is an isolated development workspace where an agent can read files, run commands, edit code, and leave artifacts.
@@ -29,7 +28,8 @@ An **agent runtime** is the software that starts and supervises the agent inside
 A **trace** is the record of the run's inputs, actions, tool calls, outputs, and failures.
 
 Tangle Sandbox provides a public [software development kit (SDK)](https://docs.tangle.tools/sandbox/quickstart) for creating that workspace, running commands, dispatching agent prompts, and reconnecting to durable sessions.
-This article explains the production boundary around those calls and shows the smallest public smoke test.
+The calls that carry the argument are `client.create`, `box.exec`, and `box.prompt`. The reader gets back an exit code, a usage record, and a cost for each turn.
+This article explains the production boundary around those calls.
 
 > A production AI dev container is ready when a reviewer can reconnect to the work, inspect the evidence, and recover from a failed step without giving the agent the host machine.
 
@@ -48,13 +48,11 @@ A production agent product must answer several additional questions.
 | Evidence | Can a reviewer see the diff, commands, tests, and failures? |
 | Cleanup | What disappears when the task ends, and what is retained? |
 
-Those questions describe a control plane around the container.
-The control plane is the software that creates the workspace, routes commands to it, records state, and closes it.
+Those questions describe a control plane: the software that creates the workspace, routes commands to it, records state, and closes it.
 It should not ask the model to remember its own security boundary.
 
 The [Tangle Sandbox documentation](https://docs.tangle.tools/sandbox) describes a sandbox as a dev container or microVM with a shell, filesystem, ports, snapshots, and an optional GPU.
 A **microVM** is a small virtual machine with a stronger machine boundary than an ordinary process container.
-Both are implementation choices behind the same product-level contract.
 
 The isolation primitive still matters.
 [Firecracker](https://firecracker-microvm.github.io/) documents a microVM monitor with a small device model and a separate virtual-machine boundary.
@@ -65,7 +63,7 @@ The product has to build those layers.
 
 ## Start with a public smoke test
 
-The current public SDK quickstart uses a server-side TypeScript client.
+The SDK is a server-side TypeScript client.
 Install the package and keep the API key out of browser code.
 
 ~~~bash
@@ -73,51 +71,21 @@ npm install @tangle-network/sandbox
 export TANGLE_API_KEY=sk-tan-...
 ~~~
 
-The smallest real call creates a machine, runs one harmless command, inspects the result, and releases the machine:
+The smallest real call is the [Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) run through the [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference). It creates a machine, runs one command, reads the exit code and output, and deletes the machine.
 
-~~~typescript
-import { Sandbox } from '@tangle-network/sandbox'
+<Example path="sandboxes/run-code" title="The smallest smoke test" />
 
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
-})
-
-const box = await client.create({
-  image: 'universal',
-  name: 'agent-smoke',
-})
-
-try {
-  const result = await box.exec('node --version && npm --version')
-  console.log({
-    exitCode: result.exitCode,
-    stdout: result.stdout,
-    stderr: result.stderr,
-  })
-} finally {
-  await box.delete()
-}
-~~~
-
-This example uses the public [Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) and [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference).
-The result is useful because it exposes an exit code and output rather than returning a generic “command accepted” message.
-
-The smoke test does not prove that your repository image is correct.
-It does not prove that a credential is scoped correctly.
-It does not prove that a long-running agent can reconnect.
+The smoke test does not prove that your repository image, a credential's scope, or a long-running agent's reconnect works.
 It proves only that the client can create the selected public environment, execute one command, and delete it.
 
-Run this test before adding a model, browser, repository clone, or customer data.
-A failure at this boundary is cheaper to fix than a failure hidden inside a long agent task.
+Run it before adding a model, browser, repository clone, or customer data. A failure here is cheaper to fix than one hidden inside a long agent task.
 
 ## The server owns the lifecycle
 
-The SDK creates and controls the workspace, but the application still needs a state model around it.
-A browser should not decide that a sandbox is ready because the create request returned.
-The server should wait for the environment to accept commands and should persist the identifiers needed to reconnect.
+The SDK creates the workspace, but the application still needs a state model around it.
+A browser should not decide a sandbox is ready because the create request returned. The server should wait for the environment to accept commands, then persist the identifiers needed to reconnect.
 
-One useful application state sequence is:
+The application state sequence is:
 
 ~~~text
 requested -> creating -> ready -> running -> reconnecting
@@ -128,30 +96,33 @@ requested -> creating -> ready -> running -> reconnecting
 
 The names are illustrative.
 The important properties are that “ready” means a real command can run, “failed” retains the creation error, and “deleted” is not confused with “evidence deleted.”
-The review packet should live outside the temporary machine if a reviewer needs it after cleanup.
+The review packet should live outside the temporary machine.
 
 Readiness should come from a harmless command with the expected working directory and executable, not from a successful control-plane response alone.
 If that command cannot run, keep the machine in a creating or failed state and retain the reason.
-This prevents the first agent prompt from becoming an accidental readiness test with user data attached.
 
 Persist at least the application run identifier, sandbox identifier, session identifier when there is one, creation time, expiration policy, and cleanup state.
 Do not use a browser tab or an in-memory promise as the only record of ownership.
 When the API worker restarts, it should be able to answer whether the machine exists and whether a session is already in flight.
 
-The SDK's idempotent session dispatch helps with one retry boundary.
-It does not make sandbox creation idempotent by itself.
+Session dispatch is idempotent. Sandbox creation is not.
 If a create request times out after the service accepted it, the application needs its own request identity or a lookup strategy before creating another machine.
 Otherwise, a network retry can leave two workspaces running the same task.
 
-Cleanup needs the same care.
+For a per-customer product, `client.instances.ensure` takes a stable key and keeps one isolated sandbox for it. The platform keeps it, resumes it, and replaces it if it stops starting, so a retry with the same key does not create a second machine.
+
+<Example path="products/legal-agent" title="One kept sandbox per customer" />
+
+Asking again with the same `turnId` settles a running turn.
+
 Delete only after durable evidence has been stored, and make cleanup retryable without hiding the original task result.
 If deletion fails, label the machine for later cleanup rather than telling the reviewer that the run is gone.
 
 ## A real run has more than one lifecycle
 
-A short command and a long agent task have different lifecycles.
+Short commands and long agent tasks have different lifecycles.
 
-For a command, the important sequence is:
+For a command, the sequence is:
 
 ~~~text
 create -> execute -> inspect exit code and output -> delete
@@ -163,38 +134,49 @@ For an agent task, the sequence is closer to:
 create -> dispatch -> stream -> reconnect -> inspect files and tests -> retain evidence -> delete
 ~~~
 
-The second sequence needs a stable session identity.
 The Tangle [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) exposes a durable session path with dispatch, event consumption, result retrieval, and status inspection.
 
 ~~~typescript
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: 'https://sandbox.tangle.tools',
+})
+const box = await client.create()
+// The server derives this id from the run, so a retried dispatch reuses it.
+const serverDerivedSessionId = 'run-42-tests'
+
 const { sessionId, alreadyExisted } = await box.dispatchPrompt(
   'Run the tests and summarize any failure without changing files.',
   { sessionId: serverDerivedSessionId },
 )
-
 console.log({ sessionId, alreadyExisted })
 
 for await (const event of box.session(sessionId).events()) {
   console.log(event)
 }
-
-const final = await box.session(sessionId).result()
-const state = await box.session(sessionId).status()
-console.log({ final, state })
+console.log(await box.session(sessionId).result(), await box.session(sessionId).status())
 ~~~
 
 The session identifier should be derived by the server.
 The SDK reference says that reusing the same identifier makes a repeated dispatch idempotent, so a retry returns the in-flight or completed session instead of executing the work twice.
 That property matters when the caller is a webhook, a background worker, or a browser that lost its connection.
 
-The stream is not the source of truth for every artifact.
-Keep the session events, final result, file diff, test reports, and retained snapshot or output reference together under the same application run identifier.
-If a product stores only the last streamed sentence, it cannot reconstruct what happened during the command that produced the patch.
+The stream is not the source of truth.
+Keep the session events, final result, file diff, test reports, and retained snapshot or output reference together under the same application run identifier. A product that stores only the last streamed sentence cannot reconstruct the command that produced the patch.
+
+## Check the agent's claim
+
+A finished turn is not a finished task. The example below asks Claude Code to fix a failing test in a cloned repository, then runs `npm test` itself. The exit code from `box.exec` decides the check; the agent's reply does not. `run.usage` and `run.costUsd` record what the turn consumed.
+
+<Example path="sandboxes/fix-a-test" title="Check the agent's fix with the repository's own tests" />
+
+The run shows that the repository's test command exited zero after the agent's turn and that the diff was saved. It does not show that the edit is right or that the suite covers the reported bug. The evidence record below keeps that gap visible.
 
 ## Evidence should survive the workspace
 
-A disposable workspace is allowed to disappear.
-The review record is not.
+A disposable workspace may disappear. The review record must not.
 
 For a coding task, a useful evidence packet can contain:
 
@@ -223,8 +205,7 @@ For a coding task, a useful evidence packet can contain:
 }
 ~~~
 
-This JSON is an illustrative application record.
-It is not a claim about the exact Sandbox response schema.
+This JSON is an illustrative application record, not the Sandbox SDK response schema.
 
 The record keeps four things separate:
 
@@ -238,19 +219,11 @@ It is an explicit acceptance, rejection, or request for more evidence.
 An **evaluation** is a repeatable check against a criterion, such as whether tests pass or a required file exists.
 The evaluation can feed the review decision, but a passing command does not automatically authorize a merge.
 
-Tangle's Intelligence product is the analysis layer that can receive run traces and help explain why a run failed.
-The current [Tangle AI documentation](https://docs.tangle.tools/ai) describes that relationship between sandbox runs, traces, and evaluation.
-The trace is evidence about the run.
-It is not proof that the generated code is safe.
+Tangle's Intelligence product can receive run traces and help explain why a run failed. The [Tangle AI documentation](https://docs.tangle.tools/ai) describes that relationship. The trace is evidence about the run, not proof that the generated code is safe.
 
 ## Make review artifacts deterministic
 
-A reviewer should be able to answer the same questions after the workspace is gone.
-What did the agent start from?
-What did it change?
-Which commands ran?
-What did each command return?
-Which checks were required, and which were skipped?
+After the workspace is gone, a reviewer should still see what the agent started from, what it changed, which commands ran, what each one returned, and which required checks were skipped.
 
 A durable review packet can point to immutable artifacts rather than copying every byte into one database row:
 
@@ -268,14 +241,12 @@ A durable review packet can point to immutable artifacts rather than copying eve
 }
 ~~~
 
-This is an illustrative application record, not the Sandbox SDK response schema.
 The stable command identifiers let a check result cite the exact output that supports it.
 The `missingChecks` field prevents a passing unit test from being read as a complete review.
 The base artifact gives the reviewer a comparison point even when the agent rewrote files several times.
 
 The packet should also record whether output was truncated or a command timed out.
 A short stdout string can mean “the command was quiet” or “the runtime stopped capturing output.”
-Those are different explanations for a missing fact.
 When an artifact is redacted for a secret, record that redaction rather than presenting the shortened artifact as complete.
 
 ## Production policy belongs outside the prompt
@@ -296,8 +267,9 @@ Write the policy that surrounds the task:
 | Artifact boundary | Remove secrets from logs and preserve the diff separately |
 | Cleanup | Delete the machine unless a reviewed snapshot or artifact must remain |
 
-The exact rules depend on the product.
 The invariant is that the runtime enforces them independently of the model's prose.
+
+Spend limits follow the same rule. `client.fleets.create` takes one `budgetUsd` for a whole fleet of agents, and the Platform refuses any charge past it, mid-turn included. `fleet.spend()` reports the cap, the amount spent, and what remains.
 
 The first failure case to test is a rejected command.
 Ask the worker to perform an action outside the policy and make sure the result says rejected, names the rule, and leaves a record.
@@ -308,14 +280,11 @@ Make sure the same session can be reopened without starting another worker.
 
 ## When the container becomes a Tangle service
 
-A sandbox can remain a managed development environment.
-It can also become one component in a protocol-backed service.
-The terms are easy to mix up.
+A sandbox can stay a managed development environment, or become one component in a protocol-backed service.
 
 A **Blueprint** is a reusable service template with a defined job interface and execution requirements.
 A **service instance** is one live deployment of that template.
 An **operator** is the compute provider that runs a service instance.
-An operator can host the service without being the developer who wrote its Blueprint.
 The [Tangle core concepts](https://docs.tangle.tools/vision/core-concepts) explain that relationship.
 
 A **router** is the model-access layer that chooses or forwards inference requests.
@@ -326,8 +295,7 @@ It can authorize a paid task before the sandbox begins, but a settled payment do
 The [x402 specification and implementations](https://github.com/coinbase/x402) describe the payment boundary.
 
 **Attestation** is cryptographic evidence about a confidential machine or protected execution image.
-It can help a caller check where code ran.
-It does not prove that the agent chose the right edit or that a test suite covered the right behavior.
+It can show where code ran, not whether the agent chose the right edit or a test suite covered the right behavior.
 Tangle's [runtime and backend documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox/runtime-and-harnesses) requires attestation before its confidential runtime mode is activated.
 
 These layers answer different questions:
@@ -360,7 +328,7 @@ The product should make those failures visible and give a reviewer a recovery ac
 “Command failed, files changed, tests missing, review required” is a better state than “agent completed” when the evidence is incomplete.
 
 The [AI agent sandbox guide](/blog/ai-agent-sandbox) explores the smaller workspace boundary.
-The [AI agent runtime environment guide](/blog/agent-runtime-environments) maps the sandbox to model routing, browser actions, service execution, and payment without treating any one surface as proof of correctness.
+The [AI agent runtime environment guide](/blog/agent-runtime-environments) maps the sandbox to model routing, browser actions, service execution, and payment.
 
 ## Decide what to run
 

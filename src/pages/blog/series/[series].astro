@@ -1,230 +1,48 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro'
-import BlogCover from '../../../components/BlogCover.astro'
+import PostList from '../../../components/PostList.astro'
 import { getCollection } from 'astro:content'
 import { blogSeriesSlug, getBlogSeriesDetails } from '../../../data/blogSeries'
 
 export async function getStaticPaths() {
-  const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
-  const sortSeriesPosts = (posts: Awaited<ReturnType<typeof getCollection<'blog'>>>) =>
-    [...posts].sort((a, b) => {
-      const orderA = a.data.seriesOrder ?? 999
-      const orderB = b.data.seriesOrder ?? 999
-      if (orderA !== orderB) return orderA - orderB
-      return new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
-    })
-
+  const normalize = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || ''
   const posts = await getCollection('blog', ({ data }) => !data.draft)
-  const seriesMap = new Map<string, typeof posts>()
-
+  const grouped = new Map<string, typeof posts>()
   for (const post of posts) {
-    const series = normalizeSeries(post.data.series)
-    if (series === 'Standalone') continue
-    if (!seriesMap.has(series)) seriesMap.set(series, [])
-    seriesMap.get(series)?.push(post)
+    const name = normalize(post.data.series)
+    if (!name) continue
+    if (!grouped.has(name)) grouped.set(name, [])
+    grouped.get(name)!.push(post)
   }
-
-  return [...seriesMap.entries()].map(([seriesName, entries]) => ({
+  return [...grouped.entries()].map(([seriesName, entries]) => ({
     params: { series: blogSeriesSlug(seriesName) },
-    props: { seriesName, posts: sortSeriesPosts(entries) },
+    props: { seriesName, posts: entries.sort((a, b) => (a.data.seriesOrder ?? 999) - (b.data.seriesOrder ?? 999) || b.data.date.localeCompare(a.data.date)) },
   }))
 }
 
 const { seriesName, posts } = Astro.props
 const details = getBlogSeriesDetails(seriesName)
-const displayName = details?.title ?? seriesName
+const title = details?.title ?? seriesName
 ---
 
-<BaseLayout
-  title={`${displayName} | Blog`}
-  description={details?.description ?? `Tangle blog posts in the ${displayName} series.`}
-  bodyClass="page-editorial"
->
-  <section class="series-page" data-theme="website" aria-labelledby="series-title">
-    <div class="series-shell">
-      <a href="/blog" class="back-link"><span aria-hidden="true">&larr;</span> Blog</a>
-
-      <header class="series-hero">
-        <h1 id="series-title">{displayName}</h1>
-        {details && (
-          <div class="series-intro">
-            <p>{details.premise}</p>
-            <p>{details.decision}</p>
-            <p class="series-start">
-              Start here: <a href={`/blog/${details.startHere.slug}`}>{details.startHere.title}</a>.
-              {posts.length === 1 ? ' This collection currently contains one article.' : ` ${details.path ?? 'Then continue in the order below.'}`}
-            </p>
-          </div>
-        )}
-      </header>
-
-      <div class="series-posts">
-        {posts.map((post, index) => (
-          <a href={`/blog/${post.data.slug}`} class="series-post">
-            <div class="series-post-cover">
-              <BlogCover
-                title={post.data.title}
-                summary={post.data.summary}
-                series={post.data.series}
-                seriesOrder={post.data.seriesOrder}
-                tags={post.data.tags}
-                coverImage={post.data.coverImage}
-                imageAlt={post.data.imageAlt || post.data.title}
-              />
-            </div>
-            <div class="series-post-copy">
-              <span class="series-part">Part {index + 1}</span>
-              <h2>{post.data.title}</h2>
-              <p>{post.data.summary}</p>
-            </div>
-          </a>
-        ))}
-      </div>
-    </div>
-  </section>
+<BaseLayout paper title={`${title} | Blog`} description={details?.description ?? `Tangle blog posts in the ${title} series.`} bodyClass="page-editorial">
+  <div class="series">
+    <a href="/blog" class="back">Blog</a>
+    <header>
+      <h1>{title}</h1>
+      {details && <p>{details.premise}</p>}
+      {details && <p>{details.decision}</p>}
+    </header>
+    <PostList posts={posts} />
+  </div>
 </BaseLayout>
 
 <style>
-  .series-page {
-    min-height: 100vh;
-    padding: 8rem 6% 6rem;
-    background: var(--depth-1);
-    color: var(--text-primary);
-  }
-
-  .series-shell {
-    width: min(74rem, 100%);
-    margin: 0 auto;
-  }
-
-  .back-link {
-    display: inline-flex;
-    gap: 0.35rem;
-    align-items: center;
-    margin-bottom: 1.35rem;
-    color: var(--accent-text);
-    font: 700 0.95rem/1 var(--font-sans);
-    letter-spacing: 0;
-    text-decoration: none;
-  }
-
-  .back-link:hover {
-    color: var(--accent-text);
-  }
-
-  .series-hero {
-    margin-bottom: 2.5rem;
-  }
-
-  .series-hero h1,
-  .series-post h2 {
-    margin: 0;
-    color: var(--text-primary);
-    font-family: var(--font-display);
-    letter-spacing: 0;
-    text-wrap: balance;
-  }
-
-  .series-hero h1 {
-    max-width: 15ch;
-    font-size: clamp(3rem, 6vw, 5.25rem);
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .series-intro {
-    max-width: 56rem;
-    margin-top: 1.4rem;
-  }
-
-  .series-intro p {
-    margin: 0.65rem 0 0;
-    color: var(--text-secondary);
-    font-size: 1.05rem;
-    line-height: 1.65;
-  }
-
-  .series-intro .series-start {
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-
-  .series-start a {
-    color: var(--accent-text);
-  }
-
-  .series-posts {
-    border-top: 1px solid rgba(25, 28, 36, 0.12);
-  }
-
-  .series-post {
-    display: grid;
-    grid-template-columns: minmax(12rem, 19rem) minmax(0, 1fr);
-    gap: clamp(1.25rem, 3vw, 2rem);
-    align-items: center;
-    padding: 1.35rem 0;
-    border-bottom: 1px solid rgba(25, 28, 36, 0.12);
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .series-post:hover h2 {
-    color: var(--accent-text);
-  }
-
-  .series-post-cover {
-    overflow: hidden;
-    border: 1px solid rgba(25, 28, 36, 0.12);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.76);
-  }
-
-  .series-post-cover :global(.blog-cover) {
-    border: 0;
-    border-radius: 0;
-    aspect-ratio: 16 / 9;
-  }
-
-  .series-post-copy {
-    min-width: 0;
-  }
-
-  .series-part {
-    display: block;
-    margin-bottom: 0.55rem;
-    color: var(--text-muted);
-    font: 700 0.78rem/1 var(--font-mono);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .series-post h2 {
-    max-width: 20ch;
-    font-size: clamp(1.45rem, 3vw, 2.45rem);
-    font-weight: 600;
-    line-height: 1.04;
-  }
-
-  .series-post p {
-    max-width: 48rem;
-    margin: 0.75rem 0 0;
-    color: var(--text-secondary);
-    font-size: 1rem;
-    line-height: 1.55;
-  }
-
-  @media (max-width: 720px) {
-    .series-page {
-      padding: 6.25rem 5% 4.5rem;
-    }
-
-    .series-post {
-      grid-template-columns: 1fr;
-      gap: 0.95rem;
-    }
-
-    .series-post-cover {
-      max-width: 28rem;
-    }
-  }
+  .series { width: min(46rem, 92vw); margin: 0 auto; padding: 6.5rem 0 6rem; color: var(--text-primary); }
+  .back { display: inline-block; margin-bottom: 1.2rem; font-size: 0.9rem; font-weight: 600; color: var(--accent-text); text-decoration: none; }
+  .back::before { content: '← '; }
+  .series h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 3.6vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.08; }
+  .series header p { margin: 1rem 0 0; color: var(--text-secondary); font-size: 1.05rem; line-height: 1.6; }
+  .series header { padding-bottom: 1.6rem; margin-bottom: 0.4rem; }
+  @media (max-width: 720px) { .series { padding-top: 5rem; } }
 </style>

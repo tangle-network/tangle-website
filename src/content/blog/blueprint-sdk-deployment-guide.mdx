@@ -4,6 +4,7 @@ slug: blueprint-sdk-deployment-guide
 summary: >-
   Use Tangle's Blueprint SDK to turn a Rust service into an operator-run job with a clear contract, evidence from a deployment on a test network, monitoring, and rollback.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - blueprint-sdk
@@ -11,30 +12,30 @@ tags:
   - tangle
 series: Blueprint SDK
 seriesOrder: 1
-coverImage: /images/covers/editorial/blueprint-sdk-v2.webp
-heroImage: /images/covers/editorial/blueprint-sdk-v2.webp
-imageAlt: 'An editorial still life about a developer kit for runnable services'
 ---
 
 Your Rust service works on your laptop.
 Another team needs to run it on a different machine, discover its jobs, configure its keys, observe its health, and recover when the first release is wrong.
-That is the point where “the binary starts” stops being a deployment plan.
+That is where “the binary starts” stops being a deployment plan.
 
-This guide follows the path from a local service to a job run by a Tangle service provider.
-It focuses on the boundaries a service provider and a consumer can inspect: the job contract, the artifact, the runner, the network settings, the first test-network run, and the return path after failure.
+This guide follows one service from a local build to a job run by a Tangle service provider.
+Its boundaries are the job contract, the artifact, the runner, the network settings, the first test-network run, and the return path after failure.
 
 On Tangle, a **Blueprint** is a reusable definition of software that can run as a service.
-It describes the executable artifact, the jobs it exposes, the inputs and outputs those jobs accept, and the information needed to operate it.
+It describes the executable artifact, the jobs it exposes, their inputs and outputs, and what an operator needs to run it.
 A **Service** is one live configured instance of a Blueprint.
 A **Job** is one callable unit of work inside that Service.
-An **operator** is the person or team that supplies the machine, runs the service, responds to jobs, and keeps the instance available.
+An **operator** supplies the machine, runs the service, responds to jobs, and keeps the instance available.
 
-The public [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) describes those three objects and the roles around them.
-The **Blueprint SDK** is Tangle’s Rust toolkit for building, testing, and running those services.
-The public [Blueprint SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) describes its Rust toolkit, `cargo-tangle`, the Blueprint Runner (the process that connects job triggers, handlers, and results), the Blueprint Manager (the long-lived operator process that watches chain events and runs services), and optional Hypertext Transfer Protocol (HTTP) gateways.
-`CLI` means command-line interface, the terminal program used to create and operate a Blueprint project.
+The argument rests on three surfaces: `cargo tangle blueprint create` scaffolds the project, `cargo tangle blueprint run` starts the runner under the Blueprint Manager against a protocol RPC endpoint, and the job router dispatches each job call to its handler.
+What the operator observes from them is the service startup, a job’s typed result or error code, and the failure context in the logs.
+The evidence tables below list what each check must show.
+
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) covers those objects and the roles around them.
+The **Blueprint SDK** is Tangle’s Rust toolkit for building, testing, and running services.
+Its [SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) describes `cargo-tangle`, the command-line interface (CLI) for creating and operating a project; the Blueprint Runner, which connects job triggers, handlers, and results; the Blueprint Manager, the long-lived operator process that watches chain events and runs services; and optional Hypertext Transfer Protocol (HTTP) gateways.
 The companion [How Blueprints Work](/blog/how-blueprints-work) article explains the service lifecycle in broader terms.
-The [Blueprint Protocol guide](/blog/blueprint-protocol-operator-services) focuses on the operator-facing contract and evidence that a service should publish.
+The [Blueprint Protocol guide](/blog/blueprint-protocol-operator-services) covers the operator-facing contract and the evidence a service should publish.
 
 ## Decide what the operator is agreeing to run
 
@@ -56,10 +57,9 @@ It raises questions that project instructions can leave vague:
 - Which version of the service produced the result?
 
 Write those answers into the public service definition and run instructions.
-If an operator must know a setting to start the service, that setting belongs in the deployment contract rather than in a private handoff message.
+If an operator must know a setting to start the service, it belongs in the deployment contract, not in a private handoff message.
 
-An illustrative job contract might look like this.
-It describes the application boundary and is not a claim about a fixed Tangle metadata schema.
+This illustrative contract describes the application boundary, not a fixed Tangle metadata schema.
 
 ```json
 {
@@ -82,7 +82,7 @@ It describes the application boundary and is not a claim about a fixed Tangle me
 }
 ```
 
-The contract should state whether the example URL is fetched in the operator runtime or by the caller.
+State in the contract whether the example URL is fetched by the operator runtime or by the caller.
 That decision changes the network policy, the privacy boundary, the timeout, and the evidence a reviewer should retain.
 
 ## Create a project that has a runner boundary
@@ -93,10 +93,8 @@ The [Tangle CLI quickstart](https://docs.tangle.tools/developers/cli/quickstart)
 cargo tangle blueprint create --name document-labeler
 ```
 
-The public [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runner/building) describes the runner as the primary process of a Blueprint.
 The generated project separates job definitions and core logic from the binary that starts the runner.
-
-The runner has several responsibilities.
+The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runner/building) calls the runner the primary process of a Blueprint, with these parts:
 
 | Runner part | Plain-language job |
 | --- | --- |
@@ -107,25 +105,23 @@ The runner has several responsibilities.
 | Consumer | Handles the result after the job finishes |
 | Background service | Keeps supporting processes such as an HTTP server or database connection alive |
 
-A **job router** is easy to misunderstand as a network router.
-Here it is an in-process dispatch table: a job identifier arrives, and the job router selects the corresponding handler.
-The job router does not prove that the handler’s result is correct.
-It only connects the job call to the code that is meant to handle it.
+A **job router** is an in-process dispatch table, not a network router.
+It maps an arriving job identifier to its handler.
+It connects a job call to the code meant to handle it; it does not prove that the handler’s result is correct.
 
-The [Blueprint SDK source repository](https://github.com/tangle-network/blueprint) contains the SDK, runner, CLI, examples, and operator documentation.
-Use its current project template and versioned documentation when you compile a new service because command flags and crate names can change.
+The [Blueprint SDK source repository](https://github.com/tangle-network/blueprint) holds the SDK, runner, CLI, examples, and operator documentation.
+Use its current project template and versioned documentation for a new service, because command flags and crate names change.
 
 ## Prove the local path before adding a network
 
-The local loop should produce evidence for both success and failure.
-Start from a clean checkout and run the language-level checks before using a Tangle network.
+The local loop should produce evidence for success and failure from a clean checkout, before any Tangle network is involved.
 
 ```bash
 cargo test
 ```
 
-Then exercise one valid and one invalid `classify` request through the same runner route that an operator will use.
-The local test should show the input validation, the handler result, the error code, and the process behavior after the error.
+Then exercise one valid and one invalid `classify` request through the same runner route an operator will use.
+The run should show input validation, the handler result, the error code, and the process behavior after the error.
 
 Use a small test matrix.
 
@@ -141,9 +137,8 @@ Use a small test matrix.
 A passing local test does not prove that an independent operator can run the service.
 The local machine may have a cached dependency, an open port, a hidden environment variable, or a credential that the published runbook never mentions.
 
-The [Cargo command reference](https://doc.rust-lang.org/cargo/commands/index.html) covers the Rust build and test commands.
-The language tooling checks the application.
-The Blueprint test flow checks how the application joins Tangle’s service lifecycle.
+Cargo checks the application; the Blueprint test flow checks how it joins Tangle’s service lifecycle.
+The [Cargo command reference](https://doc.rust-lang.org/cargo/commands/index.html) lists the Rust build and test commands.
 
 ## Make the artifact identifiable
 
@@ -158,25 +153,19 @@ Publish the source revision, application version, dependency lock state, build t
 
 An integrity value is a fingerprint that changes when the artifact changes.
 For a container, the immutable image digest is more precise than a mutable tag.
-The [Docker image reference](https://docs.docker.com/reference/cli/docker/image/) documents image identity and commands for inspecting it.
+The [Docker image reference](https://docs.docker.com/reference/cli/docker/image/) documents image identity and the commands for inspecting it.
 
 For a Rust service, keep the lockfile in the deployable project when reproducibility matters.
 The [Cargo lockfile guide](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html) explains the difference between the manifest that declares dependencies and the lockfile that records the resolved versions.
 
-The source repository, build artifact, and running service are separate boundaries.
-A source change does not become a deployable release until an artifact is built, identified, and tested.
-An artifact does not become a healthy service until an operator starts it and a consumer can call it.
-
 ## Exercise the operator path with a local Tangle network
 
-The Blueprint SDK publishes a local testing flow that uses a seeded [Anvil](https://www.getfoundry.sh/anvil) network.
-Anvil is Foundry’s local Ethereum development node.
-The Tangle test guide says the local test setup starts Tangle Protocol contracts with pre-seeded state so Blueprint Manager flows can be tested without depending on a public network.
-An RPC endpoint, or remote procedure call endpoint, is the network address through which the manager communicates with an EVM node.
-EVM means Ethereum Virtual Machine, the execution environment used by Ethereum-compatible networks.
+The Blueprint SDK’s local testing flow runs against a seeded [Anvil](https://www.getfoundry.sh/anvil) network, Foundry’s local Ethereum development node.
+The [Testing with Tangle guide](https://docs.tangle.tools/developers/testing-with-tangle) starts Tangle Protocol contracts with pre-seeded state, so Blueprint Manager flows run without a public network.
+The RPC (remote procedure call) endpoint is the address the manager uses to reach an EVM (Ethereum Virtual Machine) node.
 
-The documented prerequisites are Rust, Foundry’s `anvil`, and Docker.
-Create a local operator keystore, a protected directory or service that holds signing key material, with the public CLI command:
+Prerequisites are Rust, Foundry’s `anvil`, and Docker.
+Create a local operator keystore, the protected store for signing key material:
 
 ```bash
 cargo tangle key --algo ecdsa --keystore ./local-operator-keys --name anvil-operator
@@ -194,8 +183,7 @@ cargo tangle blueprint run \
   --settings-file ./settings.env
 ```
 
-The command is a public example from the [Testing with Tangle guide](https://docs.tangle.tools/developers/testing-with-tangle).
-Use the current SDK runbook for the exact fixture and settings file expected by the version you install.
+The current SDK runbook names the fixture and settings file your installed version expects.
 
 The local network run should answer two questions: did the process start, and did the job route work?
 
@@ -208,15 +196,13 @@ The local network run should answer two questions: did the process start, and di
 | Observation | Logs include service, job, and failure context |
 | Restart | The service can be stopped and started without corrupting state |
 
-This is the cheapest place to catch a wrong job identifier, missing setting, bad RPC URL, or incompatible artifact.
-Fix those issues before asking a public operator to diagnose them.
+This is the cheapest place to catch a wrong job identifier, a missing setting, a bad RPC URL, or an incompatible artifact.
+Fix those before asking a public operator to diagnose them.
 
 ## Publish the operator configuration surface
 
-The current Blueprint SDK documentation lists a common Tangle EVM configuration surface.
-It includes the HTTP and WebSocket RPC URLs, the core Tangle contract, the staking contract, an optional status registry contract, and the keystore path.
-
-Write each value’s purpose and ownership into the runbook.
+The current Blueprint SDK documentation lists the common Tangle EVM settings: the HTTP and WebSocket RPC URLs, the core Tangle contract, the staking contract, an optional status registry contract, and the keystore path.
+Write each value’s purpose and owner into the runbook.
 
 | Setting | Meaning | Owner or risk |
 | --- | --- | --- |
@@ -228,17 +214,16 @@ Write each value’s purpose and ownership into the runbook.
 | `keystore_path` | Location of operator signing material | Key protection and filesystem permissions |
 
 Do not publish secret values in the Blueprint metadata.
-Document how an operator supplies them, how they rotate them, and what happens when a key is unavailable.
+Document how an operator supplies them, how they rotate, and what happens when a key is unavailable.
 Separate developer keys, test keys, operator keys, and consumer keys.
 
-The **runtime** is the environment in which the manager and service processes execute, including the host, container or virtual machine, filesystem, network policy, and resource limits.
-An operator runbook should state which parts are required by the Blueprint and which parts are a local implementation choice.
+The **runtime** is where the manager and service processes execute: host, container or virtual machine, filesystem, network policy, and resource limits.
+The runbook should say which of these the Blueprint requires and which are local choices.
 
 ## Run the first test-network evidence pass
 
-A testnet is a blockchain network used to exercise a service before production.
-Testnet is the first place where the artifact, operator, service lifecycle, network, and job behavior meet.
-It should leave an evidence record that a reviewer can understand without relying on a successful local process.
+A **testnet** is a blockchain network for exercising a service before production.
+It is the first place where the artifact, operator, lifecycle, network, and job behavior meet, and it should leave an evidence record that a reviewer can read without a local run.
 
 Record the following.
 
@@ -252,28 +237,25 @@ Record the following.
 | Can a reviewer inspect health? | Heartbeat or status record, health endpoint, and alert owner |
 | Can the release be identified? | Source version, artifact fingerprint, and deployment timestamp |
 
-A **trace** is the ordered record of an execution, including inputs, job calls, outputs, errors, and timing.
-An **evaluation** is a repeatable check against a stated expectation, such as a valid result, an error code, or a health response.
-Keep the trace and evaluation result with the artifact identity so a reviewer can distinguish a service that ran from a service that passed the intended check.
+A **trace** is the ordered record of an execution: inputs, job calls, outputs, errors, and timing.
+An **evaluation** is a repeatable check against a stated expectation.
+Store both with the artifact identity, so a reviewer can tell a service that ran from one that passed the intended check.
 
-An operator’s heartbeat is a liveness signal.
-It can show that an operator is reporting status within the expected rules.
-It does not prove that every job result is correct.
-The [operator introduction](https://docs.tangle.tools/operators/introduction) describes operator responsibilities such as running services, submitting heartbeats, responding to jobs, and maintaining uptime.
+A heartbeat shows that an operator reports status within the expected rules; it does not prove that job results are correct.
+The [operator introduction](https://docs.tangle.tools/operators/introduction) lists the operator responsibilities: running services, submitting heartbeats, responding to jobs, and keeping uptime.
 
 ## Decide how payment and evidence relate
 
 Payment is part of the deployment contract when the service charges for creation, a subscription, a quote, or each job.
-Tangle’s public [pricing and payments documentation](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) describes `PayOnce`, `Subscription`, and `EventDriven` pricing models and distinguishes on-chain collection from optional x402 settlement.
+Tangle’s [pricing and payments documentation](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) describes `PayOnce`, `Subscription`, and `EventDriven` pricing models and distinguishes on-chain collection from optional x402 settlement.
 
 **x402** is an open payment standard built around Hypertext Transfer Protocol (HTTP) `402 Payment Required`.
 The server returns payment requirements, the client prepares and authorizes a payment payload, and the server verifies and settles it before returning the resource.
-A facilitator is the service that verifies and settles an x402 payment on behalf of the server.
-A `JobCall` is the runner’s internal representation of one job request.
-The [Blueprint SDK x402 guide](https://docs.tangle.tools/developers/blueprint-runner/x402) documents an optional gateway that advertises job payment requirements, verifies payments through a facilitator, and turns a paid request into a `JobCall` for the runner.
+A facilitator is the service that verifies and settles an x402 payment on the server’s behalf.
+The [Blueprint SDK x402 guide](https://docs.tangle.tools/developers/blueprint-runner/x402) documents an optional gateway that advertises job payment requirements, verifies payments through a facilitator, and turns a paid request into a `JobCall`, the runner’s internal representation of one job request.
 
 x402 is separate from the on-chain job submission path.
-Treat the following as separate checks:
+Treat these as separate checks:
 
 1. Did the service communicate the correct payment requirement?
 2. Did the client authorize the requested payment?
@@ -289,28 +271,25 @@ Payment acceptance is not evidence of output correctness.
 Some services need stronger claims about where code and data ran.
 A **trusted execution environment (TEE)** is a protected execution area designed to isolate code and data from the surrounding host.
 An **attestation** is a signed statement from trusted hardware or an attestation verifier about the software and environment it observed.
-An attestation verifier is the software or service that checks that signed statement against the expected identity and policy.
+An attestation verifier is the software or service that checks that statement against the expected identity and policy.
 On Tangle, a service can declare a confidentiality policy such as `tee_required`, which requires TEE placement and stops instead of falling back when the operator cannot satisfy it.
-The public [execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) documents this policy boundary, and the [service API reference](https://docs.tangle.tools/developers/api/reference/itangleservices) documents the request field.
+The [execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) documents this policy boundary, and the [service API reference](https://docs.tangle.tools/developers/api/reference/itangleservices) documents the request field.
 
-Attestation can support a statement such as “this operator bound the service to the declared protected execution profile.”
+An attestation can support a statement such as “this operator bound the service to the declared protected execution profile.”
 It does not prove that the model answered correctly, that the application handled every input safely, or that the operator’s surrounding system has no vulnerabilities.
 Keep the attestation claim beside its assumptions and expiration rules.
 
 If the Blueprint runs an AI agent, an **agent profile** is the saved configuration for the model, tools, permissions, instructions, and budget used by a run.
-The profile is application input.
-The runtime and any attestation are execution-boundary evidence.
-The result still needs an application evaluation.
+The profile is application input; the runtime and attestation are execution-boundary evidence; the result still needs an application evaluation.
 
 ## Make rollback a tested operation
 
-Promotion means moving a reviewed artifact and configuration from one environment to another.
-The useful readiness question is whether the team can return to a known working version after an unhealthy release.
+The readiness question for promotion is whether the team can return to a known working version after an unhealthy release.
 
 Keep the previous artifact and its configuration available until the new release has passed its observation period.
 Record which operator owns the rollback, which command or deployment action performs it, and which health or job check confirms recovery.
 
-A rollback plan should distinguish several cases.
+Plan each failure separately.
 
 | Failure | First action | Evidence of recovery |
 | --- | --- | --- |
@@ -334,15 +313,12 @@ Do not describe a healthy local test as a production deployment.
 Do not describe an operator heartbeat as proof that a model or classifier returned a correct result.
 Do not describe an attestation as a complete security review.
 
-The public [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the implementation source.
-The [Blueprint examples](https://github.com/tangle-network/blueprint/tree/main/examples) show current example layouts.
-The [Tangle documentation](https://docs.tangle.tools) supplies the current network, operator, and CLI guidance.
-Check those sources again when you pin a version or write an operator runbook.
+Check the [Blueprint SDK repository](https://github.com/tangle-network/blueprint), its [examples](https://github.com/tangle-network/blueprint/tree/main/examples), and the [Tangle documentation](https://docs.tangle.tools) again when you pin a version or write an operator runbook.
 
 ## The practical deployment decision
 
-Use the Blueprint SDK when several operators need to run a common service and consumers need a consistent way to discover the service, create an instance, call a job, and inspect lifecycle evidence.
-Keep a normal private service when one team owns the full runtime and does not need protocol-level operator coordination.
+Use the Blueprint SDK when several operators need to run a common service and consumers need a consistent way to discover it, create an instance, call a job, and inspect lifecycle evidence.
+Keep a normal private service when one team owns the full runtime and needs no protocol-level operator coordination.
 
 Before publishing, require one clean local run, one seeded-network run, one testnet job, one intentional failure, and one rehearsed rollback.
 Record the artifact fingerprint, network, Blueprint and Service identifiers, operator and manager versions, job result, failure behavior, monitoring owner, and payment policy.

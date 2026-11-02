@@ -10,9 +10,9 @@
 // Each example runs byte for byte from a copy beside scripts/examples-typecheck/node_modules, under this same
 // file as an --import preload that wraps the SDK's methods, fetch and stdout. Every call carries the example
 // line it came from (V8 stack), so the replay lights the line that fired it; check mode verifies that the line
-// names the call, the source sha256 matches, the run exited 0 and the record is under 30 days old.
+// names the call, the source sha256 (comments and blank lines excluded) matches, the run exited 0 and the record is under 30 days old.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { sourceDigest } from "./example-digest.mjs";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
@@ -30,7 +30,8 @@ const NO_RUN: Record<string, string> = {
   "runtime/any-cloud-daytona": "no credential in vault",
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+// A call that threw, or returned the SDK's { success: false } turn, failed the run even when the process exited 0.
+const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || (e.result as { success?: boolean } | undefined)?.success === false);
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
 
@@ -246,14 +247,16 @@ function fold(lines: string[], raw: Event[]): Event[] {
 // Coalesce a stream's deltas: one event per text part, tool state and run of tokens, with a count and end time.
 const clip = (value: unknown): unknown => typeof value === "string" ? (value.length > 1500 ? `${value.slice(0, 1500)}… (${value.length} chars)` : value)
   : Array.isArray(value) ? value.map(clip) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clip(v)])) : value;
-const DELTAS = new Set(["message.part.updated", "token", "raw", "model-processing"]);
+const DELTAS = new Set(["message.part.updated", "token", "raw", "model-processing", "task.reasoning", "task.message.delta", "task.tool.updated"]);
 function compact(events: Event[]): Event[] {
   const out: Event[] = [];
   const open = new Map<string, Event>();
   for (const event of events) {
     if (event.kind !== "stream" || !DELTAS.has(String(event.type))) { out.push(event); continue; }
-    const part = (event.data as { part?: { id?: string; type?: string; state?: { status?: string } } } | undefined)?.part;
-    const key = `${event.parent}:${event.type}:${part?.id ?? ""}:${part?.state?.status ?? ""}`;
+    const data = event.data as { part?: { id?: string; type?: string; state?: { status?: string } }; taskId?: string } | undefined;
+    const part = data?.part;
+    // A batch task's deltas each carry their own part id: they coalesce per task instead.
+    const key = data?.taskId ? `${event.parent}:${event.type}:${data.taskId}` : `${event.parent}:${event.type}:${part?.id ?? ""}:${part?.state?.status ?? ""}`;
     const last = open.get(key);
     if (last) {
       last.count = Number(last.count ?? 1) + Number(event.count ?? 1);
@@ -262,7 +265,7 @@ function compact(events: Event[]): Event[] {
       last.data = event.type === "token" && typeof value === "string" ? { ...(last.data as object), value: `${(last.data as { value?: string }).value ?? ""}${value}` } : clip(event.data);
       continue;
     }
-    if (part?.id) for (const [k] of open) if (k.startsWith(`${event.parent}:`) && !k.includes(":message.part.updated:")) open.delete(k);
+    if (part?.id && !data?.taskId) for (const [k] of open) if (k.startsWith(`${event.parent}:`) && !k.includes(":message.part.updated:")) open.delete(k);
     const kept = { ...event, data: clip(event.data) };
     out.push(kept);
     open.set(key, kept);
@@ -355,11 +358,11 @@ async function record(key: string, target: string) {
   }
   const events = compact(fold(source.split("\n"), raw));
   const { id, ids, traceIds, costUsd } = collect(events);
-  const exitCode = phases.every((p) => p.exitCode === 0) ? 0 : phases.at(-1)!.exitCode;
+  const exitCode = phases.every((p) => p.exitCode === 0) && !events.some(failed) ? 0 : phases.at(-1)!.exitCode || 1;
   const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval", "@tangle-network/agent-runtime", "@tangle-network/agent-provider-tangle"].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
-    source: { path: sourcePath, sha256: sha256(source) },
+    source: { path: sourcePath, sha256: sourceDigest(source) },
     run: { id, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
       sdk: versions, node: process.version, host: hostname(), baseUrl: "https://sandbox.tangle.tools" },
     events,
@@ -384,18 +387,17 @@ function check() {
     const path = join(RUNS, `${target}.json`);
     if (!existsSync(path)) { failures.push(`${target}: no record at ${relative(ROOT, path)}`); continue; }
     const record = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
-    const source = readFileSync(join(EXAMPLES, `${target}.mts`), "utf8");
-    const lines = source.split("\n");
-    if (record.source.sha256 !== sha256(source)) failures.push(`${target}: the record is for another version of the file; re-record it`);
+    const source = readFileSync(join(EXAMPLES, `${target}.mts`), "utf8"), lines = source.split("\n");
+    if (record.source.sha256 !== sourceDigest(source)) failures.push(`${target}: the record is for another version of the file; re-record it`);
     if (record.run.exitCode !== 0) failures.push(`${target}: the recorded run exited ${record.run.exitCode}`);
-    const age = (Date.now() - Date.parse(record.run.recordedAt)) / 86_400_000;
-    if (!(age <= MAX_AGE_DAYS)) failures.push(`${target}: recorded ${record.run.recordedAt}, over ${MAX_AGE_DAYS} days ago`);
+    if (!((Date.now() - Date.parse(record.run.recordedAt)) / 86_400_000 <= MAX_AGE_DAYS)) failures.push(`${target}: recorded ${record.run.recordedAt}, over ${MAX_AGE_DAYS} days ago`);
     for (const event of record.events) {
       // A delegated call (openaiTools' handler running the model's tool calls) maps to the line that called the helper.
       const text = lines[(event.line ?? 0) - 1] ?? "";
       if (event.kind === "call" && !(event.delegated ? /\w\(/.test(text) : text.includes(`${event.name}(`))) failures.push(`${target}: line ${event.line} does not call ${event.name}`);
     }
     if (!record.events.some((event) => event.kind === "call")) failures.push(`${target}: the record has no SDK calls`);
+    for (const e of record.events.filter(failed)) failures.push(`${target}: line ${e.line} ${e.name} failed: ${JSON.stringify(e.error ?? (e.result as { error?: unknown }).error).slice(0, 140)}`);
   }
   for (const subject of existsSync(RUNS) ? readdirSync(RUNS) : []) {
     for (const f of readdirSync(join(RUNS, subject))) if (!files.has(`${subject}/${f.replace(/\.json$/, "")}`)) failures.push(`${subject}/${f}: a record with no example file`);

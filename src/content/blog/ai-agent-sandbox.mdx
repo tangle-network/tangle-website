@@ -5,6 +5,7 @@ summary: >-
   An AI agent sandbox gives a software agent isolated files, processes, network rules, and reviewable output.
   Learn how to test the workspace with a real task.
 date: '2026-06-18'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -12,10 +13,9 @@ tags:
   - infrastructure
 series: Agent Intent Infrastructure
 seriesOrder: 2
-coverImage: /images/covers/editorial/agent-intent-v2.webp
-heroImage: /images/covers/editorial/agent-intent-v2.webp
-imageAlt: 'An editorial still life about describing and running an agent task'
 ---
+
+import Example from '../../components/Example.astro'
 
 A coding agent is asked to upgrade one dependency and open a review.
 It edits the manifest, installs packages, runs the test suite, sees a failure, changes an import, and runs the tests again.
@@ -26,12 +26,10 @@ It gives an agent files, processes, packages, and sometimes a browser or GPU whi
 The sandbox does not make the model correct.
 It gives the model a place where a wrong action has a smaller blast radius and a run can leave inspectable results.
 
-Tangle Sandbox’s public TypeScript SDK creates a workspace, waits for it to become usable, executes commands, supports sessions and snapshots, and deletes the temporary machine when the work is finished.
-The design decision is easy to state and easy to miss: the workspace must outlive an individual prompt, while the evidence must outlive the temporary machine.
+Tangle Sandbox’s public TypeScript SDK is the surface this post rests on. `client.create()` returns a machine, `box.exec()` returns `exitCode`, `stdout` and `stderr`, `box.snapshot()` saves the filesystem, and `box.delete()` removes the temporary machine. The workspace must outlive an individual prompt, while the evidence must outlive the temporary machine.
 
 ## The workspace is part of the agent
 
-A chat response can be wrong without changing anything outside the response.
 A coding agent changes state as it works.
 It needs a directory to inspect, a process to run tests, a package manager to install dependencies, and enough time to recover from a failed attempt.
 
@@ -56,8 +54,7 @@ Before an agent receives a repository or a secret, the workspace contract should
 | What can a reviewer inspect? | Changed files, output, errors, screenshots, and run metadata |
 | When does the workspace end? | An explicit stop, expiry, idle timeout, or deletion event |
 
-The word **runtime** means the software and machine that execute an agent’s actions.
-The sandbox is one runtime boundary inside a larger product that may also provide model calls, browser control, approvals, and result evaluation.
+A **runtime** is the software and machine that execute an agent’s actions. The sandbox is one runtime boundary inside a larger product.
 
 A **policy** is the set of rules that decides whether an action is allowed.
 The model may propose `npm install`, but the process enforcing the policy must decide which packages, network hosts, and write paths are permitted.
@@ -82,59 +79,24 @@ curl -fsS https://sandbox.tangle.tools/.well-known/tangle-agent.json
 curl -fsS https://sandbox.tangle.tools/v1/public-templates
 ```
 
-The health call checks whether the public service answers.
 The manifest tells a caller which package and authentication variable to use.
 The template call exposes a public catalog without creating an account-owned workspace.
 
 Those calls do not prove that your API key is valid, that a requested environment can be provisioned, or that your command will pass.
-They separate capability discovery from a real workload test.
 
 The package’s [public README](https://www.npmjs.com/package/@tangle-network/sandbox) contains the current SDK examples and entry points.
-Use the live README and manifest when version-specific options matter because the service surface can change.
 
 ## Create, run, inspect, and delete
 
-The smallest useful SDK loop is a dependency check inside a disposable workspace.
-This example uses the public `Sandbox` class and keeps the API key on the server.
-Set both `TANGLE_API_KEY` and `SANDBOX_BASE_URL` in the server environment before running it.
+The smallest useful SDK loop is one command on a fresh machine. The example below is a verified run on production; its caption gives the date, exit code, and SDK version. It calls `client.create`, `box.exec`, and `box.delete`, and prints the exit code and the platform string the machine reports.
 
-```typescript
-import { Sandbox } from '@tangle-network/sandbox'
-
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: process.env.SANDBOX_BASE_URL!,
-})
-
-const box = await client.create({
-  name: 'dependency-review',
-  environment: 'universal',
-  resources: {
-    cpuCores: 2,
-    memoryMB: 4096,
-    diskGB: 20,
-  },
-})
-
-try {
-  await box.waitFor('running')
-
-  const result = await box.exec('node --version && npm --version')
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr)
-  }
-
-  console.log({ stdout: result.stdout, timing: result.timing })
-} finally {
-  await box.delete()
-}
-```
+<Example path="sandboxes/run-code" />
 
 The lifecycle has five observable moments:
 
-1. `create` requests a named environment with explicit resources.
-2. `waitFor('running')` prevents the client from sending work to a machine that is still provisioning.
-3. `exec` returns an exit code, standard output, standard error, and timing data.
+1. `create` requests a machine. Pass `resources` when the workload needs explicit CPU, memory, or disk.
+2. `box.waitFor('running')` blocks until the machine accepts work; call it before the first `exec` when provisioning may still be in progress.
+3. `exec` returns `exitCode`, `stdout`, and `stderr`.
 4. The application copies any patch, report, or log that must survive the run.
 5. `delete` releases temporary state even when the command throws.
 
@@ -156,40 +118,58 @@ Consider a package upgrade that produces this sequence:
 | Cleanup completed | Delete result or expiry state | Temporary execution ended |
 
 The final answer can summarize that sequence, but the sequence itself is the evidence.
+
+The check that separates the two cases is one more command. `sandboxes/fix-a-test` clones a repository, asks Claude Code to fix the failing test with `box.prompt`, then runs `npm test` itself with `box.exec`. A finished agent turn does not end the task: the script writes `fix.patch` only after the test command exits 0.
+
+<Example path="sandboxes/fix-a-test" />
+
+The run proves that one `npm test` exited 0 after the agent’s edit. It does not prove the patch is minimal or that a reviewer would accept it.
 A **trace** is the structured record of the run’s inputs, actions, outputs, errors, identifiers, and artifacts.
 It lets a reviewer distinguish “the agent fixed the dependency” from “the agent claimed it fixed the dependency after a test command failed.”
 
 Tangle’s public Sandbox docs describe durable sessions that can reconnect after a client crash, deployment, or browser reload.
 That matters when the command continues after the user interface disconnects.
-The session ID is the handle for the work, while the trace and artifacts are the record of what the work did.
 
 ## Keep state across attempts without keeping authority forever
 
 A retry should see the files it needs, but it should not inherit permissions accidentally.
-The application should make those two decisions separately.
 
-The SDK supports snapshots for preserving filesystem state and sessions for continuing a conversation with an agent backend.
-The following example shows the snapshot shape documented by the public package:
+The SDK supports snapshots for preserving filesystem state. The block below installs dependencies, saves the workspace, restores it into a new machine, and runs `npm test` there. It prints the exit code and stdout of the restored run.
 
-```typescript
-const snapshot = await box.snapshot({
-  tags: ['dependency-baseline'],
+```ts
+import { Sandbox } from '@tangle-network/sandbox'
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: 'https://sandbox.tangle.tools',
 })
 
-const restored = await client.create({
-  fromSnapshot: snapshot.snapshotId,
+const box = await client.create({
+  git: { url: 'https://github.com/tangle-network/sandbox-demo' },
 })
-
 try {
-  await restored.waitFor('running')
-  const result = await restored.exec('npm test', {
-    timeoutMs: 10 * 60 * 1000,
+  const install = await box.exec('npm install')
+  if (install.exitCode !== 0) throw new Error(install.stderr)
+
+  const snapshot = await box.snapshot({ tags: ['dependency-baseline'] })
+
+  const restored = await client.create({
+    fromSnapshot: snapshot.snapshotId,
+    fromSandboxId: box.id,
   })
-  console.log(result.exitCode, result.stdout, result.stderr)
+  try {
+    await restored.waitFor('running')
+    const tests = await restored.exec('npm test', { timeoutMs: 10 * 60 * 1000 })
+    console.log(tests.exitCode, tests.stdout)
+  } finally {
+    await restored.delete()
+  }
 } finally {
-  await restored.delete()
+  await box.delete()
 }
 ```
+
+This block typechecks against the published SDK. It is not one of the production-verified examples, so it has no run caption.
 
 Use the same `idempotencyKey` only when retrying the same logical create request.
 An idempotency key is a caller-chosen identifier that lets a service recognize a retry rather than provisioning a second copy of the same request.
@@ -207,7 +187,6 @@ Start with the narrowest network policy that can complete the task.
 Record whether a request was allowed, denied, or failed for another reason.
 Treat a denied request as evidence about policy, not as proof that the model made a bad decision.
 
-Credentials need the same care.
 Inject a short-lived, task-scoped secret only when the job needs it.
 Do not mount a developer’s general-purpose credential directory into a workspace that can read arbitrary files or send network requests.
 If the model needs a GitHub connection, expose the smallest operation set that satisfies the task and keep writes disabled until a reviewer approves them.
@@ -252,8 +231,6 @@ Choose an ordinary isolated workspace when the main requirement is containing fi
 In both cases, test the actual permissions and failure paths you plan to deploy.
 
 ## Sandbox versus a one-shot code runner
-
-The right boundary follows the workload.
 
 | Workload | Smaller tool that may fit | Why an agent sandbox earns its cost |
 | --- | --- | --- |
@@ -301,9 +278,6 @@ A saved patch proves which files were captured.
 
 None of those facts proves that the agent’s patch is correct, that every secret was handled safely, or that an untested network path is harmless.
 The application still needs code review, deterministic tests, credential policy, and a decision about which side effects require human approval.
-
-The narrow promise is valuable.
-An agent receives a bounded place to work, and the rest of the system receives a durable record of what happened there.
 
 ## The decision for builders
 

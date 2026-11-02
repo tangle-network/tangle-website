@@ -62,11 +62,10 @@ If a requested model is unavailable, record the exact model-roster error and sto
 ## Output Rules
 
 - If editing files, modify only the requested MDX post and directly required assets/metadata.
-- Keep frontmatter valid for `src/content.config.ts`: `title`, `slug`, `summary`, `date`, `author`, `tags`, optional `series`, `seriesOrder`, `coverImage`, `heroImage`, `imageAlt`, `draft`.
+- Keep frontmatter valid for `src/content.config.ts`: `title`, `slug`, `summary`, `date`, `author`, `tags`, optional `series`, `seriesOrder`, `updated`, `draft`.
 - Preserve internal links unless a better current target exists.
 - Add `## FAQ` with `###` questions when the post targets search/agent retrieval.
 - Every SEO/AEO rewrite needs at least one exact install, curl, CLI, or API block unless the post is purely conceptual.
-- Use images from `public/images/blog/<slug>/` or `public/images/covers/`; do not reference non-existent assets.
 - Run `pnpm build` or a narrower available validation after substantive edits.
 
 ## Then consider
