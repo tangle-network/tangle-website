@@ -5,6 +5,7 @@ summary: >-
   How Blueprints work as reusable Tangle service templates, and how jobs move
   from public metadata to operator execution, payment, verification, and expiry.
 date: '2026-02-14'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - blueprints
@@ -14,16 +15,17 @@ series: Tangle Re-Introduction
 seriesOrder: 2
 ---
 
-Your team has a working service that can summarize a document.
-The first customer wants to call it from an agent, choose which service providers may execute it, pay per Job, and inspect what happened when two answers disagree.
-A web endpoint can expose the summary function, but it does not by itself describe provider registration, service state, artifact identity, or a result rule.
+Your team has a working service that summarizes documents.
+The first customer wants to call it from an agent, choose which operators may run it, pay per Job, and see why two answers disagree.
+A web endpoint exposes the function, but not operator registration, service state, artifact identity, or a result rule.
 
 Tangle is a coordination network for services that independent parties run.
-Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
-Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
-That missing description is what a **Blueprint**, a reusable service template, supplies: it connects a service’s jobs, artifacts, service providers, and rules.
+Its contracts record selected registration, service, payment, verification, and lifecycle state; application work runs off-chain, meaning outside the blockchain, while on-chain means recorded in blockchain state.
+The missing description is what a **Blueprint**, a reusable service template, supplies: it connects a service’s jobs, artifacts, service providers, and rules.
 
-How Blueprints work begins with these protocol objects and the provider that runs them:
+The mechanism this post rests on is the Blueprint Runner’s job path. A producer turns a trigger into a job call, the job router (which maps a job identifier to its handler) selects the handler, and the handler returns a typed result or an explicit error. Through the optional x402 gateway, a paid request can return `202 Accepted`, which means it was enqueued, not that the work is done.
+
+These protocol objects and the provider that runs them come first:
 
 1. A **Blueprint** is a reusable template for a service.
 2. A **Service** is one configured instance of that template.
@@ -33,13 +35,9 @@ How Blueprints work begins with these protocol objects and the provider that run
 The [Tangle Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) describes those objects and the split between protocol coordination and off-chain application logic.
 The Blueprint software development kit (SDK) is the public Rust toolkit for packaging the logic, routing jobs, running an operator process, and testing the path against local Tangle contracts.
 
-A Blueprint puts service code, Job schemas, artifact sources, operator requirements, triggers, and usage policies into one versioned service definition.
-
 ## The request before the architecture
 
-Use a transcription service as an example.
-The customer sends an audio reference and a language hint.
-The service returns timestamped text.
+Take a transcription service. The customer sends an audio reference and a language hint, and gets timestamped text back.
 
 The public job contract might be:
 
@@ -66,7 +64,7 @@ The separation matters because a caller can choose the job contract while the op
 
 ## What belongs in a Blueprint
 
-A deployable Blueprint normally contains more than the function that does the work.
+A Blueprint puts service code, Job schemas, artifact sources, operator requirements, triggers, and usage policies into one versioned service definition, with these parts:
 
 | Blueprint component | What it tells the system |
 | --- | --- |
@@ -87,19 +85,12 @@ That includes the job schema, payment path, operator requirements, execution pol
 
 ## On-chain coordination and off-chain execution
 
-Tangle uses on-chain and off-chain state for different jobs.
-A smart contract is a program whose state transitions are executed by a blockchain network.
-On-chain state is recorded in smart-contract state that participants can query and agree on.
-Off-chain work is computed by an operator process outside the chain.
+A smart contract is a program whose state transitions a blockchain network executes, and on-chain state is what participants can query and agree on.
 
 The chain can record service creation, operator registration, job identifiers, payment transitions, and lifecycle changes.
 The operator can process an audio file, call a model, and return a transcript without putting the file or every token into the chain.
 
 The path looks like this:
-
-A **job router** maps a job identifier to the handler that should run it.
-A **trace** is a time-ordered record of a run.
-A **task evaluation** is a test or judging procedure for the property a customer cares about.
 
 ```text
 caller or agent
@@ -119,7 +110,7 @@ A **producer** is an adapter that turns an external event into a job call.
 A **consumer** is an adapter that sends a job result to its destination.
 The [job-router documentation](https://docs.tangle.tools/developers/blueprint-runner/routers) describes routing, parameter validation, and the producer-consumer relationship.
 
-For a transcription job it might include the call ID, input fingerprint, artifact version, start and end time, exit state, output reference, and evaluation result.
+For a transcription job, a **trace** (a time-ordered record of a run) might include the call ID, input fingerprint, artifact version, start and end time, exit state, output reference, and evaluation result.
 A trace is useful evidence, but it does not become independent evidence merely because it has a timestamp.
 
 ## The Blueprint lifecycle
@@ -134,9 +125,7 @@ A mutable `latest` tag can point to different bytes on different days, so a prod
 
 ### 2. Operators register
 
-Operators register their willingness to run a Blueprint.
-Registration does not mean that a customer has already created a Service.
-It means the operator is available for a service instance of that type and can be evaluated against any requirements the Blueprint declares.
+Registration records an operator’s willingness to run a Blueprint, not a customer Service that already exists. The operator is available for a service instance of that type and can be checked against the Blueprint’s declared requirements.
 
 The operator may need a keystore, remote procedure call (RPC) endpoints, hardware capabilities, a container runtime, or a confidential-computing setup.
 The [Blueprint Manager documentation](https://docs.tangle.tools/developers/blueprints/manager) says that the manager watches chain events, obtains the Blueprint’s artifacts and metadata, and runs assigned services natively, in a container, or in a virtual machine according to the definition and confidentiality policy.
@@ -158,7 +147,7 @@ x402 is an open protocol for programmatic payment over the Hypertext Transfer Pr
 The caller sends a request, the server returns `402 Payment Required` with payment requirements, the caller signs a payment payload, and the server verifies and settles it before delivering or enqueuing the resource.
 The [official x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) documents the headers and steps.
 
-The Job can be triggered by an on-chain event, a web webhook, a schedule, a custom event source, or an x402-paid request.
+The Job can be triggered by an on-chain event, a webhook, a schedule, a custom event source, or an x402-paid request.
 The producer turns the trigger into the internal job shape expected by the Runner.
 
 Tangle’s optional [x402 gateway](https://docs.tangle.tools/developers/blueprint-runner/x402) turns a verified payment into a `JobCall`, the internal message for a configured service and job.
@@ -250,9 +239,6 @@ An **optimistic challenge** accepts a result provisionally and lets a participan
 | Optimistic challenge | An incorrect deterministic result can be challenged during a window | Finality waits, and someone must monitor and challenge |
 | MPC | Parties can compute from split inputs under a threshold assumption | It can be expensive and still needs a correctness rule |
 | Task evaluation | A result passes selected examples, rules, or human review | Unseen cases and evaluator error remain |
-
-A **quorum** is the minimum number or weight of participants whose matching result is accepted.
-A **canary** is a known input used to detect a selected behavior change.
 
 These terms describe mechanisms, not product guarantees.
 The Blueprint must state which one it uses and which assumptions a customer is expected to accept.
@@ -373,5 +359,4 @@ Read the [job-router reference](https://docs.tangle.tools/developers/blueprint-r
 Read the [x402 gateway guide](https://docs.tangle.tools/developers/blueprint-runner/x402) for paid job ingress and its `202 Accepted` semantics.
 Read the [Tangle CLI reference](https://docs.tangle.tools/developers/cli/tangle) and the [Blueprint SDK repository](https://github.com/tangle-network/blueprint) for current commands, code, examples, and release versions.
 
-Once the lifecycle is clear, the next design question is which verification mechanism belongs on each Job.
-That is the subject of [How Tangle Verifies Work](/blog/how-tangle-verifies-work).
+Before you publish a Blueprint, choose the verification mechanism each Job needs. [How Tangle Verifies Work](/blog/how-tangle-verifies-work) works through those boundaries.
