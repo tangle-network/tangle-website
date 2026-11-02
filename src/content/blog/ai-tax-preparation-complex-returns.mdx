@@ -4,6 +4,7 @@ slug: ai-tax-preparation-complex-returns
 summary: >-
   Build source-backed workpapers with the calculations and records supporting a return, then connect them to draft forms and review questions.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -13,20 +14,27 @@ series: Building an AI Tax Agent
 seriesOrder: 1
 ---
 
+import Example from '../../components/Example.astro'
+
 At 9:42 p.m., Maya has a Form W-2, the employer wage and withholding statement, two brokerage statements, a partnership Schedule K-1, the pass-through tax statement, three wallet exports, and a spreadsheet of estimated payments spread across six folders.
 She asks an AI assistant to “get the return ready,” but the assistant cannot know whether a missing cost-basis record, the acquisition evidence used to measure gain or loss, means zero basis, an unopened attachment, or a transaction that never happened.
 
 AI tax preparation for complex returns is useful when it turns that uncertainty into a reviewable work package.
 The package should show which documents arrived, which facts were extracted, which records disagree, which calculations ran, and what still needs a taxpayer or advisor decision.
 
-A fluent tax explanation serves a different purpose.
-This article describes preparation software, not tax advice, and a taxpayer or qualified tax professional must approve the filing position.
+The Tangle surface behind this post is an agent app with one kept sandbox per client.
+`client.instances.ensure` creates it under a `customer:` key, and the platform resumes it between turns.
+The agent writes source documents to its filesystem, runs computations there with `box.exec`, and sends the prepared return through `submit_proposal`.
+The reader can observe the turn's `state` reach `completed` and the proposal come back `queued_for_approval`.
+
+This article describes preparation software, not tax advice.
+A taxpayer or qualified tax professional must approve the filing position.
 
 ## Complexity comes from connected facts
 
 Complexity comes from records that have different owners, dates, currencies, entities, or reporting obligations.
 
-Maya’s documents look separate at first, but the facts connect:
+Maya’s documents look separate, but the facts connect:
 
 | Record | Fact it can support | Fact it cannot settle by itself |
 | --- | --- | --- |
@@ -37,10 +45,9 @@ Maya’s documents look separate at first, but the facts connect:
 | Entity agreement | ownership, rights, and dates | how every entity fact maps to a tax form |
 | Estimated-payment record | payments and dates | whether the payment belongs to the right tax year |
 
-The preparation system should keep those boundaries visible.
 An extracted value is a candidate fact until a source and a reviewer give it a status.
 
-The Internal Revenue Service (IRS) makes the same evidence problem visible in its public guidance.
+The Internal Revenue Service (IRS) shows the same evidence problem.
 Its [digital-asset guidance](https://www.irs.gov/filing/digital-assets) says taxpayers should keep records of purchases, receipts, sales, exchanges, and other dispositions, along with fair market value and basis information.
 Its page for [Form 8949](https://www.irs.gov/forms-pubs/about-form-8949), the federal sales-and-dispositions form, describes it as a reconciliation step whose subtotals flow to Schedule D.
 Software should preserve the records that make that reconciliation possible instead of presenting only the final number.
@@ -50,8 +57,7 @@ Software should preserve the records that make that reconciliation possible inst
 The first screen should show the intake inventory: what arrived?
 For every upload, record the document name, tax year, owner, page count, file type, processing status, and whether extraction succeeded.
 
-The source index should also distinguish a missing document from a document that was present but unreadable.
-Those conditions lead to different next actions.
+The source index should also distinguish a missing document from one that was present but unreadable.
 
 | Intake state | Example | Correct next action |
 | --- | --- | --- |
@@ -68,7 +74,7 @@ A reviewer should know which files the agent could read and which files never en
 
 Document extraction can find a number on a page.
 Interpretation decides what the number represents, which period it belongs to, and whether it can enter a calculation.
-Those are different operations and should not share one status called “processed.”
+They should not share one status called “processed.”
 
 Consider this sample brokerage statement that contains the text “basis: 12,000.”
 The preparation system should preserve the text, normalize the amount, and ask whether the statement covers the same asset lot as the reported sale.
@@ -80,14 +86,12 @@ The preparation system should preserve the text, normalize the amount, and ask w
 | sample reconciliation | acquisition record says `9000 USD` | show both values and open a question |
 | sample preparation | reviewer accepts the $9,000 record | pass the accepted value to the calculation |
 
-An extraction model can be useful at the first stage and still be wrong about the lot, currency, or tax treatment.
-The workflow should therefore let a reviewer accept the number while rejecting its interpretation, or request a better source before either value reaches a draft form.
-This separation also makes failure recovery concrete: an unreadable page needs a new upload, while a conflicting ownership percentage needs a decision.
+An extraction model can be right about the number and wrong about the lot, currency, or tax treatment.
+A reviewer should be able to accept the number, reject its interpretation, or request a better source before either reaches a draft form.
 
 ## Facts need a status, a source, and a history
 
-Document extraction turns pages into structured candidates.
-It does not make every sentence true.
+Document extraction turns pages into candidates, not truths.
 
 A practical fact record has four parts:
 
@@ -96,8 +100,7 @@ A practical fact record has four parts:
 3. A status such as `candidate`, `needs-review`, `accepted`, or `rejected`.
 4. A history of corrections so a later reviewer can see what changed.
 
-This small TypeScript model shows the boundary.
-It is illustrative application code, not a tax calculation and not a private Tangle interface.
+The model below is illustrative application code, not a tax calculation or a Tangle interface.
 
 ```typescript
 type FactStatus = 'candidate' | 'needs-review' | 'accepted' | 'rejected'
@@ -132,13 +135,12 @@ const ownership: ReviewFact = {
 console.log(ownership)
 ```
 
-The source is optional in the type because the missing-source case must be representable.
-The application should prevent an unreferenced, high-impact fact from entering a draft form without an explicit review decision.
+The source is optional in the type so the missing-source case is representable.
+The application should still block an unreferenced, high-impact fact from a draft form until a reviewer decides.
 
 ## Reconcile before you calculate
 
 Reconciliation means comparing records and showing where they disagree.
-It is the point at which the workflow stops pretending that the first extracted value is the right one.
 
 Maya’s agreement says she owns 20% of a partnership.
 The K-1 says 15%.
@@ -153,8 +155,7 @@ The agent should preserve both facts, show both pages, and ask which document go
 The same pattern catches duplicated brokerage sales, a wallet transfer that appears as a withdrawal and a deposit, and a foreign-currency amount whose conversion date is unclear.
 The agent should not silently choose the newest file, the largest number, or the value that makes the refund look better.
 
-A conflict record can be simple.
-It can be serialized as JSON (JavaScript Object Notation) when it crosses a service boundary:
+A conflict serializes as JSON (JavaScript Object Notation) when it crosses a service boundary:
 
 ```typescript
 const conflict = {
@@ -190,8 +191,7 @@ In the example code, `ordinaryIncomeCandidates` is a preparation label for amoun
 | reported basis | unavailable | block gain or loss calculation |
 
 The calculator can add the first two income candidates and preserve the proceeds.
-It should return `null` for the gain candidate and create a basis review item.
-That is a safer result than filling the blank with zero.
+It should return `null` for the gain candidate and create a basis review item, not zero.
 
 ```typescript
 type CalculationInput = {
@@ -229,11 +229,64 @@ This example does not calculate tax due.
 The IRS [digital-asset guidance](https://www.irs.gov/filing/digital-assets) says records may need the asset type, transaction date and time, units, fair market value, and basis, so the application should request the missing acquisition evidence before it creates a Form 8949 entry for a sale or exchange.
 If a broker supplies [Form 1099-DA, a digital-asset proceeds statement](https://www.irs.gov/businesses/understanding-your-form-1099-da), the software should preserve that statement while still showing which basis fields are covered and which remain unresolved.
 
+`box.exec` runs the calculation as code in the kept sandbox and returns the exit code and stdout.
+The embed shows that call on a fresh machine; it prints a platform string, not a tax figure.
+
+<Example path="sandboxes/run-code" />
+
+The output proves only that the command ran and returned its result.
+
 ## Coordinate the workflow with Tangle and run it in a Sandbox
 
 Tangle coordinates reusable service packages and the operators that run them.
 Its Sandbox product provides an isolated runtime for agent jobs.
 The tax workflow described here treats a Tangle Tax Agent as a proposed application built on public Tangle surfaces, not as a claim that Tangle currently provides tax advice or files returns.
+
+The example has the shape of Maya’s workspace, with a contract in place of a tax file.
+`client.instances.ensure` returns the same sandbox for a `customer:` key, `instance.box.write` puts a source document on its filesystem, and `instance.turn` runs the agent until `turn.state` is `completed`.
+
+<Example path="products/legal-agent" title="One kept sandbox per customer" />
+
+It proves a per-customer sandbox and a readable completed turn, not a correct review.
+
+The return reaches a human through a structured tool call, not a sentence in the model’s reply.
+`buildAppToolOpenAITools` advertises `submit_proposal` to the model, and `createAppToolRuntimeExecutor` sends each call to the product’s handler.
+A proposal whose type is in `regulatedTypes` is stamped `regulated`, and the handler must queue it instead of executing it.
+The fence uses a stub handler, needs a `TANGLE_API_KEY`, and prints the queued titles.
+
+```ts
+import { buildAppToolOpenAITools, createAppToolRuntimeExecutor, type AppToolHandlers, type AppToolTaxonomy } from '@tangle-network/agent-app/tools'
+import { createOpenAICompatStreamTurn, runAppToolLoop } from '@tangle-network/agent-app/runtime'
+
+const taxonomy: AppToolTaxonomy = { proposalTypes: ['file-return', 'other'], regulatedTypes: ['file-return'] }
+const queued: string[] = []
+const handlers: AppToolHandlers = {
+  submitProposal: async (args) => {
+    queued.push(args.title)
+    return { proposalId: `p-${queued.length}`, deduped: false, status: 'queued_for_approval' }
+  },
+  scheduleFollowup: async () => ({ id: 'f-1', dueDate: '2026-11-15', deduped: false }),
+  renderUi: async (args) => ({ path: `ui/${args.title}.json`, content: JSON.stringify(args.schema) }),
+  addCitation: async (args) => ({ citationId: 'c-1', path: args.path }),
+}
+
+const tools = buildAppToolOpenAITools(taxonomy)
+const model = createOpenAICompatStreamTurn({ baseUrl: 'https://router.tangle.tools/v1', apiKey: process.env.TANGLE_API_KEY!, model: 'glm-5.3', tools })
+const result = await runAppToolLoop({
+  systemPrompt: 'Prepare the draft 2025 return from the source index. Submit it with submit_proposal once every high-impact fact is accepted.',
+  userMessage: 'Prepare the 2025 return for Maya Stone.',
+  // The loop takes text and tool calls; the adapter's reasoning and usage events are for the UI.
+  streamTurn: async function* (messages) {
+    for await (const event of model(messages)) if (event.type === 'text' || event.type === 'tool_call') yield event
+  },
+  executeToolCall: createAppToolRuntimeExecutor({ handlers, taxonomy, ctx: { userId: 'maya', workspaceId: 'tax-2025', threadId: null } }),
+  isExecutableTool: (name) => tools.some((tool) => tool.function.name === name),
+})
+console.log(result.finalText, queued)
+```
+
+The fence proves that a model-issued `submit_proposal` call reaches the approval path with `status: 'queued_for_approval'`.
+It does not prove that the return is correct, and the stub handler stores nothing.
 
 These terms describe the boundary:
 
@@ -257,9 +310,7 @@ The [x402 documentation](https://docs.x402.org/introduction) describes the payme
 For the execution boundary, see [AI Agent Sandbox](/blog/ai-agent-sandbox), and for the submission boundary, see [Automated Tax Filing With Review Before Submit](/blog/automated-tax-filing-review-before-submit).
 
 Those mechanisms coordinate execution and payment; the tax product still settles the tax position.
-A Router can select a model route, but it cannot make a missing basis value true.
-Attestation can bind code to a hardware boundary, but it cannot show that the model’s tax interpretation is correct.
-An evaluation can catch a regression, but it cannot replace taxpayer approval.
+A Router cannot make a missing basis value true, attestation cannot show the tax interpretation is correct, and an evaluation cannot replace taxpayer approval.
 
 The [Tangle Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) documents the scoped package and health endpoint for a runtime smoke test:
 
@@ -319,17 +370,14 @@ By the end of preparation, Maya should receive a packet with:
 - an approval record that is separate from the agent’s generated explanation.
 
 An advisor should be able to open the packet and ask “why is this number here?” without rerunning the entire agent.
-That is the practical meaning of source-backed preparation.
 
 ## Choose preparation software by its stopping behavior
 
 Use AI tax preparation for complex returns when the system can show the source, assumption, calculation input, and review state behind every high-impact output.
 Keep a simpler filing path for a return whose facts are clean and whose supported forms already fit a conventional workflow.
 
-If the product gives a polished answer but cannot show the document page, rule version, unresolved question, or correction history, it belongs in the assistant category.
-Keep it out of the preparation path until it exposes those records for a taxpayer or advisor to review.
-For the filing-stage boundary, continue with [AI tax filing software for complex returns](/blog/ai-tax-filing-software-complex-returns).
-
+If the product gives a polished answer but cannot show the document page, rule version, unresolved question, or correction history, it belongs in the assistant category, outside the preparation path.
+For the filing-stage boundary, see [AI tax filing software for complex returns](/blog/ai-tax-filing-software-complex-returns).
 
 ## What is AI tax preparation?
 

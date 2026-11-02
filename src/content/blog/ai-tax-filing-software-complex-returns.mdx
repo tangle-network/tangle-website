@@ -11,7 +11,10 @@ tags:
   - filing-software
 series: Building an AI Tax Agent
 seriesOrder: 2
+updated: '2026-11-01'
 ---
+
+import Example from '../../components/Example.astro'
 
 Jordan opens a tax app and sees a large refund number.
 The app can explain the number in a friendly paragraph, but it cannot show whether the amount came from a Schedule K-1 (pass-through tax statement) footnote, a corrected brokerage statement, or a missing state allocation.
@@ -22,6 +25,8 @@ The review should let the taxpayer inspect the documents used, follow important 
 Filing software has two jobs.
 It prepares a return and controls the transition from draft to electronic filing (e-file).
 This article is about product design and evaluation, not tax advice; unresolved basis, foreign forms, state allocation, and judgment-dependent positions still need taxpayer and professional review.
+
+The product shape assumed here is an agent app built on `@tangle-network/agent-app`. The agent works in one kept Sandbox per client and proposes a filing only through `submit_proposal`, which queues it as `queued_for_approval`. A human approval record must exist before anything is transmitted.
 
 ## Review starts before the filing button
 
@@ -92,11 +97,70 @@ An example package can use a plain JSON (JavaScript Object Notation) shape:
 The identifiers are illustrative.
 The important properties are the explicit status, the source reference, the missing-basis exception, and the absence of an approval object.
 
+The agent cannot file the package. The handler queues each `submit_proposal` call; the product's approval executor, not the tool package, enforces the approval. The fence streams one tool-loop run against the Router and prints each tool result.
+
+```ts
+import { randomUUID } from "node:crypto";
+import {
+  buildAppToolOpenAITools,
+  createAppToolRuntimeExecutor,
+  type AppToolHandlers,
+  type AppToolTaxonomy,
+} from "@tangle-network/agent-app/tools";
+import { createOpenAICompatStreamTurn, streamAppToolLoop } from "@tangle-network/agent-app/runtime";
+
+const taxonomy: AppToolTaxonomy = {
+  proposalTypes: ["tax-proposal"],
+  regulatedTypes: ["tax-proposal"], // a named human approves before filing
+};
+const handlers: AppToolHandlers = {
+  // Queue only. Nothing is transmitted from this handler.
+  async submitProposal() {
+    return { proposalId: randomUUID(), deduped: false, status: "queued_for_approval" };
+  },
+  async scheduleFollowup(args) {
+    return { id: args.title, dueDate: args.dueDate, deduped: false };
+  },
+  async renderUi(args) {
+    return { path: "ui/summary.json", content: JSON.stringify(args.schema) };
+  },
+  async addCitation(args) {
+    return { citationId: randomUUID(), path: args.path };
+  },
+};
+
+const tools = buildAppToolOpenAITools(taxonomy);
+const loop = streamAppToolLoop({
+  systemPrompt: "Prepare the 2025 return in this workspace. Propose filings; never file.",
+  userMessage: "Recompute the Form 8949 gain with the new basis record.",
+  streamTurn: createOpenAICompatStreamTurn({
+    baseUrl: "https://router.tangle.tools/v1",
+    apiKey: process.env.TANGLE_API_KEY!,
+    model: "glm-5.3",
+    tools,
+  }),
+  extractText: (event) => (event.type === "text" ? event.text : ""),
+  extractToolCall: (event) => (event.type === "tool_call" ? event.call : null),
+  executeToolCall: createAppToolRuntimeExecutor({
+    handlers,
+    taxonomy,
+    ctx: { userId: "jordan", workspaceId: "return-2025-jordan", threadId: null },
+  }),
+  isExecutableTool: (name) => tools.some((tool) => tool.function.name === name),
+  maxToolTurns: 8,
+});
+for await (const step of loop) {
+  if (step.kind === "tool_result") console.log(step.label, step.outcome);
+}
+```
+
+The loop stops at `maxToolTurns` or when the model finishes. The run shows the proposal reaching the queue as a tool result; it does not show that the proposed gain is correct.
+
 If the product cannot represent “received but not sufficient,” it can turn a document into false certainty.
 
 ## The buyer should test one high-impact line
 
-A product demonstration often uses a clean Form W-2 wage statement because the path is easy to narrate.
+A demonstration often uses a clean Form W-2 wage statement.
 Jordan should ask to inspect a line whose answer depends on more than one source.
 
 For a digital-asset sale, the reviewer might need to see:
@@ -126,6 +190,10 @@ If Jordan later supplies a purchase record showing $9,000 of basis, the system h
 It should recompute the candidate gain as $16,000, subject to the taxpayer’s facts and the applicable instructions.
 It should also show the source page, the calculation inputs, the affected Form 8949 entry, the Schedule D summary, and the new package version.
 
+The agent should not assert the new gain. The fix-a-test example checks the agent's claim with `box.exec` and reads the exit code before writing a patch.
+
+<Example path="sandboxes/fix-a-test" />
+
 | Draft state | Evidence | What changes | Approval state |
 | --- | --- | --- | --- |
 | draft-12 | proceeds statement, basis missing | gain or loss remains unresolved | not approved |
@@ -134,15 +202,12 @@ It should also show the source page, the calculation inputs, the affected Form 8
 
 A useful product demonstration asks the vendor to perform this correction while the reviewer watches.
 If the refund or balance changes without a source link and version comparison, the product has displayed a new answer without showing the decision that produced it.
-That is the exact failure a complex-return workflow is supposed to prevent.
 
 ## Keep a simple filing path for simple returns
 
-Complexity should earn its place at the product boundary.
 A taxpayer with a clean wage statement and a small number of supported forms may prefer a conventional filing product or an official free path.
 
 The IRS directs eligible taxpayers to [IRS Free File](https://www.irs.gov/e-file-do-your-taxes-for-free).
-An AI filing product should explain when its extra workflow earns its place.
 
 | Return shape | Better product behavior |
 | --- | --- |
@@ -153,18 +218,12 @@ An AI filing product should explain when its extra workflow earns its place.
 | multiple states | residence timeline, allocation workpapers, and state-specific review |
 
 Forcing every taxpayer through a large agent workflow adds review steps, duplicates questions, and creates unnecessary escalation paths.
-The product should earn complexity with a problem the simpler path cannot explain or control.
 
 ## The Tangle vocabulary describes operating boundaries
 
 Tangle coordinates reusable service packages and the operators that run them.
 Its Sandbox product provides an isolated runtime for agent jobs.
 The tax product described here is a proposed workflow pattern, not a claim that Tangle currently provides tax filing or professional advice.
-
-An **agent profile** is the pinned configuration of the model, tools, spending budget, and policies used for a run.
-A **runtime** is the environment that holds files, executes parsers, calls models, and records outputs.
-For this application, a **trace** is the chronological record of those inputs, tool calls, outputs, and decisions.
-An **evaluation** is a repeatable test that checks the result, cost, and policy behavior against known cases.
 
 If a team packages the workflow for Tangle, a **Blueprint** is the reusable service definition that describes its jobs, inputs, outputs, and operating requirements.
 A **service instance** is one live deployment of that Blueprint.
@@ -201,10 +260,13 @@ The product should answer:
 The workflow should keep a copy of the approved package separate from a temporary extraction workspace.
 Deleting a scratch workspace should not delete the records needed to explain the filed return.
 
+The kept workspace is one sandbox per client key, created with `client.instances.ensure`. The legal-agent example shows that call, a file write, and a turn polled until it completes.
+
+<Example path="products/legal-agent" />
+
 ## Test the runtime before trusting the tax workflow
 
 Tangle’s [Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) documents the scoped package and health endpoint for a public isolated runtime.
-The package and endpoint provide a small reachability check before a team uploads sensitive data.
 
 ```bash
 npm install @tangle-network/sandbox
@@ -285,9 +347,6 @@ Do not point a browser agent at a live taxpayer return until the product has tes
 Browser automation can click the right controls and still submit the wrong version if the approval boundary is weak.
 
 ## Ask for a packet before choosing a product
-
-AI tax filing software earns its place on a complex return when it can make one high-impact line explainable from source to draft to approval.
-The product should show the documents used, the facts extracted, the calculations run, the unresolved questions, the corrections made, and the exact package awaiting transmission.
 
 Choose a simpler product when the return has no such coordination problem.
 Choose a professional-led workflow when the product cannot expose its assumptions or when the facts require judgment it cannot support.
