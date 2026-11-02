@@ -4,44 +4,44 @@ slug: self-improving-stack-post-training
 summary: >-
   Post-training for agents moves improvement from prompts and skills into model weights or adapters, with harder data, release, and rollback decisions.
 date: '2026-05-30'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['ai', 'agents', 'models', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 5
 ---
 
+import Example from '../../components/Example.astro'
+
 The coding agent follows a new tool-use procedure in one project after the team adds a skill.
 It forgets the procedure in another product, under another prompt, with another tool description.
-The team asks whether the behavior should be moved into the model.
-
-That is the post-training decision.
-
-**Model weights** are the learned parameters that determine how a model maps context to output probabilities.
-**Post-training** updates those weights or adds a learned adapter after the initial broad training stage.
-An **adapter** is a smaller learned parameter set applied on top of a base model.
-A **prompt** is the task, context, and constraints supplied to a model for a run.
-A **skill** is a reusable procedure that an agent can load for matching tasks.
-An **agent runtime** is the surrounding software that supplies tools, controls turns and budgets, and records execution.
-An **agent profile** is the versioned bundle of model, prompt, skills, tools, permissions, runtime, and limits used for a run.
-A **trace** is the record of one execution, including actions, observations, artifacts, costs, and outcome.
-An **evaluation** is a structured test of behavior against tasks, hard checks, policy rules, and cost limits.
-A **checker** is a repeatable check that tests whether an artifact or action meets an explicit condition.
-A **holdout set** is a protected group of tasks kept out of candidate search until the release decision.
-A **baseline** is the version already in use, and a **candidate** is a proposed replacement.
+The team asks whether the behavior should move into the model.
 
 Most product teams can improve an agent without changing weights.
 They can edit prompts, skills, retrieval, tools, runtime execution, traces, and release rules.
-Post-training becomes appropriate when the behavior should generalize across many contexts and the team can accept a harder data, release, and rollback problem.
+Post-training is worth its cost when the behavior should generalize across many contexts and the team can accept a harder data, release, and rollback problem.
+
+The Tangle products that carry this argument sit on the evidence side of the loop.
+`evals/score-a-trace` sends one sandbox run's answer and every tool invocation to a judge on the Router, and returns a score per dimension. That score is what a training signal is built from.
+`evals/regression-gate` is the check a post-trained candidate has to clear: it runs the shipped and the candidate version on the same scenarios in real sandboxes, and exits 1 when the candidate passes fewer cases.
+
+The terms used below:
+
+- **Model weights** are the learned parameters that map context to output probabilities.
+- **Post-training** updates those weights, or adds a learned adapter on top of a base model, after the initial broad training stage.
+- An **agent profile** is the versioned bundle of model, prompt, skills, tools, permissions, runtime, and limits used for a run.
+- A **trace** records one execution: actions, observations, artifacts, costs, and outcome.
+- An **evaluation** tests behavior against tasks, hard checks, policy rules, and cost limits.
+- A **holdout set** is a group of tasks kept out of candidate search until the release decision.
+- A **baseline** is the version in use. A **candidate** is its proposed replacement.
 
 ## The model boundary changes the release unit
 
-External changes are usually inspectable as files or configuration.
-A reviewer can read a prompt diff, compare a skill, inspect a tool schema, or revert a runtime change.
+External changes are usually inspectable as files or configuration. A reviewer can read a prompt diff, compare a skill, inspect a tool schema, or revert a runtime change.
 
-Weight changes are distributed through a model artifact.
-The same update can affect tool choice, refusal behavior, uncertainty, style, and task performance in contexts that were not present in the motivating trace.
+Weight changes ship as a model artifact. One update can change tool choice, refusal behavior, uncertainty, style, and task performance in contexts that were not in the trace that motivated it.
 
-The loop still has familiar stages:
+The loop keeps the same stages:
 
 ```text
 collect behavior
@@ -52,20 +52,18 @@ evaluate the candidate
 release or reject the artifact
 ```
 
-The mutable object is different:
+Only the mutable object changes:
 
 ```text
 external loop: candidate prompt, skill, tool, memory, or runtime
 weight loop: candidate model weights or an adapter attached to a base model
 ```
 
-That difference changes what “local fix” means.
-A prompt can be scoped to one profile.
-A model update can generalize across profiles, which is its value and its risk.
+A local fix means something different in each loop. A prompt can be scoped to one profile. A model update can generalize across profiles, which is its value and its risk.
 
 ## The post-training ladder
 
-The methods below use different signals and make different claims.
+Each method uses a different signal and makes a different claim.
 
 | Method | Plain-language signal | Typical use | Main failure |
 | --- | --- | --- | --- |
@@ -77,37 +75,21 @@ The methods below use different signals and make different claims.
 | Check-backed reward | Tests, schemas, proofs, or exact checks | Code, math, and structured tool tasks | The model finds a shortcut around the checker |
 | Tool-use reinforcement learning (RL) | Reward tool choice and argument behavior in an environment | Multi-step actions and tool use | Sparse rewards and unsafe exploration |
 
-The ladder is not a ranking.
-It is a choice of what evidence the training loop can trust.
-
 ## Supervised fine-tuning teaches examples
 
-**Supervised fine-tuning**, or SFT, trains on pairs of inputs and desired outputs.
-The model is adjusted to put more probability on the demonstrated response.
+**Supervised fine-tuning**, or SFT, trains on pairs of inputs and desired outputs, raising the probability the model gives the demonstrated response.
 
 ```text
 training row = (task, desired response)
 ```
 
-For an agent, the response can include a tool call, structured arguments, or a final artifact.
-SFT is useful for teaching the expected shape of a workflow:
+For an agent, the response can be a tool call with structured arguments or a final artifact. SFT teaches the expected shape of a workflow.
 
-- how to format a tool request;
-- how to fill a required structured-data field;
-- how to use domain vocabulary;
-- how to return an approval request;
-- how to separate evidence from a conclusion.
-
-SFT is weak when the dataset shows only the final answer and hides why that answer was chosen.
-The model can copy a style while missing the check that made the example safe.
-It can also learn a temporary workaround after the underlying tool bug is fixed.
-
-Use traces to decide whether the training row should contain a final answer, an action sequence, a preference pair, or a result backed by a repeatable check.
+It is weak when the dataset shows only the final answer and hides why that answer was chosen. The model can copy the style while missing the check that made the example safe, and it can learn a workaround after the underlying tool bug is fixed. Use traces to decide whether a training row should hold a final answer, an action sequence, a preference pair, or a result backed by a repeatable check.
 
 ## RLHF and RLAIF turn preferences into a proxy
 
-**Reinforcement learning from human feedback**, or RLHF, trains a model from human comparisons rather than only from demonstrations.
-The classic [InstructGPT description from OpenAI](https://openai.com/index/instruction-following/) has three broad stages:
+**Reinforcement learning from human feedback**, or RLHF, trains from human comparisons as well as demonstrations. The [InstructGPT description from OpenAI](https://openai.com/index/instruction-following/) has three broad stages:
 
 ```text
 human demonstrations -> supervised model
@@ -115,24 +97,15 @@ human comparisons -> reward model
 reward model -> policy update with reinforcement learning
 ```
 
-A **reward model** is a learned scorer that predicts which output a reviewer would prefer.
-The policy is the model being trained to produce responses.
-The reward model is not the user’s actual outcome; it is a proxy for that outcome.
+A **reward model** is a learned scorer that predicts which output a reviewer would prefer. It is a proxy for the user's outcome, not the outcome.
 
-**RLAIF**, or reinforcement learning from AI feedback, replaces some human comparisons with judgments generated by another model, often under written principles.
-[Constitutional AI](https://arxiv.org/abs/2212.08073) is a public example of using a written constitution to guide critique, revision, and preference collection.
+**RLAIF**, or reinforcement learning from AI feedback, replaces some human comparisons with judgments from another model, often under written principles. [Constitutional AI](https://arxiv.org/abs/2212.08073) is a public example of a written constitution guiding critique, revision, and preference collection.
 
-The scale advantage comes from generating more comparisons under the same written principles.
-The risk is correlated error.
-If the judge and the policy share a blind spot, the loop can strengthen it.
-The training team needs human anchor cases, independent checks, judge versioning, and held-out tasks that the optimizer cannot read.
+Scale comes with correlated-error risk: if the judge and the policy share a blind spot, the loop strengthens it. The team needs human anchor cases, judge versioning, and held-out tasks the optimizer cannot read.
 
 ## DPO simplifies the preference path
 
-**Direct Preference Optimization**, or DPO, trains from a preferred and rejected response without separately fitting a reward model and running online policy optimization in the same way as classic RLHF.
-The [DPO paper](https://arxiv.org/abs/2305.18290) derives a classification-style objective using a reference model and preference pairs.
-
-The practical shape is:
+**Direct Preference Optimization**, or DPO, trains from a preferred and a rejected response against a reference model. It does not fit a separate reward model and run online policy optimization as classic RLHF does. The [DPO paper](https://arxiv.org/abs/2305.18290) derives a classification-style objective from those pairs.
 
 ```text
 task -> preferred response
@@ -140,48 +113,23 @@ task -> preferred response
      -> update the candidate relative to a reference model
 ```
 
-DPO is attractive because the training pipeline is simpler.
-It does not make preference data less important.
-If the preferred response wins because it is longer, more flattering, or closer to a judge’s style rather than more correct, the model learns that bias.
+The pipeline is simpler, but the preference data matters as much as before. If the preferred response wins because it is longer, more flattering, or closer to a judge's style, the model learns that bias.
 
-For agent training, a preference pair can compare:
+For agents, a pair can compare a correct tool call with an invalid one, a verified patch with a plausible untested one, a source-backed answer with an unsupported one, or a safe refusal with an unsafe compliance. A reviewer should be able to name the test, policy, source, or outcome that made the winner better.
 
-```text
-correct tool call vs invalid tool call
-verified patch vs plausible untested patch
-source-backed answer vs unsupported answer
-safe refusal vs unsafe compliance
-```
+## Process supervision scores the path
 
-The pair needs evidence for the preference.
-A reviewer should be able to point to the test, policy, source, or outcome that made one response better.
+Outcome supervision scores the final artifact. Process supervision scores the intermediate decisions: the tool call, the observation the agent used, the check it ran.
 
-## Process supervision uses the path
+An outcome-only label says the artifact failed. A process label can say the tool arguments were invalid, the observation was ignored, or the check ran on the wrong file. The public [Let's Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf) study showed why step-level feedback can matter on hard reasoning tasks. A step that happened is not a good step, and a judge's praise does not make the judge correct.
 
-Outcome supervision scores the final artifact.
-Process supervision scores intermediate decisions.
+The judge in this example reads the answer and every tool invocation from one `claude-code` run on a real sandbox. It scores two process dimensions: `grounded`, whether every file and line it names exists, and `economical`, whether no tool call repeats earlier work. A low `economical` score can flag a run that reached a correct answer by wasteful means.
 
-Consider an agent trace:
+<Example path="evals/score-a-trace" />
 
-```text
-read task
-choose tool
-send arguments
-observe result
-revise plan
-run check
-return artifact
-```
+The script prints the trace ID, the two dimension scores, and the judge's notes. That proves this judge scored this run on these dimensions. It does not prove the judge agrees with a reviewer. Calibrate the judge on labeled examples before its scores become training labels.
 
-An outcome-only label says the artifact failed.
-A process label can say the tool arguments were invalid, the observation was ignored, or the check ran on the wrong file.
-
-The public [Let’s Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf) study showed why step-level feedback can matter for hard reasoning tasks.
-Agent systems already produce candidate process signals in their traces, but those signals need careful labeling.
-The fact that a step happened does not make it a good step.
-The fact that a judge praised it does not make the judge correct.
-
-Use deterministic process labels where possible:
+Use deterministic process labels where a check exists:
 
 ```text
 valid tool schema
@@ -192,12 +140,11 @@ artifact changed as intended
 rollback condition preserved
 ```
 
-Use semantic judgments for what deterministic checks cannot cover, and calibrate those judgments against trusted examples.
+Use semantic judgments, like the one above, only where no deterministic check exists.
 
 ## Check-backed reward is a strong narrow signal
 
-A **check-backed reward** comes from a check that can be rerun and whose success condition is explicit.
-Examples include:
+A **check-backed reward** comes from a check that can be rerun and whose success condition is explicit. Examples include:
 
 ```text
 tests_passed
@@ -208,21 +155,13 @@ required_policy_assertions_passed
 tool_result_matches_expected_state
 ```
 
-The public [DeepSeek-R1 paper](https://arxiv.org/abs/2501.12948) describes reinforcement learning with rule-based rewards for reasoning-oriented tasks alongside model-based rewards for more general data.
-The result does not mean all reasoning can be reduced to exact tests.
-It shows why trainable environments with checkable outcomes are attractive.
+The public [DeepSeek-R1 paper](https://arxiv.org/abs/2501.12948) describes reinforcement learning with rule-based rewards for reasoning-oriented tasks, alongside model-based rewards for more general data. That does not mean all reasoning reduces to exact tests. It shows why trainable environments with checkable outcomes are attractive.
 
-A model can pass a weak test while producing a dangerous artifact.
-A code test can miss a payment authorization regression.
-A schema can be valid while the values are wrong.
-A tool call can return `200` while the requested state change did not occur.
-
-Check-backed reward is strongest when the checker covers the user’s real failure and its limits are known.
+A model can pass a weak test while producing a dangerous artifact. A code test can miss a payment authorization regression. A schema can be valid while the values are wrong. A tool call can return `200` while the requested state change did not occur.
 
 ## A worked decision: teach the model or keep the procedure outside?
 
-Suppose a coding agent repeatedly forgets to run the project’s migration check before opening a pull request.
-The team has four candidate fixes:
+Suppose a coding agent repeatedly forgets to run the project's migration check before opening a pull request. The team has four candidate fixes:
 
 | Candidate | What changes | Why choose it | What can go wrong |
 | --- | --- | --- | --- |
@@ -231,16 +170,13 @@ The team has four candidate fixes:
 | Runtime | Make the check a required release step | Enforceable and measurable | It may slow unrelated tasks or need new tooling |
 | Post-training | Update model behavior across contexts | Broad transfer and lower prompt dependence | Harder attribution, rollback, and regression control |
 
-Start outside the model when the behavior is a policy or an enforceable workflow step.
-Move toward weights when many contexts show the same behavior, the data is clean, and the product needs the model to generalize it before a prompt or skill is loaded.
+Start outside the model when the behavior is a policy or an enforceable workflow step. Move toward weights when many contexts show the same behavior, the data is clean, and the product needs the model to generalize it before a prompt or skill is loaded.
 
-The model update should not be the first response to a missing capability.
-If the migration checker does not exist, post-training cannot create a trustworthy one.
+The model update should not be the first response to a missing capability. If the migration checker does not exist, post-training cannot create a trustworthy one.
 
 ## Data provenance becomes the main control
 
-The training record needs more than input and output text.
-For agent behavior, preserve:
+For agent behavior, the training record must preserve:
 
 ```text
 source and ownership
@@ -256,30 +192,21 @@ deduplication identity
 contamination status
 ```
 
-Do not train on holdout cases.
-Do not treat model-generated answers as ground truth without labels or checks.
-Treat a judge rationale as a hypothesis until an independent check supports it.
-Do not lose the distinction between real user feedback, synthetic data, replayed data, and evaluation output.
+Do not train on holdout cases. Do not treat model-generated answers as ground truth without labels or checks. Treat a judge rationale as a hypothesis until an independent check supports it. Keep user feedback, synthetic data, replayed data, and evaluation output distinct.
 
-The [model-collapse study in Nature](https://www.nature.com/articles/s41586-024-07566-y) documents how repeatedly training on model-generated data can remove diversity and distort the distribution.
-Agent teams should mark generated traces and control their mixture rather than feeding every successful-looking answer back into training.
+The [model-collapse study in Nature](https://www.nature.com/articles/s41586-024-07566-y) documents how repeatedly training on model-generated data can remove diversity and distort the distribution. Agent teams should mark generated traces and control their share of the mixture, rather than feeding every successful-looking answer back into training.
 
-## Tangle’s public boundary
+## Tangle's public boundary
 
-The public [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) focuses on executing agents, teams, tools, bounded rounds, and improvement experiments.
-The public [agent-eval repository](https://github.com/tangle-network/agent-eval) focuses on comparing behavior, preserving evaluation cases, analyzing traces, and keeping final test cases away from the optimizer.
+The public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) covers executing agents, teams, tools, bounded rounds, and improvement experiments. The public [agent-eval repository](https://github.com/tangle-network/agent-eval) covers comparing behavior, preserving evaluation cases, analyzing traces, and keeping final test cases away from the optimizer.
 
-The public TypeScript packages document this installation path:
+The public TypeScript packages install with:
 
 ```bash
 pnpm add @tangle-network/agent-runtime @tangle-network/agent-eval @tangle-network/sandbox
 ```
 
-Those are useful pieces for collecting training evidence.
-They are not a public claim that every Tangle agent is fine-tuned in production.
-The model update remains a separate training and release system unless a product explicitly wires one in.
-
-The distinction keeps the stack inspectable:
+These packages collect training evidence. They are not a public claim that any Tangle agent is fine-tuned in production. The model update remains a separate training and release system unless a product explicitly wires one in.
 
 ```text
 runtime executes the workflow
@@ -290,32 +217,17 @@ training system updates the model or adapter
 release rule decides whether the artifact ships
 ```
 
-An agent profile should identify the model artifact, prompt, skills, tools, permissions, runtime, and evaluator used to generate the training evidence.
-Otherwise a model update can absorb behavior from an untracked configuration and become impossible to reproduce.
+An agent profile should identify the model artifact, prompt, skills, tools, permissions, runtime, and evaluator used to generate the training evidence. Without that record, a model update can absorb behavior from an untracked configuration and become impossible to reproduce.
 
 ## Frontier Tuning is an environment-level example
 
-Microsoft’s public [Frontier Tuning announcement](https://devblogs.microsoft.com/microsoft365dev/frontier-tuning-teaching-ai-to-work-the-way-you-do/) describes a private-preview approach that applies reinforcement learning inside a customer’s compliance boundary.
-It describes an evolving environment, customer workflows and data, and tuned models, skills, and runtime orchestration as parts of one system.
+Microsoft's public [Frontier Tuning announcement](https://devblogs.microsoft.com/microsoft365dev/frontier-tuning-teaching-ai-to-work-the-way-you-do/) describes a private-preview approach that applies reinforcement learning inside a customer's compliance boundary, with tuned models, skills, and runtime orchestration as one system.
 
-That framing is useful because enterprise agent improvement rarely ends at weight updates.
-The environment, tools, skills, and evaluation rules influence what the model can learn and what the customer can safely deploy.
-The announcement is a vendor description of a product direction, not independent evidence that every organization will see the same lift.
-
-The release question remains:
-
-```text
-Which behavior belongs in model parameters,
-and which behavior should remain visible in the runtime and policy files?
-```
-
-Keep behavior external when auditability, tenant separation, frequent policy changes, or fast rollback matters more than compression.
-Choose post-training when the signal is repeated, broad, privacy-safe, and valuable across the contexts where the model will be used.
+For an agent team, the environment, tools, skills, and evaluation rules shape what a model can learn and what a customer can deploy. The announcement is a vendor description, not independent evidence of the lift a given organization will see.
 
 ## The model release rule
 
-A model artifact needs a stricter release rule than a prompt change.
-At minimum, compare:
+A model artifact needs a stricter release rule than a prompt change. At minimum, compare:
 
 ```text
 held-out task quality
@@ -346,8 +258,13 @@ rollback target
 approver
 ```
 
-The release rule should be independent of the training process.
-A training loop must not be allowed to rewrite the evaluator that decides whether its own model ships.
+`evals/regression-gate` is the mechanism behind the pass-or-fail step. The example below runs the shipped prompt and a candidate on two fix scenarios, each in a fresh sandbox, and exits 1 when the candidate passes fewer cases.
+
+<Example path="evals/regression-gate" />
+
+The surface here is a prompt. A post-trained candidate needs the `agent` function to run the candidate model instead; the comparison and exit code stay the same. The gate shows only that the candidate passes at least as many of these two tests as the shipped version. Holdout quality, safety probes, and cost need their own cases in the release record.
+
+The release rule must be independent of the training process. A training loop must not be able to rewrite the evaluator that decides whether its own model ships.
 
 ## Where post-training fails
 
@@ -357,32 +274,47 @@ A training loop must not be allowed to rewrite the evaluator that decides whethe
 
 **Process-label noise** rewards a step that correlates with success without causing it.
 
-**Checker gaming** exploits a test, schema, or simulator that covers only part of the user’s requirement.
+**Checker gaming** exploits a test, schema, or simulator that covers only part of the user's requirement.
 
 **Catastrophic forgetting** improves one domain while damaging previously useful behavior.
 
 **Data leakage** turns private or holdout examples into model behavior.
 
-**Synthetic drift** feeds generated outputs back into training until the data distribution narrows.
+**Synthetic drift** feeds generated outputs back into training until the distribution narrows.
 
 **Hidden coupling** makes a model improvement depend on one prompt, tool schema, or runtime setting that was not recorded.
 
 **Rollback ambiguity** leaves the team able to revert a pointer but unable to identify which data, reward, or policy produced the artifact.
 
-These risks do not make post-training a bad idea.
-They explain why it belongs after traces, evaluation, data governance, and external controls are working.
+These risks explain why post-training comes after traces, evaluation, data governance, and external controls.
 
 ## Choose the model boundary
 
-Choose prompt or skill changes when the behavior is local, frequently changing, or easy to inspect.
-Choose runtime changes when the behavior requires enforcement, tools, budgets, or an execution shape.
-Choose post-training when the behavior should generalize across many contexts, the training signal is defensible, and the release process can govern the artifact.
+Choose prompt or skill changes for local, frequently changing, easy-to-inspect behavior, and runtime changes for behavior that needs enforcement, tools, or budgets. Choose post-training when the behavior should generalize across contexts, the training signal is defensible, and the release process can govern the artifact.
 
-The model boundary is worth crossing when the gain is broad enough to justify the loss of local visibility.
-That is the durable decision behind post-training agents.
+If the failure is still local to instructions or a recurring procedure, start with [prompt optimization](/blog/self-improving-stack-prompt-optimization) or [skill optimization](/blog/self-improving-stack-skill-optimization). If the team cannot explain the failure from a run record, read [agent traces](/blog/self-improving-stack-trace-systems) before changing model parameters.
 
-If the failure is still local to instructions or a recurring procedure, start with [prompt optimization](/blog/self-improving-stack-prompt-optimization) or [skill optimization](/blog/self-improving-stack-skill-optimization).
-If the team cannot explain the failure from a run record, read [agent traces](/blog/self-improving-stack-trace-systems) before changing model parameters.
+## What to run before a weight update
+
+Score the traces behind the proposed training rows with `evals/score-a-trace`, and check a human-labeled sample against its dimensions. Then run `evals/regression-gate` with the candidate and require at least as many passes as the shipped version. If the judge disagrees with the reviewer or the candidate fails any case, keep the behavior in the prompt, skill, or runtime rule.
+
+## FAQ
+
+### What is post-training for agents?
+
+Post-training updates model weights or a learned adapter after broad pretraining, so behavior changes across future contexts. For agents, the training signal can come from demonstrations, preferences, process labels, check-backed outcomes, or tool-use environments.
+
+### When should an agent team use post-training?
+
+Use it when a behavior repeats across many contexts, should generalize before a prompt or skill is loaded, and has a clean training signal with a governed release path. Keep the behavior external when it is a fast-changing policy, an enforceable runtime rule, or a procedure that must stay easy to inspect.
+
+### Is DPO the same as RLHF?
+
+No. DPO trains directly from preference pairs using a reference model. Classic RLHF commonly trains a reward model and then optimizes a policy against that reward. Both depend on the quality and coverage of their preference data.
+
+### Do traces become training data automatically?
+
+No. A trace is evidence about a run, not a label that the run should be imitated. Training data needs provenance, privacy review, split assignment, checker or human support, and contamination checks before it becomes a model update. When the behavior should stay outside model weights and adapt through scoped writes, see [agent memory flywheels](/blog/self-improving-stack-memory-flywheels).
 
 ## Sources
 
@@ -390,34 +322,10 @@ If the team cannot explain the failure from a run record, read [agent traces](/b
 - [Training language models to follow instructions with human feedback](https://arxiv.org/abs/2203.02155)
 - [Constitutional AI: Harmlessness from AI Feedback](https://arxiv.org/abs/2212.08073)
 - [Direct Preference Optimization](https://arxiv.org/abs/2305.18290)
-- [Let’s Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf)
+- [Let's Verify Step by Step](https://cdn.openai.com/improving-mathematical-reasoning-with-process-supervision/Lets_Verify_Step_by_Step.pdf)
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948)
 - [Frontier Tuning](https://devblogs.microsoft.com/microsoft365dev/frontier-tuning-teaching-ai-to-work-the-way-you-do/)
 - [Microsoft Frontier Tuning overview](https://microsoft.ai/models/microsoft-frontier-tuning/)
 - [AI models collapse when trained on recursively generated data](https://www.nature.com/articles/s41586-024-07566-y)
 - [Tangle agent-runtime](https://github.com/tangle-network/agent-runtime)
 - [Tangle agent-eval](https://github.com/tangle-network/agent-eval)
-
-
-## What is post-training for agents?
-
-Post-training updates model weights or a learned adapter after broad pretraining so behavior changes across future contexts.
-For agents, the training signal can come from demonstrations, preferences, process labels, check-backed outcomes, or tool-use environments.
-
-## When should an agent team use post-training?
-
-Use it when a behavior repeats across many contexts, should generalize before a prompt or skill is loaded, and has a clean training signal with a governed release path.
-Keep the behavior external when it is a fast-changing policy, an enforceable runtime rule, or a procedure that must remain easy to inspect.
-
-## Is DPO the same as RLHF?
-
-No.
-DPO trains directly from preference pairs using a reference model, while classic RLHF commonly trains a reward model and then optimizes a policy against that reward.
-Both depend on the quality and coverage of their preference data.
-
-## Do traces become training data automatically?
-
-No.
-A trace is evidence about a run, not a label that the run should be imitated.
-Training data needs provenance, privacy review, split assignment, checker or human support, and contamination checks before it becomes a model update.
-When the behavior should remain outside model weights and adapt through scoped writes, see [agent memory flywheels](/blog/self-improving-stack-memory-flywheels).

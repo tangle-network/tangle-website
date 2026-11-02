@@ -4,17 +4,18 @@ slug: self-improving-stack-trace-systems
 summary: >-
   Agent traces preserve calls, tool actions, observations, artifacts, costs, and outcomes so the team can diagnose failures, not tune scores alone.
 date: '2026-06-02'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'traces', 'evals', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 8
 ---
 
+import Example from '../../components/Example.astro'
+
 Suppose an agent fails a customer task with a score of 0.42.
 The team asks whether it used the wrong tool, received bad data, stopped too soon, misunderstood the task, or was judged incorrectly.
 The dashboard has one number and no way to tell.
-
-That is the failure of score-only learning.
 
 An **agent trace** is the structured record of one execution: the task, configuration, model calls, tool actions, observations, intermediate artifacts, timing, cost, errors, checks, and outcome.
 A **span** is one timed operation inside that record, such as a model call, tool call, retrieval step, or checker.
@@ -30,6 +31,8 @@ A **promotion rule** is the explicit rule that decides whether a candidate may r
 
 A score tells you how the run ended.
 A trace exposes tool arguments, observations, retries, and checks that an optimizer can change.
+
+On Tangle, `box.prompt(task)` returns the run's `toolInvocations`, `traceId`, `usage`, and `costUsd`, and a `box.streamPrompt(task)` run, as in `runtime/any-cloud`, ends with a `done` event carrying `totalCostUsd`.
 
 ## A score is a lossy projection
 
@@ -73,9 +76,8 @@ It needs enough structure to answer, “What would have changed the outcome if t
 
 ## The smallest useful trace
 
-A trace can start as a small structured document.
-The schema can grow later, but its joins should be decided early.
-The values in this illustrative shape are placeholders; a production trace must carry the identifiers and measurements from its own run.
+Start with a small structured document and decide its joins early.
+The values are placeholders; a production trace carries its own run's identifiers and measurements.
 
 ```json
 {
@@ -132,13 +134,11 @@ The values in this illustrative shape are placeholders; a production trace must 
 | Outcome | Why did the run pass or fail? | Score, hard checks, failure class, and evaluator version |
 | Budget ledger | What did the run cost? | Calls, tokens, tools, wall time, and monetary estimate |
 
-The example stores digests rather than sensitive bodies in the top-level record.
-The full bodies can live in access-controlled artifact storage when a reviewer needs them.
-The join keys let an analyst move from the score to the failed tool span, from the span to the observation, and from the observation to the returned artifact.
+The record stores digests, not sensitive bodies; full bodies live in access-controlled artifact storage. The join keys let an analyst move from the score to the failed tool span, its observation, and the returned artifact.
 
 ## Run identity comes first
 
-Every span is hard to use if nobody can tell which run, task, candidate, or environment produced it.
+Spans are hard to use without the run, task, candidate, or environment that produced them.
 Keep a stable identity for:
 
 ```text
@@ -156,12 +156,11 @@ seed or replicate
 parent run
 ```
 
-For each run, the profile should include model choice, instructions, skills, tools, permissions, budgets, and relevant execution settings.
 Changing one of those fields should create a new profile identity or a recorded versioned override.
 
 This prevents a common measurement error.
 The team thinks it is comparing two prompts, but the candidate also received a different model, a different tool schema, and twice the turn limit.
-The trace can make that asymmetry visible only if those fields are recorded.
+Only recorded fields make that asymmetry visible.
 
 ## Span trees preserve the mechanism
 
@@ -187,7 +186,18 @@ Did the model call that produced the final answer happen after the test failed?
 
 The public [ReAct paper](https://arxiv.org/abs/2210.03629) made the reasoning-and-action trajectory central to an agent’s interaction with an environment.
 The public [Reflexion paper](https://arxiv.org/abs/2303.11366) shows how feedback can be converted into language that influences later trials.
-Those systems rely on a record of actions and observations because a final answer alone cannot carry the same learning signal.
+Both rely on a record of actions and observations, because a final answer alone cannot carry the same learning signal.
+
+## A judge reads every tool call
+
+The judge in `evals/score-a-trace` receives the task, the final answer, and the run's `toolInvocations`, so it can check each claim against the calls that produced it.
+It scores two dimensions: `grounded`, that every file and line the answer names exists, and `economical`, that no tool call repeats earlier work.
+The script prints `run.traceId` beside the scores so the verdict can be joined back to the recorded run.
+
+<Example path="evals/score-a-trace" />
+
+The output is one score per dimension and the judge's notes, tied to one trace ID.
+It proves the judge saw the recorded answer and calls, not that it agrees with a human reviewer; calibrate on labeled traces before a dimension gates a release.
 
 ## Raw provider evidence and structured spans serve different jobs
 
@@ -239,8 +249,7 @@ It must not receive private holdout labels, answer keys, or post-hoc judge ratio
 
 ## Trace integrity is an input to the release rule
 
-A trace can be present and still be incomplete.
-Before using it for promotion, check the expected evidence:
+Before using a trace for promotion, check the expected evidence:
 
 ```text
 run identity exists
@@ -266,9 +275,8 @@ It is not evidence that the agent succeeded or failed against a real model.
 [OpenTelemetry](https://opentelemetry.io/docs/specs/semconv/) supplies common interfaces, conventions, and transports for traces, metrics, logs, and events.
 The [OpenTelemetry GenAI semantic-conventions repository](https://github.com/open-telemetry/semantic-conventions-genai) defines conventions for generative-AI clients, agents, tools, providers, and evaluation-related signals.
 
-Those conventions help agent traces join ordinary service traces and use existing collectors, storage, dashboards, and retention controls.
-They do not define every field an improvement loop needs.
-An agent system still needs product-specific attributes such as candidate identity, task split, skill version, failure class, artifact digest, budget ledger, promotion decision, and analyst evidence.
+Those conventions let agent traces join ordinary service traces and reuse collectors, storage, dashboards, and retention controls.
+They do not define the fields an improvement loop needs: candidate identity, task split, skill version, failure class, artifact digest, budget ledger, promotion decision, and analyst evidence.
 
 The practical design is:
 
@@ -287,23 +295,20 @@ The GenAI conventions are an evolving public project, so a trace reader should r
 The public [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) describes a runtime that records runs for chat turns, one-shot tasks, teams, bounded rounds, and improvement experiments.
 The public [agent-eval repository](https://github.com/tangle-network/agent-eval) describes paired case evaluation, analysis of existing runs and traces, and prompt or skill optimization without exposing final test cases to the optimizer.
 
-The public TypeScript packages document this installation path:
+Install the packages with:
 
 ```bash
 pnpm add @tangle-network/agent-runtime @tangle-network/agent-eval @tangle-network/sandbox
 ```
 
-In this setting, the runtime emits behavior and the evaluation layer preserves and analyzes it.
 An evaluation result is not a trace, and a trace is not a promotion decision.
-Each layer has a separate job.
 The [runtime execution article](/blog/self-improving-stack-agent-runtime-topology) covers the execution shapes whose branches and cancellations should appear in these records.
 
 When the agent is deployed through Tangle’s service model, a **Blueprint** is the reusable template for the service and an **operator** is the party running a live instance from that template.
 An **x402** payment can authorize a paid web job before it enters the runner.
 A **router** can dispatch that job to its registered handler.
 A signed **attestation** can bind an execution measurement to the recorded runtime and policy.
-Join those records to the trace with stable run, span, artifact, and payment identifiers; they still do not prove that the agent’s answer was correct.
-The product still needs a result-level check and an evaluation that tests user-visible behavior.
+Join those records to the trace with stable run, span, artifact, and payment identifiers. They still do not prove that the agent’s answer was correct, so the product still needs a result-level check and an evaluation of user-visible behavior.
 
 ## Findings must point back to evidence
 
@@ -334,8 +339,8 @@ Another engineer can inspect the same span, disagree with the diagnosis, and pro
 
 ## Privacy is part of trace design
 
-Agent traces can contain credentials, customer records, private source code, browser state, retrieved documents, and model prompts.
-The trace needs enough detail to identify mechanism without becoming an unrestricted copy of every secret the agent could see.
+Agent traces can contain credentials, customer records, source code, browser state, and prompts.
+The trace needs enough detail to identify mechanism, not an unrestricted copy of every secret the agent could see.
 
 Capture-time protections should cover obvious credentials such as authorization headers, cookies, passwords, service keys, and access tokens.
 Tenant, retention, and access policies should apply to raw bodies and artifacts as well as indexes and dashboards.
@@ -389,16 +394,11 @@ The fix is to define the diagnosis questions, capture the fields that answer the
 
 ## Build the trace before the next optimizer
 
-Start with one failure the team can reproduce.
-Write down the decision the next engineer needs to make.
-Add run identity, profile, model spans, tool spans, observations, artifacts, hard checks, budget, outcome, and failure class.
-Then replay the run and confirm that the evaluator and analyst can reach the same evidence.
+Start with one failure the team can reproduce, and write down the decision the next engineer needs to make.
+Run `evals/score-a-trace` on that failure, and add the run identity, profile, model spans, tool spans, observations, artifacts, hard checks, budget, outcome, and failure class it needs.
+Replay the run and confirm that the evaluator and analyst reach the same evidence.
 
-After that, add candidate comparison and promotion rules.
-Only then is it worth asking an optimizer to turn findings into prompt, skill, runtime, or model changes.
-
-The trace is not the product and it is not a correctness certificate.
-It is the evidence boundary that lets a self-improving system learn from a real mechanism rather than from a number it cannot explain.
+Only then add candidate comparison and promotion rules, and let an optimizer turn findings into prompt, skill, runtime, or model changes.
 
 ## Sources
 

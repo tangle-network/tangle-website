@@ -4,22 +4,23 @@ slug: self-improving-stack-memory-flywheels
 summary: >-
   Agent memory becomes learning only when a scoped, evidence-backed write reaches the right future task and evaluation shows better behavior than no memory.
 date: '2026-05-31'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'memory', 'knowledge', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 6
 ---
 
+import Example from '../../components/Example.astro'
+
 An invoice agent learns that a customer’s annual plan can be cancelled at any time.
 The statement is wrong, but it came from a successful-looking run, so the system saves it as a “lesson.”
 Two weeks later, the same memory is retrieved for another customer and the agent repeats the mistake with more confidence.
 
-That is why agent memory deserves a stricter definition than “we store conversation history.”
-Memory is an intervention on the next run.
-It changes what the model sees, which means a bad write can become a durable behavior change.
+Agent memory needs a stricter definition than “we store conversation history”: it is an intervention on the next run, so a bad write becomes a durable behavior change.
 
 **Agent memory** is information carried from one run to another.
-A **trace** is the record of a past run, including the task, model actions, tool results, artifacts, and outcome.
+A **trace** is the record of a past run: the task, model actions, tool results, artifacts, and outcome.
 **Retrieval** is the selection step that chooses saved information for the current task.
 A **memory write** is a proposed fact, procedure, preference, decision, or warning added to persistent state.
 An **evaluation** is a repeatable test of whether the agent fulfilled the task.
@@ -36,9 +37,11 @@ measure a better outcome than the no-memory baseline
 
 Saving more text proves only that a database accepted more text.
 
+On Tangle, an agent app keeps each customer’s state in one Sandbox SDK sandbox whose files stay across turns. The caller reads `turn.state` until it is `completed`.
+
 ## A memory write is a product decision
 
-Consider a public support agent that answers questions about a refund policy.
+A public support agent answers refund-policy questions.
 The identifiers in the examples below are illustrative; they are not records from a Tangle deployment.
 After one run, it proposes:
 
@@ -70,16 +73,14 @@ A safer proposal separates observation from authority:
 }
 ```
 
-The second record does not pretend that the agent’s answer is a source.
-It preserves the observed failure while pointing a curator or researcher to the policy evidence that can resolve it.
+The second record does not treat the agent’s answer as a source.
+It preserves the observed failure and points a curator to the policy evidence that can resolve it.
 
 This distinction is central to the public [agent-knowledge repository](https://github.com/tangle-network/agent-knowledge).
 Its README describes immutable raw sources, cited generated claims, deterministic indexing, linting, readiness checks, and release reports.
-The useful boundary is simple: raw evidence remains evidence, while generated knowledge remains editable until it passes the project’s checks.
 
 ## The memory state has a scope
 
-Not every useful fact should be global.
 A memory can belong to one run, task, project, user, team, or organization.
 The broader the audience, the stronger the evidence and review should be.
 
@@ -92,8 +93,7 @@ The broader the audience, the stronger the evidence and review should be.
 | Team | “Reviews require a rollback note.” | Is it a real team convention? |
 | Global | “This public API field is required.” | Is there a current authoritative source? |
 
-Scope is not metadata decoration.
-It determines who is allowed to retrieve the memory and how a contradiction should be handled.
+Scope decides who may retrieve a memory and how a contradiction is handled.
 A project-specific tool workaround should not appear in a global coding assistant.
 A private customer preference should not be retrieved for another tenant.
 A stale endpoint warning should not block a new version without an expiry or recheck.
@@ -110,17 +110,21 @@ A practical memory loop has seven steps:
 6. Measure the task with and without the retrieved memory.
 7. Retire, supersede, or narrow the write when evidence changes.
 
-The trace is the raw material.
-The write gate is the admission decision.
-The retrieval component chooses the context.
-The evaluator decides whether the intervention helped.
-
 The [trace systems article](/blog/self-improving-stack-trace-systems) explains why the record needs tool spans and artifacts rather than a final answer alone.
-Without those details, an analyst cannot tell whether a memory captured a cause, a symptom, or a fluent explanation after the fact.
+Without tool spans and artifacts, an analyst cannot tell whether a memory captured a cause, a symptom, or a fluent explanation.
+
+## Where a memory write lands
+
+On Tangle, a memory write lands in the customer’s kept sandbox. `instance.box.write` puts a file in it, and later `instance.turn` calls on the same key run against the same files.
+
+<Example path="products/legal-agent" title="products/legal-agent.mts, one kept sandbox per customer" />
+
+The example writes a contract, not a memory, but the calls are the ones a memory file would use.
+It proves that a file and a turn persist under one key, not that a stored memory is correct.
 
 ## A write gate for persistent state
 
-A useful gate asks different questions for different memory classes, but these checks cover most systems:
+These checks cover most memory classes:
 
 | Check | Question |
 | --- | --- |
@@ -144,9 +148,14 @@ admit with a warning
 expire after a deadline
 ```
 
-That vocabulary matters when the agent is allowed to write during production.
+That vocabulary matters when the agent writes during production.
 A write that is useful as a lead may be unsafe as an instruction.
-The storage format should preserve that distinction instead of reducing every proposal to a paragraph in a similarity-search index.
+
+A memory write is also a change to what the agent receives, so gate it like a prompt change: score the shipped prompt, score it with the memory added, and refuse a lower score. The regression gate below does that in CI and exits 1 on a regression.
+
+<Example path="evals/regression-gate" title="evals/regression-gate.mts, the candidate must not score below the shipped surface" />
+
+It compares two prompt strings on two fix tasks, so it proves the comparison, not memory. A memory case needs scenarios where retrieval should fire and where it should stay silent.
 
 ## Retrieval is an intervention
 
@@ -179,12 +188,11 @@ Useful measurements include:
 
 High retrieval recall can coexist with poor task success.
 The vector store may find semantically similar experiences that use the wrong policy, scope, or date.
-The final metric belongs to the task, not the database.
 
 ## A public knowledge workflow
 
-The Tangle [agent-knowledge documentation](https://github.com/tangle-network/agent-knowledge) shows a public CLI path for initializing a knowledge base, adding sources, indexing, searching, and linting.
-This small example uses an illustrative policy file named refund-policy.md:
+The Tangle [agent-knowledge documentation](https://github.com/tangle-network/agent-knowledge) covers a public CLI path from init to lint.
+This example uses an illustrative policy file named refund-policy.md:
 
 ```bash
 pnpm add @tangle-network/agent-knowledge @tangle-network/agent-eval
@@ -195,14 +203,11 @@ agent-knowledge search "annual plan refund" --root .
 agent-knowledge lint --root .
 ```
 
-The commands create a source-backed knowledge workflow.
-They do not prove that the agent will use the result correctly.
+The commands do not prove that the agent will use the result correctly.
 That requires an agent evaluation with a baseline that disables retrieval and a candidate that enables it.
 
 A **readiness bundle** is a report of whether the sources required for a task are present, fresh, and strong enough to proceed.
-The same repository describes a readiness bundle that can block, ask, or acquire before execution when required knowledge is missing.
-That is a more useful contract than “retrieve the top five chunks.”
-It gives the system a way to say that a real-time fact is absent or too old instead of filling the gap with a plausible memory.
+The same repository describes a bundle that can block, ask, or acquire before execution. It lets the system report that a real-time fact is absent or too old instead of filling the gap with a plausible memory.
 
 ## Negative knowledge needs an expiry
 
@@ -215,7 +220,7 @@ Some of the best memory is a warning:
 “Do not merge two branches until their artifacts have been checked for conflicts.”
 
 These warnings prevent repeated failures, but they can become harmful when conditions change.
-A negative memory should record the condition under which the tactic failed, the evidence that supports the warning, a replacement action, and a recheck date.
+A negative memory records the condition under which the tactic failed, the evidence for the warning, a replacement action, and a recheck date.
 
 ```yaml
 kind: negative_knowledge
@@ -228,15 +233,13 @@ replacement: "Use the v2 endpoint and verify the response schema."
 expires: 2026-10-01
 ```
 
-The replacement action is important.
 A warning without a next move can turn caution into paralysis.
-An expiry is important for the opposite reason: a memory should not outlive the condition it describes.
+An expiry matters for the opposite reason: a memory should not outlive the condition it describes.
 
 ## Memory is not a skill
 
 A memory says what happened or what appears to be true.
 A **skill** is a reusable procedure with an invocation condition, steps, and checks.
-The distinction is practical.
 
 “The last migration failed because the agent skipped the rollback test” is memory.
 “Before editing a migration, inspect the schema, run the rollback test, and attach the result” is a skill.
@@ -252,12 +255,11 @@ repeated trace failure
 ```
 
 The [skill optimization article](/blog/self-improving-stack-skill-optimization) covers the procedure side.
-Keeping the surfaces separate prevents a memory store from becoming an unreviewed prompt file with better search.
+Separate surfaces keep a memory store from becoming an unreviewed prompt file with better search.
 
 ## Multi-agent memory has multiple audiences
 
-There is no single context called “the agent” once a workflow has a supervisor, workers, reviewer, and judge.
-Each role should receive the memory it needs and no more.
+Once a workflow has a supervisor, workers, reviewer, and judge, each role receives only the memory it needs.
 
 | Role | Useful memory | Memory it should usually not see |
 | --- | --- | --- |
@@ -268,17 +270,16 @@ Each role should receive the memory it needs and no more.
 
 The same fact can be safe for one role and unsafe for another.
 An **agent profile** is the versioned description of a run’s model, tools, skills, permissions, and runtime settings.
-Record retrieval policy in the agent profile and trace alongside the storage record.
-Recording that profile lets an evaluation distinguish a memory change from a role or tool change.
+Record retrieval policy in the agent profile and in the trace next to the storage record. An evaluation can then tell a memory change from a role or tool change.
 
 ## Poisoning and false confidence
 
 A knowledge gap means the agent needed a fact and did not have it.
 Knowledge poisoning means the agent acted on a false fact that looked trustworthy.
-The second failure is more dangerous because retrieval suppresses uncertainty.
+The second is more dangerous because retrieval suppresses uncertainty.
 
 The [MemoryGraft paper](https://arxiv.org/abs/2512.16962) studies poisoned experience retrieval as an attack on long-term agent memory.
-The exact attack details will evolve, but the general control is stable:
+The general controls:
 
 1. Keep source records separate from generated summaries.
 2. Restrict who can write durable memory.
@@ -286,17 +287,17 @@ The exact attack details will evolve, but the general control is stable:
 4. Test retrieval with adversarial and contradictory cases.
 5. Quarantine suspicious memories rather than silently deleting their history.
 
+The agent’s own run writes to this store, so the gate admits each write as a change, scored against the baseline, before retrieval serves it.
+
 A poisoning finding should require two pieces of evidence:
 the agent acted on the belief, and a source or trace contradicts that belief.
 Without both, the system may be turning ordinary uncertainty into an accusation.
 
 ## Where Tangle fits
 
-Tangle’s public [agent-knowledge repository](https://github.com/tangle-network/agent-knowledge) treats knowledge as a versionable graph built from raw sources and generated pages.
-Its documented flow includes source records, citation anchors, indexing, search, lint, validation, readiness, and release reporting.
-That gives a memory system concrete places to enforce provenance and freshness.
+Tangle’s public [agent-knowledge repository](https://github.com/tangle-network/agent-knowledge) treats knowledge as a versionable graph. Its flow (source records, citation anchors, indexing, search, lint, validation, readiness, release reporting) gives a memory system places to enforce provenance and freshness.
 
-The public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) supplies the execution loop that can run an agent, supervise workers, and feed observed results into an improvement process.
+The public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) runs the agent, supervises workers, and feeds results into an improvement process.
 The public [agent-eval repository](https://github.com/tangle-network/agent-eval) supplies the comparison boundary for candidate behavior.
 Together, they make the memory loop inspectable:
 
@@ -305,13 +306,9 @@ trace → finding → proposed write → gated knowledge candidate
 → retrieved context → paired evaluation → release or rollback
 ```
 
-If the agent is exposed as a Tangle service, a **Blueprint** is the reusable template that defines the jobs and runnable artifact.
-A **Service** is a live instance created from that template.
-An **operator** is the party that runs a live Service created from that template.
-A **Router** sends a job call to the registered handler.
-An **x402** request is a payment-gated HTTP job path, not evidence that the returned answer is correct.
-A **trusted execution environment**, or TEE, is a hardware-backed area designed to isolate code and secrets from the host.
-An **attestation** is signed evidence about a TEE’s loaded code and hardware state, not a claim that the agent’s memory was truthful.
+If the agent runs as a Tangle service, a **Blueprint** is the reusable template that defines its jobs, a **Service** is a live instance of it, and an **operator** runs that instance. A **Router** sends job calls to the registered handler.
+An **x402** request is a payment-gated HTTP job path, not evidence that the answer is correct.
+An **attestation** is signed evidence about a **trusted execution environment** (TEE), a hardware-backed area that isolates code and secrets from the host. It says what code loaded, not that the agent’s memory was truthful.
 
 Those boundaries matter when memory is private or paid.
 Payment can authorize access.
@@ -336,7 +333,6 @@ It has not yet demonstrated learning.
 
 Use an authoritative source system or an ordinary retrieval index when the facts are current and externally owned.
 Use persistent memory when a scoped write should change future behavior and the system can evaluate that intervention.
-
 
 ## Is agent memory the same as learning?
 
