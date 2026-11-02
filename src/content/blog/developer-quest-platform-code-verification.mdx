@@ -4,6 +4,7 @@ slug: developer-quest-platform-code-verification
 summary: >-
   Define one technical behavior, run its build, test, or browser check in an isolated workspace, and return the exact failure when it breaks.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - blueprint-agent
@@ -12,6 +13,8 @@ tags:
 series: Blueprint Agent
 seriesOrder: 4
 ---
+
+import Example from '../../components/Example.astro'
 
 A developer connects a wallet, posts a screenshot, and receives the points for “integrating the partner’s package.”
 The partner checks the repository later and finds no call to that package.
@@ -25,19 +28,16 @@ A **verifier** is the check or service that observes that behavior and records w
 **Code verification** means that completion depends on a build, test, runtime check, browser run, or deployment result.
 It gives the platform an observable question: did this defined behavior pass under these conditions?
 
-An **evaluation** is a repeatable check against an expected result.
+On Tangle, the verifier can answer that question inside a Sandbox, an isolated Linux machine created with the Sandbox SDK. `client.create()` starts the machine, `box.exec` runs the check command and returns its `exitCode` and `stdout`, and `box.delete()` removes it. An agent run in the same sandbox adds a trace, covered below.
+
 A **trace** is the ordered record of a run, including the inputs, actions, outputs, failures, retries, and artifacts needed to inspect it.
 
-An API, or application programming interface, is the documented boundary through which one program requests data or actions from another.
-
-[Blueprint Agent](https://docs.tangle.tools/blueprint-agent/introduction) is Tangle’s AI coding workspace.
-Its public documentation describes an agent that edits and runs code in a browser-based development environment while the developer reviews and steers the work.
-That workspace can help a developer finish a quest, while the verifier remains the authority on whether the quest’s behavior occurred.
+[Blueprint Agent](https://docs.tangle.tools/blueprint-agent/introduction) is Tangle’s AI coding workspace, where an agent edits and runs code while the developer reviews it.
+It can help a developer finish a quest, but the verifier remains the authority on whether the quest’s behavior occurred.
 
 ## A quest is a small contract
 
-The word “quest” can describe anything from reading a tutorial to deploying a service.
-The platform needs a narrower contract for technical work.
+The platform needs a narrower contract than “quest” usually implies.
 
 | Field | Question it answers |
 | --- | --- |
@@ -53,7 +53,7 @@ The platform needs a narrower contract for technical work.
 “Add a `quote` endpoint that returns an amount and expiry, reject an expired request with a documented error, and pass the supplied checks” gives the developer a finite target.
 
 The task should fit in one focused session.
-If the verifier needs to understand an entire product before it can decide, the quest needs to be split.
+If the verifier needs a whole product to decide, split the quest.
 
 ## Order quests by evidence, not points
 
@@ -68,14 +68,11 @@ environment starts
 -> user-facing or deployed result is observable
 ```
 
-Each stage answers a different question.
-An install proves that the workspace can reach the dependency step.
-An API call proves that the request can cross the interface.
-A product-specific behavior shows whether the integration crossed the connection boundary.
-A failure case shows whether the integration understands the contract.
-A deployed result shows that the work reached a reviewable target.
-
-A testnet is a blockchain network used for testing with non-production assets and state.
+The install shows the workspace reaches the dependency step.
+The call shows the request crosses the interface.
+The product-specific behavior shows the integration crosses the connection boundary.
+The failure case shows the integration understands the contract.
+The deployed result shows the work reached a reviewable target.
 
 Use the stages to diagnose friction.
 Do not add points to a weak check and call the resulting number progress.
@@ -89,18 +86,16 @@ Do not add points to a weak check and call the resulting number progress.
 | Deploy the service | Artifact, target, health result | A URL points to an old build |
 | Fix a bug | Regression test fails before and passes after | The test never exercises the reported bug |
 
-The verifier should treat missing evidence as a failure or skip.
-It should never infer a pass from an absent observation.
+The verifier should record missing evidence as a failure or skip, never as a pass.
 
 ## A worked quest for a paid job
 
 Consider a Blueprint that exposes a document classification job.
 A **Blueprint** is a reusable definition of a service, including its jobs, inputs, outputs, executable artifact, and optional protocol rules.
-A **Service** is one configured running instance of the Blueprint.
 A **Job** is one callable unit of work inside a live Service.
 
-The partner wants developers to build a small client that pays for one job and renders the result.
-The quest can be divided into four checks.
+The partner wants a small client that pays for one job and renders the result.
+Four checks cover it.
 
 1. The client sends an unpaid request and receives a payment requirement.
 2. The client signs the requested payment and retries the request.
@@ -108,12 +103,11 @@ The quest can be divided into four checks.
 4. A malformed document produces a documented error without displaying a false success.
 
 **x402** is an open payment standard that uses Hypertext Transfer Protocol (HTTP) `402 Payment Required` to communicate what a client must pay before receiving a resource.
-The [x402 HTTP 402 documentation](https://docs.x402.org/core-concepts/http-402) describes the payment requirements and headers used by current versions of the protocol.
+The [x402 HTTP 402 documentation](https://docs.x402.org/core-concepts/http-402) describes the payment requirements and headers.
 An x402 check can prove that the payment exchange reached the service.
 The result check must still prove that the job returned the expected fields.
 
-The completion packet could have this shape.
-This JavaScript Object Notation (JSON) is an illustrative contract for a partner-owned verifier.
+This illustrative JavaScript Object Notation (JSON) contract shows one partner-owned completion packet.
 
 ```json
 {
@@ -131,8 +125,18 @@ This JavaScript Object Notation (JSON) is an illustrative contract for a partner
 ```
 
 The quest is incomplete because the failure behavior is wrong, even though three checks passed.
-This is the practical value of separate check results.
-One score would hide the behavior that the partner needs to fix.
+One score would hide the behavior the partner needs to fix.
+
+## Run the check in a fresh sandbox
+
+The verifier runs the submission and its check in a new sandbox.
+In the example, the command passed to `box.exec` stands in for the quest’s check command, such as the partner’s test script.
+
+<Example path="sandboxes/run-code" title="A check command in a fresh sandbox, then deleted" />
+
+The output is that command’s exit code and stdout.
+An exit code of 0 shows that the command succeeded in that environment.
+It does not show that the submission ran unless the sandbox was created from the submitted source, as the evaluation example does with the `git` option of `client.create`.
 
 ## Let an agent help without making it the judge
 
@@ -140,12 +144,11 @@ An **agent profile** is a saved set of choices for an agent run, including the m
 A **runtime** is the machine and software that apply those choices, mount the project, start processes, and enforce resource and network limits.
 
 The profile can give the agent the partner docs, starter files, test command, and a browser tool.
-The runtime can keep the workspace isolated and preserve command output between attempts.
+The runtime keeps the workspace isolated and preserves command output between attempts.
 The developer can accept, reject, or edit the agent’s changes.
 The verifier should run independently of the agent’s final explanation.
-Tangle’s [Sandbox runtime](https://docs.tangle.tools/infrastructure/introduction) is the isolated workspace that provides the files, processes, and policy boundary for the run.
+Tangle’s [Sandbox runtime](https://docs.tangle.tools/infrastructure/introduction) provides that isolated workspace.
 
-This separation protects the meaning of the quest.
 If the assistant writes a test that asserts its own mocked output, the verifier should run against the partner’s fixture or service boundary.
 If the assistant claims that a deployment succeeded, the verifier should query the named target and record the artifact version.
 If the agent cannot access a required tool, the quest should expose that environmental failure rather than quietly changing the task.
@@ -159,6 +162,16 @@ For a judge-facing version of the same design, read [Crypto Hackathon Platform F
 
 A trace can include the starting project, agent actions, tool calls, file diff, command output, evaluation results, retries, and final artifact.
 
+The example runs a coding agent on a repository question.
+`box.prompt` returns the answer, the tool invocations, and a `traceId`.
+`judge.score` reads the answer and tool calls against the task and returns a score per dimension with notes.
+
+<Example path="evals/score-a-trace" title="Judge one agent run's trace against its task" />
+
+The output is the trace id, two judged dimensions, and the judge’s notes.
+The judge is a model, so a low score sends a reviewer to the trace.
+It does not replace the build or test that decides the quest.
+
 The trace gives each failure a place to live.
 
 | Failure | Trace evidence | Useful next action |
@@ -170,16 +183,13 @@ The trace gives each failure a place to live.
 | Deployment is stale | Target, version, and health result | Redeploy or expire the old URL |
 | Verifier is flaky | Attempts and dependency status | Remove the unstable condition before scoring |
 
-The trace should be useful without becoming an export of every private conversation.
+The trace should not export every private conversation.
 Redact credentials, personal data, private code, and sensitive prompts.
 Keep a reviewer-facing summary that names the relevant evidence and links to a protected full record when policy allows.
 
 ## Give developers a way to challenge a result
 
-An automatic result becomes part of a person’s onboarding record, grant milestone, or hackathon score.
-The platform needs an appeal path before it assigns a durable consequence.
-
-The appeal does not need to bypass the check.
+An automatic result can become part of an onboarding record, grant milestone, or hackathon score, so the platform needs an appeal path before it assigns a durable consequence.
 It should preserve the original result, record the environment and dependency versions, rerun the same check when possible, and let a named reviewer explain an override.
 
 | Appeal step | Record |
@@ -190,20 +200,14 @@ It should preserve the original result, record the environment and dependency ve
 | Reviewer decides | Evidence inspected and reason for keeping or changing the result |
 | Quest is maintained | Whether the failure exposed a bad instruction or flaky check |
 
-This process protects both sides.
-Developers have a way to recover from a provider outage or a false negative.
-Partners receive a record of weak checks instead of quietly overriding scores in a spreadsheet.
-If the same appeal repeats, fix the quest rather than training support staff to explain the same exception.
-Appeal data also shows whether the quest measures the intended skill.
-Many appeals about a missing dependency point to setup failure.
-Many appeals about a hidden fixture point to a verifier that was never explained.
-Many appeals about a generated implementation point to a task that needs a review or extension step.
+Developers can recover from a provider outage or a false negative.
+Partners receive a record of weak checks instead of quiet overrides in a spreadsheet.
+If the same appeal repeats, fix the quest rather than training support staff to explain the exception.
+Repeated appeals point to setup gaps, hidden fixtures, or tasks that need a review step.
 
 ## Design the verifier before the reward
 
-Points often distort quest design.
-A low-effort action gets a high completion rate, so the program treats that rate as success.
-The partner then learns that developers can collect points, not that they can use the product.
+Points often distort quest design: a low-effort action gets a high completion rate, which the program then treats as success.
 
 Start from the partner decision.
 If the goal is SDK activation, weight a real SDK behavior more heavily than workspace creation.
@@ -216,19 +220,18 @@ Tell developers which data the verifier records and how they can challenge a fal
 
 ## Test the route a user will call
 
-When a quest exercises a Tangle job, the test should follow the public job boundary.
+A quest that exercises a Tangle job should test through the public job boundary.
 A **job router** maps a job identifier to its handler inside the **Blueprint Runner**, the process that receives job triggers and connects handlers to results.
-The runner also connects event producers, which turn events into job calls, result consumers, which handle job results, and background services that keep supporting processes alive.
-An RPC endpoint is a network address that accepts remote procedure calls, such as requests to a blockchain node.
+The runner also runs the event producers that turn events into job calls, the result consumers, and the background services around them.
+An RPC endpoint is a network address for remote procedure calls, such as a blockchain node.
 
 Testing only the handler function can miss a wrong job identifier, input encoding, permission rule, or result submission path.
-Testing through the runner or documented client path makes the quest closer to the behavior a user will receive.
+Testing through the runner or documented client path matches what a user receives.
 The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runner/building) describes those runner components, and the [public Blueprint repository](https://github.com/tangle-network/blueprint) contains runnable examples.
 
 If the task requires confidential execution, an **attestation** is a signed statement from trusted hardware or an attestation service about the software and environment observed during execution.
 It can be one evidence field for the runtime boundary.
-It does not establish that the job output is correct.
-The quest still needs a result check.
+It does not show that the job output is correct, so the quest still needs a result check.
 The [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) documents the policy boundary.
 
 ## Failure cases that make quests dishonest
@@ -253,8 +256,8 @@ For grants or partner qualification, add a small extension or review step that t
 ## What code verification can establish
 
 Code verification establishes completion of a defined technical behavior under a defined environment.
-It can make developer progress more legible to the builder, the partner, and the reviewer.
-It can show whether a program’s setup and documentation work for a fresh workspace.
+It can make progress legible to the builder, the partner, and the reviewer.
+It can show whether setup and docs work in a fresh workspace.
 
 It cannot establish that the service handles authentication, authorization, malformed input, load, and operational failures in production.
 It cannot establish long-term usage or market demand by itself.
@@ -276,7 +279,7 @@ A quest is ready for builders when a new developer can understand the outcome, a
 
 ## What is a developer quest platform?
 
-It is a system for assigning, tracking, and verifying developer tasks during onboarding, education, hackathons, grants, or partner programs.
+It is a system for assigning, tracking, and verifying developer tasks.
 
 ## What is code verification?
 
