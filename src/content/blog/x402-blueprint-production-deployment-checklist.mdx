@@ -4,6 +4,7 @@ slug: x402-blueprint-production-deployment-checklist
 summary: "A rollout checklist for taking an x402-enabled Blueprint from dev to staging to mainnet without silent payment or config failures."
 description: "A rollout checklist for taking an x402-enabled Blueprint from dev to staging to mainnet without silent payment or config failures."
 date: '2026-03-30'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ["blueprint", "x402", "tangle", "deployment", "production", "tee", "pay-per-call"]
 series: x402 Production Runway
@@ -18,14 +19,13 @@ A paid service deployment has separate payment, queue, worker, and result states
 The HTTP server, payment network, facilitator, service registry, provider runtime, execution queue, and result path can all report different states.
 The launch test is concrete: a known payer must discover the right price, receive the right payment request, settle on the intended network, enqueue exactly one job, and observe a separately verified result.
 
-This production deployment checklist follows that launch test through dev, staging, and mainnet.
-It covers the health, stats, price, authorization dry-run, and paid-job routes documented by the current Tangle runner for x402, an HTTP payment protocol, plus accepted-token, quote-TTL, and job-policy fields from the public configuration.
+This checklist follows that launch test through dev, staging, and mainnet.
+It covers the health, stats, price, authorization dry-run, and paid-job routes of the current Tangle x402 runner, plus the accepted-token, quote-TTL, and job-policy fields from the public configuration.
 
 Start with [x402 payments](/blog/x402-payments-for-ai-agents) for the request flow and [confidential execution](/blog/blueprint-tee-x402-production-gating) for the confidential-execution boundary.
 
 ## The protocol, runner, and payment gateway roles
 
-Tangle is a protocol for registering and coordinating services run by independent operators.
 A Blueprint is the deployable definition of a service, including its jobs and operating rules.
 An operator is the person or service that runs a Blueprint instance.
 A runtime is the process that loads the Blueprint, exposes its interfaces, receives jobs, and produces results.
@@ -36,7 +36,6 @@ x402 is an HTTP payment protocol.
 When a client requests a paid resource without a valid payment, the server returns HTTP 402 with the amount, asset, recipient, and network needed for payment.
 The client signs a payment and retries.
 A facilitator verifies payment payloads and returns the payment scheme's settlement result before the gateway enqueues work.
-The Tangle gateway's current behavior enqueues the job after settlement.
 The [current x402 seller flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) describes the 402, signed retry, verification, settlement, and response sequence.
 
 Tangle's x402 gateway is an optional payment ingress for Blueprint jobs.
@@ -65,9 +64,8 @@ An RPC (remote procedure call) endpoint is the network node interface used to re
 
 ## Dev, staging, and production configuration differences
 
-Diff environment manifests and require approval for each changed field before promotion.
+Diff environment manifests and require approval for each changed field before promotion, especially network, token, recipient, policy, and worker-capacity fields.
 Keep the typed job schema invariant across environments, and make the build check reject environment-specific schema changes.
-Require an approved diff for network, token, recipient, policy, and worker-capacity fields:
 
 | Concern | Dev | Staging | Production |
 | --- | --- | --- | --- |
@@ -92,8 +90,7 @@ The current Tangle x402 configuration includes a bind address, facilitator URL, 
 Basis points are hundredths of a percent, so 200 basis points means a 2 percent markup.
 The public Blueprint source defines a quote TTL with a current default of 300 seconds, but a deployment should make its chosen value visible and test it.
 
-An illustrative configuration fragment shows the shape without pretending that an example wallet or facilitator is yours.
-This fragment omits deployment-specific `facilitator_url` and `pay_to` values.
+This illustrative fragment omits deployment-specific `facilitator_url` and `pay_to` values, so it shows the shape, not a wallet or facilitator you can use.
 Validate every value against the release's public source and inject sensitive values outside the file.
 
 ~~~toml
@@ -139,8 +136,7 @@ An address copied from a different network can be syntactically valid and still 
 ## Payment-disabled development loop
 
 Dev should answer whether the Blueprint can load, expose its routes, validate a job body, and produce a result without involving real money.
-Set the default invocation mode to disabled and allow only the local path needed for development.
-Use synthetic inputs and a disposable operator account.
+Set the default invocation mode to disabled, and use synthetic inputs and a disposable operator account.
 
 The first check is the health endpoint:
 
@@ -175,9 +171,9 @@ curl -fsS -X POST "$X402_BASE_URL/x402/jobs/$SERVICE_ID/$JOB_INDEX/auth-dry-run"
   --data "$AUTH_DRY_RUN_BODY"
 ~~~
 
-The environment variables in this block should be populated with the staging gateway URL, a real test service ID, a real job index, and a test authorization body.
-The commands are useful because they separate route discovery and authorization from payment settlement.
-Do not use a production wallet to make the first testnet call.
+Populate the variables with the staging gateway URL, a real test service ID, a real job index, and a test authorization body.
+The two commands separate route discovery and authorization from payment settlement.
+Do not use a production wallet for the first testnet call.
 
 Then exercise the payment state machine:
 
@@ -268,7 +264,6 @@ It should be sufficient for another operator to answer what was paid, where it s
 | Attestation | Required, passed with measurement and policy, or not part of this job |
 
 The deployment owner should capture each field from the target environment and link the public contract or transaction where appropriate.
-The point of the record is reconciliation, not paperwork.
 
 The runtime should expose enough events to build a trace:
 price discovered, payment required, payment verified, settlement accepted, job enqueued, worker started, worker finished, result available, and failure or refund decision.
@@ -298,8 +293,6 @@ Queueing after confirmed settlement is safer than queueing before settlement, bu
 
 ## The final launch sequence
 
-The production checklist is short when expressed as a sequence:
-
 1. Load the Blueprint with paid invocation disabled.
 2. Confirm health, stats, and one local job result.
 3. Confirm the target network, asset contract, decimals, recipient, rate source, and facilitator independently.
@@ -317,11 +310,9 @@ A single production job is easier to reconcile than an entire public catalog.
 
 ## Promote one reconciled path
 
-An x402 Blueprint is ready for production when its payment state and execution state can be observed separately and reconciled together.
 The deployment must know which network and asset it accepts, where money goes, which callers may invoke which jobs, what 202 means, and how a failed or confidential job is handled.
 
 The checklist is not a promise that every job will succeed.
-It is a way to make the remaining failures visible before they become silent money or trust failures.
 Promote one known path, keep the policy narrow, and expand only when the evidence record says the complete path works.
 
 
