@@ -4,12 +4,15 @@ import { canonicalCandidateDigest } from '@tangle-network/agent-interface';
 // publication decision allowed it. The runner rechecks its sealed evidence before exporting; this consumer checks
 // that the committed bytes are the record the runner signed (its digest) and that the rates it prints are the
 // counts it carries. It runs no second statistical model.
-export interface BoardInterval { lower: number; upper: number; level: number; method: string }
+export interface BoardInterval { lower: number; upper: number; level: number; method: 'task-cluster-bootstrap' }
 export interface BoardProfile {
   id: string; rank: number | null; label: string; harness: string; model: string;
   attempts: number; solved: number; rate: number; interval: BoardInterval;
   cost: { totalUsd: number; meanUsd: number; perSolvedUsd: number | null; basis: 'receipts'; receipts: number };
   medianWallMs: number;
+  estimate: 'none' | 'insufficient' | 'descriptive' | 'bootstrap';
+  tiers: Record<'F' | 'C' | 'B' | 'A' | 'S', number> | null;
+  onFront: boolean | null;
 }
 export interface BoardRecord {
   version: 3;
@@ -20,7 +23,7 @@ export interface BoardRecord {
   grader: { kind: 'app-grade'; passTier: string; graderCommit: string } | { kind: 'verification'; pass: string };
   tasks: Array<{ label: string; digest: string }>;
   profiles: BoardProfile[];
-  cells: Array<{ task: string; setup: string; attempts: number; solved: number; costUsd: number }>;
+  cells: Array<{ task: string; setup: string; attempts: number; solved: number; costUsd: number; tiers?: Record<'F' | 'C' | 'B' | 'A' | 'S', number>; mean?: number | null }>;
 }
 
 const close = (a: number, b: number) => Math.abs(a - b) <= 2e-6; // the record rounds to six decimals
