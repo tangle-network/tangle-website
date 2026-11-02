@@ -1,21 +1,21 @@
 import { createE2BProvider } from "@tangle-network/agent-provider-e2b";
 import { providerAsSandboxClient } from "@tangle-network/agent-runtime/kernel";
 
-const sh = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
+// E2B hosts the sandbox; the model still goes through the Tangle Router on your key.
+const provider = createE2BProvider({ router: { key: process.env.TANGLE_API_KEY! } });
 
-// E2B runs the command; the template must have claude installed and logged in.
-const provider = createE2BProvider({
-  turnCommand: ({ prompt }) => `cd sandbox-demo && claude -p ${sh(prompt ?? "")}`,
+// The same profile as on Tangle: "claude-code", "codex", "opencode" or "pi".
+const client = providerAsSandboxClient(provider, {
+  defaults: { profile: { name: "repo-reader", harness: "claude-code" } },
 });
 
-const client = providerAsSandboxClient(provider);
-
-const box = await client.create({ environment: "claude-code" }); // the E2B template
+const box = await client.create({
+  git: { url: "https://github.com/tangle-network/sandbox-demo" },
+});
 try {
-  await box.exec("git clone https://github.com/tangle-network/sandbox-demo");
   const task = "Read this repository. In two sentences, say what it does.";
-  for await (const event of box.streamPrompt(task, { timeoutMs: 300_000 })) {
-    if (event.type === "result") console.log(event.data.finalText || event.data.stderr);
+  for await (const event of box.streamPrompt(task)) {
+    if (event.type === "result") console.log(event.data.finalText);
   }
 } finally {
   await box.delete();
