@@ -1,68 +1,78 @@
 ---
-import { latencyRange, type LatencyRangeRow } from '@tangle-network/charts';
+import { formatSpanDuration as time, latencyRange, metricBars, timeSeries } from '@tangle-network/charts';
 import { Metric, MetricStrip } from '@tangle-network/ui/primitives';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchHead from '../../components/BenchHead.astro';
 import Figure from '../../components/Figure.astro';
-import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds, type Row } from '../../data/benchmarks/sandbox';
+import { drawnWidth, niceMax } from '../../data/benchmarks/grid';
+import snapshot from '../../data/benchmarks/sandbox.json';
 import '@tangle-network/charts/figure.css';
 import '../../styles/bench.css';
 
-const width = 1160;
-// Fewer than 5 samples support no p95.
-const timed = (r: Row): LatencyRangeRow => ({ id: r.label, label: r.label, p50Ms: r.value, p95Ms: r.n >= 5 ? (r.whisker ?? null) : null, n: r.n, facts: r.facts });
+const { headline, memory, panels, passed, source, trends, window } = snapshot;
+type Panel = (typeof panels)[number];
+type Row = Panel['rows'][number] & { logo?: string; p90?: number };
 
-// Coding agents by the id the facts feed uses.
-const agents: Record<string, { name: string; logo?: string }> = {
-  'claude-code': { name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
-  codex: { name: 'Codex', logo: '/images/harness/codex.png' },
-  opencode: { name: 'OpenCode', logo: '/images/harness/opencode.svg' },
-  hermes: { name: 'Hermes', logo: '/images/harness/hermes.png' },
-  openclaw: { name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
-  'kimi-code': { name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
-  pi: { name: 'Pi', logo: '/images/harness/pi.svg' },
-  prime: { name: 'Prime Agent', logo: '/images/harness/prime-agent.png' },
-  'factory-droids': { name: 'Factory Droid' },
-  acp: { name: 'ACP' },
+const slug = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+const marks = (rows: { label: string; logo?: string }[]) => Object.fromEntries(rows.flatMap((r) => (r.logo ? [[r.label, { model: { label: r.label, src: r.logo } }]] : [])));
+const band = (b: number[] | null) => (b ? { lo: b[0], hi: b[1] } : null);
+
+const range = ({ title, rows, span = 4 }: Panel & { span?: number }) =>
+  latencyRange((rows as Row[]).map((r) => {
+    const p50 = band(r.p50_band), p95 = band(r.p95_band);
+    return {
+      id: r.label, label: r.label, p50Ms: r.p50, p95Ms: r.p95, n: r.n,
+      ...(p50 ? { p50Band: [p50.lo, p50.hi] as const } : {}),
+      ...(p95 ? { p95Band: [p95.lo, p95.hi] as const } : {}),
+      facts: [...(r.p90 ? [`p90: ${time(r.p90)}`] : []), ...(r.failed ? [`Failed: ${r.failed} of ${r.attempts}`] : [])],
+    };
+  }), { id: slug(title), measure: title, minN: 1, identities: marks(rows as Row[]), width: drawnWidth(span) });
+
+const daily = ({ title, days }: (typeof trends)[number]) => {
+  const values = days.flatMap((d) => [d.p50, d.p95]);
+  const points = (key: 'p50' | 'p95') => days.map((d, i) => ({ x: i, y: d[key], observations: { count: d.n, label: 'samples' } }));
+  return timeSeries([{ id: 'p50', label: 'p50', points: points('p50') }, { id: 'p95', label: 'p95', colorIndex: 1, points: points('p95') }], {
+    id: slug(title), width: drawnWidth(4), dense: true, crosshair: true, formatY: time,
+    x: { label: 'Day', domain: [0, days.length - 1], categories: days.map((d, i) => ({ at: i, label: d.day.slice(5) })) },
+    y: { label: 'Time', unit: '', scale: 'log', domain: [Math.min(...values) / 1.3, Math.max(...values) * 1.3] },
+  });
 };
-const agentRows = firstText.rows.map((r) => ({ ...r, id: r.label, name: agents[r.label]?.name ?? r.label })).sort((a, b) => a.value - b.value);
-const agentMarks = Object.fromEntries(agentRows.flatMap((r) => (agents[r.id]?.logo ? [[r.id, { model: { label: r.name, src: agents[r.id].logo! } }]] : [])));
 
-// The public 100-at-once board with Tangle's one row placed by median.
-const board = burst100.computesdk;
-const tangle = burst100.tangle;
-const names: Record<string, string> = { e2b: 'E2B', 'cloud-run': 'Cloud Run', computesdk: 'ComputeSDK' };
-const providerName = (id: string) => names[id] ?? id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-const boardRows: LatencyRangeRow[] = [
-  ...board.rows.map((r) => ({ id: r.provider, label: providerName(r.provider), p50Ms: r.median_ms, p95Ms: r.p95_ms, n: board.iterations, extra: `${Math.round(r.success_rate * 100)}%`, facts: [`ComputeSDK board, ${day(board.timestamp)}`] })),
-  { id: 'tangle', label: tangle.production_changed ? 'Tangle ✱' : 'Tangle', p50Ms: tangle.p50_ms, p95Ms: tangle.p95_ms, n: 100, extra: `${tangle.reached}%`, facts: [`Run ${day(tangle.at)}`, ...(tangle.production_changed ? ['A release landed during this run'] : [])] },
-].sort((a, b) => a.p50Ms - b.p50Ms);
-const place = boardRows.findIndex((r) => r.id === 'tangle') + 1;
+const memoryFigure = metricBars(memory.map((r) => ({
+  id: r.label, label: r.label, value: r.p50,
+  interval: { lower: r.p50_band[0], upper: r.p50_band[1], level: 0.95, method: 'binomial-ranks' as const },
+  observations: { count: r.n, label: 'runs' }, facts: r.p95 ? [`p95: ${r.p95} MB`] : [],
+})), { id: 'memory', measure: 'MB', unit: '', domain: [0, niceMax(Math.max(...memory.map((r) => r.p50_band[1])))], formatValue: (v) => v.toFixed(0), identities: marks(memory), width: drawnWidth(6) });
 
-const updated = [firstText.run.started_at, lifecycle.run.started_at, tangle.at].map(day).sort().at(-1)!;
-const summary = `A new sandbox in ${seconds(lifecycle.rows[0].value)}, a coding agent's first reply in ${seconds(agentRows[0].value)}, and 100 sandboxes at once in ${seconds(tangle.p50_ms)}, #${place} of ${boardRows.length} clouds.`;
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+const passedFigure = metricBars(passed.map((r) => ({
+  id: r.label, label: r.label, value: r.rate, detail: `${r.passed}/${r.attempts}`,
+  interval: { lower: r.lower, upper: r.upper, level: 0.95, method: 'wilson' as const },
+  observations: { count: r.attempts, label: 'runs' },
+})), { id: 'passed', measure: 'Share of runs', unit: '', domain: [0, 1], formatValue: pct, width: drawnWidth(6) });
+
+const [first, second] = [headline[0], headline[2]];
+const summary = `A new sandbox in ${time(first.p50)} at the median and ${time(first.p95)} at p95, a coding agent's first reply in ${time(second.p50)}, over ${window.samples.toLocaleString('en-US')} production runs in the last 7 days.`;
 ---
 
-<BaseLayout paper title="Sandbox leaderboard" description={summary}>
+<BaseLayout paper title="Sandbox benchmarks" description={summary}>
   <article class="bench">
-    <BenchHead regime="stack" title="Sandbox leaderboard" updated={updated} />
+    <BenchHead regime="stack" title="Sandbox benchmarks" status={`Last 7 days, ${window.samples.toLocaleString('en-US')} production runs. Bands are 95% confidence.`} />
 
-    <MetricStrip columns={4} className="bench-stats">
-      <Metric label="New sandbox" value={seconds(lifecycle.rows[0].value)} />
-      <Metric label="First command" value={seconds(firstCommand.together.p50_ms!)} />
-      <Metric label="First agent reply" value={seconds(agentRows[0].value)} hint={agentRows[0].name} />
-      <Metric label="100 at once" value={seconds(tangle.p50_ms)} hint={`#${place} of ${boardRows.length} clouds`} />
+    <MetricStrip columns={6} className="bench-stats">
+      {headline.map((h) => <Metric label={h.label} value={time(h.p50)} hint={h.p95 ? `p95 ${time(h.p95)}` : undefined} />)}
     </MetricStrip>
 
-    <Figure title="100 sandboxes at once" figure={latencyRange(boardRows, { id: 'clouds', measure: 'time to interactive', minN: 1, ranked: true, highlight: ['tangle'], heads: { value: 'median', extra: 'reached' }, width })} />
-    <Figure title="First reply from a coding agent" figure={latencyRange(agentRows.map((r) => ({ ...timed(r), id: r.id, label: r.name })), { id: 'agents', measure: 'create to first text', minN: 1, scale: 'linear', ranked: true, identities: agentMarks, width })} />
-    <Figure title="Every sandbox operation" figure={latencyRange(lifecycle.rows.map((r) => ({ ...timed(r), compareMs: r.desktop })), { id: 'verbs', measure: 'time per operation', minN: 1, scale: 'linear', heads: { value: 'base', compare: 'desktop' }, width })} />
-    <Figure title="Bursts, branches and forks" figure={latencyRange([...bursts.rows, { label: '100 at once', value: tangle.p50_ms, n: tangle.reached, facts: [`${tangle.reached} of 100 reached a first command`, `p95 ${seconds(tangle.p95_ms)}`] }, ...branches.rows, ...forks.rows].map(timed), { id: 'many', measure: 'time to first command', minN: 1, scale: 'linear', width })} />
-    <Figure title="First model call" figure={latencyRange(firstCall.rows.map(timed), { id: 'first-call', measure: 'first Router call', minN: 1, scale: 'linear', width })} />
+    <div class="bench-grid">
+      {panels.slice(0, 6).map((p) => <Figure title={p.title} figure={range(p)} />)}
+      {trends.map((t) => <Figure title={t.title} figure={daily(t)} />)}
+      {panels.slice(6).map((p: Panel & { span?: number }) => <Figure title={p.title} span={p.span} figure={range(p)} />)}
+      <Figure title="Peak memory by coding agent" span={6} figure={memoryFigure} />
+      <Figure title="Runs that passed their checks" span={6} figure={passedFigure} />
+    </div>
 
     <footer class="bench-method">
-      {tangle.production_changed && <p>✱ A release landed during this run, so the <a href={feed.source}>facts feed</a> marks it invalid.</p>}
-      <p>Clouds from ComputeSDK's <a href={board.source}>burst board</a>, {day(board.timestamp)}. Tangle runs the same test on production. These are test runs, not customer traffic.</p>
+      <p>From the <a href={source}>production facts feed</a>. Test runs, not customer traffic. Samples taken while a release landed are left out.</p>
     </footer>
   </article>
 </BaseLayout>
