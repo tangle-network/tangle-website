@@ -3,8 +3,7 @@ import { Sandbox, openaiTools } from "@tangle-network/sandbox/agent";
 const apiKey = process.env.TANGLE_API_KEY!;
 const client = new Sandbox({ apiKey, baseUrl: "https://sandbox.tangle.tools" });
 
-// Your loop, any Router model, and the sandbox as its tools:
-// exec, read, write, search and run code.
+// Your loop, any Router model, the sandbox as its tools.
 const box = await client.create({
   git: { url: "https://github.com/tangle-network/sandbox-demo" },
 });

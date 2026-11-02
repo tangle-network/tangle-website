@@ -14,7 +14,7 @@ try {
   const run = await box.prompt("`npm test` fails. Find the cause and fix it.");
   if (!run.success) throw new Error(run.error);
 
-  // A finished turn is not a finished task: check the result yourself.
+  // Check the result yourself.
   const tests = await box.exec("npm test");
   if (tests.exitCode !== 0) throw new Error("The tests still fail.");
 

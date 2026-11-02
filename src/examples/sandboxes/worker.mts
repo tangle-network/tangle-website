@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Start:   npx tsx worker.mts
-// Collect: npx tsx worker.mts <sandboxId> <executionId>  (any process, any time)
+// Collect later, from any process: npx tsx worker.mts <sandboxId> <executionId>
 const [sandboxId, executionId] = process.argv.slice(2);
 const sessionId = "upgrade-deps";
 

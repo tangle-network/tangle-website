@@ -10,9 +10,9 @@
 // Each example runs byte for byte from a copy beside scripts/examples-typecheck/node_modules, under this same
 // file as an --import preload that wraps the SDK's methods, fetch and stdout. Every call carries the example
 // line it came from (V8 stack), so the replay lights the line that fired it; check mode verifies that the line
-// names the call, the source sha256 matches, the run exited 0 and the record is under 30 days old.
+// names the call, the source sha256 (comments and blank lines excluded) matches, the run exited 0 and the record is under 30 days old.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { sourceDigest } from "./example-digest.mjs";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
@@ -30,7 +30,6 @@ const NO_RUN: Record<string, string> = {
   "runtime/any-cloud-daytona": "no credential in vault",
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 // A call that threw, or returned the SDK's { success: false } turn, failed the run even when the process exited 0.
 const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || (e.result as { success?: boolean } | undefined)?.success === false);
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
@@ -363,7 +362,7 @@ async function record(key: string, target: string) {
   const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval", "@tangle-network/agent-runtime", "@tangle-network/agent-provider-tangle"].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
-    source: { path: sourcePath, sha256: sha256(source) },
+    source: { path: sourcePath, sha256: sourceDigest(source) },
     run: { id, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
       sdk: versions, node: process.version, host: hostname(), baseUrl: "https://sandbox.tangle.tools" },
     events,
@@ -389,7 +388,7 @@ function check() {
     if (!existsSync(path)) { failures.push(`${target}: no record at ${relative(ROOT, path)}`); continue; }
     const record = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
     const source = readFileSync(join(EXAMPLES, `${target}.mts`), "utf8"), lines = source.split("\n");
-    if (record.source.sha256 !== sha256(source)) failures.push(`${target}: the record is for another version of the file; re-record it`);
+    if (record.source.sha256 !== sourceDigest(source)) failures.push(`${target}: the record is for another version of the file; re-record it`);
     if (record.run.exitCode !== 0) failures.push(`${target}: the recorded run exited ${record.run.exitCode}`);
     if (!((Date.now() - Date.parse(record.run.recordedAt)) / 86_400_000 <= MAX_AGE_DAYS)) failures.push(`${target}: recorded ${record.run.recordedAt}, over ${MAX_AGE_DAYS} days ago`);
     for (const event of record.events) {

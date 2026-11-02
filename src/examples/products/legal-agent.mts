@@ -6,8 +6,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Each customer gets one isolated sandbox. The platform keeps it,
-// resumes it, and replaces it if it stops starting.
+// One sandbox per customer. The platform keeps it, resumes it, replaces it.
 export async function review(customerId: string, turnId: string, contract: string) {
   const instance = await client.instances.ensure({
     key: `customer:${customerId}`,
@@ -28,7 +27,7 @@ export async function review(customerId: string, turnId: string, contract: strin
   await instance.box.write("contracts/msa.md", contract);
   const ask = "Review contracts/msa.md. List the indemnity, liability and termination risks.";
   let turn = await instance.turn(ask, { thread: "main", turnId });
-  // The turn keeps running in the sandbox; asking with the same turnId settles it.
+  // Same turnId: pick the turn back up.
   while (turn.state === "running") {
     await new Promise((wait) => setTimeout(wait, 3_000));
     turn = await instance.turn(ask, { thread: "main", turnId });

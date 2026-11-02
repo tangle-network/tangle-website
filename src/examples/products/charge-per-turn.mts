@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Each turn reports its tokens and model cost; the Platform reports what the
-// sandbox has cost in total. Price it and pass it on.
+// Each turn reports its cost. Price it, pass it on.
 const box = await client.create({
   git: { url: "https://github.com/tangle-network/sandbox-demo" },
   backend: { type: "opencode", model: { model: "glm-5.3" } },

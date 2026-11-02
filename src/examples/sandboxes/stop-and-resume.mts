@@ -5,8 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// A stopped sandbox keeps its disk and meters only that disk.
-// Resume it and every file is still there.
+// Stopped: the disk stays and is all you pay for. Resumed: every file is there.
 const box = await client.create();
 try {
   await box.exec("echo 'first draft' > notes.md");

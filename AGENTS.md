@@ -2,6 +2,10 @@
 
 ## Product direction
 
+Before writing a heading, subline, button, meta description or example comment, read the brand
+[copy bible](https://github.com/tangle-network/brand/blob/main/docs/copy-bible.md): a line about our
+process or proof instead of what the reader gets is rejected copy.
+
 Before changing positioning, product hierarchy, industry claims or primary CTAs,
 read [PRODUCT_DIRECTION.md](PRODUCT_DIRECTION.md). It is the website's strategy
 entrypoint and distinguishes proposals from current delivery evidence.
