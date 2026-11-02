@@ -3,7 +3,7 @@
 import snapshot from './sandbox.json';
 
 type Lane = (typeof snapshot.lanes)[keyof typeof snapshot.lanes];
-export interface Row { label: string; p50_ms: number; p95_ms?: number | null; n: number; flagged?: boolean; note?: string }
+export interface Row { label: string; value: number; whisker?: number | null; low?: number; high?: number; n?: number | string; flagged?: boolean; note?: string }
 
 const lane = (name: keyof typeof snapshot.lanes): Lane => snapshot.lanes[name];
 const verb = (l: Lane, journey: string, field: string, profile: string | null = null) => {
@@ -11,7 +11,7 @@ const verb = (l: Lane, journey: string, field: string, profile: string | null = 
   if (!v) throw new Error(`benchmark snapshot: ${l.run_id} has no ${journey}.${field}${profile ? ` (${profile})` : ''}`);
   return v;
 };
-const row = (label: string, v: ReturnType<typeof verb>): Row => ({ label, p50_ms: v.p50_ms!, p95_ms: v.p95_ms, n: v.n, flagged: v.failed_rows > 0 });
+const row = (label: string, v: ReturnType<typeof verb>): Row => ({ label, value: v.p50_ms!, whisker: v.p95_ms, n: v.n, flagged: v.failed_rows > 0 });
 export const day = (iso: string) => iso.slice(0, 10);
 export const seconds = (ms: number) => (ms >= 10_000 ? `${(ms / 1000).toFixed(0)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
 
@@ -44,7 +44,7 @@ export const firstCall = {
 const text = lane('first-text');
 export const firstText = {
   run: text,
-  rows: [...text.first_text].sort((a, b) => a.p50_ms! - b.p50_ms!).map((f): Row => ({ label: f.harness, p50_ms: f.p50_ms!, p95_ms: f.p95_ms, n: f.n })),
+  rows: [...text.first_text].sort((a, b) => a.p50_ms! - b.p50_ms!).map((f): Row => ({ label: f.harness, value: f.p50_ms!, whisker: f.p95_ms, n: f.n })),
 };
 
 // One sandbox through every lifecycle verb, in order.
@@ -62,7 +62,7 @@ export const lifecycle = {
 // Many sandboxes at once: creates in a burst, and children branched from one parent.
 export const bursts = {
   run: matrix,
-  rows: matrix.burst.map((b): Row => ({ label: `${b.size} creates at once`, p50_ms: b.p50_ms!, p95_ms: b.p90_ms, n: b.ok, flagged: b.ok < b.asked, note: `${b.ok} of ${b.asked} reached a first command; the whisker is p90` })),
+  rows: matrix.burst.map((b): Row => ({ label: `${b.size} creates at once`, value: b.p50_ms!, whisker: b.p90_ms, n: b.ok, flagged: b.ok < b.asked, note: `${b.ok} of ${b.asked} reached a first command; the whisker is p90` })),
 };
 const fanout = lane('branch-fanout');
 export const branches = {

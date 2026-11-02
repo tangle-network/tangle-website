@@ -1,0 +1,144 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import BenchHead from '../../components/BenchHead.astro';
+import Bars from '../../components/Bars.astro';
+import { verifyBoardRecord, type BoardRecord } from '../../data/benchmarks/board-record';
+import legal from '../../data/benchmarks/applied/legal-personas.json';
+import tax from '../../data/benchmarks/applied/tax-calc-bench.json';
+import { day } from '../../data/benchmarks/sandbox';
+import '../../styles/bench.css';
+
+// Every record below is imported by `pnpm import:applied` (scripts/import-applied.mts) from the repository that
+// owns it, at a pinned commit, or written by the VerticalBench runner; nothing here is authored, and every rate
+// is computed from a record. A board that does not verify stops the build.
+const files = import.meta.glob<unknown>('../../data/benchmarks/boards/*.json', { eager: true, import: 'default' });
+
+const boards: BoardRecord[] = Object.entries(files)
+  .map(([path, value]) => {
+    const board = verifyBoardRecord(value, path);
+    if (!path.endsWith(`/boards/${board.suite.id}.json`)) throw new Error(`benchmark board ${path} holds suite ${board.suite.id}`);
+    return board;
+  })
+  .sort((a, b) => b.campaign.completedAt.localeCompare(a.campaign.completedAt));
+
+const mean = <T,>(rows: T[], f: (r: T) => number) => rows.reduce((a, r) => a + f(r), 0) / rows.length;
+const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+
+const runs = tax.record.runs;
+const taxBench = {
+  source: tax.source,
+  benchmark: tax.record.benchmark,
+  published: tax.record.published,
+  writeup: tax.record.writeup,
+  n: runs.length,
+  models: [...new Set(runs.map((r) => r.model))],
+  strict: mean(runs, (r) => (r.strict ? 1 : 0)),
+  lenient: mean(runs, (r) => (r.lenient ? 1 : 0)),
+  byLine: mean(runs, (r) => r.byLine),
+  lenientByLine: mean(runs, (r) => r.lenientByLine),
+  medianWallMs: median(runs.map((r) => r.wallMs)),
+  fullyCorrect: runs.filter((r) => r.byLine === 1).length,
+  /** Weakest first. */
+  cases: runs.slice().sort((a, b) => a.byLine - b.byLine || a.scenarioId.localeCompare(b.scenarioId)),
+};
+
+type Profile = { model: string; meanComposite: number; min: number; n: number };
+const profiles = Object.entries(legal.record.profiles as Record<string, Profile>).map(([id, p]) => ({ id, ...p }));
+const legalMatrix = {
+  source: legal.source,
+  task: legal.record.task,
+  backend: legal.record.backend,
+  finding: legal.record.finding,
+  runId: legal.record.runId,
+  profiles,
+  /** Lowest score first. */
+  personas: Object.entries(legal.record.byPersona as Record<string, Record<string, number>>)
+    .map(([id, scores]) => ({ id, scores, low: Math.min(...profiles.map((p) => scores[p.id])) }))
+    .sort((a, b) => a.low - b.low || a.id.localeCompare(b.id)),
+};
+
+const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+const usd = (x: number | null) => (x === null ? '–' : `$${x.toFixed(2)}`);
+const minutes = (ms: number) => `${(ms / 60_000).toFixed(1)} min`;
+const github = (s: { repo: string; commit: string; path: string }) => `https://github.com/${s.repo}/blob/${s.commit}/${s.path}`;
+const bestBoard = Math.max(...boards.flatMap((b) => b.profiles.map((p) => p.rate)));
+const bestLegal = Math.max(...legalMatrix.profiles.map((p) => p.meanComposite));
+const agentModel = taxBench.models.map((m) => m.split('@')[0]).join(', ');
+---
+
+<BaseLayout paper title="Applied benchmarks" description={`How well agents built on Tangle do real work: the tax agent scores ${pct(taxBench.strict)} fully correct returns and ${pct(taxBench.byLine)} correct lines on TaxCalcBench (n=${taxBench.n}); coding, legal, health and research records with their sources.`} bodyClass="page-editorial">
+  <article class="bench">
+    <BenchHead regime="applied" title="Applied benchmarks">
+      <p>How well agents built on Tangle do real work in a domain: tax returns, software tasks, legal work, health records, research. Where another party publishes a benchmark, the agent runs it and that party's evaluator scores the output. Where none exists, the record is our own eval, and it says so. Every number is computed at build time from the record file it links; the page authors nothing.</p>
+      <dl class="bench-headline">
+        <div><dt>tax returns with every line exact, n={taxBench.n}</dt><dd>{pct(taxBench.strict)}</dd></div>
+        <div><dt>tax lines exact</dt><dd>{pct(taxBench.byLine)}</dd></div>
+        <div><dt>coding tasks solved, best board profile</dt><dd>{pct(bestBoard)}</dd></div>
+        <div><dt>legal personas, verifier composite</dt><dd>{bestLegal.toFixed(1)}</dd></div>
+      </dl>
+    </BenchHead>
+
+    <section aria-labelledby="tax">
+      <h2 id="tax">Tax: TaxCalcBench</h2>
+      <p><a href={taxBench.benchmark.url}>TaxCalcBench</a> (Column Tax) holds {taxBench.benchmark.cases} synthetic TY2024 federal returns, each a taxpayer record and the correct Form 1040. Its published protocol is {taxBench.benchmark.protocol}. The production tax agent, unchanged from deployment, took the same cases with its tools and self-audit step, wrapping {agentModel}; Column Tax's own evaluator scored every return.</p>
+      <table class="board plain">
+        <caption>Our run on the scored cases beside Column Tax's published single-shot results. Strict: every evaluated line exact. Lenient: within $5. By line: share of lines exact.</caption>
+        <thead><tr><th scope="col">system</th><th scope="col" class="num">strict</th><th scope="col" class="num">lenient</th><th scope="col" class="num">by line</th><th scope="col" class="num">by line, lenient</th></tr></thead>
+        <tbody>
+          <tr class="tangle"><th scope="row">Tangle tax agent, {agentModel}, n={taxBench.n}</th><td class="num">{pct(taxBench.strict)}</td><td class="num">{pct(taxBench.lenient)}</td><td class="num">{pct(taxBench.byLine)}</td><td class="num">{pct(taxBench.lenientByLine)}</td></tr>
+          {taxBench.published.map((p) => (
+            <tr><th scope="row">{p.model}, single shot</th><td class="num">{pct(p.strict)}</td><td class="num">{pct(p.lenient)}</td><td class="num">{pct(p.byLine)}</td><td class="num">{pct(p.lenientByLine)}</td></tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="bench-src">Our rows: <a href={github(taxBench.source)}>{taxBench.n} run records</a> in tangle-network/tax-agent at {taxBench.source.commit.slice(0, 12)} (sha256 {taxBench.source.sha256.slice(0, 12)}), {taxBench.fullyCorrect} of {taxBench.n} returns with every line exact, median {minutes(taxBench.medianWallMs)} per return. {51 - taxBench.n} of {taxBench.benchmark.cases} cases are missing from the record (dropped on sandbox errors in that run) and are not counted as either. Published rows: Column Tax's README, as cited in the <a href={taxBench.writeup}>write-up</a>. Reproduce: <code>pnpm bench:taxcalc</code> in tax-agent.</p>
+      <details>
+        <summary>Every scored return, weakest first</summary>
+        <Bars unit="rate" rows={taxBench.cases.map((c) => ({ label: c.scenarioId, value: c.byLine, n: c.toolCalls, note: `${c.strict ? 'strict' : c.lenient ? 'lenient' : 'not'} correct, ${c.turns} turns, ${c.toolCalls} tool calls, ${minutes(c.wallMs)}` }))} caption="Share of evaluated lines exact per return; n = tool calls the agent made" count="tool calls" />
+      </details>
+    </section>
+
+    <section aria-labelledby="coding">
+      <h2 id="coding">Coding: VerticalBench boards</h2>
+      <p>VerticalBench (tangle-network/blueprint-agent) builds real apps against a pinned backend and grades them in a real browser. A board is one campaign's record, written by the runner only when its publication decision allowed it, with every cell, receipt-backed cost and a task-clustered bootstrap interval on each rate. The build rechecks each record's digest and totals; a record that fails stops the build.</p>
+      {boards.map((board) => (
+        <Fragment>
+          <h3>{board.suite.name}</h3>
+          <p>{board.suite.description}</p>
+          <Bars unit="rate" rows={board.profiles.map((p) => ({ label: p.label, value: p.rate, low: p.interval.lower, high: p.interval.upper, n: p.attempts, note: `${p.solved} of ${p.attempts} solved, ${usd(p.cost.totalUsd)} total, ${usd(p.cost.perSolvedUsd)} per solved task, median ${minutes(p.medianWallMs)}` }))}
+            caption={`Campaign ${board.campaign.id}, ${day(board.campaign.completedAt)}: ${board.tasks.length} tasks × ${board.campaign.repetitions} repetitions, ${board.mode} mode, pass at App Grade ${board.grader.kind === 'app-grade' ? board.grader.passTier : ''}; n = attempts`} count="attempts" />
+          <p class="bench-src">{board.profiles.map((p) => `${p.label}: ${usd(p.cost.totalUsd)} for ${p.attempts} attempts, ${usd(p.cost.perSolvedUsd)} per solved task, median ${minutes(p.medianWallMs)}`).join('. ')}. Record: <a href={`https://github.com/tangle-network/tangle-website/blob/master/src/data/benchmarks/boards/${board.suite.id}.json`}>{board.suite.id}.json</a>, digest {board.digest.slice(7, 19)}.</p>
+        </Fragment>
+      ))}
+    </section>
+
+    <section aria-labelledby="legal">
+      <h2 id="legal">Legal: persona matrix</h2>
+      <p>No public legal benchmark fits the legal agent's product surface yet, so this record is our own eval: {legalMatrix.personas.length} synthetic client personas (formations, financings, licensing, employment, contracts), each run through the production legal agent on {legalMatrix.backend.split(' ')[0]} with two models, and scored by a deterministic six-dimension verifier against the persona's expected requirements, jurisdictions and fees. A rubric we wrote scores a product we wrote; read it as a regression floor, not a comparison with anyone.</p>
+      <Bars unit="rate" rows={legalMatrix.profiles.map((p) => ({ label: p.model, value: p.meanComposite / 100, low: p.min / 100, high: 1, n: p.n, note: `mean composite ${p.meanComposite}, lowest persona ${p.min}` }))} caption={`Run ${legalMatrix.runId}: mean verifier composite per model over ${legalMatrix.personas.length} personas; the band runs from the lowest persona to 100; n = personas`} count="personas" />
+      <p class="bench-src">{legalMatrix.finding} Record: <a href={github(legalMatrix.source)}>legal-haiku-vs-sonnet.json</a> in tangle-network/legal-agent at {legalMatrix.source.commit.slice(0, 12)}. Harvey LAB, the lawyer-authored legal agent benchmark, has a runner in the same repository (<code>tests/eval/benchmarks/harvey</code>) and no scored run published yet.</p>
+      <details>
+        <summary>Every persona, lowest score first</summary>
+        <table class="board plain">
+          <thead><tr><th scope="col">persona</th>{legalMatrix.profiles.map((p) => <th scope="col" class="num">{p.id}</th>)}</tr></thead>
+          <tbody>{legalMatrix.personas.map((row) => <tr><th scope="row">{row.id}</th>{legalMatrix.profiles.map((p) => <td class="num">{row.scores[p.id]}</td>)}</tr>)}</tbody>
+        </table>
+      </details>
+    </section>
+
+    <section aria-labelledby="health">
+      <h2 id="health">Health: journeys, no quality number yet</h2>
+      <p>The health agent's eval (<a href="https://github.com/tangle-network/health-agent/tree/main/eval/health">health-agent/eval/health</a>) runs 12 synthetic patient journeys over 26 sessions through the real product: migrations, signup, the audited vault and the sandbox event bridge, with six programmatic judges for grounding, redaction, audit completeness, injection refusal and safety escalation. It proves product behavior and persistence on invented data. It publishes no model-quality number, so none is printed here.</p>
+    </section>
+
+    <section aria-labelledby="research">
+      <h2 id="research">Research: not yet published</h2>
+      <p>Discovery, the research system, scores each run with the evaluator its play names. Those records are not public yet. When one is, it goes here with its source, the same way.</p>
+    </section>
+
+    <section aria-labelledby="method">
+      <h2 id="method">Method</h2>
+      <p>A domain appears here only with a record file this page can read: a run record per case, the commit that produced it, and the evaluator that scored it. Public benchmarks are scored by their owner's evaluator, imported and never reimplemented. Our own evals are named as ours. The import (<code>pnpm import:applied</code>) copies each record from the repository that owns it at a pinned commit and stores its sha256; the page computes every rate from those files when it builds.</p>
+    </section>
+  </article>
+</BaseLayout>
