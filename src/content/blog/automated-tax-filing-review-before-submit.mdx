@@ -4,6 +4,7 @@ slug: automated-tax-filing-review-before-submit
 summary: >-
   Bind human approval to one evidence-backed return version and pause submission whenever a source document, calculation, or form changes afterward.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -13,21 +14,59 @@ series: Building an AI Tax Agent
 seriesOrder: 5
 ---
 
+import Example from '../../components/Example.astro'
+
 At 4:58 p.m. on filing day, an automated tax system reports that a return is ready.
 The taxpayer sees a refund, a green status, and a button labeled “submit,” but the system has not shown whether a late Schedule K-1, the pass-through tax statement, changed the draft after review.
 
 Automated tax filing should model approval as a state transition that carries the exact package a person reviewed.
-The agent can collect documents, prepare calculations, fill a draft, and move through an authorized portal.
-Submission should happen only after a person approves the exact package that will be sent.
+The agent can collect documents, prepare calculations, fill a draft, and move through an authorized portal, but submission should happen only after a person approves the exact package that will be sent.
 
 This article describes a product control for tax software, not tax advice.
 Filing obligations, signature rules, and transmission behavior vary by taxpayer, form, preparer, and jurisdiction.
 
+## The agent proposes, and a person approves
+
+The agent does not file. In agent-app, it calls `submit_proposal`, a structured tool whose arguments the app validates. Dispatch stamps `regulated` on every proposal type listed in `regulatedTypes`, and the product's handler must queue such a proposal rather than execute it. The fence below marks `file-return` as regulated and runs the bounded tool loop with a Router model.
+
+```ts
+import { buildAppToolOpenAITools, createAppToolRuntimeExecutor, type AppToolHandlers, type AppToolTaxonomy } from '@tangle-network/agent-app/tools'
+import { createOpenAICompatStreamTurn, runAppToolLoop } from '@tangle-network/agent-app/runtime'
+
+const taxonomy: AppToolTaxonomy = { proposalTypes: ['file-return', 'other'], regulatedTypes: ['file-return'] }
+const queued: string[] = []
+const handlers: AppToolHandlers = {
+  submitProposal: async (args) => {
+    queued.push(args.title)
+    return { proposalId: `p-${queued.length}`, deduped: false, status: 'queued_for_approval' }
+  },
+  scheduleFollowup: async () => ({ id: 'f-1', dueDate: '2026-11-15', deduped: false }),
+  renderUi: async (args) => ({ path: `ui/${args.title}.json`, content: JSON.stringify(args.schema) }),
+  addCitation: async (args) => ({ citationId: 'c-1', path: args.path }),
+}
+
+const tools = buildAppToolOpenAITools(taxonomy)
+const model = createOpenAICompatStreamTurn({ baseUrl: 'https://router.tangle.tools/v1', apiKey: process.env.TANGLE_API_KEY!, model: 'glm-5.3', tools })
+const result = await runAppToolLoop({
+  systemPrompt: 'Prepare the draft 2025 return from the source index. Submit it with submit_proposal once every high-impact fact is accepted.',
+  userMessage: 'Prepare the 2025 return for Maya Stone.',
+  // The loop takes text and tool calls; the adapter's reasoning and usage events are for the UI.
+  streamTurn: async function* (messages) {
+    for await (const event of model(messages)) if (event.type === 'text' || event.type === 'tool_call') yield event
+  },
+  executeToolCall: createAppToolRuntimeExecutor({ handlers, taxonomy, ctx: { userId: 'maya', workspaceId: 'tax-2025', threadId: null } }),
+  isExecutableTool: (name) => tools.some((tool) => tool.function.name === name),
+})
+console.log(result.finalText, queued)
+```
+
+The script prints the stop reason (`completed` when no cap ended the loop), the tool labels in call order, and the proposals waiting in the queue.
+The output shows what the agent asked to file and that the request is waiting.
+It does not show that the return is correct, and the handler here is a sketch: a product would persist proposals in its own store.
+
 ## Approval belongs to a version
 
-A return is a changing document.
 New statements arrive, reviewers correct values, forms gain attachments, and an electronic filing (e-file) system can reject a package for a specific reason.
-
 The approval event should bind at least:
 
 | Approval field | Why it matters |
@@ -46,8 +85,8 @@ A new Portable Document Format (PDF) file with the same filename is still a new 
 
 ## The workflow should show its states
 
-The simple state machine below is an artifact a product team can implement and test.
-The names are illustrative and do not describe a live IRS interface.
+The state machine below is an artifact a product team can implement and test.
+Its names are illustrative and do not describe a live IRS interface.
 
 ```text
 intake
@@ -72,16 +111,14 @@ any state
 
 `approved` means a person accepted a specific package.
 It does not mean the tax authority accepted the return.
-`submitting` means transmission is in progress.
-It does not mean the return was received or processed.
+`submitting` means transmission is in progress, not that the return was received or processed.
 `accepted` should be reserved for an explicit response from the relevant filing system.
 
-The distinction matters because a product can report success too early.
+A product that reports success at the click reports it too early.
 An agent that clicks the submit control and stops has completed an action, not established the filing outcome.
 
 ## A review receipt should make the decision replayable
 
-A workpaper is a record showing how a reported value or form input was assembled.
 The approval record can be a small structured object.
 This JSON (JavaScript Object Notation) example is illustrative and does not model a live tax-portal API:
 
@@ -112,11 +149,8 @@ This JSON (JavaScript Object Notation) example is illustrative and does not mode
 The sample refund is illustrative.
 The important fields are `packageVersion`, `packageHash`, `openQuestions`, and the empty `submission` field.
 
-Before submission, the interface should let the taxpayer open the forms, source mappings, calculations, and unresolved-item history.
-The final confirmation should state what will happen next and what event counts as acceptance.
-
-If a browser automation session later changes a field, the product should compute a new package version.
-The old approval must no longer authorize the changed package.
+Before submission, the interface should let the taxpayer open the forms, source mappings, calculations, and unresolved-item history, and should state what will happen next and what event counts as acceptance.
+If a browser automation session later changes a field, the product computes a new package version, and the old approval no longer authorizes the changed package.
 
 ## A stale approval should fail visibly
 
@@ -133,10 +167,9 @@ The system now has two valid records of what happened, but only one may be submi
 
 The `packageHash` in the sample is a fingerprint of the exact package contents.
 It is useful only if the product calculates it from the forms and attachments that will be sent and stores the value with the approval event.
-It does not prove that the tax position is correct.
-It proves which bytes the reviewer approved.
+It does not prove that the tax position is correct; it proves which bytes the reviewer approved.
 
-This distinction matters during a browser timeout.
+This matters during a browser timeout.
 The product must first query whether the portal accepted the earlier submission, then compare that response with the approved package before trying again.
 A second click can create a duplicate filing or submit a package that Jordan never reviewed.
 
@@ -152,19 +185,20 @@ A review screen should help a taxpayer decide, not narrate the product’s inter
 | What remains uncertain? | missing documents, conflicts, and escalation notes |
 | What happens after I approve? | submission state, response handling, and retry policy |
 
+The agent's run needs the same scrutiny before a proposal reaches the queue.
+The `evals/score-a-trace` example scores the answer and every tool call made before the proposal, on two dimensions: `grounded` (every file and line named exists) and `economical` (no tool call repeats earlier work).
+For a return, `grounded` would mean every amount traces to a source document; the example shows a code-search task with the same two dimensions.
+
+<Example path="evals/score-a-trace" title="The judge reads the answer and every tool call" />
+
 For a digital-asset line, the taxpayer may need to inspect proceeds, acquisition records, transfer matching, and basis.
 Basis is the tax cost used to measure gain or loss.
 The Internal Revenue Service (IRS) [digital-asset guidance](https://www.irs.gov/filing/digital-assets) says taxpayers must report applicable digital-asset income, gains, and losses and keep records supporting their positions.
 For a foreign corporation, the product should show the ownership and role facts behind any [Form 5471](https://www.irs.gov/forms-pubs/about-form-5471) question.
 
-A green “ready” badge cannot answer those questions.
-An evidence-linked package can.
-
 ## A rejection is a new review event
 
-An e-file rejection is a response that requires the workflow to explain what happened.
 The [IRS guidance on rejected electronic returns](https://www.irs.gov/faqs/electronic-filing-e-file/age-name-or-ssn-rejects-errors-correction-procedures/age-name-ssn-rejects-errors-correction-procedures-3) says taxpayers should review the rejection explanation, correct eligible errors, and resubmit, while some problems require paper filing.
-
 The product should separate two cases:
 
 1. A transmission correction that does not alter the tax facts or package contents.
@@ -189,30 +223,21 @@ It should not silently edit the old approved package until the history is imposs
 ## Tangle terms belong beside the control
 
 Tangle is a coordination layer for services that run through operators.
-The tax filing workflow described here is an application design, not a claim that Tangle currently transmits tax returns.
+This filing workflow is an application design; it does not claim that Tangle transmits tax returns.
 
-A **Blueprint** is a reusable service definition.
-It can describe a `prepare-return` job, the input and output schemas, the operator requirements, and the lifecycle states around that job.
-
-A **service instance** is one live deployment of that Blueprint.
-An **operator** is the party that runs the service instance.
-A **runtime** is the environment where the agent, documents, browser, and calculations execute.
-An **agent profile** pins the model, tools, budget, and approval policy for a run.
+- **Blueprint**: a reusable service definition, such as a `prepare-return` job with input and output schemas, operator requirements, and lifecycle states.
+- **Service instance**: one live deployment of a Blueprint, run by an **operator**.
+- **Runtime**: where the agent, documents, browser, and calculations execute.
+- **Agent profile**: the model, tools, budget, and approval policy pinned for a run.
+- **Trace**: what the run saw, which tools it called, what it changed, and which response it received.
+- **Evaluation**: a repeatable test of task outcome, cost, and policy behavior. Filing tests should cover stale approval, changed totals, missing attachments, duplicate submission, rejection, timeout, and account mismatch.
+- **Attestation**: a signed report about measured code and hardware-backed execution. It can establish where a workflow ran. It cannot prove that a form is accurate or that approval was informed.
 
 A [Tangle Router](https://docs.tangle.tools/gateway/operator-routing) selects an operator or provider route for a model request.
-It can route extraction work to one model and document rendering work to another, but it cannot approve a return.
+It can route extraction and document rendering to different models, but it cannot approve a return.
 
-For this application, a **trace** records what the run saw, which tools it called, what it changed, and which response it received.
-An **evaluation** is a repeatable test of the task outcome, cost, and policy behavior.
-For automated filing, tests should include stale approval, changed totals, missing attachments, duplicate submission, rejection, timeout, and account mismatch.
-
-An **attestation** is a signed report about the measured code and hardware-backed execution environment.
-It can help establish where a workflow ran.
-It cannot prove that a form is accurate or that the taxpayer’s approval was informed.
-
-**x402** is an HTTP payment flow in which a service responds with `402 Payment Required`, the caller supplies payment proof, and the caller retries.
-It can charge for a preparation or review job.
-It does not make submission safe and does not prove the result is correct.
+**x402** is an HTTP payment flow: a service responds with `402 Payment Required`, the caller supplies payment proof, and the caller retries.
+It can charge for a preparation or review job, but it does not make submission safe or prove the result correct.
 
 The [Tangle core concepts](https://docs.tangle.tools/vision/core-concepts), [Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction), [Router documentation](https://docs.tangle.tools/gateway/operator-routing), and [x402 standard](https://docs.x402.org/introduction) describe these public interfaces and their boundaries.
 For the source-backed preparation stage, read [AI Tax Filing Software For Complex Returns](/blog/ai-tax-filing-software-complex-returns), and for the workpaper handoff, read [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
@@ -220,7 +245,6 @@ For the source-backed preparation stage, read [AI Tax Filing Software For Comple
 ## Browser automation needs a hard stop
 
 Some products use a browser agent to enter an approved return into a tax portal.
-A browser agent is software that observes a page, chooses actions, and executes clicks or form fills.
 It can reduce repetitive entry, but it adds another place where the wrong version, account, or form can be selected.
 
 Tangle’s public [Browser Agent Driver repository](https://github.com/tangle-network/browser-agent-driver) documents a general-purpose browser automation command-line interface (CLI) and structured run output.
@@ -247,9 +271,7 @@ Its repository does not establish that it can file a particular tax return or sa
 
 ## The runtime must preserve evidence
 
-The browser is only one part of the run.
-The system also needs the source documents, generated forms, approval object, browser observations, response messages, and correction history.
-
+The system needs the source documents, generated forms, approval object, browser observations, response messages, and correction history.
 Tangle’s [AI Agent Sandbox documentation](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes a split between lifecycle records recorded on the blockchain layer and an operator API for live inputs and outputs.
 That is a useful design pattern for tax filing:
 
@@ -286,12 +308,9 @@ It does not prove that a filing workflow has the required isolation, retention, 
 | evidence capture fails | block completion instead of reporting a bare success |
 
 The system should block submission by default when required evidence is missing.
-An incomplete trace can still be a useful preparation result.
-It should not be treated as proof that the return was sent correctly.
+An incomplete trace can still be a useful preparation result, but it is not proof that the return was sent correctly.
 
 ## Choose the level of automation deliberately
-
-The right product decision is often one of these:
 
 | Automation level | Appropriate when | Required control |
 | --- | --- | --- |
@@ -308,9 +327,6 @@ A system can know that an attachment is missing without knowing whether the atta
 Automated tax filing is ready for a complex return when the system can answer what will be sent, why each high-impact number is present, who approved the package, and what happened after transmission.
 If it cannot answer those questions, stop at preparation and export the packet for a taxpayer or advisor.
 For a foreign-ownership workflow with a different schedule boundary, continue with [CFC tax filing software for Form 5471](/blog/cfc-tax-filing-software-form-5471).
-
-Review-before-submit binds the agent’s changing workspace to an approved filing package.
-
 
 ## What is automated tax filing?
 
