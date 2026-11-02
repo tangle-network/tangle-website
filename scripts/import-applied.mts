@@ -1,6 +1,5 @@
-// Imports the applied-benchmark records that /benchmarks/applied prints, from the repository that
-// owns each one, at a pinned commit. Each output file carries the source (repo, path, commit, sha256)
-// and a reduced record; every number on the page is computed from these files at build time.
+// Imports the applied boards whose evaluator lives in another repository, each at a pinned commit.
+// Each output file carries its source (repo, path, commit, sha256) and one board in the shape applied.ts reads.
 //   GH=gh-drew node scripts/import-applied.mts            # all sources
 //   node scripts/import-applied.mts tax-calc-bench         # one source
 import { execFileSync } from "node:child_process";
@@ -14,35 +13,37 @@ const OUT = new URL("../src/data/benchmarks/applied/", import.meta.url).pathname
 const raw = (repo: string, path: string, ref: string) =>
   execFileSync(GH, ["api", "-H", "Accept: application/vnd.github.raw", `repos/${repo}/contents/${path}?ref=${ref}`], { maxBuffer: 64e6 });
 
-interface TaxRun { runId: string; model: string; commitSha: string; wallMs: number; tokenUsage: { input: number; output: number; cached: number };
-  scenarioId: string; outcome: { raw: { by_line: number; lenient_by_line: number; strict: boolean; lenient: boolean; turns: number; tool_calls: number } } }
+const tCritical20 = 2.086; // Student's t, 95%, 20 degrees of freedom: 21 clients.
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+const TAX_MODELS: Record<string, string> = { "gpt-5.5": "GPT-5.5", "gpt-5.1": "GPT-5.1", opus: "Claude Opus", sonnet: "Claude Sonnet", haiku: "Claude Haiku" };
 
 const SOURCES: Record<string, { repo: string; path: string; ref: string; reduce: (bytes: Buffer) => unknown }> = {
-  // Column Tax's TaxCalcBench, run by the production tax agent and scored by the benchmark's own evaluator.
+  // Column Tax's TaxCalcBench, every configuration that finished all 51 held-out returns, graded line by line by its own evaluator.
   "tax-calc-bench": {
-    repo: "tangle-network/tax-agent", path: "docs/research/taxcalcbench/data/ty24-full51-results.jsonl", ref: "c20ceb4d1168f864951ea37048aefcf06c7ce640",
-    reduce: (bytes) => ({
-      benchmark: { name: "TaxCalcBench TY2024", url: "https://github.com/column-tax/tax-calc-bench", cases: 51, protocol: "single turn, no tools; scored line by line on the lines that move tax owed or refund" },
-      // Column Tax's published single-shot results, best thinking budget per model, as cited in the tax agent's write-up
-      // (docs/research/taxcalcbench/PAPER.md). Percentages are from their README on the date of that write-up.
-      published: [
-        { model: "Gemini 2.5 Pro", strict: 0.3235, lenient: 0.5196, byLine: 0.8122, lenientByLine: 0.8612 },
-        { model: "Claude Opus 4", strict: 0.2745, lenient: 0.4265, byLine: 0.783, lenientByLine: 0.8235 },
-        { model: "Gemini 2.5 Flash", strict: 0.2598, lenient: 0.4118, byLine: 0.7794, lenientByLine: 0.8166 },
-        { model: "Claude Sonnet 4", strict: 0.2304, lenient: 0.3824, byLine: 0.774, lenientByLine: 0.8142 },
-      ],
-      writeup: "https://github.com/tangle-network/tax-agent/blob/c20ceb4d1168f864951ea37048aefcf06c7ce640/docs/research/taxcalcbench/PAPER.md",
-      runs: bytes.toString("utf8").trim().split("\n").map((line) => JSON.parse(line) as TaxRun).map((r) => ({
-        runId: r.runId, scenarioId: r.scenarioId, model: r.model, commitSha: r.commitSha, wallMs: r.wallMs, tokens: r.tokenUsage,
-        strict: r.outcome.raw.strict, lenient: r.outcome.raw.lenient, byLine: r.outcome.raw.by_line, lenientByLine: r.outcome.raw.lenient_by_line,
-        turns: r.outcome.raw.turns, toolCalls: r.outcome.raw.tool_calls,
-      })),
-    }),
+    repo: "tangle-network/tangle-website", path: "src/data/benchmarks/results/tax.json", ref: "2c1c1b868b8f8e0707bf076663fe198bb18e8ea7",
+    reduce: (bytes) => {
+      const run = JSON.parse(bytes.toString("utf8")) as { generated: string; rows: { model: string; harness: string; score: number; ciLow: number; ciHigh: number; n: number; costUsd: number }[] };
+      return {
+        id: "tax", title: "Tax returns", measure: "Line accuracy", max: 1, percent: true, interval: "student-t", date: run.generated, by: "Column Tax's TaxCalcBench", url: "https://github.com/column-tax/tax-calc-bench", costTitle: "Cost per return",
+        rows: run.rows.map((r) => ({ id: `${r.harness}-${r.model}`, model: TAX_MODELS[r.model], harness: r.harness, score: r.score, lower: r.ciLow, upper: r.ciHigh, samples: `${r.n} returns`, cost: r.costUsd })),
+      };
+    },
   },
-  // The legal agent's persona matrix: 21 synthetic client personas, two models, a deterministic six-dimension verifier, on the production Router.
+  // The legal agent's persona matrix: 21 synthetic clients, two models, a deterministic six-dimension verifier, on the production Router.
   "legal-personas": {
     repo: "tangle-network/legal-agent", path: "tests/eval/.matrix-proof/legal-haiku-vs-sonnet.json", ref: "61f4676566f35d6b31540eae0c3f852778211ccc",
-    reduce: (bytes) => JSON.parse(bytes.toString("utf8")),
+    reduce: (bytes) => {
+      const run = JSON.parse(bytes.toString("utf8")) as { profiles: Record<string, { model: string; min: number; n: number }>; byPersona: Record<string, Record<string, number>> };
+      return {
+        id: "legal", title: "Legal work", measure: "Score out of 100", max: 100, percent: false, interval: "student-t", date: "2026-06-02", by: "the legal agent's eval", url: "https://github.com/tangle-network/legal-agent",
+        rows: Object.entries(run.profiles).map(([id, p]) => {
+          const scores = Object.values(run.byPersona).map((persona) => persona[id]!), m = mean(scores);
+          const half = tCritical20 * Math.sqrt(scores.reduce((sum, x) => sum + (x - m) ** 2, 0) / (scores.length - 1) / scores.length);
+          return { id, model: `Claude ${id[0]!.toUpperCase()}${id.slice(1)} 4.5`, harness: "legal-agent", score: Number(m.toFixed(2)), lower: Number((m - half).toFixed(2)), upper: Number(Math.min(100, m + half).toFixed(2)), samples: `${scores.length} clients`, detail: `lowest ${p.min}` };
+        }),
+      };
+    },
   },
 };
 
