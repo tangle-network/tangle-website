@@ -31,6 +31,8 @@ const NO_RUN: Record<string, string> = {
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+// A call that threw, or returned the SDK's { success: false } turn, failed the run even when the process exited 0.
+const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || (e.result as { success?: boolean } | undefined)?.success === false);
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
 
@@ -355,7 +357,7 @@ async function record(key: string, target: string) {
   }
   const events = compact(fold(source.split("\n"), raw));
   const { id, ids, traceIds, costUsd } = collect(events);
-  const exitCode = phases.every((p) => p.exitCode === 0) ? 0 : phases.at(-1)!.exitCode;
+  const exitCode = phases.every((p) => p.exitCode === 0) && !events.some(failed) ? 0 : phases.at(-1)!.exitCode || 1;
   const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval", "@tangle-network/agent-runtime", "@tangle-network/agent-provider-tangle"].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
@@ -384,18 +386,17 @@ function check() {
     const path = join(RUNS, `${target}.json`);
     if (!existsSync(path)) { failures.push(`${target}: no record at ${relative(ROOT, path)}`); continue; }
     const record = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
-    const source = readFileSync(join(EXAMPLES, `${target}.mts`), "utf8");
-    const lines = source.split("\n");
+    const source = readFileSync(join(EXAMPLES, `${target}.mts`), "utf8"), lines = source.split("\n");
     if (record.source.sha256 !== sha256(source)) failures.push(`${target}: the record is for another version of the file; re-record it`);
     if (record.run.exitCode !== 0) failures.push(`${target}: the recorded run exited ${record.run.exitCode}`);
-    const age = (Date.now() - Date.parse(record.run.recordedAt)) / 86_400_000;
-    if (!(age <= MAX_AGE_DAYS)) failures.push(`${target}: recorded ${record.run.recordedAt}, over ${MAX_AGE_DAYS} days ago`);
+    if (!((Date.now() - Date.parse(record.run.recordedAt)) / 86_400_000 <= MAX_AGE_DAYS)) failures.push(`${target}: recorded ${record.run.recordedAt}, over ${MAX_AGE_DAYS} days ago`);
     for (const event of record.events) {
       // A delegated call (openaiTools' handler running the model's tool calls) maps to the line that called the helper.
       const text = lines[(event.line ?? 0) - 1] ?? "";
       if (event.kind === "call" && !(event.delegated ? /\w\(/.test(text) : text.includes(`${event.name}(`))) failures.push(`${target}: line ${event.line} does not call ${event.name}`);
     }
     if (!record.events.some((event) => event.kind === "call")) failures.push(`${target}: the record has no SDK calls`);
+    for (const e of record.events.filter(failed)) failures.push(`${target}: line ${e.line} ${e.name} failed: ${JSON.stringify(e.error ?? (e.result as { error?: unknown }).error).slice(0, 140)}`);
   }
   for (const subject of existsSync(RUNS) ? readdirSync(RUNS) : []) {
     for (const f of readdirSync(join(RUNS, subject))) if (!files.has(`${subject}/${f.replace(/\.json$/, "")}`)) failures.push(`${subject}/${f}: a record with no example file`);
