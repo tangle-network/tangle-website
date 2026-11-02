@@ -6,6 +6,7 @@ summary: >-
   and recovery when the selected Tangle operator fails.
 description: "Implement signed RFQ fields, expiry, replay protection, result authorization, and recovery when the selected Tangle operator fails."
 date: '2026-03-28'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - x402
@@ -18,37 +19,35 @@ seriesOrder: 11
 ---
 
 You have three independent service providers that can run the same job.
-For a sample quote, one says the work will cost 0.004 ETH, Ethereum's native token, another says 0.005 ETH, and the third sample quote says 0.0035 ETH.
-You choose the third quote, send the job, and wait.
-The buyer needs the selected provider to stay bound to the job and the quoted amount to stay tied to the request.
+Their sample quotes are 0.004 ETH, Ethereum's native token, 0.005 ETH, and 0.0035 ETH.
+You choose the 0.0035 ETH quote, send the job, and wait.
+The buyer needs the selected provider bound to the job and the quoted amount tied to the request.
 
-An RFQ, short for request for quote, turns that conversation into a set of signed facts.
-Tangle is a protocol for registering and coordinating services that are run by independent operators.
+An RFQ, short for request for quote, turns that conversation into signed facts.
+Tangle is a protocol for registering and coordinating services run by independent operators.
 The requester identifies the job and its inputs.
-An operator is the provider that signs a price and an expiry for that exact request.
-The Tangle contracts check those facts when the job is submitted and when a result is paid.
-The signature does not prove that the computation is correct, but it makes the economic and identity claims testable.
+Each operator signs a price and an expiry for that exact request, and the Tangle contracts check those facts when the job is submitted (through `JobQuoteDetails`) and when a result is paid.
+The signature does not prove that the computation is correct. It makes the economic and identity claims testable.
 
-This distinction matters for agent services.
-An agent can select a provider by comparing signed quotes returned for the same request, but a buyer still needs to know which provider accepted the work, what the provider promised to charge, and what happens if the provider disappears.
-An RFQ supplies those bindings without pretending that a signature is a quality guarantee.
+Agents can select a provider by comparing signed quotes for the same request.
+The buyer still needs to know which provider accepted the work, what it promised to charge, and what happens if it disappears.
+An RFQ supplies those bindings without making a signature a quality guarantee.
 
 ## Quote fields and their on-chain bindings
 
 A Blueprint is the deployable service definition that tells Tangle what jobs exist, how they are called, and what evidence or payment rules apply.
-An operator is the person or service that runs an instance of that Blueprint and takes responsibility for responding to jobs.
+An operator runs an instance of that Blueprint and takes responsibility for responding to jobs.
 A service instance is one registered deployment, identified on-chain by a service ID.
 A job index is the number assigned to one callable operation inside that service.
 
 The requester is the account asking for the job.
 The request includes the service ID, job index, and inputs.
-A quote is an operator's signed offer for that particular job.
-The quote contains a price and time bounds, but it also carries the identity of the requester and a hash of the inputs.
-The confidentiality field states which execution boundary the requester requires; it records intent, not proof that the work ran privately.
+A quote is an operator's signed offer for that job.
+It carries a price, time bounds, the requester's identity, and a hash of the inputs.
+The confidentiality field states which execution boundary the requester requires. It records intent, not proof that the work ran privately.
 
-The inputs hash is a fixed-length fingerprint of the exact bytes the requester says should be processed.
-It is not the input itself.
-Anyone can recompute the fingerprint from the agreed serialization and check whether it matches, while sensitive inputs can remain out of the public transaction.
+The inputs hash is a fixed-length fingerprint of the exact bytes the requester says should be processed, not the input itself.
+Anyone can recompute it from the agreed serialization and check the match, and sensitive inputs stay out of the public transaction.
 
 Tangle's current public type defines the quote details as follows:
 
@@ -65,8 +64,8 @@ struct JobQuoteDetails {
 }
 ~~~
 
-The field names and types above come from the public TNT Core contract.
-The contract source is the authority for the encoding, while the [Tangle pricing and payments guide](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) explains the user-facing flow.
+The field names and types come from the public TNT Core contract, which is the authority for the encoding.
+The [Tangle pricing and payments guide](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) explains the user-facing flow.
 
 ## What the signature binds
 
@@ -79,22 +78,20 @@ The signature says, in effect:
 
 > This operator key offers this requester this job, for this input fingerprint, at this price, during this time interval, under this confidentiality setting.
 
-That sentence is a useful mental model, but it is not a substitute for checking the encoded fields.
-The contract still needs to recover the signer, compare the requester to the caller, validate the service and job, reject an expired quote, and ensure that the payment matches the selected prices.
+The sentence is a useful mental model, not a substitute for checking the encoded fields.
+The contract must still recover the signer, compare the requester to the caller, validate the service and job, reject an expired quote, and check that payment matches the selected prices.
 
-A signed quote does not say that the operator has enough capacity.
-It does not say that the result will be accurate.
-It does not say that the input serialization was meaningful.
-It says that a particular key signed a particular offer, and the protocol can use that fact when deciding who may act next.
+A signed quote does not show that the operator has capacity, that the result will be accurate, or that the input serialization was meaningful.
+It shows only that a particular key signed a particular offer, which the protocol can use when deciding who may act next.
 
 ## How a signed quote reaches result submission
 
 Consider Alice, who needs a document-extraction job.
 Her client serializes the document reference and extraction options, computes the input fingerprint, and asks several operators for prices.
-The operators can calculate prices locally because the request contains the information they need, while the sensitive document can remain outside the quote response.
+Operators can price locally from the request, and the sensitive document stays out of the quote response.
 
-In this sample, Operator A returns a signed offer for 0.004 ETH that expires at 12:05.
-In this sample, Operator B returns a signed offer for 0.005 ETH that expires at 12:10.
+Operator A's sample offer is 0.004 ETH, expiring at 12:05.
+Operator B's is 0.005 ETH, expiring at 12:10.
 Alice selects Operator A at 12:01.
 Her transaction supplies the selected quote and the exact payment amount.
 
@@ -110,17 +107,15 @@ The important checks happen at the boundary between those steps:
 | Settlement | The job reaches its configured completion or failure path | Payment and service outcome remain separate facts |
 
 The caller binding is easy to overlook.
-The current type includes requester as a first-class signed field, and the contract rejects a zero requester and requires it to equal the caller.
-That prevents a valid signature from being lifted out of one user's request and attached to another user's transaction.
+The current type includes requester as a signed field, the contract rejects a zero requester, and it requires the requester to equal the caller.
+That stops a valid signature from being lifted out of one user's request and attached to another user's transaction.
 
-The input fingerprint provides a second binding.
-If the client changes the model, document, or options after asking for a quote, the new bytes should produce a new fingerprint and therefore require a new quote.
-That is the desired failure.
-Silently reusing the old price for materially different work would make the quote look precise while pricing the wrong job.
+The input fingerprint is a second binding.
+If the client changes the model, document, or options after asking for a quote, the new bytes produce a new fingerprint and require a new quote.
+That failure is the desired one. Reusing the old price would make the quote look precise while pricing the wrong job.
 
-Payment is also exact at submission.
-For multiple selected operators, the transaction value must equal the sum of their quote prices.
-The submitted value must equal the displayed quote total and the amount escrowed.
+Payment is exact at submission.
+With multiple selected operators, the transaction value must equal the sum of their quote prices, the displayed quote total, and the amount escrowed.
 
 ## Why the result check is the accountability mechanism
 
@@ -130,7 +125,7 @@ The result check enforces which quoted operator may claim the job payment.
 Once a job has been created from quotes, Tangle records which operators were quoted for that job.
 When an operator submits a result, the jobs submission contract validates that relationship.
 The current public implementation rejects an operator that was not quoted for the job with a **NotQuotedOperator** error.
-The rejected operator may have the right service, a good reputation, and a plausible result; those facts do not authorize it to claim this job's payment.
+The rejected operator may have the right service, a good reputation, and a plausible result. Those facts do not authorize it to claim this job's payment.
 
 This prevents a free-rider pattern:
 
@@ -140,6 +135,7 @@ This prevents a free-rider pattern:
 
 Without an identity check at result submission, the quote would describe an intention rather than an enforceable assignment.
 With the check, the protocol can distinguish a quoted operator that failed to deliver from an unrelated operator that was never selected.
+The [on-chain RFQ guide](/blog/on-chain-rfq-job-quotes-verification-slashing) walks through the same gate with a continuing example.
 
 The check has a deliberate limitation.
 It authenticates the responsible operator; it does not evaluate the content of the result.
@@ -152,18 +148,16 @@ Quality requires a separate verification method, such as a deterministic check, 
 A quote has a timestamp and an expiry.
 The timestamp gives the protocol an age to check.
 The expiry gives the requester a latest acceptable execution time.
-Both are needed because a quote can be valid according to its own expiry while still being too old for the service's current risk policy.
+Both are needed because a quote can be valid by its own expiry and still be too old for the service's current risk policy.
 
 The pricing engine documentation describes quote TTL and expiry as security controls.
-The service can also enforce a maximum quote age.
-That means an operator cannot keep one signed price alive indefinitely merely because the original expiry was generous.
+The service can also enforce a maximum quote age, so an operator cannot keep one signed price alive indefinitely because the original expiry was generous.
 
 The job submission path must reject a quote signature reused for duplicate work or duplicate payment.
 The exact replay key belongs to the deployed contract version, so production clients should use the public contract and ABI for the target network rather than reimplementing the rule from memory.
 
-Clock handling deserves a concrete policy.
-If a client clock is two minutes fast, it may discard a quote that the chain would accept.
-If it is two minutes slow, it may present a quote that is already too old.
+Clock handling needs a concrete policy.
+A client clock two minutes fast may discard a quote the chain would accept. Two minutes slow, it may present a quote that is already too old.
 Use the chain's observed time for final decisions, allow a small measured skew, and display the quote expiry to the user in the same timezone as the request.
 
 ## What happens when an operator fails
@@ -188,9 +182,8 @@ The distinction between a result check and slashing is important:
 | Quoted operator submits a wrong result | The operator identity check can still pass | An independent checker or dispute process must establish that the result was wrong |
 | Payment settles but the client times out | The payment record and job outcome may diverge | The client needs idempotent status lookup and a refund or dispute policy |
 
-This is why “signed quote” should not be advertised as “guaranteed result.”
-The signature gives the system a clean starting point for attribution.
-Accountability still depends on evidence, authority, timing, and the rules of the active deployment.
+Do not advertise a signed quote as a guaranteed result.
+The signature gives attribution a clean starting point. Accountability still depends on evidence, authority, timing, and the active deployment's rules.
 
 ## RFQ and x402 solve different boundaries
 
@@ -202,10 +195,6 @@ The [Tangle x402 runner documentation](https://docs.tangle.tools/developers/blue
 RFQ is useful when the requester needs a signed, on-chain selection of operators and exact job-level price commitments.
 x402 is useful when the client should pay through HTTP before the gateway enqueues the job.
 They can coexist when the product keeps HTTP payment and on-chain operator assignment as separate records, but a successful x402 payment alone does not identify an operator in the RFQ sense or prove that the result is correct.
-
-Use RFQ when provider selection and accountable assignment are part of the product.
-Use x402 when the primary problem is payment at an HTTP boundary.
-Use both only when the extra state is worth the operational and user-interface complexity.
 
 The [on-chain RFQ guide](/blog/on-chain-rfq-job-quotes-verification-slashing) goes deeper into verification and slashing.
 The [x402 payments guide](/blog/x402-payments-for-ai-agents) covers the separate HTTP payment path.
@@ -221,7 +210,7 @@ An operator may quote a job and then lose its worker before submission.
 The product needs a status endpoint, a retry policy that does not accidentally replay payment, and a clearly documented outcome for an unfulfilled quote.
 Selecting several operators can improve availability, but it also changes the payment total and the result aggregation problem.
 
-Confidentiality is another boundary, not a magic privacy guarantee.
+Confidentiality is a boundary, not a privacy guarantee.
 The quote records a confidentiality setting and an input fingerprint, but the setting must correspond to an actual execution and data-handling policy.
 If the service promises confidential execution, document where the input is decrypted, who can observe logs, and what evidence a buyer receives.
 
@@ -231,14 +220,9 @@ Give the client a fast status path, an idempotent request identifier, and a poli
 
 ## Use RFQ when assignment matters
 
-An RFQ becomes a meaningful accountability primitive when four things are bound together:
-the requester, the exact job and inputs, the selected operator, and the amount paid.
-Tangle's current quote shape makes those bindings explicit, and the result submission check prevents a non-quoted operator from taking over the assignment.
-
 The remaining work is product design.
 You still need a quality check, a capacity strategy, a dispute evidence plan, and a customer-facing explanation of pending versus completed work.
 Build those around the protocol's actual guarantees, and the quote becomes a useful contract between an automated buyer and an independent service operator.
-
 
 ## Is an RFQ quote the same as a completed job?
 
