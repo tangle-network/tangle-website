@@ -4,41 +4,40 @@ slug: self-improving-stack-optimization-theory
 summary: >-
   Optimization theory for agent builders helps choose what to change, compare candidates fairly, and stop noisy gains from becoming production regressions.
 date: '2026-05-29'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'evals', 'optimization', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 4
 ---
 
-An agent that answers support questions is missing the same refund rule three days in a row.
-The team keeps rewriting its system prompt.
-The wording gets longer, but the agent still reaches for an obsolete policy page.
+import Example from '../../components/Example.astro'
+
+An agent that answers support questions keeps missing the same refund rule three days in a row.
+The team keeps lengthening the system prompt, and the agent still reaches for an obsolete policy page.
 
 That is not necessarily a prompt problem.
 The failure may live in retrieval, memory, the tool description, the runtime loop, or the evaluator that never noticed the regression.
-That is the kind of failure an optimization framework should diagnose.
-The framework asks which part of the system can change, which evidence can distinguish a better candidate from a lucky one, and which release rule is allowed to make the change real.
+An optimization framework should diagnose that. It asks which part of the system can change, which evidence can tell a better candidate from a lucky one, and which release rule may make the change real.
 
-An **agent** is software that uses a model, tools, and state to pursue a task.
-The **mutable surface** is the part of that system the improvement loop is permitted to change.
-The **runtime** is the software that executes model turns and tool calls, manages limits, and records what happened.
-A **trace** is the record of one run, including inputs, actions, tool results, artifacts, costs, and outcome.
-An **evaluator** is the test or person that scores the run.
-The **baseline** is the version already in use.
-The **candidate** is the proposed replacement.
-A **promotion gate** is the rule that decides whether the candidate may replace the baseline.
+The **mutable surface** is the part of the system the improvement loop is permitted to change.
+The **runtime** executes model turns and tool calls, enforces limits, and records what happened.
+A **trace** is the record of one run: inputs, actions, tool results, artifacts, costs, and outcome.
+The **baseline** is the version already in use, and the **candidate** is the proposed replacement.
+A **promotion gate** is the rule that decides whether the candidate replaces the baseline.
 A **deterministic check** is a repeatable test that turns an artifact or action into evidence.
-A **holdout set** is a protected group of cases kept outside candidate search.
-A **sandbox** is an isolated execution boundary that limits files, networks, credentials, or processes.
+A **holdout set** is a group of cases kept outside candidate search.
 
-The common loop is short:
+The common loop:
 
 ```text
 candidate → run → measure → compare → keep, reject, or revise
 ```
 
-The engineering difficulty sits inside the verbs.
 If the loop changes the wrong artifact, measures the wrong outcome, or compares unequal work, it can improve its number while making the product worse.
+
+Tangle’s public surface for the measure-and-compare verbs is agent-eval’s `defineAgentEval`: scenarios and a `baselineSurface` go in, and `evaluate({ surface })` returns a mean per judge.
+The gate script below prints both means and exits 1 when the candidate scores lower.
 
 ## Start with the failure, not the optimizer
 
@@ -54,8 +53,8 @@ There are at least five plausible repairs:
 | The judge rewards fluent unsupported answers | Evaluator or promotion gate |
 
 The cheapest editable surface is not automatically the causal surface.
-Prompt text is easy to change, so teams often use it as a universal repair kit.
-That habit creates prompt maximalism: a growing instruction block that tries to simulate permissions, memory, concurrency, and verification.
+Prompt text is easy to change, so teams use it as a universal repair kit.
+That habit creates prompt maximalism, named below.
 
 Use the smallest surface that can produce the desired behavior.
 If the agent knows the policy and applies it inconsistently, a prompt or skill experiment is reasonable.
@@ -64,8 +63,6 @@ If the agent needs a second worker or an isolated workspace, the runtime must ex
 If the candidate can change the evaluator, the outer release process must remain outside the search.
 
 ## One loop, several search spaces
-
-The same proposal-and-test loop can operate on different objects.
 
 | Search surface | Candidate can change | Evidence that matters most |
 | --- | --- | --- |
@@ -81,8 +78,7 @@ The [GEPA paper](https://arxiv.org/abs/2507.19457) describes reflective prompt e
 [SkillOpt](https://arxiv.org/abs/2605.23904) moves the same idea to a persistent skill document and accepts bounded edits only when validation improves.
 [AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/) makes executable code the candidate and uses automated evaluators to search algorithm space.
 
-These systems rhyme because they all search.
-They are not interchangeable because a prompt edit cannot create a sandbox, and a code mutation cannot be judged safely by a stylistic preference score alone.
+These systems rhyme because they all search, but they are not interchangeable: a prompt edit cannot create a sandbox, and a code mutation cannot be judged by a stylistic preference score alone.
 
 ## A small equation that prevents vague claims
 
@@ -96,22 +92,20 @@ The product objective is:
 J(s) = E[Q(τ(s, x))] - λᵀ C(τ(s, x))
 ```
 
-The notation is less important than the terms it forces into the conversation.
 Q might include a test result, citation correctness, task completion, or human review.
 C might include model calls, tokens, wall time, dollars, sandbox minutes, and human review time.
-λ expresses which costs the product cannot ignore.
+λ sets the price the product puts on each cost.
 
 If a new topology scores higher only because it uses four times as many model calls, the result may be worth buying, but it is a compute trade rather than a pure quality improvement.
 If a memory layer increases answer quality but exposes private notes to the wrong tenant, quality is not the only term that changed.
 If a judge rewards long answers, verbosity has entered Q whether the team intended it or not.
 
-Writing the cost vector down is often the first useful optimization.
-It exposes the hidden budget that a candidate was spending to win.
+Writing the cost vector down often exposes the hidden budget a candidate spent to win.
 
 ## Compare paired runs, not lucky averages
 
-The baseline and candidate should see the same task, profile, tool surface, and replicate whenever possible.
-An **agent profile** is the versioned bundle that identifies those run conditions, such as model, prompt, tools, permissions, skills, and runtime settings.
+The baseline and candidate should see the same task, profile, tool surface, and replicate when possible.
+An **agent profile** is the versioned bundle that identifies those run conditions, such as model, prompt, tools, permissions, skills, and runtime settings. It tells the evaluator whether a candidate changed only a prompt or also the model, router, runtime, or deployment boundary.
 
 For paired task i, calculate:
 
@@ -119,22 +113,21 @@ For paired task i, calculate:
 δᵢ = score(candidate, i) - score(baseline, i)
 ```
 
-The list of deltas answers a better question than two unrelated averages.
-It shows whether the candidate tends to improve the same work the baseline attempted.
-It also exposes asymmetric failures, such as a candidate that wins easy tasks and loses every high-risk case.
+The list of deltas shows whether the candidate improves the same work the baseline attempted.
+It exposes asymmetric failures, such as a candidate that wins easy tasks and loses every high-risk case.
 
 A positive average is only a signal.
-The release decision should also state the number of pairs, the spread of deltas, the protected cases that regressed, and the uncertainty around the estimate.
-A bootstrap confidence interval is one practical way to resample the paired deltas and estimate how much the result could move under another draw.
+The release decision should state the number of pairs, the spread of deltas, the protected cases that regressed, and the uncertainty of the estimate.
+A bootstrap confidence interval resamples the paired deltas to estimate how far the result could move.
 
 Do not turn a confidence interval into a magic pass number.
 The minimum useful lift depends on the product.
 A one-point lift may matter for a high-severity failure class and not matter for a low-value formatting preference.
-The threshold should be set before the candidate is inspected.
+Set the threshold before the candidate is inspected.
 
 ## The baseline must be hard enough to beat
 
-An optimizer can look excellent when its comparison point is weak.
+An optimizer looks excellent against a weak comparison point.
 An eight-branch agent should not be compared with one greedy sample if the product could have spent the same budget on eight simple samples.
 
 For a test-time workflow, compare at least:
@@ -146,24 +139,36 @@ For a test-time workflow, compare at least:
 | A stronger model with fewer retries | The existing model with equivalent spend and latency |
 | A new memory retriever | The same agent with retrieval disabled and the same task set |
 
-This is the equal-compute principle.
-It does not say that extra compute is bad.
-It says that the system should name whether the gain came from a better policy, a larger search, a stronger model, or a combination.
+This is the equal-compute principle. It does not say extra compute is bad. It says the system should name whether a gain came from a better policy, a larger search, a stronger model, or a combination.
 
-The [test-time compute article](/blog/self-improving-stack-test-time-compute) develops this comparison in more detail.
+The [test-time compute article](/blog/self-improving-stack-test-time-compute) develops this comparison.
 The [evaluation gates article](/blog/self-improving-stack-evaluation-gates) explains how to turn it into a release decision.
 
 ## Where Tangle changes the boundary
 
 Tangle’s public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) describes a TypeScript runtime for chat turns, one-shot tasks, and teams of agents.
 Its public README shows a driver reading worker output, composing the next step, and stopping after a validator passes.
-That is a runtime mechanism, not a prompt convention.
 
 The companion [agent-eval repository](https://github.com/tangle-network/agent-eval) describes the measurement side.
-Its public examples compare a baseline surface with a candidate across the same cases and return score distributions.
-Those repositories are useful boundaries for an optimization design: runtime code executes the candidate, while evaluation code decides whether the measured change earned promotion.
+Runtime code executes the candidate. Evaluation code decides whether the measured change earned promotion.
+The example below is the smallest working gate: it runs the shipped prompt and a candidate on the same two scenarios in fresh sandboxes, and CI fails when the candidate scores lower.
+It calls `client.create`, sends each prompt with `box.prompt`, and reads the verdict from `box.exec`, which returns the test’s exit code.
 
-Tangle’s network vocabulary describes a separate deployment boundary.
+<Example path="evals/regression-gate" title="A CI gate that fails when the candidate scores below the shipped prompt" />
+
+Each field of the example maps to one object in the objective and the release rule:
+
+- `baselineSurface` is the baseline, fixed for the whole comparison.
+- `scenarios` is the task set x, run on both surfaces.
+- `agent` computes τ(s, x): a fresh sandbox per run, the surface sent with `box.prompt`, and the test’s exit code from `box.exec` returned as the artifact.
+- `judge.score` is Q, a deterministic check: 1 if the test exits 0, else 0.
+- `evaluate({ surface })` estimates E[Q] for one surface, and `aggregates.byJudge.suite.mean` reads that estimate.
+- The final `if` is the promotion gate.
+- `expectUsage: "off"` only disables the check for zero-cost stub runs. The script reads no cost, so the λᵀC term is absent.
+
+The output proves that the candidate did not lower the pass rate on these two scenarios under one check. It does not prove the candidate is better.
+The gate has no minimum lift, paired-delta interval, protected holdout, or cost term, so a candidate that wins by spending more would pass. Add those before the score drives a release.
+
 A **Blueprint** is a reusable service template that defines runnable artifacts, jobs, metadata, and optional protocol logic.
 A **Service** is a live instance created from that template.
 An **operator** is the independent party that runs the Service and handles its jobs.
@@ -176,16 +181,11 @@ It does not say that the agent’s answer was correct.
 If a service uses a trusted execution environment, or TEE, an **attestation** is a signed report about the loaded code and hardware state that a policy check can compare with an expected measurement.
 Attestation can support an execution-integrity claim.
 It does not replace a task evaluator, a trace, or a rollback plan.
-Tangle’s [public TEE and x402 explanation](https://www.tangle.tools/blog/blueprint-tee-x402-production-gating/) makes that separation explicit.
-
-An agent profile still belongs in the optimization record.
-It tells the evaluator whether a candidate changed only a prompt or also changed the model, tools, permissions, router, runtime, or deployment boundary.
+Tangle’s [public TEE and x402 explanation](https://www.tangle.tools/blog/blueprint-tee-x402-production-gating/) draws the same line.
 
 ## A worked choice
 
-Imagine a paid document-review agent.
-The agent receives a document, retrieves policy sources, returns a finding, and charges per job.
-The product has two failures: unsupported claims and unpredictable cost.
+A paid document-review agent receives a document, retrieves policy sources, returns a finding, and charges per job. Its two failures are unsupported claims and unpredictable cost.
 
 The first experiment should not be a multi-agent rewrite.
 It should freeze the model and tools, add a source-citation check, and compare the current prompt with a candidate prompt on paired held-out documents.
@@ -195,7 +195,7 @@ If the agent finds the right source but fails to include it in the output, add a
 If the agent needs several independent sources in parallel, test a real fanout topology with a budget cap.
 If the result is good but the trace omits retrieval spans, repair the harness before trusting the score.
 
-The following decision record is illustrative; its case counts are placeholders, not a Tangle benchmark:
+The decision record below is illustrative; its counts are placeholders, not a Tangle benchmark:
 
 ```text
 surface: prompt
@@ -209,9 +209,6 @@ holdout: 40 documents never shown during search
 decision: hold, promote, or reject
 ```
 
-The point is not the field names.
-The point is that someone can tell what changed, what was measured, what remained fixed, and why the release decision follows.
-
 ## Failure modes worth naming
 
 **Prompt maximalism** hides missing tools, memory, or control flow inside prose.
@@ -222,7 +219,7 @@ The point is that someone can tell what changed, what was measured, what remaine
 
 **Surface confusion** blames the prompt because it is easy to edit even when the trace points to retrieval or permissions.
 
-**Holdout contamination** makes a protected test set part of the search process.
+**Holdout contamination** makes a protected test set part of search.
 
 **Candidate drift** changes the profile between generation and final scoring, so the measured object is not the object that ships.
 
@@ -231,11 +228,6 @@ Every mutable surface needs a reversible activation path, especially memory, per
 
 ## Choose the layer that can move the outcome
 
-Optimize the prompt when the failure is an instruction or example.
-Optimize a skill when a reusable procedure is missing or brittle.
-Optimize memory when the next run needs scoped, source-backed context.
-Optimize runtime topology when the system needs a different sequence, branch, worker, or stop rule.
-Optimize harness code when the current machine cannot express the needed action or cannot prove what happened.
 Touch model weights only when the behavior cannot be reliably expressed outside the model and the team is ready for the stronger data, safety, and rollback obligations.
 
 The shortest trustworthy improvement loop is:
@@ -253,7 +245,6 @@ promote only on protected evidence
 If the team cannot say which surface caused the improvement, it has a result but not yet an explanation.
 That is enough for a candidate.
 It is not enough for a system that is allowed to improve itself.
-
 
 ## What is optimization theory for agent builders?
 
