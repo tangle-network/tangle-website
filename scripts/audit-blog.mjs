@@ -81,11 +81,6 @@ function lineOf(text, needle) {
   return text.slice(0, index).split('\n').length
 }
 
-function imageExists(image) {
-  if (!image?.startsWith('/images/')) return true
-  return fs.existsSync(path.join(root, 'public', image.slice(1)))
-}
-
 function addFinding(findings, severity, file, message, needle, text) {
   findings.push({
     severity,

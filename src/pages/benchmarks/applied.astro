@@ -1,139 +1,53 @@
 ---
+import { metricBars } from '@tangle-network/charts';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchHead from '../../components/BenchHead.astro';
-import Board, { type BoardRow } from '../../components/Board.astro';
-import Chart from '../../components/Chart.astro';
-import { verifyBoardRecord, type BoardRecord } from '../../data/benchmarks/board-record';
-import legal from '../../data/benchmarks/applied/legal-personas.json';
-import tax from '../../data/benchmarks/applied/tax-calc-bench.json';
-import { day } from '../../data/benchmarks/sandbox';
+import Figure from '../../components/Figure.astro';
+import { drawnWidth, niceMax } from '../../data/benchmarks/grid';
+import { boards, harnessLabel, identity, type AppliedBoard } from '../../data/benchmarks/applied';
+import '@tangle-network/charts/figure.css';
 import '../../styles/bench.css';
 
-// Every record below is imported by `pnpm import:applied` from the repository that owns it at a pinned commit, or written
-// by the VerticalBench runner; nothing here is authored, and every rate is computed from a record. A board that does not verify stops the build.
-const files = import.meta.glob<unknown>('../../data/benchmarks/boards/*.json', { eager: true, import: 'default' });
-const boards: BoardRecord[] = Object.entries(files)
-  .map(([path, value]) => {
-    const board = verifyBoardRecord(value, path);
-    if (!path.endsWith(`/boards/${board.suite.id}.json`)) throw new Error(`benchmark board ${path} holds suite ${board.suite.id}`);
-    return board;
-  })
-  .sort((a, b) => b.campaign.completedAt.localeCompare(a.campaign.completedAt));
+const usd = (x: number) => `$${x.toFixed(2)}`;
+const wide = (b: AppliedBoard) => b.rows.length > 3;
+const facts = (b: AppliedBoard, r: AppliedBoard['rows'][number]) => [`Harness: ${harnessLabel(r)}`, ...(r.cost === undefined ? [] : [`Cost: ${usd(r.cost)}`]), `Run: ${b.date}`];
+const named = (b: AppliedBoard) => Object.fromEntries(b.rows.map((r) => [r.id, identity(r)]));
 
-const mean = <T,>(rows: T[], f: (r: T) => number) => rows.reduce((a, r) => a + f(r), 0) / rows.length;
-const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
-const pct = (x: number) => `${(x * 100).toFixed(x > 0 && x < 0.095 ? 1 : 0)}%`;
-const usd = (x: number | null) => (x === null ? '–' : `$${x.toFixed(2)}`);
-const minutes = (ms: number) => `${(ms / 60_000).toFixed(1)} min`;
-const github = (s: { repo: string; commit: string; path: string }) => `https://github.com/${s.repo}/blob/${s.commit}/${s.path}`;
-
-const runs = tax.record.runs;
-const taxBench = {
-  source: tax.source,
-  benchmark: tax.record.benchmark,
-  published: tax.record.published,
-  writeup: tax.record.writeup,
-  n: runs.length,
-  model: [...new Set(runs.map((r) => r.model.split('@')[0]))].join(', '),
-  strict: mean(runs, (r) => (r.strict ? 1 : 0)),
-  lenient: mean(runs, (r) => (r.lenient ? 1 : 0)),
-  byLine: mean(runs, (r) => r.byLine),
-  medianWallMs: median(runs.map((r) => r.wallMs)),
-  fullyCorrect: runs.filter((r) => r.byLine === 1).length,
-  cases: runs.slice().sort((a, b) => a.byLine - b.byLine || a.scenarioId.localeCompare(b.scenarioId)),
+const scores = (b: AppliedBoard) => {
+  const format = (v: number) => (b.percent ? `${(v * 100).toFixed(1)}%` : v.toFixed(1));
+  const rows = [...b.rows].sort((x, y) => y.score - x.score);
+  return metricBars(rows.map((r) => ({
+    id: r.id, label: `${r.model} on ${harnessLabel(r)}`, value: r.score,
+    ...(r.detail ? { detail: r.detail } : {}),
+    interval: { lower: r.lower, upper: r.upper, level: 0.95, method: b.interval },
+    observations: { count: Number(r.samples.match(/\d+/g)!.at(-1)), label: r.samples.replace(/^[\d of]+/, '').trim() },
+    facts: facts(b, r),
+  })), { id: b.id, measure: b.measure, unit: '', domain: [0, b.max], formatValue: format, identities: named(b), width: drawnWidth(wide(b) ? 6 : 2) });
 };
-const taxRows: BoardRow[] = [
-  { label: 'Tangle tax agent', sub: taxBench.model, value: taxBench.byLine, extra: pct(taxBench.strict), n: taxBench.n, highlight: true },
-  ...taxBench.published.map((p): BoardRow => ({ label: p.model, sub: 'single shot, published by Column Tax', value: p.byLine, extra: pct(p.strict), n: taxBench.benchmark.cases })),
-].sort((a, b) => b.value - a.value);
 
-type Profile = { model: string; meanComposite: number; min: number; n: number };
-const modelName = (id: string) => id.replace(/^[\w-]+\//, '').replace(/^claude-(\w+)-(\d)-(\d)-\d{8}$/, (_, k, a, b) => `Claude ${k[0].toUpperCase()}${k.slice(1)} ${a}.${b}`).replace(/^gpt-([\d.]+)-(\w)/, (_, v, c) => `GPT-${v} ${c.toUpperCase()}`);
-const maker = (model: string) => ({ Gemini: 'google', Claude: 'anthropic', GPT: 'openai' })[model.split(/[ -]/)[0]];
-const logo = (model: string) => (maker(model) ? `/images/models/${maker(model)}.svg` : undefined);
-const harnesses: Record<string, string> = { opencode: 'OpenCode', 'claude-code': 'Claude Code', codex: 'Codex' };
-const profiles = Object.entries(legal.record.profiles as Record<string, Profile>).map(([id, p]) => ({ id, ...p, model: modelName(p.model) })).sort((a, b) => b.meanComposite - a.meanComposite);
-const personas = Object.entries(legal.record.byPersona as Record<string, Record<string, number>>)
-  .map(([id, scores]) => ({ id, scores, low: Math.min(...profiles.map((p) => scores[p.id])) }))
-  .sort((a, b) => a.low - b.low || a.id.localeCompare(b.id));
-const legalRows: BoardRow[] = profiles.map((p) => ({ label: p.model, sub: p.id, value: p.meanComposite / 100, extra: String(p.min), n: p.n }));
+const costs = (b: AppliedBoard) => {
+  const rows = b.rows.filter((r) => r.cost !== undefined).sort((x, y) => x.cost! - y.cost!);
+  return metricBars(rows.map((r) => ({ id: r.id, label: `${r.model} on ${harnessLabel(r)}`, value: r.cost!, observations: { count: Number(r.samples.match(/\d+/g)!.at(-1)), label: r.samples.replace(/^[\d of]+/, '').trim() }, facts: facts(b, r) })),
+    { id: `${b.id}-cost`, measure: 'US dollars', unit: '', domain: [0, niceMax(Math.max(...rows.map((r) => r.cost!)))], formatValue: usd, identities: Object.fromEntries(rows.map((r) => [r.id, identity(r)])), width: drawnWidth(wide(b) ? 6 : 3) });
+};
 
-const boardRows = (b: BoardRecord): BoardRow[] => [...b.profiles].sort((x, y) => y.rate - x.rate).map((p) => ({
-  label: modelName(p.model), sub: `${harnesses[p.harness] ?? p.harness}${p.label.includes('no-web') ? ', no web' : ''}`, logo: logo(modelName(p.model)), value: p.rate, low: p.interval.lower, high: p.interval.upper, extra: usd(p.cost.perSolvedUsd), n: p.attempts,
-  note: `${p.solved} of ${p.attempts} solved, ${usd(p.cost.totalUsd)} total, median ${minutes(p.medianWallMs)}`,
-}));
-// The charts: tax by its headline metric, then every coding profile on every board, solved and cost per solved task.
-const taxChart: BoardRow[] = [
-  { label: 'Tangle tax agent', value: taxBench.strict, logo: '/favicon.svg', highlight: true },
-  ...taxBench.published.map((p): BoardRow => ({ label: p.model, value: p.strict, logo: logo(p.model) })),
-].sort((a, b) => b.value - a.value);
-const coding = boards.flatMap((b) => b.profiles.map((p) => ({ label: `${modelName(p.model).split(' ').at(-1)} on ${b.suite.name.split(' ')[0]}`, logo: logo(modelName(p.model)), value: p.rate, cost: p.cost.perSolvedUsd })));
-const bestBoard = boards.map((b) => ({ board: b, top: boardRows(b)[0] })).sort((a, b) => b.top.value - a.top.value)[0];
-const latest = [tax.source.importedAt, legal.source.importedAt, boards[0].campaign.completedAt].map(day).sort().at(-1);
-
-const lead = `As of ${latest}: tax, ${taxBench.fullyCorrect} of ${taxBench.n} returns with every line exact. Coding, ${bestBoard.top.label} solves ${pct(bestBoard.top.value)} of ${bestBoard.board.suite.name}. Legal, ${profiles[0].model} scores ${profiles[0].meanComposite.toFixed(1)} of 100 across ${personas.length} personas.`;
-const domains = [['tax', 'Tax'], ['coding', 'Coding'], ['legal', 'Legal'], ['health', 'Health'], ['research', 'Research']];
+const best = (b: AppliedBoard) => b.rows.reduce((x, y) => (y.score > x.score ? y : x));
+const updated = boards.map((b) => b.date).sort().at(-1)!;
+const tax = boards.find((b) => b.id === 'tax')!;
+const summary = `Agent profiles compared on tax, legal and app-building work: ${best(tax).model} on ${harnessLabel(best(tax))} leads tax returns at ${(best(tax).score * 100).toFixed(1)}% line accuracy.`;
 ---
 
-<BaseLayout paper title="Applied AI leaderboard" description={`How well agents built on Tangle do real work in tax, coding, legal, health and research, scored by each benchmark's own evaluator. ${lead}`}>
+<BaseLayout paper title="Applied AI benchmarks" description={summary}>
   <article class="bench">
-    <BenchHead regime="applied" title="Applied AI leaderboard">
-      <p>How well agents built on Tangle do taxes, build apps and handle legal work. Public benchmarks are scored by their owner's evaluator.</p>
-      <p class="lead">{lead}</p>
-    </BenchHead>
+    <BenchHead regime="applied" title="Applied AI benchmarks" status={`Each bar is a model and harness. Whiskers are 95% confidence. Updated ${updated}.`} />
 
-    <nav class="regimes bench-domains" aria-label="Domains">{domains.map(([id, label]) => <a href={`#${id}`}>{label}</a>)}</nav>
-
-    <div class="lb-charts">
-      <Chart title="Tax returns" unit="rate" note="Share of TaxCalcBench returns with every line exact. Higher is better." rows={taxChart} />
-      <Chart title="Coding" unit="rate" note="Share of VerticalBench app tasks solved, per board. Higher is better." rows={[...coding].sort((a, b) => b.value - a.value)} />
-      <Chart title="Cost per solved task" unit="usd" note="Spend divided by tasks solved, per board. Lower is better." rows={coding.filter((r) => r.cost !== null).map((r) => ({ ...r, value: r.cost! })).sort((a, b) => a.value - b.value)} />
+    <div class="bench-grid">
+      {boards.map((b) => <Figure title={b.title} span={wide(b) ? 6 : 2} figure={scores(b)} />)}
+      {boards.filter((b) => b.costTitle).map((b) => <Figure title={b.costTitle!} span={wide(b) ? 6 : 3} figure={costs(b)} />)}
     </div>
 
-    <section id="tax" aria-labelledby="tax-title">
-      <div class="bench-sec-head"><h2 id="tax-title">Tax: TaxCalcBench</h2><p><a href={taxBench.benchmark.url}>TaxCalcBench</a> (Column Tax), {taxBench.benchmark.cases} synthetic TY2024 federal returns; our <a href={github(taxBench.source)}>{taxBench.n} run records</a> at {taxBench.source.commit.slice(0, 10)}.</p></div>
-      <Board rows={taxRows} unit="rate" head="system" value="lines exact" spread="" extraHead="returns exact" count="returns" caption={`Returns exact: every evaluated line matches the correct Form 1040. Lines exact: share of lines that match. Published rows are Column Tax's single-shot results, as cited in the write-up; ours ran the production tax agent, median ${minutes(taxBench.medianWallMs)} per return.`} />
-      <details>
-        <summary>Every scored return, weakest first</summary>
-        <Board rows={taxBench.cases.map((c): BoardRow => ({ label: c.scenarioId, value: c.byLine, extra: c.strict ? 'exact' : c.lenient ? 'within $5' : 'no', n: c.toolCalls, note: `${c.turns} turns, ${minutes(c.wallMs)}` }))} unit="rate" head="return" value="lines exact" spread="" extraHead="return" count="tool calls" ranked={false} />
-      </details>
-    </section>
-
-    <section id="coding" aria-labelledby="coding-title">
-      <div class="bench-sec-head"><h2 id="coding-title">Coding: VerticalBench boards</h2><p>Real apps built against a pinned backend and graded in a real browser by <a href="https://github.com/tangle-network/blueprint-agent">blueprint-agent</a>; a board is one campaign's record.</p></div>
-      {boards.map((board) => (
-          <div class="bench-board">
-            <div class="bench-sec-head"><h3>{board.suite.name}</h3><p>{day(board.campaign.completedAt)}, {board.tasks.length} tasks × {board.campaign.repetitions}</p></div>
-            <Board rows={boardRows(board)} unit="rate" head="profile" value="solved" spread="interval" extraHead="per solved" count="attempts" caption={`${board.suite.description} Pass at ${board.grader.kind === 'app-grade' ? `App Grade ${board.grader.passTier}` : board.grader.pass}. Record ${board.digest.slice(0, 12)}.`} />
-          </div>
-        ))}
-    </section>
-
-    <section id="legal" aria-labelledby="legal-title">
-      <div class="bench-sec-head"><h2 id="legal-title">Legal: persona matrix</h2><p>Our own eval: {personas.length} synthetic client personas through the production legal agent, scored by a verifier; <a href={github(legal.source)}>record</a> at {legal.source.commit.slice(0, 10)}.</p></div>
-      <Board rows={legalRows} unit="rate" head="model" value="mean composite" spread="" extraHead="lowest persona" count="personas" caption={`Verifier score out of 100, averaged over ${personas.length} synthetic client personas. Lowest persona: the model's weakest single score.`} />
-      <details>
-        <summary>Every persona, lowest score first</summary>
-        <div class="lb"><table>
-          <thead><tr><th scope="col">persona</th>{profiles.map((p) => <th scope="col" class="num">{p.id}</th>)}</tr></thead>
-          <tbody>{personas.map((row) => <tr><th scope="row">{row.id}</th>{profiles.map((p) => <td class="num">{row.scores[p.id]}</td>)}</tr>)}</tbody>
-        </table></div>
-      </details>
-    </section>
-
-    <section id="health" aria-labelledby="health-title">
-      <div class="bench-sec-head"><h2 id="health-title">Health</h2></div>
-      <p class="lb-status">The health agent's <a href="https://github.com/tangle-network/health-agent/tree/main/eval/health">eval</a> runs 12 synthetic patient journeys over 26 sessions through the real product: signup, the audited vault, record import and the chat. It proves the journeys complete; a quality number against a public benchmark is not published yet, so no row appears here.</p>
-    </section>
-
-    <section id="research" aria-labelledby="research-title">
-      <div class="bench-sec-head"><h2 id="research-title">Research</h2></div>
-      <p class="lb-status">Discovery scores each research run with the evaluator its play names. Those records are not public yet. When one is, it goes here with its source, the same way.</p>
-    </section>
-
     <footer class="bench-method">
-      <p>A domain appears here only with a record file this page can read: a run record per case, the commit that produced it, and the evaluator that scored it. Public benchmarks are scored by their owner's evaluator, imported and never reimplemented. Our own evals are named as ours.</p>
-      <p>The import (<code>pnpm import:applied</code>) copies each record from the repository that owns it at a pinned commit and stores its sha256; the page computes every rate from those files when it builds.</p>
+      <p>{boards.map((b, i) => <>{i ? ' ' : ''}{b.title}: <a href={b.url}>{b.by}</a>, {b.date}.</>)} Tax shows the five configurations that finished all 51 returns; three others did not finish.</p>
     </footer>
   </article>
 </BaseLayout>
