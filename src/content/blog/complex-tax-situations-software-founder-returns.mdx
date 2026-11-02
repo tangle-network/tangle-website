@@ -4,6 +4,7 @@ slug: complex-tax-situations-software-founder-returns
 summary: >-
   Connect company ownership, K-1s, equity, crypto, foreign reporting, and state records in one source map before drafting a founder's return.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -13,9 +14,10 @@ series: Building an AI Tax Agent
 seriesOrder: 8
 ---
 
+import Example from '../../components/Example.astro'
+
 A founder can have every document their accountant requested and still lack a usable tax file.
 The folder may contain a wage statement (Form W-2), two Schedule K-1 forms, a brokerage statement, a digital-asset broker statement (Form 1099-DA), wallet exports, an ownership spreadsheet, and a foreign subsidiary ledger.
-Each file is readable on its own.
 The difficulty is that the same person, entity, asset, date, and dollar amount appears in several files, often with different labels or incomplete history.
 
 Software for complex tax situations should connect those records, map facts to draft forms, show the evidence behind each important number, and stop when a human decision is required.
@@ -24,6 +26,8 @@ It should attach each draft number to its source, calculation inputs, unresolved
 In this series, **Tangle Tax Agent** means a proposed workflow from Tangle, the project behind this series, for that preparation job.
 It is an AI tax agent in the ordinary sense: software that can organize documents, extract candidate facts, run bounded calculations, and prepare questions for a reviewer.
 This article does not claim that a public Tangle product is an IRS-authorized preparer or that it can resolve every tax position without a taxpayer or qualified professional.
+
+The proposed workflow rests on three Tangle surfaces: a Sandbox SDK box per client that holds the documents on its filesystem, `box.exec` for each computation, and the agent-app `submit_proposal` tool, which returns `queued_for_approval` instead of filing. The reader observes the exit code, the proposal status, and the source list behind each number.
 
 This is not tax advice.
 Founder returns can require tax, legal, and accounting review.
@@ -40,8 +44,6 @@ Its Schedule K-1 is the schedule that reports one shareholder’s share of the c
 A partnership K-1 serves a similar reporting purpose for a partnership, though the underlying rules differ.
 The IRS’s current [Form 1120-S instructions](https://www.irs.gov/instructions/i1120s) say the shareholder’s K-1 reports the shareholder’s separate share and can include information needed for state and local returns.
 The current [partner instructions for Schedule K-1 (Form 1065)](https://www.irs.gov/instructions/i1065sk1) explain how partnership items, activity information, and limitations are carried into the partner’s return.
-
-The software needs to link shared entities, owners, dates, amounts, and assets across source documents and downstream form fields.
 
 | Record | Fact it can support | Downstream question |
 | --- | --- | --- |
@@ -60,8 +62,7 @@ Foreign-company ownership can raise a reporting question even when the company m
 
 ## A founder scenario exposes the hidden joins
 
-Consider Elena, a software founder with the following illustrative file set for one tax year.
-The numbers below are made up to show the workflow, not to calculate Elena’s tax.
+Consider Elena, a software founder. Her file set is illustrative, and its numbers are made up to show the workflow.
 
 | File | Candidate fact | What the software must not assume |
 | --- | --- | --- |
@@ -73,7 +74,7 @@ The numbers below are made up to show the workflow, not to calculate Elena’s t
 | Foreign subsidiary cap table | Elena owned shares and served as a director for part of the year | that no distribution means no information-return question |
 | Estimated-payment receipts | payments made to two states and the federal government | that a bank transaction with a similar amount is the correct payment |
 
-The first output should be an inventory of those files and the questions they create, rather than a filled Form 1040.
+The first output should be an inventory of those files and their questions, not a filled Form 1040.
 
 Suppose Elena’s S corporation K-1 reports a loss, while the basis workpaper from the prior year is missing.
 The agent can extract the loss and mark the basis input as unavailable.
@@ -97,8 +98,13 @@ For each source, the index should retain the tax year, owner, document type, pag
 A source-to-line mapping connects a draft return line or schedule item back to the document, transaction, calculation input, or approved answer that supports it.
 This mapping is the difference between “the system says $42,000” and “the system used page 3 of the brokerage statement, minus the documented adjustment, and a reviewer accepted the result.”
 
-The following TypeScript is an illustrative data shape for that distinction.
-It is application code for a review workflow, not a private Tangle implementation and not a tax calculator.
+The agent’s claim is checked by a rerun: the exit code of `npm test` decides, not the agent’s reply.
+
+<Example path="sandboxes/fix-a-test" title="The agent's claim, checked by box.exec" />
+
+The rerun proves the check passed, not that a tax number is right; a reviewer still decides that from the source.
+
+The following TypeScript is an illustrative data shape for that distinction, not a Tangle implementation or a tax calculator.
 
 ```typescript
 type ReviewState = 'candidate' | 'accepted' | 'needs-review' | 'blocked'
@@ -137,12 +143,8 @@ A sample value such as “20” can mean 20 dollars, 20 percent, 20 shares, or 2
 The source excerpt gives a reviewer enough context to catch a bad normalization before the fact changes a form.
 
 The source hierarchy should be visible rather than absolute.
-An official IRS instruction can explain what a form asks for.
-A signed entity document can support ownership.
-A bookkeeping export can support a transaction total.
-A taxpayer answer can resolve who owns a wallet or why two documents differ.
-None of those sources automatically outranks every other source for every question.
-The system should show the conflict and state which source a reviewer accepted.
+An IRS instruction explains what a form asks for, a signed entity document supports ownership, a bookkeeping export supports a transaction total, and a taxpayer answer resolves who owns a wallet or why two documents differ.
+So the system shows conflicts and records which source a reviewer accepted.
 
 ## Route work by consequence
 
@@ -157,15 +159,14 @@ It is not a tax conclusion.
 | Blocked | A required K-1 or prior-year workpaper is missing | Keep the draft incomplete and name the missing input |
 | Superseded | A corrected K-1 replaces the earlier statement | Preserve both versions and recalculate affected outputs |
 
-This routing lets software move quickly through low-consequence extraction while slowing down where a wrong assumption can change a filing position.
-It also gives the founder a reason for the delay.
+Routing keeps low-consequence extraction fast and slows only where a wrong assumption can change a filing position.
+It gives the founder a reason for the delay.
 “Foreign ownership timeline incomplete” is actionable.
 “AI confidence low” is not enough for a high-stakes review decision.
 
 ## The review packet is the product boundary
 
 A review packet is the set of records a taxpayer or advisor needs to inspect a draft before approval.
-For Elena, it should contain the following pieces.
 
 | Packet section | What it should answer |
 | --- | --- |
@@ -179,34 +180,56 @@ For Elena, it should contain the following pieces.
 | Change log | What changed after a correction, a late document, or a reviewer decision? |
 | Approval record | Who approved which version, and which issues were accepted or escalated? |
 
-The following is an illustrative API shape for a review packet.
-It is not a public Tangle endpoint.
+The fence below makes one `submit_proposal` call through the executor that the model's tool calls reach, with stub handlers that a product replaces with store writes.
 
-```http
-POST /review-packets
-Content-Type: application/json
+```ts
+import {
+  createAppToolRuntimeExecutor,
+  type AppToolHandlers,
+  type AppToolTaxonomy,
+} from '@tangle-network/agent-app/tools'
 
-{
-  "taxYear": 2025,
-  "returnType": "founder",
-  "requireApproval": true,
-  "sources": ["w2.pdf", "s-corp-k1.pdf", "wallet-export.csv"]
+// A filing is a regulated proposal: a named human must approve it before it runs.
+const taxonomy: AppToolTaxonomy = {
+  proposalTypes: ['file-return', 'draft-schedule', 'question'],
+  regulatedTypes: ['file-return'],
 }
+
+// Stub handlers: a product writes to its own store here.
+const handlers: AppToolHandlers = {
+  submitProposal: async (args) => ({ proposalId: `prop-${args.type}`, deduped: false, status: 'queued_for_approval' }),
+  scheduleFollowup: async (args) => ({ id: 'followup-1', dueDate: args.dueDate, deduped: false }),
+  renderUi: async (args) => ({ path: `ui/${args.title}.json`, content: JSON.stringify(args.schema) }),
+  addCitation: async (args) => ({ citationId: 'cite-1', path: args.path }),
+}
+
+const executeToolCall = createAppToolRuntimeExecutor({
+  handlers,
+  taxonomy,
+  ctx: { userId: 'elena', workspaceId: 'founder-2025', threadId: 'main' },
+})
+
+// The model calls the same tool; the executor routes it to the handler.
+const outcome = await executeToolCall({
+  toolName: 'submit_proposal',
+  args: { type: 'file-return', title: '2025 S corporation basis schedule' },
+})
+console.log(outcome)
 ```
 
-This is where Tangle Tax Agent should be concrete.
-The proposed workflow should let the agent create those artifacts in one work session, retain the sources beside them, and leave filing behind an explicit approval step.
-The product claim is reviewable preparation, not automatic correctness.
+The printed outcome reports `queued_for_approval`: the filing waits for a named reviewer.
 
-The same pattern connects this post to [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns), which explains source-linked workpapers, and [Automated Tax Filing With Review Before Submit](/blog/automated-tax-filing-review-before-submit), which explains why submission needs a separate approval state.
+At the customer level, `client.instances.ensure` takes a customer key and returns that customer's kept sandbox. The documents are written into it, and each turn is polled until it completes.
 
-If a future implementation exposes this workflow through a public API, its service description should expose the input documents, draft artifacts, and approval boundary without hiding the underlying tax uncertainty.
-A system record does not prove a tax position.
-The evidence belongs in the workpapers a reviewer can open.
+<Example path="products/legal-agent" title="One kept sandbox per customer" />
+
+The proposed workflow keeps documents, drafts, and approval state in that sandbox. The claim is reviewable preparation, not automatic correctness.
+
+The same pattern appears in [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns) for source-linked workpapers and in [Automated Tax Filing With Review Before Submit](/blog/automated-tax-filing-review-before-submit) for the separate approval state.
+
+A system record does not prove a tax position; the evidence belongs in the workpapers a reviewer can open.
 
 ## The safe stopping points are specific
-
-There are several legitimate stop conditions.
 
 The agent should stop when an expected K-1 is missing, when an amended K-1 changes an earlier entry, or when an attached statement contains information the main form does not capture.
 The current IRS instructions for partnership K-1s explain that partners may need to account for activity, prior-year limitations, and attached information separately.
@@ -221,13 +244,11 @@ It should stop when a digital asset sale has proceeds but no defensible acquisit
 The IRS treats digital assets as property and expects taxpayers to report taxable transactions even when a statement does not provide every basis input.
 The current [digital asset guidance](https://www.irs.gov/filing/digital-assets) and [Form 8949 instructions](https://www.irs.gov/instructions/i8949) are better anchors than a model’s generic explanation.
 
-A stop should preserve progress.
-The founder should be able to export the source index, the open questions, and the draft workpapers for an advisor instead of starting from an empty inbox.
+A stop should preserve progress: the founder can export the source index, open questions, and draft workpapers for an advisor instead of starting from an empty inbox.
 
 ## A practical test for software selection
 
 Ask the vendor or internal team to demonstrate one fictional founder return with a missing basis workpaper, a late K-1, a matched wallet transfer, and an ownership change.
-The test is more revealing than a clean upload demo.
 
 | Ask the system to show | A useful result | A failure |
 | --- | --- | --- |
@@ -258,7 +279,6 @@ Choose software for a complex founder return only when it can connect entities a
 For a simple return with one employer and complete records, a lower-friction filing product may be the better choice.
 For a founder return with multiple entities, foreign ownership, equity, crypto, or missing history, the review packet is the feature that matters.
 For the multiple-entity reconciliation inside that packet, continue with [K-1 tax filing software](/blog/k-1-tax-filing-multiple-entities).
-
 
 ## What does complex tax situations software do?
 
