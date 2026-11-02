@@ -4,28 +4,34 @@ slug: self-improving-stack-governance
 summary: >-
   Agent governance sets owners, authority limits, evidence requirements, approvals, and rollback paths before behavior changes reach users.
 date: '2026-06-07'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'security', 'governance', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 13
 ---
 
-A support agent drafts refund replies using a policy document.
+import Example from '../../components/Example.astro'
+
+A support agent drafts refund replies from a policy document.
 After it cites an outdated rule, the team proposes a prompt edit that asks for a current policy citation in every answer.
 The edit scores better on the examples used to write it.
 A better search score cannot authorize the prompt to advise customers.
-The team still needs to decide who turns it on and who restores the old version after a wrong eligibility answer.
+The team still has to decide who turns the edit on and who restores the old version after a wrong eligibility answer.
 
 **Agent governance** assigns the owner, authority, evidence, approval, and rollback for that decision.
 The current prompt is the **baseline**; the proposed edit is a **candidate**.
-The candidate can earn a limited release only after it passes cases kept out of the editing process, deterministic checks, and an owner's review.
-This article follows that one prompt change from proposal to rollback.
+The candidate earns a limited release only after it passes cases kept out of the editing process, deterministic checks, and an owner's review.
 
-The same problem recurs when an agent can revise a skill, write shared memory, or add a tool.
-It also recurs when the agent can change its runtime or the test that judges it.
+The same decision recurs when an agent can revise a skill, write shared memory, add a tool, change its runtime, or change the test that judges it.
 An **agent profile** records the model, instructions, tools, permissions, and limits used for a run.
 A **trace** records the actions and outputs from that run.
 A **safety case** states which use is acceptable, the evidence for it, the remaining risk, and who accepts that risk.
+
+In Tangle's stack the gate is an exit code and the spend limit is enforced outside the agent.
+`evals/regression-gate` runs the shipped prompt and the candidate over the same scenarios and exits 1 when the candidate scores lower, which blocks promotion.
+On a fleet, `budgetUsd` is the limit the Platform refuses to exceed, so a charge past it fails even if the agent never checks.
+`fleets/cancel-on-cap` shows the stop that runs first: its script checks `fleet.spend()` and calls `fleet.cancel()` at a lower `softCapUsd`, well before the Platform's limit.
 
 ## A safety case has a shape
 
@@ -41,45 +47,36 @@ release rule: protected checks pass before a limited trial
 rollback: restore the previous prompt and review affected drafts
 ```
 
-The scope keeps the claim honest.
-An agent may be acceptable for summarizing public documents and unacceptable for sending payments.
-A prompt may be safe with read-only tools and unsafe when the same model can publish, delete, or deploy.
-A model evaluation may pass while the full agent fails because retrieved pages can inject instructions or a worker receives unnecessary credentials.
+The scope keeps the claim honest: an agent may be acceptable for summarizing public documents and unacceptable for sending payments, and a prompt may be safe with read-only tools yet unsafe when the same model can publish or deploy.
+A model evaluation may pass while the full agent fails, because retrieved pages can inject instructions or a worker receives unnecessary credentials.
 
-NIST’s [AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) uses four functions: Govern, Map, Measure, and Manage.
-The framework is voluntary, but its structure is useful for agents.
+NIST's [AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) uses four functions.
 Govern assigns policy and ownership.
 Map describes use, data, authority, and affected parties.
 Measure tests behavior and risk.
 Manage decides whether to mitigate, monitor, restrict, roll back, or accept residual risk.
-
-The functions are continuous.
-An agent that changes itself changes the evidence and risk picture, so the safety case must be revisited at each promotion boundary.
+The functions run continuously: an agent that changes itself changes the risk picture, so the safety case must be revisited at each promotion boundary.
 
 ## Governance sits outside the mutable surface
 
 The refund example changes only prompt text.
-Other teams let agents change procedures, persistent knowledge, execution, or learned model behavior.
-These surfaces need different checks because they can fail in different ways.
+Other teams let agents change procedures, persistent knowledge, execution, or learned model behavior, and each surface fails differently.
 
 A prompt edit needs protected evaluation and tests for instruction injection.
-A reusable skill also needs invocation and scope checks: it may improve the intended task while triggering on unrelated work.
+A reusable skill also needs invocation and scope checks, because it may improve the intended task while triggering on unrelated work.
 Shared memory needs source provenance, freshness, contradiction handling, and a write policy before a new fact persists.
-
 Changes to workers, retries, or handoffs need budget, isolation, and trace checks.
 Harness code and new tools need an external evaluator and a separate activation review.
 Model updates need data, privacy, and deployment controls, plus a way to restore the prior version.
-New connectors or credentials change authority and require their own approval.
+New connectors or credentials change authority and need their own approval.
 
 The optimizer cannot own the gate that decides whether its own change persists.
-
 If prompt search can edit the judge, the score is compromised.
 If harness evolution can edit the test adapter, the test is compromised.
 If memory can write global facts without review, retrieval is compromised.
 If a worker can create credentials, authority is compromised.
 
-A separate service, signed policy, or protected test set can enforce the rule.
-Its authority must remain outside the surface it judges.
+A separate service, signed policy, or protected test set can enforce the rule from outside the surface it judges.
 
 ## Tool output is untrusted input
 
@@ -93,8 +90,7 @@ A retrieved document can recommend a dangerous command.
 A GitHub issue can include a shell script.
 A child agent can return an instruction that was not part of the approved task.
 
-Those strings are observations, not policy.
-The runtime should keep separate representations for:
+Those strings are observations, not policy. The runtime should keep a separate representation for each data class:
 
 | Data class | Meaning |
 | --- | --- |
@@ -106,19 +102,18 @@ The runtime should keep separate representations for:
 | Result | What occurred after execution |
 
 The [OWASP 2025 Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/) names prompt injection, sensitive information disclosure, improper output handling, excessive agency, and supply-chain risk.
-Those categories become concrete when an agent can read untrusted content and take side effects.
+These risks become concrete once an agent reads untrusted content and takes side effects.
 
 Prompt text cannot enforce this boundary.
-The runtime’s action policy, tool adapter, credential scope, and trace must enforce it.
+The runtime's action policy, tool adapter, credential scope, and trace must enforce it.
 
 ## Authority is a variable
 
-Authority means what the agent can cause outside its own text.
+Authority is what the agent can cause outside its own text.
 Reading public policy and drafting a reply need different authority from sending that reply, issuing a refund, or writing a policy fact into shared memory.
-Tool access, network access, credentials, budgets, and permission to change evaluation are separate parts of the agent's authority.
+Tool access, network access, credentials, budgets, and permission to change evaluation are separate parts of that authority.
 
-Use the minimum authority required by the task.
-The policy should be machine-readable enough to reject an action before the model’s explanation can persuade a reviewer.
+The policy should be machine-readable enough to reject an action before the model's explanation can persuade a reviewer.
 
 ```json
 {
@@ -132,13 +127,13 @@ The policy should be machine-readable enough to reject an action before the mode
 }
 ```
 
-The example is illustrative policy data.
-It names the action, budget, evidence, approval, and stop conditions that a runtime can enforce.
-It does not claim that every product should use the same fields.
+This is illustrative policy data.
+It names the action, budget, evidence, approval, and stop conditions a runtime can enforce.
+Other products may need different fields.
 
 Human approval belongs at actions with irreversible or high-consequence effects.
 The approval packet should contain the requested action, expected outcome, affected users, evidence, policy decision, artifact or diff, and rollback path.
-A button labeled “approve” is not enough if the reviewer cannot see what will happen.
+
 
 ## The evaluation boundary
 
@@ -147,15 +142,20 @@ The candidate must not see the protected holdout cases or their answers during t
 The candidate also cannot edit the judge, task split, or release rule and then claim its new score is comparable.
 
 Execution errors need their own status.
-A provider outage does not show that the agent failed the task, and a retry can hide a deterministic failure while increasing cost.
+A provider outage does not show that the agent failed the task, and a retry can hide a deterministic failure while raising cost.
 A semantic judge may assess an answer's clarity, but it cannot override a failed citation check, an unauthorized tool call, or a missing run trace.
 
 The [evaluation gates article](/blog/self-improving-stack-evaluation-gates) describes the measurement side.
-Governance adds the ownership and access rules around that measurement.
 
 The candidate may generate outputs and traces.
 It should not read evaluator secrets, change the holdout manifest, edit the release policy, or decide its own promotion.
 The evaluator should record the profile, backend, task split, deterministic checks, semantic judge, cost, trace completeness, and decision.
+
+The gate below is the smallest form of this rule: it runs the shipped prompt and the candidate over the same two cases and exits 1 when the candidate's mean is lower.
+A passing run shows only that the candidate scored no lower on those cases.
+The boundary rules above still decide whether the candidate may see the holdout or touch the judge.
+
+<Example path="evals/regression-gate" title="src/examples/evals/regression-gate.mts" />
 
 Missing evidence should return hold or reject.
 It should not be silently treated as a zero-quality run.
@@ -165,19 +165,19 @@ A missing backend response is a harness failure until the system proves that the
 
 The following values are an illustrative release record, not a measured Tangle result or a product API response.
 The support owner freezes prompt `v3` as the baseline and proposes `v4`, which asks the agent to cite the current policy before stating refund eligibility.
-The model, read-only policy lookup, tool permissions, and evaluator remain fixed.
+The model, read-only policy lookup, tool permissions, and evaluator stay fixed.
 The owner reserves 24 cases before prompt editing and withholds them from the candidate generator.
 
 The release rule is fixed before the run.
 All 24 cases must execute, and at least 22 candidate answers must cite the current policy.
 None of six late-refund cases may give incorrect eligibility.
-Every run must have a trace and cost receipt.
-No sending or payment tool is available to either profile.
+Every run must have a trace and a cost receipt.
+Neither profile has a sending or payment tool.
 
-**Candidate.** The owner records the `v3` → `v4` prompt diff and both frozen profile identities.
+**Candidate.** The owner records the `v3` to `v4` prompt diff and both frozen profile identities.
 Any undeclared model, tool, or evaluator change rejects this prompt-only comparison.
 
-**Holdout.** The owner records the split identity for 24 paired cases, including six late-refund cases, before search begins.
+**Holdout.** The owner records the split identity for 24 paired cases, including the six late-refund cases, before search begins.
 Any exposure of those cases to the candidate generator voids the comparison.
 
 **Checks.** All 24 cases execute.
@@ -192,109 +192,100 @@ The owner approves `v4` for one queue for 48 hours, with a person still sending 
 A new draft must resolve to `v4` and retain its trace.
 
 **Rollback.** Before activation, the team rehearses restoring `v3` and verifies that the next draft uses it.
-If a live draft states incorrect eligibility or loses its trace, the team stops `v4`, restores `v3`, and keeps affected run IDs for review.
+If a live draft states incorrect eligibility or loses its trace, the team stops `v4`, restores `v3`, and keeps the affected run IDs for review.
 
 The gate protects a narrow claim: this candidate met the declared checks on these cases and can enter a supervised trial.
-The owner still needs a customer-outcome check before any broader release.
+A broader release needs a customer-outcome check.
 If a holdout case leaks into prompt search, retire that comparison and reserve fresh cases.
 
 ## Profiles make scope visible
 
-The refund trial needs an exact profile identity for each run.
 The profile identifies the model and provider, prompt and skill versions, tools, permissions, memory policy, worker topology, budgets, evaluator, and deployment target.
-Two replies can look alike while having different authority or access to private data.
-Record the profile with the trace so the owner can tell which version produced an answer and which runs a rollback affects.
+Two replies can look alike while carrying different authority. Record the profile with the trace so the owner knows which runs a rollback affects.
 
 ## How Tangle maps these terms
 
 Tangle's [Runtime improvement contract](https://github.com/tangle-network/agent-runtime/blob/main/docs/improve.md#from-search-to-production) keeps final-test cases out of the search method and leaves the live profile unchanged after `improve`.
-Its documented production path uses `proposeAgentImprovement`, `reviewAgentImprovementProposal`, and `executeAgentImprovementActivation`.
-The application supplies the transaction that writes the approved profile change.
-That is the proposal, review, and activation boundary in the refund example; Runtime does not decide who in a support team may approve a release.
+Its production path uses `proposeAgentImprovement`, `reviewAgentImprovementProposal`, and `executeAgentImprovementActivation`.
+The application supplies the transaction that writes the approved change; Runtime does not decide who on the support team may approve it.
 
 Tangle's [Eval contract](https://github.com/tangle-network/agent-eval#make-automated-improvement-accountable) describes paired comparisons, declared independent units, fresh final evidence, and gate contributions.
-Its documentation also says the host must enforce access isolation and author-reviewer separation.
-A result digest identifies evidence but does not prove that the candidate never saw the holdout.
-The refund team's release owner has to enforce that boundary and inspect exclusions, costs, and failures.
+It also says the host must enforce access isolation and author-reviewer separation.
+A result digest identifies evidence but does not prove the candidate never saw the holdout.
+The release owner has to enforce that boundary and inspect exclusions, costs, and failures.
 
-If the candidate could update shared policy knowledge, Tangle's [Knowledge contract](https://github.com/tangle-network/agent-knowledge#promote-a-runs-knowledge-into-the-shared-store) offers run-scoped stores and source and retrieval receipts.
-Its separate `promoteRunScopedPages` call records an actor and reason.
-The package records what was visible or used; its [receipt documentation](https://github.com/tangle-network/agent-knowledge#prove-what-the-agent-saw-and-used) explicitly does not claim the source is true or that it improved the answer.
-The refund prompt trial needs no shared-knowledge promotion.
+If the candidate could update shared policy knowledge, Tangle's [Knowledge contract](https://github.com/tangle-network/agent-knowledge#promote-a-runs-knowledge-into-the-shared-store) offers run-scoped stores with source and retrieval receipts.
+`promoteRunScopedPages` records an actor and reason.
+The [receipt documentation](https://github.com/tangle-network/agent-knowledge#prove-what-the-agent-saw-and-used) says a receipt records what was visible or used; it does not claim the source is true or that the answer improved.
 
-For a paid service, the boundary extends beyond the prompt release.
+For a paid service, the boundary extends past the prompt release.
 The [Blueprint Runner router](https://docs.tangle.tools/developers/blueprint-runner/routers) maps a job ID to a handler and rejects unknown IDs.
-The [x402 gateway contract](https://docs.tangle.tools/developers/blueprint-runner/x402) says `202 Accepted` means payment settled and a job was enqueued; it does not mean the job completed.
-A paid agent therefore needs its own completion and quality evidence before anyone treats a payment receipt as proof of a correct answer.
+The [x402 gateway contract](https://docs.tangle.tools/developers/blueprint-runner/x402) says `202 Accepted` means payment settled and a job was enqueued, not that the job completed.
+A paid agent needs its own completion and quality evidence before anyone treats a payment receipt as proof of a correct answer.
 
 ## The first release procedure
 
 Start with one task class and one owner.
-For the refund agent, the owner specifies a named support queue and read-only policy access.
+For the refund agent, the owner names a support queue and read-only policy access.
 The agent may draft answers but cannot send replies or issue refunds.
-Record which users and data it can reach, its budget, its model and tool profile, and the person who may approve activation.
+Record the users and data it can reach, its budget, its model and tool profile, and who may approve activation.
 If the team cannot enforce those limits, stop before generating candidates.
 
 Before prompt search, freeze the baseline, the editable surface, the protected cases, and the release rule.
-Run the candidate in the same isolated execution conditions as the baseline.
+Run the candidate under the same isolated conditions as the baseline.
 Keep backend proof, traces, costs, policy-citation checks, and adversarial cases for instruction injection or attempts to exceed tool authority.
 A missing trace, exposed holdout, failed permission check, or protected regression returns **hold**, even if the average answer score rises.
 
-Only then does the owner inspect a review packet: the exact diff, paired results, failures and exclusions, affected users, remaining risk, and a tested rollback.
-The approval identifies a limited target and expiry.
+Then the owner inspects a review packet: the exact diff, paired results, failures and exclusions, affected users, remaining risk, and a tested rollback.
+The approval names a limited target and an expiry.
 Activation is a separate write by an authorized application or operator, followed by a check that the next run uses the approved profile.
 An approval given after a side effect offers no control over that side effect.
 
 During the trial, monitor wrong eligibility claims, missing evidence, cost breaches, and unexpected tool calls against the recorded profile.
 On a trigger, stop new candidate runs, restore the baseline, retain the affected traces, and review any state the candidate wrote.
-The team can broaden the release after it has evidence from the actual trial and a fresh decision for the broader scope.
+The team can broaden the release only with evidence from the actual trial and a fresh decision for the wider scope.
 
 ## Incidents need memory and lineage
 
 When a candidate causes harm, the owner must identify its profile and operator, the affected users and tasks, and the traces that used it.
-The owner must find any skills or memories written from those traces, plus later candidates that inherited them.
-The owner must also check which credentials or tools the candidate could reach.
+The owner must also find any skills or memories written from those traces, later candidates that inherited them, and the credentials or tools the candidate could reach.
 
 Containment may mean disabling a tool, revoking a credential, quarantining a memory, freezing a candidate, rolling back a prompt, or pausing a service.
-The trace should connect the incident to the artifacts and decisions that caused it.
-The memory layer should preserve why a fact was quarantined so the next improvement loop does not recreate it.
+The memory layer should record why a fact was quarantined so the next improvement loop does not recreate it.
 
-The [memory article](/blog/self-improving-stack-memory-flywheels) explains why provenance, scope, freshness, and contradiction handling matter for persistent state.
-The [trace article](/blog/self-improving-stack-trace-systems) explains why a score alone cannot support incident response.
+The [memory article](/blog/self-improving-stack-memory-flywheels) covers provenance and contradiction handling for persistent state; the [trace article](/blog/self-improving-stack-trace-systems) covers why a score alone cannot support incident response.
 
 ## Human control is a product boundary
 
-Anthropic’s public [trustworthy agents guidance](https://www.anthropic.com/research/trustworthy-agents) describes human control, alignment with user expectations, permission choices, tool controls, transparency, and privacy as practical design principles.
-The concrete implementation is permission choice, approval timing, visible progress, and an understandable recovery path.
+Anthropic's [trustworthy agents guidance](https://www.anthropic.com/research/trustworthy-agents) describes human control, alignment with user expectations, permission choices, tool controls, transparency, and privacy as practical design principles.
 
-Require approval before an irreversible action, broader credential or deployment scope, or sensitive data crossing a new boundary.
-A payment or a decision with legal, medical, employment, or safety consequences also needs a named owner at the action boundary.
-Changes to the evaluator or release policy require separate review because they change how every later candidate is judged.
+Require approval before an irreversible action, before a broader credential or deployment scope, and before sensitive data crosses a new boundary.
+A payment, or a decision with legal, medical, employment, or safety consequences, also needs a named owner at the action boundary.
+Changes to the evaluator or release policy need separate review, because they change how every later candidate is judged.
 A protected regression or exceeded authority cap blocks the candidate until the owner changes the plan and runs a new comparison.
 
-Approval should be timely.
-Requiring a person to inspect a long transcript after the side effect has already happened is incident documentation, not meaningful control.
+Approval must come before the side effect.
+Asking a person to inspect a long transcript after the action has happened is incident documentation, not control.
 
 ## Failure modes in agent governance
 
 Written policy is theater when the runtime never enforces it.
-Approval becomes a rubber stamp when every low-risk edit demands the same long review as a payment or production release.
+Approval becomes a rubber stamp when every low-risk edit gets the same long review as a payment or production release.
 The refund example keeps sending behind a person while allowing bounded draft generation, so the reviewer sees fewer, more consequential decisions.
 
-Other failures can be checked directly.
 An optimizer that changes its judge has crossed the evaluation boundary.
 A new tool or credential missing from the profile is authority drift.
-A generated summary presented as a source has lost provenance.
+A generated summary presented as a source has lost its provenance.
 A trace that leaks customer data has damaged privacy while trying to support accountability.
-The release record should name the check that catches each failure, not merely assert that the agent is governed.
+The release record should name the check that catches each failure.
 
 ## The deployment decision
 
-Choose governance work before broader self-improvement when an agent can change tools, memory, permissions, model behavior, evaluator logic, or release artifacts.
+Put governance work ahead of broader self-improvement when an agent can change tools, memory, permissions, model behavior, evaluator logic, or release artifacts.
 
 If the team cannot name the owner, protected evidence, authority cap, rollback path, and residual risk, keep the candidate out of the live path.
 Run it in a bounded experiment with a human decision-maker and an explicit expiry.
 
-The release process can begin with the refund-agent trial above.
-If its owner cannot identify the frozen candidate, protected result, approved target, and tested restore path, keep `v3` active.
-The next decision is whether the limited trial's observed customer outcomes justify broader use.
+Run the refund-agent trial above only after its owner can identify the frozen candidate, the protected result, the approved target, and a tested restore path.
+If any of those is missing, keep `v3` active.
+Widen the trial only after its customer-outcome check passes on the queue it already covers.
