@@ -57,9 +57,15 @@ const rate = benchmarks.rate_card;
 
 const usd = (n: number | null) => (n === null ? '$0.00' : `$${n.toFixed(n < 1 ? 4 : 2)}`);
 const clock = (ms: number) => { const s = Math.round(ms / 1000); return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`; };
-const tokens = (events: { kind: string; result?: { usage?: { inputTokens?: number; outputTokens?: number } } }[]) => {
-  const usage = events.find((e) => e.kind === 'call' && e.result?.usage?.inputTokens)?.result?.usage;
-  return usage ? `${((usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)).toLocaleString('en-US')}` : null;
+type Usage = { inputTokens?: number; outputTokens?: number };
+// A single turn reports usage on its call result; a fleet reports it per finished agent (cancelled agents report none).
+const tokens = (events: { kind: string; type?: string; result?: { usage?: Usage }; data?: { result?: { result?: { usage?: Usage } } } }[]) => {
+  const usages = [
+    ...events.filter((e) => e.kind === 'call' && e.result?.usage?.inputTokens).map((e) => e.result!.usage!),
+    ...events.filter((e) => e.type === 'agent.finished').map((e) => e.data?.result?.result?.usage).filter((u): u is Usage => !!u),
+  ];
+  const total = usages.reduce((n, u) => n + (u.inputTokens ?? 0) + (u.outputTokens ?? 0), 0);
+  return total ? total.toLocaleString('en-US') : null;
 };
 const receipts = [
   { title: 'Run code', what: 'One sandbox, one command, no model.', record: runCode },
