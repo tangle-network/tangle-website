@@ -5,6 +5,7 @@ summary: >-
   Turn a plain-English test goal into setup data, browser checkpoints, and a
   deterministic final assertion instead of trusting the agent's pass report.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - browser-agent
@@ -14,16 +15,17 @@ series: Browser Agent
 seriesOrder: 6
 ---
 
+import Example from '../../components/Example.astro'
+
 A team tells an agent, “Test onboarding,” and receives a result that leaves basic facts unresolved.
 The team still needs to know which account started the flow, which route opened first, what completed onboarding looked like, and what happened when an invitation was missing or a required field was rejected.
 
 Natural language test automation is useful when an English goal answers those questions and a browser run leaves proof of the answer.
 The language supplies intent, the browser supplies observed state, and the final condition supplies the decision.
-Screenshots, actions, page observations, and a stop reason let someone review the result after the run.
 
 Tangle Browser Agent is Tangle’s browser driver for running natural-language goals against real browser pages.
 The public `bad` CLI starts those Browser Agent runs from a terminal.
-This article turns a vague prompt into a reviewable case, explains the profile and runtime that influence it, and shows when deterministic code should take over.
+On Tangle’s Sandbox SDK, the run happens inside a sandbox: `client.create` returns a machine, `box.prompt` gives it the plain-language goal and returns `run.success`, and the files it writes, such as a screenshot or JSON, are the evidence `box.read` and `box.fs.download` return.
 For the full browser safety loop, read [AI Browser Automation Needs An Evidence Loop](/blog/browser-automation-ai-evidence-loop).
 
 ## Start with the outcome a person can see
@@ -52,9 +54,6 @@ Verify that the dashboard shows Smoke as the active workspace.
 Stop before purchasing a paid plan or inviting a real person.
 ~~~
 
-The second version states the entry point, allowed work, final condition, and safety boundary.
-It names the start, allowed actions, visible result, and stop boundary for review.
-
 ## Define the start, allowed actions, result, and stop boundary
 
 A natural-language case becomes useful when it answers four questions.
@@ -70,7 +69,6 @@ The final condition should name a page, value, status, or visible relationship.
 “Make sure it works” gives the evaluator nothing to compare.
 “The dashboard heading says Smoke and the plan badge says Free” gives it two observable checks.
 
-An evaluation is the comparison between that expected condition and the evidence from the run.
 A deterministic evaluation can inspect text or state.
 A screenshot-based evaluation can judge layout or visual presence.
 A human can review a sensitive step.
@@ -90,14 +88,22 @@ Stop before: payment, invitation, deletion, or any action that sends a message t
 Pass condition: the dashboard shows Smoke as the active workspace and Free as the plan.
 ~~~
 
-This case does not prescribe every page query.
-The agent can use accessible names, page text, or visual layout as the interface changes.
-The case still fixes the business meaning of success.
+The case does not prescribe page queries; the agent can use accessible names, page text, or layout. The case fixes what success means.
 
-The test author should keep the wording close to the product promise.
 If the product promise is “a new workspace opens after signup,” use that visible state.
 If the promise is “an export contains all selected rows,” inspect the downloaded file or a page confirmation that the product owns.
 Do not accept a model’s statement that a hidden request probably succeeded.
+
+## Run a plain-language task in a sandbox
+
+The verified example below runs the same shape of task in a Tangle sandbox: the agent installs Playwright and Chromium on its own machine, opens a public page, and writes a screenshot and a JSON result.
+The calls that matter are `client.create` with an `egressPolicy` that allows the browser download and one page, `box.prompt` for the goal, and `box.read` and `box.fs.download` for the evidence.
+The `finally` block deletes the box.
+
+<Example path="sandboxes/browser-task" title="A plain-language browser task in a Tangle sandbox" />
+
+The output shows that the agent drove a browser to that page and wrote those files.
+It does not prove the Smoke workspace case, which needs its own pass condition on the page the product owns.
 
 ## Run the public driver surface
 
@@ -114,14 +120,13 @@ bad run \
   --goal "Choose the free plan, create a disposable Smoke workspace, and verify the dashboard shows Smoke as active. Stop before payment or invitations."
 ~~~
 
-The commands use the public package name.
-The web address and goal are safe examples for a public or disposable page.
+Use only public or disposable pages for these examples.
 Add authentication only after the runner’s permissions, storage state, and stop policy have been checked.
 
 The driver also documents a library API, or application programming interface, for callers that need to start runs from code.
-The following example uses the public PlaywrightDriver and BrowserAgent exports:
+The following example, which is illustrative and not in the Sandbox SDK, uses the public PlaywrightDriver and BrowserAgent exports:
 
-~~~typescript
+~~~js
 import { chromium } from 'playwright'
 import {
   BrowserAgent,
@@ -153,7 +158,6 @@ try {
 
 The example is read-only.
 The model key belongs in the process that owns the browser session.
-The installed package and its README are the source of truth for changing options.
 
 ## The prompt is part of the test artifact
 
@@ -167,16 +171,12 @@ When a natural-language case fails, inspect the wording before blaming the model
 | “Look for visual bugs” | No viewport or visual criteria | “Check the pricing page at the recorded viewport for clipped text, overlapping controls, and unreadable contrast.” |
 | “Test permissions” | No role or denied action | “As a viewer, open settings and verify the billing control is unavailable.” |
 
-A better prompt cannot repair a broken application.
-It can make the failure interpretable.
-The case author owns the business condition.
-The agent owns the browser navigation within the allowed boundary.
+A better prompt cannot repair a broken application, but it makes the failure interpretable.
+The case author owns the business condition; the agent owns navigation inside the boundary.
 
 ## Version the case like a product requirement
 
-The English prompt is part of the test’s source material.
-Store a case identifier and revision beside its run artifacts.
-When the product changes the wording, final condition, or stop boundary, create a new revision rather than silently replacing the old claim.
+Store a case identifier and revision beside the run artifacts. When the wording, final condition, or stop boundary changes, create a new revision rather than replacing the old claim silently.
 
 | Change | Keep the same revision? | Reason |
 | --- | --- | --- |
@@ -188,14 +188,14 @@ When the product changes the wording, final condition, or stop boundary, create 
 
 Prompt versioning makes failures comparable.
 If revision 2 adds “stop before payment,” a run that reaches the payment page should be marked against revision 2’s boundary rather than compared with an older case that allowed the page.
-If a goal becomes longer without becoming clearer, remove the extra words and keep the observable condition.
+Cut words that do not sharpen the observable condition.
 
 ## Record a profile and a runtime
 
 An agent profile is the named configuration that shapes a run.
 It can include the model, observation mode, planner setting, browser mode, maximum turns, allowed tools, and recovery rules.
 The profile belongs beside the prompt in the test record.
-The DOM, or Document Object Model, is the page’s structured tree of elements and attributes.
+The DOM, or Document Object Model, is the page’s element tree.
 Changing from DOM-only observation to hybrid observation can change both cost and behavior.
 
 The runtime is the environment that executes the test process and browser.
@@ -205,7 +205,6 @@ The same profile can behave differently in two runtimes.
 
 The trace is the ordered record of what happened.
 At minimum, it should connect the goal to each observation, action, result, recovery, final check, and stop reason.
-The trace makes a natural-language case reviewable rather than ephemeral.
 
 | Record field | Why retain it |
 | --- | --- |
@@ -254,13 +253,7 @@ A deterministic assertion can read the displayed total and compare it with the e
 An agent can navigate to a wallet prompt.
 A lower-level test can confirm the chain identifier and requested contract address.
 
-The decision should follow the claim.
-Use the flexible layer to reach a changing surface.
-Use the deterministic layer to protect a stable invariant.
-
 ## Failure is part of the authoring loop
-
-A failed case needs enough context to tell whether the prompt, product, or environment owns the next fix.
 
 | Failure record | Likely next question |
 | --- | --- |
@@ -283,11 +276,9 @@ Screenshots do not prove a hidden API write was accepted.
 A successful browser flow does not prove an on-chain program is safe.
 A signed report about the runner’s code or execution environment does not prove the page’s business result.
 
-Wallet and payment tests need stricter boundaries.
-Use disposable accounts and test funds.
+Wallet and payment tests use disposable accounts and test funds.
 Stop before signing or payment unless the case explicitly authorizes a controlled test transaction.
 Read [Natural Language End-to-End Testing for Wallet Apps](/blog/natural-language-e2e-testing-wallet-apps) for that boundary.
-
 
 ## What is natural language test automation?
 
