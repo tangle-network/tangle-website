@@ -1,12 +1,16 @@
 ---
+import { latencyRange, type LatencyRangeRow } from '@tangle-network/charts';
+import { Metric, MetricStrip } from '@tangle-network/ui/primitives';
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import Board, { type BoardRow } from '../../components/Board.astro';
-import Chart from '../../components/Chart.astro';
 import BenchHead from '../../components/BenchHead.astro';
-import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds } from '../../data/benchmarks/sandbox';
+import Figure from '../../components/Figure.astro';
+import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds, type Row } from '../../data/benchmarks/sandbox';
+import '@tangle-network/charts/figure.css';
 import '../../styles/bench.css';
 
-const run = (l: { run_id: string; started_at: string; served_sha: string }) => `run ${l.run_id}, ${day(l.started_at)}, serving ${l.served_sha.slice(0, 12)}`;
+const width = 1160;
+// Fewer than 5 samples support no p95.
+const timed = (r: Row): LatencyRangeRow => ({ id: r.label, label: r.label, p50Ms: r.value, p95Ms: r.n >= 5 ? (r.whisker ?? null) : null, n: r.n, facts: r.facts });
 
 // Coding agents by the id the facts feed uses.
 const agents: Record<string, { name: string; logo?: string }> = {
@@ -21,73 +25,44 @@ const agents: Record<string, { name: string; logo?: string }> = {
   'factory-droids': { name: 'Factory Droid' },
   acp: { name: 'ACP' },
 };
-const agentRows: BoardRow[] = firstText.rows.map((r) => ({ ...r, label: agents[r.label]?.name ?? r.label, logo: agents[r.label]?.logo }));
+const agentRows = firstText.rows.map((r) => ({ ...r, id: r.label, name: agents[r.label]?.name ?? r.label })).sort((a, b) => a.value - b.value);
+const agentMarks = Object.fromEntries(agentRows.flatMap((r) => (agents[r.id]?.logo ? [[r.id, { model: { label: r.name, src: agents[r.id].logo! } }]] : [])));
 
-// The public 100-at-once board with Tangle's rows placed by median.
+// The public 100-at-once board with Tangle's one row placed by median.
 const board = burst100.computesdk;
+const tangle = burst100.tangle;
 const names: Record<string, string> = { e2b: 'E2B', 'cloud-run': 'Cloud Run', computesdk: 'ComputeSDK' };
 const providerName = (id: string) => names[id] ?? id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-const boardRows: BoardRow[] = [
-  ...board.rows.map((r): BoardRow => ({ label: providerName(r.provider), value: r.median_ms, whisker: r.p95_ms, extra: `${Math.round(r.success_rate * 100)}%`, n: board.iterations })),
-  ...burst100.tangle.map((t): BoardRow => ({ label: 'Tangle', sub: `${t.date}, serving ${t.served_sha.slice(0, 8)}`, value: t.p50_ms, whisker: t.p95_ms, extra: t.passed ? '100%' : 'not all', n: 100, highlight: true, flagged: !t.passed })),
-].sort((a, b) => a.value - b.value);
-// Tangle's rank comes from its newest run that passed every check, among the clouds alone.
-const latest = burst100.tangle.find((t) => t.passed)!;
-const place = 1 + board.rows.filter((r) => r.median_ms < latest.p50_ms).length;
-const runDays = [firstCommand.run, firstText.run, lifecycle.run].map((r) => day(r.started_at)).sort();
+const boardRows: LatencyRangeRow[] = [
+  ...board.rows.map((r) => ({ id: r.provider, label: providerName(r.provider), p50Ms: r.median_ms, p95Ms: r.p95_ms, n: board.iterations, extra: `${Math.round(r.success_rate * 100)}%`, facts: [`ComputeSDK board, ${day(board.timestamp)}`] })),
+  { id: 'tangle', label: tangle.production_changed ? 'Tangle ✱' : 'Tangle', p50Ms: tangle.p50_ms, p95Ms: tangle.p95_ms, n: 100, extra: `${tangle.reached}%`, facts: [`Run ${day(tangle.at)}`, ...(tangle.production_changed ? ['A release landed during this run'] : [])] },
+].sort((a, b) => a.p50Ms - b.p50Ms);
+const place = boardRows.findIndex((r) => r.id === 'tangle') + 1;
 
-const lead = `As of ${runDays.at(-1)}: a sandbox in ${seconds(firstCommand.create.p50_ms!)}, its first command ${seconds(firstCommand.exec.p50_ms!)} later. ${agentRows[0].label} writes its first words ${seconds(agentRows[0].value)} after create. 100 at once: Tangle is #${place} of ${board.rows.length + 1} on ComputeSDK's board, at a ${seconds(latest.p50_ms)} median.`;
+const updated = [firstText.run.started_at, lifecycle.run.started_at, tangle.at].map(day).sort().at(-1)!;
+const summary = `A new sandbox in ${seconds(lifecycle.rows[0].value)}, a coding agent's first reply in ${seconds(agentRows[0].value)}, and 100 sandboxes at once in ${seconds(tangle.p50_ms)}, #${place} of ${boardRows.length} clouds.`;
 ---
 
-<BaseLayout paper title="Sandbox leaderboard" description={`How fast you get a sandbox, a command, a coding agent's first words and 100 sandboxes at once on Tangle. ${lead}`}>
+<BaseLayout paper title="Sandbox leaderboard" description={summary}>
   <article class="bench">
-    <BenchHead regime="stack" title="Sandbox leaderboard">
-      <p>How fast you get a sandbox, a command, a coding agent's first words and 100 sandboxes at once, beside {board.rows.length} other clouds.</p>
-      <p class="lead">{lead}</p>
-    </BenchHead>
+    <BenchHead regime="stack" title="Sandbox leaderboard" updated={updated} />
 
-    <div class="lb-charts">
-      <Chart title="First agent words" note={`Seconds from create to a coding agent's first text, ${agentRows[0].n} run each. Lower is better.`} rows={agentRows} />
-      <Chart title="Every verb" note={`Median seconds per call on one sandbox, ${lifecycle.rows[0].n} runs. Lower is better.`} rows={lifecycle.rows} />
-      <Chart title="100 at once" note="Median and p95 time to interactive on a log scale. Lower left is better." rows={boardRows} kind="scatter" />
-    </div>
+    <MetricStrip columns={4} className="bench-stats">
+      <Metric label="New sandbox" value={seconds(lifecycle.rows[0].value)} />
+      <Metric label="First command" value={seconds(firstCommand.together.p50_ms!)} />
+      <Metric label="First agent reply" value={seconds(agentRows[0].value)} hint={agentRows[0].name} />
+      <Metric label="100 at once" value={seconds(tangle.p50_ms)} hint={`#${place} of ${boardRows.length} clouds`} />
+    </MetricStrip>
 
-    <section aria-labelledby="agents">
-      <div class="bench-sec-head"><h2 id="agents">Coding agents: create to first text</h2><p>{run(firstText.run)}. One prompt on one fresh sandbox per agent.</p></div>
-      <Board rows={agentRows} head="agent" />
-    </section>
-
-    <section aria-labelledby="board">
-      <div class="bench-sec-head"><h2 id="board">Clouds: 100 sandboxes at once</h2><p>ComputeSDK's <a href={board.source}>burst board</a> read {day(board.timestamp)}; Tangle rows by the same method on production.</p></div>
-      <Board rows={boardRows} scale="log" head="cloud" value="median" extraHead="reached" caption={`Each row creates ${board.iterations} sandboxes at once and reports the median and p95 time to interactive. Failed checks on the Tangle rows: ${[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}.`} />
-    </section>
-
-    <section aria-labelledby="verbs">
-      <div class="bench-sec-head"><h2 id="verbs">One sandbox, every verb</h2><p>{run(lifecycle.run)}. Created, snapshotted, stopped, resumed, restored, branched, then everything deleted.</p></div>
-      <Board rows={lifecycle.rows} head="verb" ranked={false} />
-      <details>
-        <summary>The same journey on the desktop shape</summary>
-        <Board rows={lifecycle.desktop} head="verb" ranked={false} />
-      </details>
-    </section>
-
-    <section aria-labelledby="many">
-      <div class="bench-sec-head"><h2 id="many">Many at once</h2><p>{run(bursts.run)}; branches from {run(branches.run)}.</p></div>
-      <div class="bench-grid">
-        <Board rows={bursts.rows} head="creates in a burst" spread="p90" ranked={false} caption="Each sandbox timed to its first command; n = sandboxes that reached one." />
-        <Board rows={[...branches.rows, ...forks.rows]} head="branch or fork" ranked={false} caption="Branch: the call to the slowest child's first command. Fork: a new sandbox from a saved snapshot or a running checkpoint." />
-      </div>
-    </section>
-
-    <section aria-labelledby="first-call">
-      <div class="bench-sec-head"><h2 id="first-call">First Router call from a fresh sandbox</h2><p>{run(firstCall.run)}. Each sandbox carries its own key; the path is how the command reached it.</p></div>
-      <Board rows={firstCall.rows} head="path" />
-    </section>
+    <Figure title="100 sandboxes at once" figure={latencyRange(boardRows, { id: 'clouds', measure: 'time to interactive', minN: 1, ranked: true, highlight: ['tangle'], heads: { value: 'median', extra: 'reached' }, width })} />
+    <Figure title="First reply from a coding agent" figure={latencyRange(agentRows.map((r) => ({ ...timed(r), id: r.id, label: r.name })), { id: 'agents', measure: 'create to first text', minN: 1, scale: 'linear', ranked: true, identities: agentMarks, width })} />
+    <Figure title="Every sandbox operation" figure={latencyRange(lifecycle.rows.map((r) => ({ ...timed(r), compareMs: r.desktop })), { id: 'verbs', measure: 'time per operation', minN: 1, scale: 'linear', heads: { value: 'base', compare: 'desktop' }, width })} />
+    <Figure title="Bursts, branches and forks" figure={latencyRange([...bursts.rows, { label: '100 at once', value: tangle.p50_ms, n: tangle.reached, facts: [`${tangle.reached} of 100 reached a first command`, `p95 ${seconds(tangle.p95_ms)}`] }, ...branches.rows, ...forks.rows].map(timed), { id: 'many', measure: 'time to first command', minN: 1, scale: 'linear', width })} />
+    <Figure title="First model call" figure={latencyRange(firstCall.rows.map(timed), { id: 'first-call', measure: 'first Router call', minN: 1, scale: 'linear', width })} />
 
     <footer class="bench-method">
-      <p>{feed.cohort}</p>
-      <p>{feed.percentiles}</p>
-      <p>Each run names the orchestrator revision it hit, so a change in a number reads against a deploy. The production benchmark workflow refreshes the <a href={feed.source}>facts feed</a> after every run; this page is rebuilt from a snapshot pulled {day(feed.published_at)}.</p>
+      {tangle.production_changed && <p>✱ A release landed during this run, so the <a href={feed.source}>facts feed</a> marks it invalid.</p>}
+      <p>Clouds from ComputeSDK's <a href={board.source}>burst board</a>, {day(board.timestamp)}. Tangle runs the same test on production. These are test runs, not customer traffic.</p>
     </footer>
   </article>
 </BaseLayout>

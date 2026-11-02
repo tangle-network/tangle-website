@@ -3,7 +3,7 @@
 import snapshot from './sandbox.json';
 
 type Lane = (typeof snapshot.lanes)[keyof typeof snapshot.lanes];
-export interface Row { label: string; value: number; whisker?: number | null; low?: number; high?: number; n?: number | string; flagged?: boolean; note?: string }
+export interface Row { label: string; value: number; whisker?: number | null; n: number; facts?: string[] }
 
 const lane = (name: keyof typeof snapshot.lanes): Lane => snapshot.lanes[name];
 const verb = (l: Lane, journey: string, field: string, profile: string | null = null) => {
@@ -11,11 +11,11 @@ const verb = (l: Lane, journey: string, field: string, profile: string | null = 
   if (!v) throw new Error(`benchmark snapshot: ${l.run_id} has no ${journey}.${field}${profile ? ` (${profile})` : ''}`);
   return v;
 };
-const row = (label: string, v: ReturnType<typeof verb>): Row => ({ label, value: v.p50_ms!, whisker: v.p95_ms, n: v.n, flagged: v.failed_rows > 0 });
+const row = (label: string, v: ReturnType<typeof verb>): Row => ({ label, value: v.p50_ms!, whisker: v.p95_ms, n: v.n });
 export const day = (iso: string) => iso.slice(0, 10);
 export const seconds = (ms: number) => (ms >= 10_000 ? `${(ms / 1000).toFixed(0)} s` : ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${ms} ms`);
 
-export const feed = { source: snapshot.source, published_at: snapshot.published_at, cohort: snapshot.cohort, percentiles: snapshot.percentiles };
+export const feed = { source: snapshot.source };
 
 // One sandbox: create, then its first command.
 const matrix = lane('create-matrix');
@@ -55,14 +55,14 @@ const steps: [string, string][] = [
 ];
 export const lifecycle = {
   run: waterfall,
-  rows: steps.map(([label, field]) => row(label, verb(waterfall, 'lifecycle.waterfall', field))),
-  desktop: steps.map(([label, field]) => row(label, verb(waterfall, 'lifecycle.waterfall', field, 'desktop'))),
+  rows: steps.map(([label, field]) => ({ ...row(label, verb(waterfall, 'lifecycle.waterfall', field)), desktop: verb(waterfall, 'lifecycle.waterfall', field, 'desktop').p50_ms! })),
 };
 
 // Many sandboxes at once: creates in a burst, and children branched from one parent.
+const burst = lane('create-burst');
 export const bursts = {
-  run: matrix,
-  rows: matrix.burst.map((b): Row => ({ label: `${b.size} creates at once`, value: b.p50_ms!, whisker: b.p90_ms, n: b.ok, flagged: b.ok < b.asked, note: `${b.ok} of ${b.asked} reached a first command; the whisker is p90` })),
+  run: burst,
+  rows: burst.burst.map((b): Row => ({ label: `${b.size} at once`, value: b.p50_ms!, n: b.ok, facts: [`${b.ok} of ${b.asked} reached a first command`, `p90 ${seconds(b.p90_ms!)}`] })),
 };
 const fanout = lane('branch-fanout');
 export const branches = {
@@ -73,21 +73,10 @@ export const branches = {
 const fork = lane('snapshot-fork');
 export const forks = {
   rows: [
-    { ...row('fork from a snapshot', verb(fork, 'snapshot.fork', 'provision_ms')), note: `${fork.run_id}, ${day(fork.started_at)}` },
-    { ...row('fork from a checkpoint', verb(fanout, 'checkpoint.fork', 'provision_ms')), note: `${fanout.run_id}, ${day(fanout.started_at)}` },
+    row('fork from a snapshot', verb(fork, 'snapshot.fork', 'provision_ms')),
+    row('fork from a checkpoint', verb(fanout, 'checkpoint.fork', 'provision_ms')),
   ],
 };
 
-// 100 at once, the ComputeSDK method, beside the public board measured the same way.
-const b100 = lane('create-burst-100');
-const tangleBurst = (l: Lane) => ({
-  run_id: l.run_id, date: day(l.started_at), served_sha: l.served_sha,
-  p50_ms: verb(l, 'create.burst_matched', 'burst_matched_n100_p50_ms').p50_ms!,
-  p95_ms: verb(l, 'create.burst_matched', 'burst_matched_n100_p95_ms').p50_ms!,
-  passed: l.records.passed > 0,
-  failed_checks: l.failed_checks.map((c) => c.name),
-});
-export const burst100 = {
-  computesdk: snapshot.computesdk,
-  tangle: [tangleBurst(matrix), tangleBurst(b100)].sort((a, b) => b.date.localeCompare(a.date)),
-};
+// 100 at once: the newest run, beside the public board measured the same way.
+export const burst100 = { computesdk: snapshot.computesdk, tangle: snapshot.burst100 };
