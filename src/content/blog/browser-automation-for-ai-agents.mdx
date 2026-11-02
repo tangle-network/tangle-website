@@ -4,6 +4,7 @@ slug: browser-automation-for-ai-agents
 summary: >-
   Browser automation for AI agents needs page state, screenshots, recovery, and a clear stop condition so a reviewer can tell what happened.
 date: '2026-06-19'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -12,6 +13,8 @@ tags:
 series: Agent Intent Infrastructure
 seriesOrder: 3
 ---
+
+import Example from '../../components/Example.astro'
 
 An agent is asked to verify a checkout flow.
 It opens the store, adds an item, fills a form, clicks Continue, and reports success.
@@ -28,6 +31,19 @@ The product boundary is deliberately narrow: drive Chromium, capture page eviden
 In this article, the **runner** is the process that owns the browser session and enforces the allowed actions.
 The service that owns a purchase, account change, or transaction still has to confirm that business effect.
 
+## Run the browser inside a sandbox
+
+Tangle's Sandbox SDK lets the agent install Chromium, drive it, and write its evidence to files on the same machine.
+The example below creates a sandbox with a strict egress policy that allows only the Playwright download hosts and one public page.
+`box.prompt` runs the Claude Code harness there, `box.read` and `box.fs.download` return what the agent wrote, and `box.delete` removes the machine in every outcome.
+
+<Example path="sandboxes/browser-task" title="The agent installs Playwright and reads a public page in its own sandbox" />
+
+The run shows that the agent reached the page and wrote the files inside a network allowlist.
+The `success` flag only reports that the agent finished without a run-level error, and `costUsd` reports the turn's cost.
+It does not show that the headlines are current or that a person would see the same page.
+For how that machine fits with model calls, state, and permissions, read the [agent runtime guide](/blog/agent-runtime-environments).
+
 ## The click that lied
 
 A browser action is an attempt, not an outcome.
@@ -42,8 +58,6 @@ Reliable browser automation therefore follows a short cycle:
 5. Observe the new page and check the expected effect.
 6. Recover once when the failure has a safe, named alternative.
 7. Stop with evidence when the checkpoint is reached or recovery is exhausted.
-
-This cycle makes the final answer a conclusion from recorded state rather than a guess about the last click.
 
 ## Each observation has a limit
 
@@ -106,16 +120,15 @@ bad run --help
 bad snapshot --help
 ```
 
-The `snapshot` command is useful when an agent is unnecessary.
-It produces a deterministic accessibility-tree dump without an LLM, which makes it a better fit for a stable page check.
-Use an agent run when the task needs goal interpretation, flexible navigation, or bounded recovery.
+The `snapshot` command produces a deterministic accessibility-tree dump without an LLM, a better fit for a stable page check.
 
 ## A published SDK example
 
-The public SDK uses Playwright to own the browser page and `BrowserAgent` to decide which allowed browser action to take.
-This example reads a public page and closes the browser in every outcome.
+The public Browser Agent SDK uses Playwright to own the browser page and `BrowserAgent` to decide which allowed browser action to take.
+It is labeled `js` because it imports Playwright and a package this harness does not install.
+It reads a public page and closes the browser in every outcome.
 
-```typescript
+```js
 import { chromium } from 'playwright'
 import {
   BrowserAgent,
@@ -129,7 +142,7 @@ const driver = new PlaywrightDriver(page)
 const agent = new BrowserAgent({
   driver,
   config: {
-    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4-mini',
     observationMode: 'hybrid',
     plannerEnabled: true,
   },
@@ -149,9 +162,8 @@ try {
 
 The example is intentionally read-only, uses Playwright's bundled Chromium, and uses the `startUrl` field documented in the public README.
 The `hybrid` observation mode combines structured page information with a screenshot.
-The planner can make a short plan before executing actions, but the runner still needs a maximum turn count, timeouts, and a stop condition for the actual task.
+The planner can make a short plan, but the runner still needs a maximum turn count, timeouts, and a stop condition.
 
-Model names and provider behavior change faster than browser APIs.
 Read the [current README](https://github.com/tangle-network/browser-agent-driver) or manifest before pinning a model in CI.
 Keep provider keys in the process that owns the browser session rather than exposing them to the page.
 
@@ -159,7 +171,6 @@ Keep provider keys in the process that owns the browser session rather than expo
 
 A **trace** is the structured record of one browser run.
 It should preserve the goal, start URL, observations, actions, effects, recoveries, artifacts, and stop reason.
-The word “trace” describes the record, not a claim that every entry is true about the external system.
 
 A useful trace can look like this:
 
@@ -189,12 +200,12 @@ A useful trace can look like this:
 }
 ```
 
-The shape is illustrative application data.
-It shows why a final string such as “checkout passed” is too small for a reviewer to diagnose a failure.
+The shape is illustrative application data, and a final string such as “checkout passed” is too small for a reviewer to diagnose a failure.
 The [Browser Agent evidence guide](/blog/browser-automation-ai-evidence-loop) develops the same observation-to-result pattern in more detail.
 
 A trace should redact passwords, access tokens, wallet seed phrases, and private page content before it leaves the test boundary.
 Evidence that exposes a secret creates a new incident even when the browser action was correct.
+Keep browser credentials scoped to the test account, and keep screenshots and DOM captures in a controlled artifact store.
 
 ## Recovery needs a budget
 
@@ -244,7 +255,6 @@ The model should see the stop rule as context, but enforcement belongs outside t
 
 For a wallet flow, the last safe checkpoint may be a signature request.
 For an account workflow, it may be a confirmation screen before “Delete.”
-For a design audit, it may be a screenshot and accessibility report.
 The correct checkpoint follows the irreversible effect, not the number of browser turns.
 
 ## DOM, vision, or both
@@ -259,7 +269,6 @@ Observation mode should match the claim being tested.
 
 Pair an agent with deterministic assertions when the final condition has a stable locator or service response.
 The agent can navigate a changing page, while a script checks that the total, route, or server response has the expected value.
-This split reduces the amount of business logic hidden inside a model judgment.
 
 ## Separate navigation from business assertions
 
@@ -277,7 +286,6 @@ A useful case gives each important claim an owner.
 This split prevents a model from turning a visual impression into a business assertion.
 It also makes failures easier to route.
 An incorrect total belongs to the page or fixture, while a missing order ID belongs to the application or payment integration.
-The trace can contain all of those observations without pretending they have the same authority.
 
 When the service has no test-facing confirmation endpoint, say so in the case definition.
 The result can still prove that the browser reached a safe page state, but it should remain “unconfirmed” for the business effect.
@@ -303,17 +311,6 @@ One green case does not establish that the flow works for every user or locale.
 
 Use [Playwright’s testing guidance](https://playwright.dev/docs/best-practices) for deterministic paths with stable element locators.
 Use Browser Agent when the test needs natural-language intent, page interpretation, or bounded recovery.
-Use both when the agent’s navigation is flexible but the acceptance check should remain deterministic.
-
-## Browser and Sandbox have different jobs
-
-The browser owns the page and the user-visible interaction.
-The [Tangle Sandbox](/blog/ai-agent-sandbox) can hold test files, comparison scripts, screenshots, and reports around the browser session.
-The [agent runtime guide](/blog/agent-runtime-environments) explains how those pieces fit with model calls, state, and permissions.
-
-Keep browser credentials scoped to the test account.
-Keep screenshots and DOM captures in a controlled artifact store.
-Delete temporary workspaces after copying the records that a reviewer needs.
 
 ## What a browser run does not prove
 

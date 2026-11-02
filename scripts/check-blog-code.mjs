@@ -7,7 +7,7 @@ import { basename, join } from 'node:path';
 
 const root = new URL('..', import.meta.url).pathname;
 const harness = join(root, 'scripts/examples-typecheck');
-const out = join(harness, 'blog');
+const scratch = `blog-${process.pid}`, out = join(harness, scratch), project = join(harness, `${scratch}.tsconfig.json`); // per run: parallel gates never share files; both go at exit
 const posts = process.argv.slice(2).length
   ? process.argv.slice(2).map((p) => (p.startsWith('/') ? p : p.endsWith('.mdx') ? join(process.cwd(), p) : join(root, 'src/content/blog', `${p}.mdx`)))
   : readdirSync(join(root, 'src/content/blog')).filter((f) => f.endsWith('.mdx')).map((f) => join(root, 'src/content/blog', f));
@@ -28,13 +28,13 @@ for (const post of posts) {
 }
 if (fences.size === 0) { console.log('check:blog-code: no ts fences to check'); process.exit(0); }
 
-// The scratch files are deleted at exit: astro check and the examples harness would otherwise typecheck them too.
-process.on('exit', () => rmSync(out, { recursive: true, force: true }));
-const tsc = spawnSync('npx', ['--no-install', 'tsc', '-p', 'tsconfig.blog.json', '--pretty', 'false'], { cwd: harness, encoding: 'utf8' });
+writeFileSync(project, JSON.stringify({ extends: './tsconfig.blog.json', include: [`${scratch}/*.mts`] }));
+process.on('exit', () => { rmSync(out, { recursive: true, force: true }); rmSync(project, { force: true }); });
+const tsc = spawnSync('npx', ['--no-install', 'tsc', '-p', project, '--pretty', 'false'], { cwd: harness, encoding: 'utf8' });
 if (tsc.error) throw tsc.error;
 const problems = new Map();
 for (const line of `${tsc.stdout}\n${tsc.stderr}`.split('\n')) {
-  const m = line.match(/^blog\/([^(]+)\((\d+),(\d+)\): (.*)$/);
+  const m = line.match(/^blog-\d+\/([^(]+)\((\d+),(\d+)\): (.*)$/);
   if (!m) continue;
   const fence = fences.get(m[1]);
   const key = fence ? `${fence.post}:${fence.line + Number(m[2]) - 1}` : m[1];
