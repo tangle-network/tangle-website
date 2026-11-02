@@ -4,6 +4,7 @@ slug: k-1-tax-filing-multiple-entities
 summary: >-
   Index every K-1 and attachment, link each to basis, passive-loss, and state workpapers, and carry late corrections through the draft.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -12,6 +13,8 @@ tags:
 series: Building an AI Tax Agent
 seriesOrder: 9
 ---
+
+import Example from '../../components/Example.astro'
 
 A late or corrected K-1 can invalidate draft amounts, state workpapers, and loss calculations when the workflow lacks document versioning and dependency tracking.
 The taxpayer has a partnership Schedule K-1 from a fund, an S corporation Schedule K-1 from a company they own, a corrected statement from an operating partnership, and a page of state or international footnotes.
@@ -23,19 +26,21 @@ The form is not one universal document.
 Schedule K-1 (Form 1065) comes from a partnership, Schedule K-1 (Form 1120-S) comes from an S corporation, and Schedule K-1 (Form 1041) can come from an estate or trust.
 
 Here, **pass-through** is shorthand for an entity-level reporting arrangement in which items are reported to owners or beneficiaries for use on their returns.
-The exact rules differ by entity type.
 The current [partner instructions for Schedule K-1 (Form 1065)](https://www.irs.gov/instructions/i1065sk1) and [Form 1120-S instructions](https://www.irs.gov/instructions/i1120s) are the right references for their respective forms.
 
 In this series, **Tangle Tax Agent** means a proposed workflow from Tangle, the project behind this series, that inventories tax records, maps attached statements, prepares reconciliation workpapers, and waits for review before a filing decision.
-It does not mean that a public Tangle product can determine every partner-level limitation or state filing position from a document alone.
+It does not mean a public Tangle product can determine every partner-level limit or state filing position from a document alone.
 
 This is not tax advice.
 Multiple K-1s can require professional review, especially when basis, passive activity, foreign information, ownership changes, or amended statements are involved.
 
+This argument rests on one kept Sandbox per client, opened with `client.instances.ensure({ key })`.
+Arithmetic runs as code with `box.exec`, which returns an exit code and output the reader can check.
+Filing waits behind `submit_proposal`, which needs human approval.
+
 ## Reconcile each K-1 against its entity, year, and attachments
 
 The first task is to determine what each K-1 represents before adding any amount to a return.
-Schedules K-2 and K-3 are additional schedules that report international tax information from certain partnerships and S corporations.
 
 | K-1 source | What it reports | Why the source identity matters |
 | --- | --- | --- |
@@ -44,17 +49,17 @@ Schedules K-2 and K-3 are additional schedules that report international tax inf
 | Estate or trust K-1 (Form 1041) | A beneficiary’s share of items reported by the fiduciary | The reporting path and attached statements differ from a partnership or S corporation |
 | K-2 or K-3 attachment | International information from certain partnerships or S corporations | Foreign tax and international items may require additional forms or review |
 
-The IRS says a partnership uses Schedule K-1 to report each partner’s separate share and provides partner instructions for applying passive-activity, basis, and other limitations.
+The IRS says a partnership uses Schedule K-1 to report each partner’s separate share, and its partner instructions cover passive-activity, basis, and other limits.
 The [2025 Form 1065 instructions](https://www.irs.gov/instructions/i1065) also require activity detail so partners can apply the passive-activity rules.
 
 The S corporation instructions also state a separate boundary.
-They say a shareholder’s K-1 reports the shareholder’s separate share, while basis, at-risk, and passive-activity limitations are determined at the shareholder level.
+They say the K-1 reports the shareholder’s separate share, while basis, at-risk, and passive-activity limits are set at the shareholder level.
 The number in the box is an input to the return, not the final deductible amount.
 
 ## Example: Priya’s Harbor, Cedar, and Northstar records
 
 Imagine Priya, a founder and angel investor, receives the following records for one tax year.
-The sample figures below are illustrative and are not a tax calculation.
+The sample figures are illustrative, not a tax calculation.
 
 | Source | Visible amount | Attached detail | First review question |
 | --- | ---: | --- | --- |
@@ -78,10 +83,18 @@ The Northstar passive-activity statement may limit the current-year use of the l
 The software should therefore create one record per source and one reconciliation entry per relationship.
 It should never flatten every K-1 into a single “other income” bucket.
 
+An agent may state a total, but the total counts only after code computes it.
+The sandbox example below applies that check to a claimed fix: it passes only when `box.exec` exits with code 0.
+For a K-1 packet, the command is the arithmetic.
+
+<Example path="sandboxes/fix-a-test" title="Checking a claim by running it" />
+
+The run shows the claimed command passed in that clone.
+It does not check the K-1 values.
+
 ## Reconcile the corrected K-1 before adding it
 
-The Northstar records make the replacement problem concrete.
-The original statement reported an $18,000 loss, while the corrected statement reported a $9,000 loss.
+The original statement reported an $18,000 loss, and the corrected statement reported $9,000.
 The application should treat the second document as a new version of the same entity-and-year record, not as another loss.
 
 | Version | Ordinary loss | Product action | Downstream review |
@@ -92,11 +105,9 @@ The application should treat the second document as a new version of the same en
 
 The difference is a $9,000 reduction in the reported loss, but that is not automatically a $9,000 increase in currently usable income.
 The passive-activity statement, basis, state allocation, and any K-3 information still travel with the corrected version.
-The product should show those dependencies instead of reporting only the arithmetic difference.
 
 A stable source identifier should combine the entity, form type, tax year, and version, while each extracted item should retain its page reference.
 When the corrected statement arrives, the system can compare fields and attachments, mark dependent calculations stale, and ask for approval before replacing the draft mapping.
-This prevents a late K-1 from silently changing a return that a taxpayer already reviewed.
 
 ## The source index is the first deliverable
 
@@ -107,7 +118,7 @@ The index should also track expected forms.
 If Priya tells the system that Northstar normally issues a K-1 but the file is missing, the return should show an expected document rather than look complete.
 The taxpayer can then request the form, ask an advisor whether to extend, or record a documented decision to proceed.
 
-The useful distinction is between these states:
+These states apply to each source:
 
 | State | Meaning |
 | --- | --- |
@@ -118,19 +129,16 @@ The useful distinction is between these states:
 | Missing | The expected document did not arrive |
 | Blocked | A downstream calculation cannot proceed without a fact or review decision |
 
-An empty field and a confirmed zero are different states.
-The source index should preserve that difference.
+An empty field and a confirmed zero are different states, and the index should keep them apart.
 
 ## Attached statements add facts beyond the face of the K-1
 
-The face of a K-1 is often a compact summary.
 Attached statements can contain activity descriptions, state amounts, foreign taxes, capital gains, partner liabilities, special allocations, and instructions for where an item belongs.
 
 The software should extract those attachments as separate records.
 It should link each extracted candidate to the page and preserve the original wording beside any normalized amount.
 
-This is especially important for partnership activity.
-The IRS partner instructions say that when passive-activity rules apply, the partner uses the activity information and relevant forms or worksheets to determine what can be reported currently.
+The IRS partner instructions say that under passive-activity rules, the partner uses activity information and forms or worksheets to determine what is currently reportable.
 The software should therefore keep each activity separate until the partner-level calculation is reviewed.
 
 **Passive activity** is an activity whose income or loss is subject to special limits because the taxpayer did not materially participate under the applicable rules.
@@ -179,15 +187,10 @@ The workflow should keep both versions and show the changes between them.
 | Taxpayer approves new draft | Record the version and the changed artifacts |
 
 The IRS partner instructions warn that prior-year limited amounts should not be combined with current-year K-1 amounts as though they were one current-year figure, except where the instructions provide a different treatment for passive activity items.
-That is a precise reason to keep year and source attached to every line.
-
-A corrected K-1 should never silently overwrite the earlier document.
-The earlier version may be needed to explain what changed, when the taxpayer received it, and why an estimate or state filing moved.
 
 ## A reviewable source record
 
-The following is a small illustrative record for a review packet.
-It is not a substitute for the forms or instructions.
+A small illustrative record for a review packet follows.
 
 ```json
 {
@@ -240,9 +243,6 @@ Content-Type: application/json
 }
 ```
 
-The record gives a reviewer four things a final number cannot provide by itself.
-It shows which document was used, which document was replaced, which value changed, and what still needs an answer.
-
 ## Make correction history the Tangle output
 
 The proposed Tangle Tax Agent workflow should treat multiple K-1s as a reconciliation session.
@@ -261,11 +261,19 @@ collect expected and received K-1s
 The agent should link sources, attachments, versions, open questions, and affected return lines into one review packet.
 It should not decide that a loss is deductible, a state footnote is irrelevant, or an amended K-1 can be ignored.
 
-For the S corporation side of this workflow, read [S Corp Tax Software For Basis And K-1s](/blog/s-corp-tax-software-basis-k1).
+Each client’s packet lives in one kept sandbox.
+The example below opens it with `client.instances.ensure`, writes the source file with `instance.box.write`, and polls `instance.turn` until the turn completes.
+It reviews contracts rather than K-1s, so only the call pattern carries over.
+
+<Example path="products/legal-agent" title="One kept sandbox per client" />
+
+The example shows the turn finishing, not the reconciliation being right.
+
+For the S corporation side, read [S Corp Tax Software For Basis And K-1s](/blog/s-corp-tax-software-basis-k1).
 For the founder context, read [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns).
 For the general source-linked preparation model, read [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
 
-If the workflow is later packaged as a public service, its useful output remains the evidence packet and correction history.
+If the workflow is later packaged as a public service, its output remains the evidence packet and correction history.
 The existence of an automated run does not certify that an entity issued a correct K-1 or that the taxpayer applied every limitation correctly.
 
 ## Reconciliation starts after the K-1 opens
@@ -286,7 +294,6 @@ Use K-1 tax filing software for multiple entities only when it preserves each so
 If the product offers one combined total with no source-to-line map, it is an entry shortcut rather than a review system.
 If one entity supplies a complete, unchanged K-1 with no material attachments, conventional filing software may be enough.
 For the foreign-corporation schedule path that can sit beside those K-1s, see [controlled foreign corporation tax software for Form 5471](/blog/controlled-foreign-corporation-taxes-form-5471).
-
 
 ## What is K-1 tax filing?
 

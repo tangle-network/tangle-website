@@ -4,6 +4,7 @@ slug: ai-coding-assistant-deployment-evidence
 summary: >-
   AI coding assistants become useful for onboarding when they turn a brief into running code, checked tasks, deployment evidence, and a reviewable trace.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - blueprint-agent
@@ -13,21 +14,23 @@ series: Blueprint Agent
 seriesOrder: 2
 ---
 
+import Example from '../../components/Example.astro'
+
 A partner gives your developer program a short brief: install the software development kit (SDK), add one application programming interface (API) call, show the result, and deploy a preview.
 An AI coding assistant can produce an impressive diff in minutes.
 The partner then asks, “How do we know the integration works?”
 
-An **AI coding assistant** is software that helps a developer write, edit, run, and understand code.
 The useful version for onboarding has to leave the chat window and reach a running project.
 It needs a place to work, a defined task, checks that can fail, and evidence another person can inspect.
 
 [Blueprint Agent](https://docs.tangle.tools/blueprint-agent/introduction) is Tangle’s browser-based coding workspace.
 Its public documentation describes an agent that edits and runs code in a real development environment, with each session running on Tangle’s [Sandbox runtime](https://docs.tangle.tools/infrastructure/introduction).
 A **runtime** is the software and machine that start a task and provide its files, processes, ports, permissions, and resource limits.
-Tangle Sandbox is the isolated workspace runtime that gives an agent a bounded place for those files and processes.
 
 That distinction gives a partner program a practical standard.
 An assistant has done useful onboarding work when it can connect a brief to a code change, a check, a running result, and a record of what happened.
+
+The product surface under this argument is the Sandbox SDK. `client.create` starts a machine from a repository, `box.prompt` runs an agent turn that returns `success`, `usage`, and `costUsd`, and `box.exec` runs a command that returns an `exitCode`. The exit code is the observation a reviewer can replay: a turn that reports success says nothing about whether `npm test` passes.
 
 ## The output is an evidence packet
 
@@ -36,7 +39,7 @@ A diff can show what changed.
 Neither one proves that the project builds or that the integration behaves as promised.
 
 Treat the result as a small evidence packet with a clear boundary.
-The packet below uses a fictional `add-quote-endpoint` task so the shape stays public and portable.
+The packet below uses a fictional `add-quote-endpoint` task so the shape stays public.
 
 | Evidence | Example observation | What it proves | What it leaves open |
 | --- | --- | --- | --- |
@@ -51,21 +54,21 @@ An **evaluation** is a repeatable check against a stated expectation.
 For code onboarding, it might be a unit test, a request with an expected response, a browser assertion, or a deployment health check.
 An evaluation result describes the check that ran; it does not turn an incomplete check into proof of production readiness.
 
-The denominator matters.
-“The assistant passed” is weak language.
-An example review note could read: “The `add-quote-endpoint` task passed four named checks in the test workspace, while the browser check was skipped.”
+“The assistant passed” is weak language. A review note should name its checks: “The `add-quote-endpoint` task passed four named checks in the test workspace, while the browser check was skipped.”
+
+The example checks the assistant’s claim by running the test itself. It clones a repository, asks the agent to fix a failing `npm test`, then throws unless `npm test` exits zero.
+
+<Example path="sandboxes/fix-a-test" title="Check the assistant’s claim by running its test" />
+
+The exit code proves that one command passed in that workspace. It says nothing about checks that command does not run.
 
 ## A profile and a runtime set the assistant’s real limits
 
-The model is only one part of an AI coding assistant.
 An **agent profile** is the saved configuration for a run, such as the chosen model, instructions, tools, permissions, and budget.
 Tangle’s public AI documentation describes profiles as controls for models, tools, and budgets.
 
-The profile states the capabilities the agent is meant to receive.
-The runtime enforces which of those capabilities the session can use.
+The profile states the capabilities the agent is meant to receive, and the runtime enforces which of them the session can use.
 If the profile asks for a browser, a package manager, a private API connection, and a long-running process, the workspace must expose those capabilities through actual tools and policy.
-
-An RPC endpoint is a network address that lets a client make remote procedure calls to a service such as a blockchain node.
 
 For a partner task, write the boundary before the agent starts.
 
@@ -78,21 +81,17 @@ For a partner task, write the boundary before the agent starts.
 | Budget | What capped the run? | Time, token, or action limit |
 | Secrets | Which credentials were available, and where were they redacted? | Secret names and redaction policy |
 
-This is where [AI Agent Sandbox: Build a Controlled Agent Workspace](/blog/ai-agent-sandbox) fits the wider system.
+[AI Agent Sandbox: Build a Controlled Agent Workspace](/blog/ai-agent-sandbox) covers the wider system.
 The [Blueprint Protocol and Operator Services](/blog/blueprint-protocol-operator-services) article covers the protocol-side deployment boundary when the example becomes a Tangle service.
 The sandbox holds files and processes long enough for the assistant to inspect a failure and try again.
-The coding product helps the developer steer the work.
 The partner’s checks decide whether the result is acceptable.
 
 ## Carry one build brief from request to result
 
-Imagine a wallet infrastructure partner wants a small example that calls its public SDK, displays a response, and works on a test network.
-The onboarding task should be written as a behavior rather than a lesson title.
+Imagine a wallet infrastructure partner wants a small example that calls its public SDK and works on a test network. Write the task as a behavior, not a lesson title.
 
 “Learn our SDK” is too vague to verify.
 “Call `getQuote` with a valid test input, render the returned asset and expiry, and show a clear error for an expired quote” names an artifact and two observable outcomes.
-
-The assistant can then work through a bounded sequence.
 
 ```text
 brief names the behavior
@@ -112,7 +111,7 @@ The preview may be healthy while the task behavior is wrong.
 The trace may contain sensitive input that should not be shared with a sponsor.
 
 A small illustrative result shape makes those distinctions explicit.
-This is a teaching example, not a claim about a private Blueprint Agent API.
+This is a teaching example, not a Blueprint Agent API.
 
 ```typescript
 type CheckResult = {
@@ -152,6 +151,12 @@ A **trace** is the ordered record of a run.
 It can include the prompt, tool calls, file changes, command output, model usage, errors, retries, and final artifacts.
 The trace answers “how did we get here?” while an evaluation answers “did this named condition hold?”
 
+A trace can be judged too. The example sends the run’s answer and tool calls to a model judge on the Router, scored on two named dimensions: every cited file and line exists, and no tool call repeats earlier work.
+
+<Example path="evals/score-a-trace" title="Judge the run’s trace" />
+
+The score is a judgment about the run, so keep it beside the trace ID.
+
 Those records solve different problems.
 When several developers fail at the same import, a partner can inspect the [traces](/blog/self-improving-stack-trace-systems) and fix the starter project or documentation.
 When a task reports green but the response body is empty, the evaluator and its fixture need inspection.
@@ -161,15 +166,15 @@ Keep the record reviewable.
 Redact access tokens, wallet keys, personal data, and proprietary source before exporting a trace to a sponsor.
 Preserve enough context to reproduce the check, including the environment, dependency lock state, and failure output.
 
-The public [Tangle AI documentation](https://docs.tangle.tools/ai) describes a loop in which work runs in isolated sandboxes and task and agent evaluations feed back into workflows.
+The public [Tangle AI documentation](https://docs.tangle.tools/ai) describes a loop in which sandbox work and evaluations feed back into workflows.
 That feedback is valuable only when the system keeps task outcomes separate from opinions about the assistant’s prose.
 
 ## Where the Tangle terms fit
 
-Tangle uses **Blueprint** in two related contexts, and a newcomer should keep them separate.
+Tangle uses **Blueprint** in two related senses.
 A protocol Blueprint is a reusable definition of an off-chain service, including its jobs, inputs, outputs, artifacts, and optional protocol rules.
 A Service is a live instance of that Blueprint, and a Job is one callable unit of work inside the Service.
-The public [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) distinguishes a Blueprint from a live Service and from an individual Job.
+The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) makes the same distinction.
 Blueprint Agent is the product where a developer works with an AI coding assistant.
 
 If the partner’s example eventually becomes a protocol service, its job definition needs a handler.
@@ -178,17 +183,15 @@ The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runn
 For deployment evidence, the check should exercise the routed job rather than merely importing the handler.
 
 If the example is a paid Hypertext Transfer Protocol (HTTP) service, **x402** is an open payment standard built around HTTP `402 Payment Required` responses.
-The server can state the payment requirements, the client can return a signed payment payload, and the server can verify and settle before serving the resource.
-x402 proves a payment flow was accepted under its rules.
-It does not prove that the paid response is correct.
-Use a separate evaluation for the result.
+The server states payment requirements, the client returns a signed payment payload, and the server verifies and settles it before serving the resource.
+x402 proves a payment was accepted under its rules, not that the paid response is correct; use a separate evaluation for the result.
 The [x402 client and server guide](https://docs.x402.org/core-concepts/client-server) describes those roles.
 
 A trusted execution environment (TEE) is a protected execution area designed to keep code and data isolated from the surrounding host.
 If a partner needs confidential execution, an **attestation** is a signed statement from trusted hardware or an attestation service about the code and environment it observed.
 Attestation can support a claim that a particular workload ran inside a particular protected environment.
 It does not establish that the workload produced a useful answer, and it does not replace application-level checks.
-The [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) explains this boundary in more detail.
+The [Tangle execution confidentiality guide](https://docs.tangle.tools/developers/blueprints/execution-confidentiality) covers this boundary.
 
 ## Deployment evidence has a return path
 
@@ -215,7 +218,6 @@ Production approval belongs behind explicit review, especially when the workspac
 
 ## Give every evidence item an owner
 
-Evidence is easier to trust when someone owns the question it answers.
 The developer owns the intent and the source change.
 The evaluation owner owns the check definition and its fixtures.
 The runtime owner owns the environment, permissions, and command record.
@@ -231,17 +233,9 @@ The partner reviewer owns the decision about whether the result satisfies the pr
 | Trace export | Program or privacy owner | Which events can the reviewer see, and what was redacted? |
 | Approval | Partner reviewer | Is the result ready for the next environment? |
 
-This ownership map prevents a common handoff failure.
-The agent finishes a build, the runtime reports green checks, and nobody is responsible for deciding whether the checks were sufficient.
-The result then gets described as “verified” even though the evidence only covers a happy path.
-
-Keep the packet small enough to review.
-Link to detailed logs when a reviewer needs them, while putting the task, artifact, check status, target, and known failures on the first page.
-The point of a trace is to shorten investigation, not to make the reviewer search through every model message.
+The common failure is a green build nobody owns: the runtime reports green checks, nobody decides whether they were sufficient, and the result is called “verified” although it covers only a happy path.
 
 ## Failure cases worth designing first
-
-The first failure is often more informative than the first pass.
 
 **The check is too weak.** A test that asserts only that a page loads can pass while the SDK call never runs.
 Add an assertion on the real response and a failure case that exercises the integration boundary.
@@ -268,7 +262,7 @@ Pair it with product-specific evaluations and an explicit deployment decision.
 If the assistant only answers questions and returns a diff, call it documentation support.
 If it edits code but cannot run the relevant checks, call it a drafting tool.
 The onboarding platform begins when the result crosses into observable software.
-For the next layer, where a developer turns that observable result into a verified onboarding task, see [developer onboarding with code-verified quests](/blog/developer-onboarding-platform-code-verified-quests).
+For the next layer, see [developer onboarding with code-verified quests](/blog/developer-onboarding-platform-code-verified-quests).
 
 
 ## What is an AI coding assistant?

@@ -4,6 +4,7 @@ slug: ai-security-audit-reproducible-findings
 summary: >-
   An AI security audit becomes useful when each finding carries its code location, exploit path, command output, severity reasoning, and fix.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - code-auditor
@@ -13,20 +14,25 @@ series: Code Auditor
 seriesOrder: 2
 ---
 
+import Example from '../../components/Example.astro'
+
 The security lead receives a report that says, “Possible authorization bypass in the admin export route.”
 There is a line number, a confident paragraph, and no request that another engineer can send.
 
-The release risk is a report that sounds certain while leaving the second reviewer unable to reconstruct the claim.
-An **AI security audit** is ready for a release decision only when that second reviewer can reconstruct the claim from the report.
-That means the report identifies the exact code revision, the route an attacker would take, the inputs and permissions used, the observed result, the reason for the severity, and the change that should prevent it.
+An **AI security audit** is ready for a release decision only when a second reviewer can rebuild the claim from the report: the exact code revision, the attacker’s route, the inputs and permissions used, the observed result, the severity reasoning, and the fix.
 
 This is the standard behind the Code Auditor direction described by Tangle.
 The public product pages and service surface may change, so this article describes the evidence contract rather than promising a callable audit endpoint.
 
+On Tangle, the proof runs in a [Sandbox](https://docs.tangle.tools/sandbox), an isolated machine for the agent.
+`client.create` checks out the repository at a revision, `box.prompt` lets the agent investigate, and `box.exec` runs the test or exploit path.
+The exit code of that `box.exec` call is the evidence a reviewer can check. The agent's sentence about the result is not.
+The [quickstart](https://docs.tangle.tools/sandbox/quickstart) shows the same sequence.
+
 ## Reproducibility starts with one reviewer and one packet
 
 Reproducible does not mean that every reader can run every test on every machine.
-It means the report makes the important conditions explicit and separates a failed setup from a failed security claim.
+It means the report makes the conditions explicit and separates a failed setup from a failed security claim.
 
 An illustrative finding packet might look like this:
 
@@ -58,17 +64,15 @@ An illustrative finding packet might look like this:
 }
 ```
 
-The path names and values are illustrative, not a report from a private repository.
-The important property is the shape: a reviewer can see what was tested and what remains open without trusting the model’s prose.
+The path names and values are illustrative, not from a private repository.
+A reviewer can see what was tested and what remains open without trusting the model’s prose.
 
 The packet also makes uncertainty visible.
-If the test database was a fixture rather than production data, the report should say so.
-If the route was tested only with a normal user and not with a service token, that boundary belongs in the report.
+A fixture database instead of production data, or a normal user where a service token mattered, belongs in the report.
 
 ## A finding is a chain of claims
 
-Security reports often compress several different claims into one severity label.
-An agent should keep them separate.
+Security reports often compress several claims into one severity label. Keep them separate.
 
 | Claim | Evidence needed |
 | --- | --- |
@@ -82,13 +86,12 @@ An agent should keep them separate.
 That sequence is a useful reminder that query output is an input to review, not the review itself.
 
 [Semgrep’s finding glossary](https://semgrep.dev/docs/writing-rules/glossary) distinguishes a rule match from the underlying truth of the code’s behavior.
-Its [triage documentation](https://semgrep.dev/docs/for-developers/resolve-findings-through-app) also treats open, reviewing, fixing, and ignored states as workflow decisions that need context.
+Its [triage documentation](https://semgrep.dev/docs/for-developers/resolve-findings-through-app) treats open, reviewing, fixing, and ignored states as workflow decisions.
 
 For web applications, the [OWASP Web Security Testing Guide (WSTG)](https://owasp.org/www-project-web-security-testing-guide/) provides a testing structure and scenario identifiers.
-Use the [WSTG versioned-reference guidance](https://github.com/OWASP/wstg#how-to-reference-wstg-scenarios) when a report relies on a particular scenario, because identifiers can change as the guide evolves.
+Cite a scenario with the [WSTG versioned-reference guidance](https://github.com/OWASP/wstg#how-to-reference-wstg-scenarios), since identifiers change as the guide evolves.
 
 A threat model states which attackers, assets, permissions, and execution paths the review covers.
-The report’s job is to connect those general tools to one repository and that threat model.
 
 ## Severity must follow the demonstrated path
 
@@ -105,19 +108,17 @@ Use this downgrade table when proof stops short of the claim:
 | Vulnerable dependency | The affected package is installed, but the vulnerable function is not used | Dependency exposure requires a reachability check |
 | Any severe issue | The build or fixture fails before the proof begins | Setup failure, not a reproduced vulnerability |
 
-This is not a universal scoring formula.
-It is a writing discipline that prevents a strong adjective from hiding a missing condition.
+The table is a writing discipline, not a universal scoring formula. It stops a strong adjective from hiding a missing condition.
 
 The report should preserve the raw tool signal even when the severity changes.
 An engineer may need to tune the rule, add a test, or revisit the conclusion after a configuration change.
 
 ## Read the report in the order a release decision happens
 
-A reviewer rarely starts by reading every model message.
-The first pass should answer whether the report has enough material to spend more time on it.
+A reviewer’s first pass asks whether the report has enough material to justify more time.
 
 Start with the source identity.
-If the report does not say which revision, dependency lockfile, or deployment configuration it examined, the location may describe code that is no longer shipping.
+Without the revision, dependency lockfile, or deployment configuration, the location may describe code that is no longer shipping.
 
 Then read the expected and observed results.
 The difference between “the request reached the handler” and “the request returned another tenant’s record” is the difference between a path candidate and a demonstrated data disclosure.
@@ -127,7 +128,7 @@ An administrative route may be public at the HTTP layer while an edge service, r
 The report should name that boundary instead of summarizing the route as public or private.
 
 Finally, read the fix check and limits.
-If the patch was never tested, the report is a recommendation rather than a verified repair.
+If the patch was never tested, the report is a recommendation, not a verified repair.
 If the test used a fixture, the report should state what the fixture omits.
 
 | Review question | If the answer is missing |
@@ -138,18 +139,15 @@ If the test used a fixture, the report should state what the fixture omits.
 | What state, data, or permission changed? | Do not infer impact from a category label |
 | Did the same proof fail after the patch? | Keep the fix unverified |
 
-This order keeps the review efficient without making it shallow.
-It directs attention to the claims that can change a release decision and leaves stylistic commentary for later.
-
 ## Setup failures are security-relevant evidence, but they are not exploits
 
 Suppose the agent reports that it “validated” a missing authorization check, but the test command exited before loading the application.
 The report must say that no reproduction occurred.
 
-The same distinction applies to missing dependencies, unavailable chain state, a failed database migration, a blocked network request, or a test that used the wrong identity.
-Each failure changes what the reader may conclude.
+Missing dependencies, unavailable chain state, a failed migration, a blocked request, or a test run as the wrong identity follow the same rule.
+Each one changes what the reader may conclude.
 
-An evidence table makes that boundary easy to inspect:
+The evidence table shows that boundary:
 
 | Captured result | What it tells the reviewer |
 | --- | --- |
@@ -167,6 +165,13 @@ Otherwise a model can describe a test that never ran, and the report will make t
 The first reproduction is only half of the release check.
 After the code change, rerun the same request or test against the patched revision.
 
+The example reruns the test in a sandbox. The fix counts only when `box.exec("npm test")` exits `0`.
+
+<Example path="sandboxes/fix-a-test" />
+
+The exit code of `npm test` decides the result, not the agent’s summary.
+It shows that the repository test passes after the change, not that the authorization path was exercised; the fix note still has to name that gap.
+
 A useful fix note contains four lines of reasoning:
 
 1. The original code allowed a specific caller and input to reach a protected action.
@@ -183,8 +188,8 @@ If the proof cannot be repeated because a fixture disappeared or a chain state i
 
 ## A missing proof needs a useful next step
 
-Some findings cannot be reproduced in the first run without becoming false or unsafe experiments.
-The production service may depend on a third-party identity provider, a queue race, a live block range, a private package, or a permission that the audit worker must not receive.
+Some findings cannot be reproduced safely in the first run.
+The service may depend on a third-party identity provider, a queue race, a live block range, a private package, or a permission the audit worker must not receive.
 
 The report should turn that boundary into a request a reviewer can answer.
 “Could not reproduce” is a status, not an explanation.
@@ -197,41 +202,41 @@ The report should turn that boundary into a request a reviewer can answer.
 | Private dependency cannot be installed | Record the package boundary and the command that failed | Provide a trusted build artifact or mark the affected path unresolved |
 | Live data would expose users | Describe the redacted assertion and missing sample | Use synthetic records that preserve the authorization relationship |
 
-This format keeps the report honest while giving engineering a path to completion.
 It also protects the audit from silently widening permissions until a desired result appears.
 
 A reviewer can then distinguish three outcomes.
 The issue may be disproved by a safe fixture, confirmed in an approved environment, or left open because the missing condition is part of the risk itself.
-Each outcome deserves a different release decision.
 
 The [automated smart contract audit guide](/blog/automated-smart-contract-audit-poc-validation) shows how to turn a confirmed contract proof into a regression test.
 The [AI code audit guide](/blog/ai-code-audit-sandboxed-agents) covers the isolated execution workflow that makes this rerun safer.
 
 ## Tangle can carry the evidence, but each layer proves something different
 
-Tangle’s public [Sandbox](https://docs.tangle.tools/sandbox) is an isolated machine for an agent.
-Its [quickstart](https://docs.tangle.tools/sandbox/quickstart) shows an SDK client creating a machine, running a command, capturing its output, and deleting the machine afterward.
-That makes it a possible execution boundary for the scan and rerun, not a substitute for the finding packet.
+The Sandbox is a possible execution boundary for the scan and rerun, not a substitute for the finding packet.
 
-If a future audit workflow is packaged for Tangle, a **Blueprint** would be the service package defining its jobs, metadata, contracts, and runtime rules.
-An **operator** would be the service provider that runs the live instance for a caller.
-A **service instance** would be that live registration and execution context, not the reusable Blueprint package.
-The **runtime** would be the container, microVM, or other environment that executes the scan and reproduction.
+If a future audit workflow is packaged for Tangle, a **Blueprint** is the reusable service package with its jobs, metadata, contracts, and runtime rules.
+An **operator** runs the live instance for a caller, and a **service instance** is that live registration and execution context, not the package.
+The **runtime** is the container, microVM, or other environment that executes the scan and reproduction.
 The public [AI Agent Sandbox Blueprint overview](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes that split between protocol lifecycle and live machine I/O.
 
 An **agent profile** records the model, instructions, tools, permissions, and resource limits used by the run.
-Pinning that profile gives the reviewer a comparison point when two runs produce different hypotheses.
+Pinning it gives the reviewer a comparison point when two runs disagree.
 
 A **trace** is the ordered record of the run’s actions, inputs, outputs, and results.
 It answers “what did the agent do?” and “what did the tools return?”
 It does not answer “was the threat model complete?” without a separate review of scope.
 
+A model judge on the Router can score that record. It reads the answer and every tool call, then scores `grounded` (every file and line the answer names exists) and `economical` (no tool call repeats earlier work).
+
+<Example path="evals/score-a-trace" />
+
+It prints the trace ID, the dimension scores and the judge’s notes, so a reviewer can open the same trace the score came from.
+
 An **evaluation** is a repeatable collection of audit tasks and expected outcomes used to compare runs under the same conditions.
-It makes the allocation measurable.
 For this workflow, the evaluation should include known true findings, known false positives, setup failures, duplicate alerts, and cases where the correct answer is “not enough evidence.”
 Score the system on reproducible accepted findings, correct rejections, missed issues, rerun success, and reviewer time.
 
-The product boundary is important.
+The product boundary matters.
 Protocol state can record that a service exists, an operator can run a runtime, and a trace can record actions.
 Those facts still need to be joined to the code revision and security evidence before an engineer accepts the finding.
 
