@@ -248,14 +248,16 @@ function fold(lines: string[], raw: Event[]): Event[] {
 // Coalesce a stream's deltas: one event per text part, tool state and run of tokens, with a count and end time.
 const clip = (value: unknown): unknown => typeof value === "string" ? (value.length > 1500 ? `${value.slice(0, 1500)}… (${value.length} chars)` : value)
   : Array.isArray(value) ? value.map(clip) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clip(v)])) : value;
-const DELTAS = new Set(["message.part.updated", "token", "raw", "model-processing"]);
+const DELTAS = new Set(["message.part.updated", "token", "raw", "model-processing", "task.reasoning", "task.message.delta", "task.tool.updated"]);
 function compact(events: Event[]): Event[] {
   const out: Event[] = [];
   const open = new Map<string, Event>();
   for (const event of events) {
     if (event.kind !== "stream" || !DELTAS.has(String(event.type))) { out.push(event); continue; }
-    const part = (event.data as { part?: { id?: string; type?: string; state?: { status?: string } } } | undefined)?.part;
-    const key = `${event.parent}:${event.type}:${part?.id ?? ""}:${part?.state?.status ?? ""}`;
+    const data = event.data as { part?: { id?: string; type?: string; state?: { status?: string } }; taskId?: string } | undefined;
+    const part = data?.part;
+    // A batch task's deltas each carry their own part id: they coalesce per task instead.
+    const key = data?.taskId ? `${event.parent}:${event.type}:${data.taskId}` : `${event.parent}:${event.type}:${part?.id ?? ""}:${part?.state?.status ?? ""}`;
     const last = open.get(key);
     if (last) {
       last.count = Number(last.count ?? 1) + Number(event.count ?? 1);
@@ -264,7 +266,7 @@ function compact(events: Event[]): Event[] {
       last.data = event.type === "token" && typeof value === "string" ? { ...(last.data as object), value: `${(last.data as { value?: string }).value ?? ""}${value}` } : clip(event.data);
       continue;
     }
-    if (part?.id) for (const [k] of open) if (k.startsWith(`${event.parent}:`) && !k.includes(":message.part.updated:")) open.delete(k);
+    if (part?.id && !data?.taskId) for (const [k] of open) if (k.startsWith(`${event.parent}:`) && !k.includes(":message.part.updated:")) open.delete(k);
     const kept = { ...event, data: clip(event.data) };
     out.push(kept);
     open.set(key, kept);
