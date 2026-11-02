@@ -4,6 +4,7 @@ slug: s-corp-tax-software-basis-k1
 summary: >-
   Reconcile Form 1120-S and each K-1 with shareholder stock basis, debt basis, distributions, payroll, and suspended-loss history.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -12,6 +13,8 @@ tags:
 series: Building an AI Tax Agent
 seriesOrder: 7
 ---
+
+import Example from '../../components/Example.astro'
 
 A shareholder receives a Schedule K-1 showing a $40,000 loss and remembers taking a $20,000 distribution during the year.
 The tax software imports the loss, subtracts the distribution, and produces a clean-looking draft.
@@ -24,7 +27,6 @@ The shareholder then uses those items, plus separate basis and limitation record
 An **S corporation** is a corporation that has made a federal election allowing certain income, losses, deductions, and credits to pass through to shareholders.
 **Stock basis** is the shareholder’s tax investment in the corporation’s stock.
 **Debt basis** is the shareholder’s tax basis in qualifying loans the shareholder personally made to the S corporation.
-Basis is a tax workpaper balance, not the corporation’s bank balance and not the amount of cash distributed.
 
 In this series, **Tangle Tax Agent** means a proposed workflow from Tangle, the project behind this series, that collects entity records, prepares Form 1120-S and K-1 workpapers, updates basis calculations, and stops for review before filing.
 It does not mean a public Tangle product can decide a shareholder’s basis or loss limits without the underlying records and approval.
@@ -33,13 +35,12 @@ A review packet is the source-linked basis workpaper, open questions, draft form
 This is not tax advice.
 S corporation returns and shareholder basis can require professional review.
 
+The basis calculation runs as code. The agent keeps one sandbox per client, runs each calculation with `box.exec`, and reads back an exit code and stdout. The return leaves that sandbox only through `submit_proposal`, which queues it for human approval before filing.
+
 ## The K-1 is an allocation, not a deduction certificate
 
 The IRS’s current [Form 1120-S instructions](https://www.irs.gov/instructions/i1120s) say Schedule K-1 shows each shareholder’s separate share of the corporation’s income, deductions, credits, and other information.
 The same instructions say the ordinary business income or loss on the K-1 is reported without applying the shareholder’s basis, at-risk, or passive-activity limitations.
-Those limitations are determined at the shareholder level.
-
-That creates a boundary the software must preserve.
 
 | Record | What it tells the shareholder | What it does not settle |
 | --- | --- | --- |
@@ -55,9 +56,7 @@ It also states that a non-dividend distribution is tested against stock basis, w
 
 ## A worked basis calculation
 
-Consider Jordan, the sole shareholder of an illustrative S corporation.
-The values below demonstrate the ordering of a simplified basis workpaper.
-They are not a tax result for a real taxpayer.
+Consider Jordan, the sole shareholder of an illustrative S corporation. The values below show the ordering of a simplified basis workpaper, not a tax result for a real taxpayer.
 
 | Basis event | Amount | Stock basis after event |
 | --- | ---: | ---: |
@@ -68,13 +67,13 @@ They are not a tax result for a real taxpayer.
 | Nondeductible expenses | -$2,000 | $28,000 |
 | Pass-through loss and deduction items | -$40,000 | $0, with $12,000 beyond stock basis |
 
-The simplified order is important.
-The IRS describes the annual order as increasing stock basis for income items, decreasing it for distributions, decreasing it for nondeductible expenses, and then decreasing it for loss and deduction items.
+The order matters.
+The IRS describes the annual order: income items raise stock basis, then distributions, nondeductible expenses, and loss items lower it.
 The current [IRS basis page](https://www.irs.gov/businesses/small-businesses-self-employed/s-corporation-stock-and-debt-basis) provides the ordering and a worked example.
 
 Assume Jordan also has $7,000 of valid debt basis from a personally made loan.
 The $12,000 beyond stock basis may use up to $7,000 of debt basis, leaving a $5,000 amount subject to suspension or other applicable limits.
-The phrase “may use” matters because at-risk, passive-activity, and other rules can still affect the amount currently allowed.
+The phrase “may use” matters: at-risk and passive-activity rules can still limit the amount allowed.
 
 The calculation can be expressed as a reviewable worksheet:
 
@@ -92,12 +91,12 @@ remaining loss candidate = $5,000
 ```
 
 A final worksheet must use the correct K-1 items, ordering rules, debt documentation, and taxpayer facts.
-The example’s purpose is to show why a product that imports a K-1 without a beginning balance and source-linked adjustments cannot produce a trustworthy basis answer.
+The example shows why a product that imports a K-1 without a beginning balance cannot produce a trustworthy basis answer.
 
 ## Replay the distribution when one source disagrees
 
 Jordan’s $20,000 distribution should be traceable as a sequence of records rather than as a negative number typed into a basis field.
-The following review table shows the minimum evidence for the illustrative calculation.
+The table lists the minimum evidence for the illustrative calculation.
 
 | Input | Source record | Review question |
 | --- | --- | --- |
@@ -115,7 +114,6 @@ If the beginning basis workpaper later changes, the application should recalcula
 
 This replay also exposes a common failure mode.
 A product can produce the correct arithmetic for the illustrative inputs while still producing the wrong taxpayer result if the loan is not qualifying debt, the K-1 is corrected, ownership changed during the year, or another shareholder-level limitation applies.
-The source-linked workpaper makes those risks reviewable before the output is treated as a filing input.
 
 ## Form 7203 makes the basis boundary visible
 
@@ -123,10 +121,10 @@ Form 7203 is the IRS form for S corporation shareholder stock and debt basis lim
 The [current IRS Form 7203 page](https://www.irs.gov/forms-pubs/about-form-7203) says shareholders use it to figure potential limitations on deductions, credits, and other items.
 The IRS instructions identify situations such as claiming an S corporation loss, receiving a non-dividend distribution, disposing of stock, or receiving a loan repayment.
 
-Software should include the Form 7203 question in the workflow rather than treat it as an afterthought.
+The workflow should include the Form 7203 question.
 The shareholder’s packet should show which K-1 lines, contributions, distributions, loan documents, and prior-year carryovers feed the calculation.
 
-The calculation should remain inspectable even when a form is not required for a particular return.
+The calculation should stay inspectable when no form is required.
 An annual basis workpaper makes the beginning balance for the next year visible and gives a reviewer a way to find a discrepancy before it compounds.
 
 The application should also distinguish these balances:
@@ -143,8 +141,13 @@ That is another reason the K-1 and distribution ledger must remain separate.
 
 ## A small calculation model can enforce the right questions
 
-The following TypeScript is a toy example of the ordering logic.
-It is intentionally incomplete and should not be used to prepare a real return.
+The basis run executes each calculation with `box.exec` in the client’s kept sandbox. The verified example below shows the call shape: `client.create()`, one `box.exec`, then `box.delete()`. The basis run keeps its sandbox and runs the reviewed calculation instead of a platform check.
+
+<Example path="sandboxes/run-code" title="One command in a fresh sandbox" />
+
+The example shows that a command returns an exit code and stdout. It does not show any basis figure.
+
+The TypeScript below is a toy of the ordering logic, incomplete and not for preparing a return.
 
 ```typescript
 type BasisInput = {
@@ -225,8 +228,6 @@ Production software would need a tax-year-specific rule set, source references, 
 ## Payroll, ownership, and state records belong beside the K-1
 
 Payroll and distributions answer different questions.
-Payroll records show wages and withholding through the employer’s payroll process.
-Distribution records show cash or property moved from the corporation.
 The K-1 reports allocated items from the entity return.
 The software should reconcile those records without merging them into one “owner compensation” field.
 
@@ -279,7 +280,6 @@ It should show the beginning balance, every increase and decrease, the source fo
 For the founder return that combines this basis work with other entities and assets, continue with [complex tax situations software for founder returns](/blog/complex-tax-situations-software-founder-returns).
 
 For the multi-entity K-1 workflow, read [K-1 Tax Filing For Multiple Entities](/blog/k-1-tax-filing-multiple-entities).
-For the founder context, read [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns).
 For the broader source-backed preparation model, read [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
 
 If the workflow later runs as a public service, an automated calculation remains a candidate until the source documents and reviewer decisions are attached.

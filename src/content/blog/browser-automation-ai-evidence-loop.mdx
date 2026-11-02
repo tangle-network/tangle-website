@@ -5,6 +5,7 @@ summary: >-
   Decide when a browser agent should observe again, retry a changed page, stop, or
   fail without letting a moved interface become a false pass.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - browser-agent
@@ -14,23 +15,24 @@ series: Browser Agent
 seriesOrder: 9
 ---
 
+import Example from '../../components/Example.astro'
+
 A browser agent sees a checkout button under a cookie banner and clicks once.
 The page moves, but the total is still loading.
 The model assumes the action worked and starts filling the next field.
 
 AI browser automation needs a loop that makes each transition inspectable.
 The agent should observe the page, take one allowed action, verify the expected local change, recover only inside a stated boundary, and check the final goal before it stops.
-The record of those steps lets a reviewer assess whether the run supports its claim.
 
 Tangle Browser Agent packages this style of work behind its `bad` command-line interface (CLI) and a public software development kit (SDK) that drives Playwright pages.
-This article treats the loop as a control problem, shows a worked failure, and explains what the run does and does not establish.
+Inside a Tangle sandbox, `client.create` and `box.prompt` run a browser task, and `box.read` returns the file the agent wrote.
+
 For a testing-focused view of the artifacts, read [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
 
 ## The browser must confirm each transition
 
 Treat the loop as a small state machine: a sequence of named page states connected by actions and checks.
 The agent should never treat an action as proof of its own effect.
-The browser must be observed again after the action.
 
 ~~~text
 goal
@@ -70,7 +72,6 @@ Network and console records show requests and errors outside the visible page.
 The [WebDriver specification](https://www.w3.org/TR/webdriver2/) defines a remote-control interface for inspecting and manipulating web browsers.
 [Playwright](https://playwright.dev/docs/intro) supplies browser control, isolation, assertions, and reports.
 An AI layer can choose how to inspect and what to do next.
-The browser tools still provide the observable surface.
 
 If the DOM says a button is enabled while the screenshot shows it covered by a modal, the run needs a rule for resolving the conflict.
 The safe rule is to capture both views, close only a related modal if policy permits, and observe again.
@@ -79,7 +80,6 @@ Guessing which channel is correct without recording the disagreement weakens the
 ## Resolve disagreement with a named priority
 
 Different observations can be correct at the same time.
-The DOM can expose a button while a page style layer covers it.
 The screenshot can show a label that the accessibility tree does not expose.
 The network can return a successful response while the page keeps stale state.
 
@@ -178,7 +178,7 @@ The test owner can inspect coupon data or expiration rules.
 The product owner can decide whether the error is expected in this environment.
 The agent did not silently substitute another coupon or submit payment.
 
-The terminal status should be one of four ordinary outcomes:
+The terminal status is one of four outcomes:
 
 | Status | Meaning |
 | --- | --- |
@@ -194,6 +194,8 @@ An evaluation compares that record with the acceptance condition.
 The trace answers “what happened?”
 The evaluation answers “does what happened satisfy the case?”
 
+In Tangle’s examples, `evals/score-a-trace` is the judge: a model on the Router reads the answer and every tool call, then scores the run. The base record it reads is described in [AI Browser Testing With Evidence Traces](/blog/ai-browser-testing-evidence-traces).
+
 This separation matters when a model provides a natural-language explanation.
 The explanation can point to a screenshot or summarize a step.
 It should not replace the expected condition, the captured state, or the terminal status.
@@ -205,8 +207,7 @@ Name the evaluator and evidence type in the case so the result’s authority is 
 
 ## Start with the public Browser Agent surface
 
-Tangle’s [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) publishes the scoped package, bad binary, safe help commands, SDK exports, and example goal.
-The [public repository](https://github.com/tangle-network/browser-agent-driver) documents the CLI, SDK, observation modes, output, and wallet section.
+The [Browser Agent manifest](https://tangle.tools/.well-known/tangle-browser-agent.json) lists the package, binary, and SDK exports. The [public repository](https://github.com/tangle-network/browser-agent-driver) documents the CLI, SDK, and observation modes.
 
 ~~~bash
 npm install -g @tangle-network/browser-agent-driver
@@ -223,9 +224,19 @@ The snapshot command is useful for a deterministic page-state check without aski
 The run command adds the agent loop.
 Start with a public read-only page, then add a disposable authenticated fixture after the evidence and stop policy are working.
 
-The public SDK uses a Playwright page:
+The sandbox example runs the browser task in a fresh Tangle sandbox.
+The agent installs Playwright and Chromium, opens a public news page, and writes a screenshot and a JSON array of five titles.
+`box.prompt` returns when the run ends, and `box.read` and `box.fs.download` collect the files.
 
-~~~typescript
+<Example path="sandboxes/browser-task" title="A browser task in a Tangle sandbox" />
+
+The run proves that the agent reported success and wrote both files.
+It does not prove the five titles are correct, because the example never checks them against the page.
+
+The public SDK drives a Playwright page directly.
+This sketch is not in the typecheck set, so check the package README before relying on optional fields or output paths.
+
+~~~js
 import { chromium } from 'playwright'
 import {
   BrowserAgent,
@@ -238,7 +249,7 @@ const driver = new PlaywrightDriver(page)
 const agent = new BrowserAgent({
   driver,
   config: {
-    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    model: process.env.BROWSER_AGENT_MODEL ?? 'glm-5.3',
     observationMode: 'hybrid',
     plannerEnabled: true,
   },
@@ -255,12 +266,8 @@ try {
 }
 ~~~
 
-This code follows the public repository’s documented exports.
-The package version and README should be checked before relying on optional fields or output paths.
-
 ## Decide what a hosted service returns
 
-The browser loop can remain a local package.
 If a team exposes it as a service, a [Blueprint](/blog/blueprint-protocol-operator-services) is the reusable definition of its jobs and runtime requirements, while an operator is the provider that runs a live instance.
 A hosted job should return the trace, evaluation, and terminal status as separate fields.
 Execution metadata can explain where the run happened, but it is not evidence that the page reached the requested business state.
@@ -273,15 +280,6 @@ It does not prove hidden backend invariants.
 It does not prove transaction settlement unless the owning system confirms it.
 It does not replace contract tests, application programming interface (API) tests, accessibility checks, or manual review of high-risk actions.
 It does not make credentials safe to expose.
-
-A visual screenshot can show a wallet prompt.
-It cannot prove that a contract will execute as intended.
-
-These boundaries are useful because they tell the team which evidence to add next.
-When the claim concerns layout, add screenshots.
-When it concerns page semantics, add DOM or accessibility evidence.
-When it concerns a transaction, add wallet request and chain evidence.
-When it concerns code identity or secret handling, add the appropriate execution evidence.
 
 
 ## What is browser automation AI?
@@ -305,7 +303,7 @@ Stop when the page is ambiguous, a required permission is missing, an unresolved
 
 No.
 Playwright provides browser automation primitives and test tooling.
-Browser Agent adds a goal-driven loop, observation choices, recovery, and evidence around those primitives.
+Browser Agent adds a goal-driven loop, observation choices, recovery, and evidence around them.
 
 ## Choose the boundary before the action
 

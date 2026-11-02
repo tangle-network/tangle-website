@@ -4,6 +4,7 @@ slug: crypto-tax-software-2026-defi-staking-wallets
 summary: >-
   Reconcile broker forms with wallet history, DeFi, staking, transfers, and missing basis before drafting Form 8949 transactions.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - tax-agent
@@ -13,6 +14,8 @@ series: Building an AI Tax Agent
 seriesOrder: 3
 ---
 
+import Example from '../../components/Example.astro'
+
 The crypto tax problem in 2026 often starts with a false sense of completion.
 A taxpayer downloads an exchange export, receives a new digital-asset broker statement (Form 1099-DA), and sees a list of proceeds.
 Then the wallet history shows a bridge, a cross-chain movement of assets, a blockchain-based finance position, and staking rewards that never appeared in the broker statement.
@@ -21,14 +24,16 @@ Crypto tax software in 2026 needs to reconcile those sources before it presents 
 It should identify what happened, preserve the records that support the classification, calculate only from supported basis inputs, and stop when the history is incomplete.
 This is a documentation-based review workflow, not shared execution or a promise that private code is required.
 
+The Tangle Tax Agent, the proposed workflow in this series, keeps one Sandbox per client.
+It reconstructs wallet, staking, and DeFi activity there, runs the cost-basis arithmetic with `box.exec` instead of asserting a number, and sends each filing position through `submit_proposal` for human approval.
+
 For federal tax purposes, a **digital asset** is a digital representation of value recorded on a cryptographically secured distributed ledger or similar technology.
 The IRS treats digital assets as property, not as a separate tax universe.
 The [IRS digital asset page](https://www.irs.gov/filing/digital-assets) includes cryptocurrency, stablecoins, and non-fungible tokens among its examples.
 
 A **wallet** is the software or hardware-controlled account and address set used to hold or move digital assets.
 A **self-custody wallet** is one where the taxpayer controls the credentials needed to authorize transfers.
-An **exchange** is a platform that records trades or custody activity in its own account system.
-**DeFi** is shorthand for financial applications that use blockchain programs and on-chain transactions, meaning transactions recorded on a blockchain, rather than a traditional broker’s account ledger.
+**DeFi** is shorthand for financial applications built on blockchain programs, whose transactions are recorded on a chain rather than in a broker’s account ledger.
 **Staking** means committing digital assets to a proof-of-stake network, a validation system based on committed assets, or to a service that may distribute rewards.
 
 This is not tax advice.
@@ -36,14 +41,13 @@ Digital asset tax treatment can depend on ownership, timing, valuation, accounti
 
 ## “2026” matters because broker data now has a boundary
 
-The year in the title matters because broker reporting is changing while self-custody records remain the taxpayer’s responsibility.
+Broker reporting is changing, while self-custody records remain the taxpayer’s responsibility.
 For 2025 sales, U.S. brokers generally report gross proceeds on Form 1099-DA, but most 2025 statements do not report basis.
 For sales after December 31, 2025, the 2026 [Instructions for Form 1099-DA](https://www.irs.gov/instructions/i1099da) require gross-proceeds reporting for digital assets.
 They require basis reporting only for covered securities, generally assets acquired after 2025 in the broker’s custodial account and held there until sale.
 Basis reporting for noncovered securities is not required, although a broker may report it voluntarily under those instructions.
 
-For 2025 transactions, the IRS warned that most Form 1099-DA statements would not include basis.
-The IRS also says DeFi brokers and some foreign brokers are not required to file Form 1099-DA or furnish a statement covering the activity.
+The IRS also says DeFi brokers and some foreign brokers are not required to file Form 1099-DA or furnish a statement covering that activity.
 See the [IRS guidance for tax professionals on digital-asset reporting](https://www.irs.gov/newsroom/tax-professionals-can-prepare-now-to-assist-their-clients-with-reporting-proceeds-from-certain-digital-asset-transactions) and the [2026 Form 1099-DA instructions](https://www.irs.gov/instructions/i1099da) for the current reporting boundary.
 
 | Source | What it can tell the software | What remains open |
@@ -55,15 +59,12 @@ See the [IRS guidance for tax professionals on digital-asset reporting](https://
 | Staking provider record | Reward quantity, time, fees, and custody or validator details | The applicable income and basis treatment for the taxpayer’s facts |
 | Taxpayer answer | Address ownership, entity ownership, purpose, and missing history | Whether the answer is supported by a record or needs review |
 
-Form 1099-DA is therefore one source in the file.
-It is not a universal ledger for every digital asset the taxpayer owned.
-
 ## Reconstruct events before calculating lots
 
 An event is a normalized description of what a transaction did, such as “asset sold,” “same-owner transfer,” “reward received,” or “classification unresolved.”
 Normalization means translating exchange rows and blockchain records into one consistent event shape while keeping the original data attached.
 
-Use this sequence so every calculation remains connected to its source:
+Keep every calculation connected to its source:
 
 1. Collect exchange, wallet, protocol, and broker records.
 2. Identify addresses, accounts, assets, and owners.
@@ -92,14 +93,13 @@ A **tax lot** is one acquisition of an asset, together with its quantity, acquis
 When a later sale uses part of several acquisitions, the software must show which lots supplied the disposed units and which method or instruction supported that choice.
 
 **Basis** is the taxpayer’s tax investment in the asset.
-For a purchased asset it often starts with cost, but transfers, fees, rewards, gifts, and other events can change the analysis.
-The [Form 8949 instructions](https://www.irs.gov/instructions/i8949) describe basis as the property’s cost under the general property rules, while transfers, fees, and rewards can change the analysis.
+For a purchased asset it often starts with cost, but transfers, fees, rewards, gifts, and other events can change it.
+The [Form 8949 instructions](https://www.irs.gov/instructions/i8949) describe basis as the property’s cost under the general property rules.
 
 ## Follow one lot through a wallet and a swap
 
 Take Olivia, who used a U.S. exchange, a self-custody wallet, and a proof-of-stake network during an illustrative 2025 tax year.
-The sample numbers below are deliberately simplified.
-They show how software should label work, not how a taxpayer should report a real transaction.
+The sample numbers are deliberately simplified: they show how software should label work, not how a taxpayer should report a real transaction.
 
 | Sample event | Raw record | Normalized candidate | Evidence state |
 | --- | --- | --- | --- |
@@ -120,8 +120,13 @@ $900 swap value - $600 candidate basis = $300 candidate gain
 That $300 is not Olivia’s final tax result.
 The system still needs to confirm which lot supplied the ETH, value the received USDC under the applicable rules, account for transaction costs, and determine whether the bridge or staking records change the lot history.
 
-The worked calculation is useful because it makes the missing inputs visible.
-An output that says “$300 gain” without the lot, event type, valuation, and source is less reviewable than an output that says “$300 candidate gain, pending these three checks.”
+`sandboxes/run-code` shows the call the agent makes: `box.exec` runs one command in a sandbox and returns `exitCode` and `stdout`. This example’s command prints a platform string; the tax agent sends a Python command that evaluates the lot arithmetic instead.
+
+<Example path="sandboxes/run-code" title="One command in a fresh sandbox, then deleted" />
+
+The output proves that one command ran and returned an exit code. It does not prove the lot arithmetic; a reviewer still checks the $600 and $300 against the lot ledger.
+
+An output that says “$300 gain” without the lot, event type, valuation, and source is less reviewable than one that says “$300 candidate gain, pending these three checks.”
 
 ## Treat transfer matching as a hypothesis
 
@@ -143,7 +148,6 @@ If it erases the withdrawal from the sale table before a reviewer accepts the ma
 
 An unmatched withdrawal is not proof of a taxable sale.
 It is evidence that the software cannot yet prove where the asset went or who controlled it.
-That distinction is central to reliable crypto tax software.
 
 The IRS says a transfer between two wallets or accounts belonging to the same taxpayer is generally non-taxable.
 Digital assets used or withheld to pay transfer services are the exception and can create a separate disposition.
@@ -151,10 +155,8 @@ See [IRS digital-asset FAQ 81](https://www.irs.gov/individuals/international-tax
 
 ## Read the protocol event before assigning a tax label
 
-DeFi activity can involve a swap, a liquidity-pool deposit, a withdrawal, a lending position, a borrowing event, a reward, an airdrop, or several of those actions in one transaction.
+DeFi activity can involve a swap, a liquidity-pool deposit, a withdrawal, a lending position, a borrowing event, a reward, an airdrop, or several of those in one transaction.
 A **liquidity pool** is a smart-contract pool that holds assets supplied by users so a protocol can enable trades or other activity.
-An **airdrop** is a distribution of digital assets to addresses, often according to protocol rules.
-
 The software should show the protocol event before assigning a tax label.
 
 | Protocol action | Records to retain | Question for review |
@@ -199,20 +201,17 @@ The safer output is an event record such as:
 }
 ```
 
-The `needs-review` state is an honest output when the record is complete enough to inspect but the tax conclusion is not automatic.
+`needs-review` is the honest output when a record is complete enough to inspect but the tax conclusion is not automatic.
 
 ## What Form 1099-DA covers in 2026
 
-Form 1099-DA reports digital asset proceeds from broker transactions.
-The current IRS instructions distinguish covered securities, where basis reporting is required for the specified acquisition period and custody conditions, from noncovered securities, where basis reporting is not required and may be voluntary.
-The instructions also identify assets acquired before 2026 or transferred into a broker’s custody as examples of noncovered securities.
+The instructions identify assets acquired before 2026 or transferred into a broker’s custody as examples of noncovered securities.
 
 That means a taxpayer can receive a 1099-DA with proceeds and still need older exchange records, wallet history, and transfer evidence to reconstruct basis.
 The IRS’s [2026 Tax Tip](https://www.irs.gov/newsroom/reminders-for-taxpayers-about-digital-assets) says most 2025 statements would not include basis and that taxpayers still must report related activity whether or not they receive a 1099-DA.
 
 For capital-asset sales and exchanges, the software should prepare a workpaper that connects the normalized event to [Form 8949](https://www.irs.gov/forms-pubs/about-form-8949) and [Schedule D](https://www.irs.gov/forms-pubs/about-schedule-d-form-1040).
-The IRS introduced six digital-asset checkboxes on the 2025 Form 8949, which taxpayers file during 2026.
-The [2025 Form 8949 instructions](https://www.irs.gov/instructions/i8949) define them this way.
+The IRS introduced six digital-asset checkboxes on the 2025 Form 8949, which taxpayers file during 2026, as defined in the [2025 Form 8949 instructions](https://www.irs.gov/instructions/i8949).
 
 | Holding period | Basis reported to the IRS | Basis not reported to the IRS | No Form 1099-DA or substitute statement |
 | --- | --- | --- | --- |
@@ -237,11 +236,15 @@ Before a taxpayer accepts a crypto result, the product should produce a packet w
 | Form 8949 draft | How supported dispositions would flow into the return | Approval of the taxpayer’s final filing position |
 | Correction log | What changed after a reviewer supplied a source or answer | That the correction itself was tax-appropriate |
 
-In this series, **Tangle Tax Agent** names the proposed Tangle workflow for collecting records, classifying candidate events, and preparing a review packet.
-It is not a claim that a public Tangle product can decide the tax treatment of every DeFi transaction or file a return without human approval.
-This is the concrete role for Tangle Tax Agent in the proposed workflow.
+The Tangle Tax Agent does not claim that a public Tangle product decides the tax treatment of every DeFi transaction or files a return without human approval.
 The agent can collect, normalize, calculate, and explain the queue.
 The taxpayer or advisor must still decide which facts are true and which tax treatment applies.
+
+`products/legal-agent` shows the kept per-client workspace. `client.instances.ensure` with the key `customer:<id>` returns that customer’s sandbox, where the tax agent keeps its wallet inventory, transfer matches, and lot ledger across turns.
+
+<Example path="products/legal-agent" title="One customer’s sandbox, keyed by customer ID" />
+
+It prints the review text, or the terminal state if the turn does not complete. It does not prove the model followed the prompt or cited the right clause.
 
 For the broader preparation model, read [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns).
 For the approval boundary, read [Automated Tax Filing With Review Control](/blog/automated-tax-filing-review-before-submit).
@@ -260,9 +263,6 @@ The taxpayer may have a legitimate explanation, such as an account transfer or s
 
 It should also retain the failed classification.
 When a reviewer changes “unknown protocol event” to “candidate swap,” the old state and reason should remain in the correction log.
-
-These controls make a later advisor handoff possible.
-They also stop an attractive total from hiding the missing records that produced it.
 
 ## A ledger cannot decide ownership or tax treatment
 
