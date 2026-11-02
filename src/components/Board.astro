@@ -1,14 +1,18 @@
 ---
-// The one leaderboard table: rank, name with its mark, the value drawn as a bar on the table's shared scale, its spread, an
-// optional extra figure and the count. Click a column head to sort; ranks renumber.
+// The one leaderboard table: rank, name with its mark, the value drawn on the table's shared scale, its spread, an optional
+// extra figure and the count. A log scale draws dots, since a bar from zero misreads on it. Fewer than 5 samples have no p95.
+// Click a column head to sort; ranks renumber.
 import { seconds } from '../data/benchmarks/sandbox';
 export interface BoardRow { label: string; sub?: string; logo?: string; value: number; whisker?: number | null; low?: number; high?: number; extra?: string; n?: number | string; flagged?: boolean; highlight?: boolean; note?: string }
-interface Props { rows: BoardRow[]; unit?: 'ms' | 'rate'; head?: string; value?: string; spread?: string; extraHead?: string; count?: string; caption?: string; ranked?: boolean }
-const { rows, unit = 'ms', head = 'name', value = 'p50', spread = 'p95', extraHead, count = 'n', caption, ranked = true } = Astro.props;
+interface Props { rows: BoardRow[]; unit?: 'ms' | 'rate'; scale?: 'linear' | 'log'; head?: string; value?: string; spread?: string; extraHead?: string; count?: string; caption?: string; ranked?: boolean }
+const { rows: given, unit = 'ms', scale = 'linear', head = 'name', value = 'p50', spread = 'p95', extraHead, count = 'n', caption, ranked = true } = Astro.props;
+const rows = given.map((r) => (typeof r.n === 'number' && r.n < 5 ? { ...r, whisker: null } : r));
 const max = unit === 'rate' ? 1 : Math.max(...rows.map((r) => Math.max(r.value, r.whisker ?? 0, r.high ?? 0)));
-const pct = (x: number) => `${((x / max) * 100).toFixed(1)}%`;
+const min = Math.min(...rows.map((r) => r.value)) / 1.5;
+const pct = (x: number) => `${((scale === 'log' ? Math.log(x / min) / Math.log(max / min) : x / max) * 100).toFixed(1)}%`;
 const text = (x: number) => (unit === 'rate' ? `${(x * 100).toFixed(x > 0 && x < 0.095 ? 1 : 0)}%` : seconds(x));
 const interval = rows.some((r) => r.low != null);
+const spreadShown = spread && (interval || rows.some((r) => r.whisker != null));
 ---
 <div class="lb">
   <table>
@@ -17,7 +21,7 @@ const interval = rows.some((r) => r.low != null);
         {ranked && <th scope="col" class="lb-rank">#</th>}
         <th scope="col" data-sort="text">{head}</th>
         <th scope="col" class="lb-plot" data-sort="num">{value}</th>
-        <th scope="col" class="num" data-sort="num">{spread}</th>
+        {spreadShown && <th scope="col" class="num" data-sort="num">{spread}</th>}
         {extraHead && <th scope="col" class="num" data-sort="num">{extraHead}</th>}
         <th scope="col" class="num" data-sort="num">{count}</th>
       </tr>
@@ -37,13 +41,13 @@ const interval = rows.some((r) => r.low != null);
             <span class="lb-plot-row">
             <span class="lb-track">
               {r.low != null && r.high != null && <span class="lb-band" style={`left: ${pct(r.low)}; width: ${pct(r.high - r.low)}`}></span>}
-              <span class="lb-fill" style={`width: ${pct(r.value)}`}></span>
+              {scale === 'log' ? <span class="lb-dot" style={`left: ${pct(r.value)}`}></span> : <span class="lb-fill" style={`width: ${pct(r.value)}`}></span>}
               {r.whisker != null && r.whisker > r.value && <span class="lb-tick" style={`left: ${pct(r.whisker)}`}></span>}
             </span>
             <span class="lb-val">{text(r.value)}</span>
             </span>
           </td>
-          <td class="num" data-v={r.whisker ?? r.high ?? ''}>{interval ? (r.low != null && r.high != null ? `${text(r.low)} – ${text(r.high)}` : '–') : r.whisker != null ? text(r.whisker) : '–'}</td>
+          {spreadShown && <td class="num" data-v={r.whisker ?? r.high ?? ''}>{interval ? (r.low != null && r.high != null ? `${text(r.low)} – ${text(r.high)}` : '–') : r.whisker != null ? text(r.whisker) : '–'}</td>}
           {extraHead && <td class="num" data-v={r.extra ?? ''}>{r.extra ?? '–'}</td>}
           <td class="num lb-n" data-v={r.n ?? ''}>{r.n ?? '–'}</td>
         </tr>
