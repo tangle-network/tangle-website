@@ -1,92 +1,114 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import Bars from '../../components/Bars.astro';
+import Board, { type BoardRow } from '../../components/Board.astro';
 import BenchHead from '../../components/BenchHead.astro';
 import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds } from '../../data/benchmarks/sandbox';
 import '../../styles/bench.css';
 
 const run = (l: { run_id: string; started_at: string; served_sha: string }) => `run ${l.run_id}, ${day(l.started_at)}, serving ${l.served_sha.slice(0, 12)}`;
-const latest = burst100.tangle[0];
+
+// Coding agents by the id the facts feed uses.
+const agents: Record<string, { name: string; logo?: string }> = {
+  'claude-code': { name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
+  codex: { name: 'Codex', logo: '/images/harness/codex.png' },
+  opencode: { name: 'OpenCode', logo: '/images/harness/opencode.svg' },
+  hermes: { name: 'Hermes', logo: '/images/harness/hermes.png' },
+  openclaw: { name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
+  'kimi-code': { name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
+  pi: { name: 'Pi', logo: '/images/harness/pi.svg' },
+  prime: { name: 'Prime Agent', logo: '/images/harness/prime-agent.png' },
+  'factory-droids': { name: 'Factory Droid' },
+  acp: { name: 'ACP' },
+};
+const agentRows: BoardRow[] = firstText.rows.map((r) => ({ ...r, label: agents[r.label]?.name ?? r.label, logo: agents[r.label]?.logo }));
+const fastest = agentRows.slice(0, 3);
+
+// The public 100-at-once board with Tangle's rows placed by median.
 const board = burst100.computesdk;
-// Where the newest Tangle 100-burst would sit on the public board, by p50.
-const place = board.rows.filter((r) => r.median_ms < latest.p50_ms).length + 1;
+const names: Record<string, string> = { e2b: 'E2B', 'cloud-run': 'Cloud Run', computesdk: 'ComputeSDK' };
+const providerName = (id: string) => names[id] ?? id.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const boardRows: BoardRow[] = [
+  ...board.rows.map((r): BoardRow => ({ label: providerName(r.provider), value: r.median_ms, whisker: r.p95_ms, extra: `${Math.round(r.success_rate * 100)}%`, n: board.iterations })),
+  ...burst100.tangle.map((t): BoardRow => ({ label: 'Tangle', sub: `${t.date}, serving ${t.served_sha.slice(0, 8)}`, value: t.p50_ms, whisker: t.p95_ms, extra: t.passed ? '100%' : 'not all', n: 100, highlight: true, flagged: !t.passed })),
+].sort((a, b) => a.value - b.value);
+const place = boardRows.findIndex((r) => r.highlight) + 1;
+const leader = boardRows[0];
+
+const lead = `As of ${day(firstCommand.run.started_at)}: a sandbox in ${seconds(firstCommand.create.p50_ms!)}, its first command ${seconds(firstCommand.exec.p50_ms!)} later. ${fastest[0].label} streams a coding agent's first text in ${seconds(fastest[0].value)}. 100 at once: Tangle is #${place} of ${boardRows.length} on ComputeSDK's board.`;
 ---
 
-<BaseLayout paper title="Stack benchmarks" description={`How fast a Tangle sandbox creates, answers its first command, streams a harness's first text, snapshots, branches and deletes, measured on production and published with n, p50 and p95. Feed published ${day(feed.published_at)}.`} bodyClass="page-editorial">
+<BaseLayout paper title="Sandbox leaderboard" description={`Time to a sandbox, its first command and a coding agent's first text on Tangle, with snapshot, branch, delete and 100 at once against the public board. ${lead}`}>
   <article class="bench">
-    <BenchHead regime="stack" title="Stack benchmarks">
-      <p>How fast and reliable the Tangle stack itself is: a sandbox's create, first command, first harness text, snapshot, branch and delete, and a fresh sandbox's first Router call. Every number here was measured on the production fleet by the public SDK, on the date shown, and published as JSON with every sample. Nothing is authored: the page reads the <a href={feed.source}>facts feed</a> and prints its rows with n, p50 and p95. Rows marked ✱ hold a record that failed one of the run's checks; they stay on the page.</p>
-      <dl class="bench-headline">
-        <div><dt>create a sandbox</dt><dd>{seconds(firstCommand.create.p50_ms!)}</dd></div>
-        <div><dt>then its first command</dt><dd>{seconds(firstCommand.exec.p50_ms!)}</dd></div>
-        <div><dt>cold provision, p50 / p95, n={firstCommand.cold.n}</dt><dd>{seconds(firstCommand.cold.p50_ms!)} / {seconds(firstCommand.cold.p95_ms!)}</dd></div>
-        <div><dt>warm claim, p50 / p95, n={firstCommand.warm.n}</dt><dd>{seconds(firstCommand.warm.p50_ms!)} / {seconds(firstCommand.warm.p95_ms!)}</dd></div>
-      </dl>
-      <p class="bench-src">{run(firstCommand.run)}. A keyed SDK <code>create()</code> on the default path, then <code>exec("true")</code>.</p>
+    <BenchHead regime="stack" title="Sandbox leaderboard">
+      <p>How long a sandbox takes to exist, run a command, stream a coding agent's first words, snapshot, branch and delete, alone and 100 at once beside the public board. Measured on the production fleet by the public SDK; every row names its run.</p>
+      <p class="lead">{lead}</p>
     </BenchHead>
 
-    <section aria-labelledby="first-text">
-      <h2 id="first-text">Time to a harness's first text</h2>
-      <p>Create a sandbox with a coding harness installed, send one prompt, and wait for the first streamed text. Each row is one harness on one fresh sandbox, from the newest run.</p>
-      <Bars rows={firstText.rows} caption={run(firstText.run)} />
+    <div class="lb-cards">
+      <article class="lb-card">
+        <span class="pill">Create</span>
+        <strong class="lb-big">{seconds(firstCommand.create.p50_ms!)}</strong>
+        <p>p95 {seconds(firstCommand.create.p95_ms!)}, n {firstCommand.create.n}. Cold provision {seconds(firstCommand.cold.p50_ms!)}, warm claim {seconds(firstCommand.warm.p50_ms!)}.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">First command</span>
+        <strong class="lb-big">{seconds(firstCommand.exec.p50_ms!)}</strong>
+        <p>After create. Create to first command {seconds(firstCommand.together.p50_ms!)} end to end.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">First agent text</span>
+        <strong class="lb-big">{seconds(fastest[0].value)}</strong>
+        <p>{fastest.map((a, i) => `${i === 0 ? '' : i === 1 ? ', then ' : ' and '}${a.label} (${seconds(a.value)})`).join('')}.</p>
+        <div class="lb-marks">{fastest.filter((a) => a.logo).map((a) => <img src={a.logo} alt={a.label} loading="lazy" />)}</div>
+      </article>
+      <article class="lb-card">
+        <span class="pill">100 at once</span>
+        <strong class="lb-big">#{place}</strong>
+        <p>Tangle median {seconds(boardRows[place - 1].value)} against {boardRows.length - burst100.tangle.length} clouds; {leader.label} leads at {seconds(leader.value)}.</p>
+      </article>
+      <article class="lb-card">
+        <span class="pill">Snapshot, branch</span>
+        <strong class="lb-big">{seconds(lifecycle.rows[1].value)}</strong>
+        <p>A whole-disk snapshot. Branch a child in {seconds(lifecycle.rows[5].value)}; restore in {seconds(lifecycle.rows[4].value)}.</p>
+      </article>
+    </div>
+
+    <section aria-labelledby="agents">
+      <div class="bench-sec-head"><h2 id="agents">Coding agents: create to first text</h2><p>{run(firstText.run)}. One prompt on one fresh sandbox per agent.</p></div>
+      <Board rows={agentRows} head="agent" />
     </section>
 
-    <section aria-labelledby="lifecycle">
-      <h2 id="lifecycle">One sandbox through every verb</h2>
-      <p>The same sandbox is created, snapshotted, stopped, resumed, restored from the snapshot, branched into a child, then the child, the snapshot and the sandbox are deleted. Each row is that verb's wall time.</p>
-      <Bars rows={lifecycle.rows} caption={`${run(lifecycle.run)}, default shape, n = sandboxes per verb`} />
+    <section aria-labelledby="board">
+      <div class="bench-sec-head"><h2 id="board">Clouds: 100 sandboxes at once</h2><p>ComputeSDK's <a href={board.source}>burst board</a> read {day(board.timestamp)}; Tangle rows by the same method on production.</p></div>
+      <Board rows={boardRows} head="cloud" value="median" extraHead="reached" caption={`Each row creates ${board.iterations} sandboxes at once and reports the median and p95 time to interactive. Failed checks on the Tangle rows: ${[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}.`} />
+    </section>
+
+    <section aria-labelledby="verbs">
+      <div class="bench-sec-head"><h2 id="verbs">One sandbox, every verb</h2><p>{run(lifecycle.run)}. Created, snapshotted, stopped, resumed, restored, branched, then everything deleted.</p></div>
+      <Board rows={lifecycle.rows} head="verb" ranked={false} />
       <details>
         <summary>The same journey on the desktop shape</summary>
-        <Bars rows={lifecycle.desktop} caption={`${run(lifecycle.run)}, desktop profile`} />
+        <Board rows={lifecycle.desktop} head="verb" ranked={false} />
       </details>
     </section>
 
     <section aria-labelledby="many">
-      <h2 id="many">Many at once</h2>
-      <p>A burst asks for several sandboxes in one moment and times each to its first command. Branching copies a live sandbox into children at once and waits until the slowest child's first command has read the parent's files.</p>
-      <Bars rows={bursts.rows} caption={`${run(bursts.run)}; n = sandboxes that reached a first command`} whisker="p90" />
-      <Bars rows={branches.rows} caption={`${run(branches.run)}: branch call to the slowest child's first command; n = parents`} />
-      <Bars rows={forks.rows} caption="A new sandbox from a saved snapshot or a running checkpoint, to runtime ready" />
-    </section>
-
-    <section aria-labelledby="board">
-      <h2 id="board">100 at once, against the public board</h2>
-      <p><a href={board.source}>ComputeSDK's burst board</a> creates {board.iterations} sandboxes at once on each provider and reports the median time to interactive. Tangle runs the same method against production as the <code>create.burst_matched</code> lane. The newest Tangle attempt is placed by its p50; its record failed the run's check that every sandbox reached a first command, so it is a measurement, not a pass.</p>
-      <table class="board">
-        <caption>Board read {day(board.timestamp)} from <a href={board.data}>its published results</a>; Tangle rows from the facts feed.</caption>
-        <thead><tr><th scope="col">#</th><th scope="col">provider</th><th scope="col" class="num">median</th><th scope="col" class="num">p95</th><th scope="col" class="num">reached</th></tr></thead>
-        <tbody>
-          {board.rows.map((r, i) => (
-            <>
-              {i + 1 === place && burst100.tangle.map((t, k) => (
-                <tr class="tangle">
-                  <td>{k === 0 ? place : ''}</td>
-                  <th scope="row">Tangle, {t.date}{t.passed ? '' : ' ✱'}</th>
-                  <td class="num">{seconds(t.p50_ms)}</td>
-                  <td class="num">{seconds(t.p95_ms)}</td>
-                  <td class="num">{t.passed ? '100%' : 'not all'}</td>
-                </tr>
-              ))}
-              <tr><td>{i + 1 + (i + 1 >= place ? 1 : 0)}</td><th scope="row">{r.provider}</th><td class="num">{seconds(r.median_ms)}</td><td class="num">{seconds(r.p95_ms)}</td><td class="num">{Math.round(r.success_rate * 100)}%</td></tr>
-            </>
-          ))}
-        </tbody>
-      </table>
-      <p class="bench-src">Failed checks on the Tangle rows: {[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}. Providers the board could not measure are left out.</p>
+      <div class="bench-sec-head"><h2 id="many">Many at once</h2><p>{run(bursts.run)}; branches from {run(branches.run)}.</p></div>
+      <div class="bench-grid">
+        <Board rows={bursts.rows} head="creates in a burst" spread="p90" ranked={false} caption="Each sandbox timed to its first command; n = sandboxes that reached one." />
+        <Board rows={[...branches.rows, ...forks.rows]} head="branch or fork" ranked={false} caption="Branch: the call to the slowest child's first command. Fork: a new sandbox from a saved snapshot or a running checkpoint." />
+      </div>
     </section>
 
     <section aria-labelledby="first-call">
-      <h2 id="first-call">First Router call from a fresh sandbox</h2>
-      <p>Each sandbox carries its own API key. This is the time from create to its first authenticated Router call, by the path the command took to the sandbox.</p>
-      <Bars rows={firstCall.rows} caption={run(firstCall.run)} />
+      <div class="bench-sec-head"><h2 id="first-call">First Router call from a fresh sandbox</h2><p>{run(firstCall.run)}. Each sandbox carries its own key; the path is how the command reached it.</p></div>
+      <Board rows={firstCall.rows} head="path" />
     </section>
 
-    <section aria-labelledby="method">
-      <h2 id="method">Method</h2>
+    <footer class="bench-method">
       <p>{feed.cohort}</p>
       <p>{feed.percentiles}</p>
-      <p>Each run names the orchestrator revision it hit, so a change in a number can be read against a deploy. The feed is refreshed by the production benchmark workflow after every run; this page is rebuilt from a snapshot pulled on {day(feed.published_at)} with <code>pnpm pull:benchmarks</code>. The SDK that took every measurement is the one you install: <code>npm install @tangle-network/sandbox</code>.</p>
-    </section>
+      <p>Each run names the orchestrator revision it hit, so a change in a number reads against a deploy. The production benchmark workflow refreshes the <a href={feed.source}>facts feed</a> after every run; this page is rebuilt from a snapshot pulled {day(feed.published_at)}.</p>
+    </footer>
   </article>
 </BaseLayout>
-
