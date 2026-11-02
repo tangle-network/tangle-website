@@ -2,6 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import BenchHead from '../../components/BenchHead.astro';
 import Board, { type BoardRow } from '../../components/Board.astro';
+import Chart from '../../components/Chart.astro';
 import { verifyBoardRecord, type BoardRecord } from '../../data/benchmarks/board-record';
 import legal from '../../data/benchmarks/applied/legal-personas.json';
 import tax from '../../data/benchmarks/applied/tax-calc-bench.json';
@@ -47,7 +48,10 @@ const taxRows: BoardRow[] = [
 ].sort((a, b) => b.value - a.value);
 
 type Profile = { model: string; meanComposite: number; min: number; n: number };
-const modelName = (id: string) => id.replace(/^claude-(\w+)-(\d)-(\d)-\d{8}$/, (_, k, a, b) => `Claude ${k[0].toUpperCase()}${k.slice(1)} ${a}.${b}`);
+const modelName = (id: string) => id.replace(/^[\w-]+\//, '').replace(/^claude-(\w+)-(\d)-(\d)-\d{8}$/, (_, k, a, b) => `Claude ${k[0].toUpperCase()}${k.slice(1)} ${a}.${b}`).replace(/^gpt-([\d.]+)-(\w)/, (_, v, c) => `GPT-${v} ${c.toUpperCase()}`);
+const maker = (model: string) => ({ Gemini: 'google', Claude: 'anthropic', GPT: 'openai' })[model.split(/[ -]/)[0]];
+const logo = (model: string) => (maker(model) ? `/images/models/${maker(model)}.svg` : undefined);
+const harnesses: Record<string, string> = { opencode: 'OpenCode', 'claude-code': 'Claude Code', codex: 'Codex' };
 const profiles = Object.entries(legal.record.profiles as Record<string, Profile>).map(([id, p]) => ({ id, ...p, model: modelName(p.model) })).sort((a, b) => b.meanComposite - a.meanComposite);
 const personas = Object.entries(legal.record.byPersona as Record<string, Record<string, number>>)
   .map(([id, scores]) => ({ id, scores, low: Math.min(...profiles.map((p) => scores[p.id])) }))
@@ -55,9 +59,15 @@ const personas = Object.entries(legal.record.byPersona as Record<string, Record<
 const legalRows: BoardRow[] = profiles.map((p) => ({ label: p.model, sub: p.id, value: p.meanComposite / 100, extra: String(p.min), n: p.n }));
 
 const boardRows = (b: BoardRecord): BoardRow[] => [...b.profiles].sort((x, y) => y.rate - x.rate).map((p) => ({
-  label: p.label, sub: p.label.includes(p.model) ? undefined : `${p.harness} · ${p.model}`, value: p.rate, low: p.interval.lower, high: p.interval.upper, extra: usd(p.cost.perSolvedUsd), n: p.attempts,
+  label: modelName(p.model), sub: `${harnesses[p.harness] ?? p.harness}${p.label.includes('no-web') ? ', no web' : ''}`, logo: logo(modelName(p.model)), value: p.rate, low: p.interval.lower, high: p.interval.upper, extra: usd(p.cost.perSolvedUsd), n: p.attempts,
   note: `${p.solved} of ${p.attempts} solved, ${usd(p.cost.totalUsd)} total, median ${minutes(p.medianWallMs)}`,
 }));
+// The charts: tax by its headline metric, then every coding profile on every board, solved and cost per solved task.
+const taxChart: BoardRow[] = [
+  { label: 'Tangle tax agent', value: taxBench.strict, logo: '/favicon.svg', highlight: true },
+  ...taxBench.published.map((p): BoardRow => ({ label: p.model, value: p.strict, logo: logo(p.model) })),
+].sort((a, b) => b.value - a.value);
+const coding = boards.flatMap((b) => b.profiles.map((p) => ({ label: `${modelName(p.model).split(' ').at(-1)} on ${b.suite.name.split(' ')[0]}`, logo: logo(modelName(p.model)), value: p.rate, cost: p.cost.perSolvedUsd })));
 const bestBoard = boards.map((b) => ({ board: b, top: boardRows(b)[0] })).sort((a, b) => b.top.value - a.top.value)[0];
 const latest = [tax.source.importedAt, legal.source.importedAt, boards[0].campaign.completedAt].map(day).sort().at(-1);
 
@@ -68,17 +78,16 @@ const domains = [['tax', 'Tax'], ['coding', 'Coding'], ['legal', 'Legal'], ['hea
 <BaseLayout paper title="Applied AI leaderboard" description={`How well agents built on Tangle do real work in tax, coding, legal, health and research, scored by each benchmark's own evaluator. ${lead}`}>
   <article class="bench">
     <BenchHead regime="applied" title="Applied AI leaderboard">
-      <p>How well agents built on Tangle do real work: tax returns, coding tasks, legal work, health records, research. A public benchmark is scored by its owner's evaluator; our own evals are named as ours; every number comes from a record file this page reads.</p>
+      <p>How well agents built on Tangle do taxes, build apps and handle legal work. Public benchmarks are scored by their owner's evaluator.</p>
       <p class="lead">{lead}</p>
     </BenchHead>
 
     <nav class="regimes bench-domains" aria-label="Domains">{domains.map(([id, label]) => <a href={`#${id}`}>{label}</a>)}</nav>
 
-    <div class="lb-cards">
-      <article class="lb-card"><span class="pill">Tax</span><strong class="lb-big">{pct(taxBench.strict)}</strong><p>Returns with every line exact on TaxCalcBench, n {taxBench.n}; {pct(taxBench.byLine)} of lines exact.</p></article>
-      <article class="lb-card"><span class="pill">Coding</span><strong class="lb-big">{pct(bestBoard.top.value)}</strong><p>{bestBoard.top.label} on {bestBoard.board.suite.name}, {bestBoard.top.n} attempts, {bestBoard.top.extra} per solved task.</p></article>
-      <article class="lb-card"><span class="pill">Legal</span><strong class="lb-big">{profiles[0].meanComposite.toFixed(1)}</strong><p>{profiles[0].model}, mean verifier composite of 100 across {personas.length} personas; lowest persona {profiles[0].min}.</p></article>
-      <article class="lb-card"><span class="pill">Health</span><strong class="lb-big">–</strong><p>12 patient journeys over 26 sessions run through the product; no quality number is published yet.</p></article>
+    <div class="lb-charts">
+      <Chart title="Tax returns" unit="rate" note="Share of TaxCalcBench returns with every line exact. Higher is better." rows={taxChart} />
+      <Chart title="Coding" unit="rate" note="Share of VerticalBench app tasks solved, per board. Higher is better." rows={[...coding].sort((a, b) => b.value - a.value)} />
+      <Chart title="Cost per solved task" unit="usd" note="Spend divided by tasks solved, per board. Lower is better." rows={coding.filter((r) => r.cost !== null).map((r) => ({ ...r, value: r.cost! })).sort((a, b) => a.value - b.value)} />
     </div>
 
     <section id="tax" aria-labelledby="tax-title">
@@ -92,19 +101,17 @@ const domains = [['tax', 'Tax'], ['coding', 'Coding'], ['legal', 'Legal'], ['hea
 
     <section id="coding" aria-labelledby="coding-title">
       <div class="bench-sec-head"><h2 id="coding-title">Coding: VerticalBench boards</h2><p>Real apps built against a pinned backend and graded in a real browser by <a href="https://github.com/tangle-network/blueprint-agent">blueprint-agent</a>; a board is one campaign's record.</p></div>
-      <div class="bench-grid">
-        {boards.map((board) => (
-          <div>
-            <div class="bench-sec-head"><h2>{board.suite.name}</h2><p>{day(board.campaign.completedAt)}, {board.tasks.length} tasks × {board.campaign.repetitions}</p></div>
+      {boards.map((board) => (
+          <div class="bench-board">
+            <div class="bench-sec-head"><h3>{board.suite.name}</h3><p>{day(board.campaign.completedAt)}, {board.tasks.length} tasks × {board.campaign.repetitions}</p></div>
             <Board rows={boardRows(board)} unit="rate" head="profile" value="solved" spread="interval" extraHead="per solved" count="attempts" caption={`${board.suite.description} Pass at ${board.grader.kind === 'app-grade' ? `App Grade ${board.grader.passTier}` : board.grader.pass}. Record ${board.digest.slice(0, 12)}.`} />
           </div>
         ))}
-      </div>
     </section>
 
     <section id="legal" aria-labelledby="legal-title">
       <div class="bench-sec-head"><h2 id="legal-title">Legal: persona matrix</h2><p>Our own eval: {personas.length} synthetic client personas through the production legal agent, scored by a verifier; <a href={github(legal.source)}>record</a> at {legal.source.commit.slice(0, 10)}.</p></div>
-      <Board rows={legalRows} unit="rate" head="model" value="mean composite" spread="" extraHead="lowest persona" count="personas" caption={legal.record.finding} />
+      <Board rows={legalRows} unit="rate" head="model" value="mean composite" spread="" extraHead="lowest persona" count="personas" caption={`Verifier score out of 100, averaged over ${personas.length} synthetic client personas. Lowest persona: the model's weakest single score.`} />
       <details>
         <summary>Every persona, lowest score first</summary>
         <div class="lb"><table>

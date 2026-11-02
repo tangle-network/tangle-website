@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import Board, { type BoardRow } from '../../components/Board.astro';
+import Chart from '../../components/Chart.astro';
 import BenchHead from '../../components/BenchHead.astro';
 import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds } from '../../data/benchmarks/sandbox';
 import '../../styles/bench.css';
@@ -21,7 +22,6 @@ const agents: Record<string, { name: string; logo?: string }> = {
   acp: { name: 'ACP' },
 };
 const agentRows: BoardRow[] = firstText.rows.map((r) => ({ ...r, label: agents[r.label]?.name ?? r.label, logo: agents[r.label]?.logo }));
-const fastest = agentRows.slice(0, 3);
 
 // The public 100-at-once board with Tangle's rows placed by median.
 const board = burst100.computesdk;
@@ -31,46 +31,25 @@ const boardRows: BoardRow[] = [
   ...board.rows.map((r): BoardRow => ({ label: providerName(r.provider), value: r.median_ms, whisker: r.p95_ms, extra: `${Math.round(r.success_rate * 100)}%`, n: board.iterations })),
   ...burst100.tangle.map((t): BoardRow => ({ label: 'Tangle', sub: `${t.date}, serving ${t.served_sha.slice(0, 8)}`, value: t.p50_ms, whisker: t.p95_ms, extra: t.passed ? '100%' : 'not all', n: 100, highlight: true, flagged: !t.passed })),
 ].sort((a, b) => a.value - b.value);
-const place = boardRows.findIndex((r) => r.highlight) + 1;
-const leader = boardRows[0];
+// Tangle's rank comes from its newest run that passed every check, among the clouds alone.
+const latest = burst100.tangle.find((t) => t.passed)!;
+const place = 1 + board.rows.filter((r) => r.median_ms < latest.p50_ms).length;
+const runDays = [firstCommand.run, firstText.run, lifecycle.run].map((r) => day(r.started_at)).sort();
 
-const lead = `As of ${day(firstCommand.run.started_at)}: a sandbox in ${seconds(firstCommand.create.p50_ms!)}, its first command ${seconds(firstCommand.exec.p50_ms!)} later. ${fastest[0].label} streams a coding agent's first text in ${seconds(fastest[0].value)}. 100 at once: Tangle is #${place} of ${boardRows.length} on ComputeSDK's board.`;
+const lead = `As of ${runDays.at(-1)}: a sandbox in ${seconds(firstCommand.create.p50_ms!)}, its first command ${seconds(firstCommand.exec.p50_ms!)} later. ${agentRows[0].label} writes its first words ${seconds(agentRows[0].value)} after create. 100 at once: Tangle is #${place} of ${board.rows.length + 1} on ComputeSDK's board, at a ${seconds(latest.p50_ms)} median.`;
 ---
 
-<BaseLayout paper title="Sandbox leaderboard" description={`Time to a sandbox, its first command and a coding agent's first text on Tangle, with snapshot, branch, delete and 100 at once against the public board. ${lead}`}>
+<BaseLayout paper title="Sandbox leaderboard" description={`How fast you get a sandbox, a command, a coding agent's first words and 100 sandboxes at once on Tangle. ${lead}`}>
   <article class="bench">
     <BenchHead regime="stack" title="Sandbox leaderboard">
-      <p>How long a sandbox takes to exist, run a command, stream a coding agent's first words, snapshot, branch and delete, alone and 100 at once beside the public board. Measured on the production fleet by the public SDK; every row names its run.</p>
+      <p>How fast you get a sandbox, a command, a coding agent's first words and 100 sandboxes at once, beside {board.rows.length} other clouds.</p>
       <p class="lead">{lead}</p>
     </BenchHead>
 
-    <div class="lb-cards">
-      <article class="lb-card">
-        <span class="pill">Create</span>
-        <strong class="lb-big">{seconds(firstCommand.create.p50_ms!)}</strong>
-        <p>p95 {seconds(firstCommand.create.p95_ms!)}, n {firstCommand.create.n}. Cold provision {seconds(firstCommand.cold.p50_ms!)}, warm claim {seconds(firstCommand.warm.p50_ms!)}.</p>
-      </article>
-      <article class="lb-card">
-        <span class="pill">First command</span>
-        <strong class="lb-big">{seconds(firstCommand.exec.p50_ms!)}</strong>
-        <p>After create. Create to first command {seconds(firstCommand.together.p50_ms!)} end to end.</p>
-      </article>
-      <article class="lb-card">
-        <span class="pill">First agent text</span>
-        <strong class="lb-big">{seconds(fastest[0].value)}</strong>
-        <p>{fastest.map((a, i) => `${i === 0 ? '' : i === 1 ? ', then ' : ' and '}${a.label} (${seconds(a.value)})`).join('')}.</p>
-        <div class="lb-marks">{fastest.filter((a) => a.logo).map((a) => <img src={a.logo} alt={a.label} loading="lazy" />)}</div>
-      </article>
-      <article class="lb-card">
-        <span class="pill">100 at once</span>
-        <strong class="lb-big">#{place}</strong>
-        <p>Tangle median {seconds(boardRows[place - 1].value)} against {boardRows.length - burst100.tangle.length} clouds; {leader.label} leads at {seconds(leader.value)}.</p>
-      </article>
-      <article class="lb-card">
-        <span class="pill">Snapshot, branch</span>
-        <strong class="lb-big">{seconds(lifecycle.rows[1].value)}</strong>
-        <p>A whole-disk snapshot. Branch a child in {seconds(lifecycle.rows[5].value)}; restore in {seconds(lifecycle.rows[4].value)}.</p>
-      </article>
+    <div class="lb-charts">
+      <Chart title="First agent words" note={`Seconds from create to a coding agent's first text, ${agentRows[0].n} run each. Lower is better.`} rows={agentRows} />
+      <Chart title="Every verb" note={`Median seconds per call on one sandbox, ${lifecycle.rows[0].n} runs. Lower is better.`} rows={lifecycle.rows} />
+      <Chart title="100 at once" note="Median and p95 time to interactive on a log scale. Lower left is better." rows={boardRows} kind="scatter" />
     </div>
 
     <section aria-labelledby="agents">
@@ -80,7 +59,7 @@ const lead = `As of ${day(firstCommand.run.started_at)}: a sandbox in ${seconds(
 
     <section aria-labelledby="board">
       <div class="bench-sec-head"><h2 id="board">Clouds: 100 sandboxes at once</h2><p>ComputeSDK's <a href={board.source}>burst board</a> read {day(board.timestamp)}; Tangle rows by the same method on production.</p></div>
-      <Board rows={boardRows} head="cloud" value="median" extraHead="reached" caption={`Each row creates ${board.iterations} sandboxes at once and reports the median and p95 time to interactive. Failed checks on the Tangle rows: ${[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}.`} />
+      <Board rows={boardRows} scale="log" head="cloud" value="median" extraHead="reached" caption={`Each row creates ${board.iterations} sandboxes at once and reports the median and p95 time to interactive. Failed checks on the Tangle rows: ${[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}.`} />
     </section>
 
     <section aria-labelledby="verbs">
