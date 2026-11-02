@@ -4,6 +4,7 @@ slug: ai-agent-evaluation-winner-release-rule
 summary: >-
   An AI evaluation can pick the wrong winner when its average score disagrees with the fail-closed rule used to release an agent candidate safely.
 date: '2026-08-09'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-eval
@@ -14,6 +15,8 @@ tags:
 series: The Instrument Problem
 seriesOrder: 3
 ---
+
+import Example from '../../components/Example.astro'
 
 An evaluation campaign can contain two different decisions that look like one.
 The **winner picker** chooses which candidate looks best among the candidates that were tested.
@@ -29,6 +32,8 @@ The fail-closed release rule preferred CLAUDE.
 The fix lets the campaign supply a ranking key built from the same reduction used by its release rule.
 
 [agent-eval](https://github.com/tangle-network/agent-eval) is Tangle's public TypeScript toolkit for running cases, scoring results, and comparing a candidate with an incumbent.
+A CI gate built on it is the simplest form of release rule: `defineAgentEval` declares the cases and the judge, `evaluate({ surface })` scores the shipped prompt and the candidate prompt, and the build exits 1 when the candidate's `aggregates.byJudge.suite.mean` is lower.
+The reader observes two means and an exit code.
 The public test in this post isolates one comparison-path defect; it is not a broad benchmark of either candidate.
 
 The point is narrower than “averages are bad.”
@@ -37,10 +42,7 @@ It is the wrong winner key when the product promise is “release only instances
 
 ## Two decisions hiding in one campaign
 
-An **evaluation** is a repeatable test of a system against a stated outcome.
 An **evaluation campaign** runs several candidates over a defined collection of cases and stores the results.
-The cases might be coding tasks, prompts, traces, or other fixed inputs.
-
 A **candidate** is one version or configuration being compared.
 The **incumbent** is the version currently in use.
 An **instance** is one case in the campaign.
@@ -63,15 +65,12 @@ In the public fixture, an instance is counted as resolved only when both of its 
 That is an **AND** rule across repetitions: `pass(rep0) && pass(rep1)`.
 
 The [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) places measurement inside a larger process of defining validity, documenting limitations, and managing the consequences of a system decision.
-That is the right level for this bug.
 The arithmetic was correct.
 The decision boundary was inconsistent.
 
 ## How the means invert the result
 
 The public regression test uses six instances and two repetitions, so there are 12 cells per candidate.
-Here is the complete shape in a compact table.
-
 `T` means the candidate resolved that repetition.
 `F` means it did not.
 
@@ -96,7 +95,6 @@ Its mean is `6 / 12 = 0.500`.
 
 The mean asks, “How many individual cells passed?”
 The fail-closed count asks, “How many instances passed every required repetition?”
-
 Both are real measurements of the table.
 They answer different questions.
 
@@ -104,18 +102,15 @@ The historical selector sorted candidates by the mean composite.
 It therefore placed MERGE above CLAUDE because `0.500 > 0.417`.
 The release rule cared about fully resolved instances and placed CLAUDE above MERGE because `2 > 1`.
 
-This is not a numerical rounding problem.
-Rounding 0.4167 to 0.417 and 0.500 to 0.500 makes the inversion easier to read, but it does not cause it.
-The inversion exists in the underlying reductions.
-
+The inversion is not a rounding artifact.
+Rounding 0.4167 to 0.417 makes the table easier to read, but the inversion exists in the underlying reductions.
 It is also not a claim that MERGE is universally worse.
 The fixture says only that this candidate pattern is a poor match for this fail-closed release contract.
 
 ## Why the mean looked attractive
 
-Mean scores are convenient.
-They use every observed cell, provide a smooth ordering, and make it easy to compare candidates with different strengths across cases.
 For a continuous outcome such as latency, calibration error, or a quality score whose release rule also uses an average, the mean may be exactly the right primary key.
+It uses every observed cell and gives a smooth ordering.
 
 The problem appears when the campaign's visible composite and its release contract represent different units.
 The mean counts individual repetitions.
@@ -128,11 +123,6 @@ That is what the table shows.
 The [Demšar paper on statistical comparisons of classifiers](https://jmlr.org/papers/v7/demsar06a.html) makes a related point for experimental comparisons: the unit of comparison and the dependence structure matter when turning many observations into a conclusion.
 The paper is about classifiers rather than agent campaigns, so it does not prescribe this release rule.
 It supports the narrower discipline of naming the unit being counted before ranking systems.
-
-The same concern appears in a software release pipeline.
-Suppose one test suite runs two repetitions per bug and the release promise is “a bug is fixed only if both checks pass.”
-Counting every green check as an equal vote lets a flaky one-off pass compete with a fix that survives both checks.
-The selector has silently changed the release promise from “repeatably fixed” to “frequently green.”
 
 The fix is not to discard the mean.
 Keep it as a descriptive field and use it as a secondary tie-breaker when the release contract allows it.
@@ -152,26 +142,27 @@ The first number carries the release contract.
 The mean breaks ties among candidates that resolve the same number of complete instances.
 
 The existing default remains the scalar mean for consumers whose outcome is continuous and whose gate does not require an AND across repetitions.
-That is an important boundary in the change.
 The fix changes the consumer with the mismatch; it does not pretend that every campaign should rank by fail-closed counts.
+
+The CI gate that compares a candidate's score with the shipped one is the mean form of this rule:
+
+<Example path="evals/regression-gate" title="src/examples/evals/regression-gate.mts" />
+
+That gate compares means, so it inherits the mean's unit.
+For a fail-closed contract, the comparison has to count complete instances, which is the job the ranking key does for the optimization path.
 
 The [public release-rule test file](https://github.com/tangle-network/agent-eval/blob/a71d599907e0699972cd511594cfb0db07851ca0/src/campaign/presets/run-optimization.test.ts) tests both behaviors.
 The default scalar selector promotes MERGE.
 The supplied fail-closed key promotes CLAUDE.
 Another test asserts that the winner has two fully resolved instances even though MERGE has the higher mean.
-
-The linked source record also explains why the descriptive composite remains untouched.
-Reports can still show the mean.
-The ranking decision now uses the metric the release rule uses.
-That separation makes a report more informative, not less.
+Reports can still show the mean; the ranking decision uses the metric the release rule uses.
 
 ## Selection is not the same as promotion
 
-There is one more boundary worth preserving.
 A compatible winner key does not turn the selected candidate into an automatic release.
 It only makes the comparison among candidates speak the same language as the gate.
 
-Imagine that CLAUDE wins the fail-closed count with two complete instances while the incumbent has two as well.
+Imagine that CLAUDE wins the fail-closed count with two complete instances while the incumbent also has two.
 The candidate has matched the incumbent on the primary key, not strictly beaten it.
 The campaign should keep the incumbent unless a secondary rule or a human decision says otherwise.
 If CLAUDE wins with three complete instances but has an incomplete result on a required case, coverage can still make it ineligible.
@@ -182,84 +173,49 @@ The first bug ranks the wrong candidate.
 The second treats ranking as permission to ship.
 Both can hide behind a green test if the test asserts only that some candidate was returned.
 
-A useful campaign report therefore exposes three labels rather than one.
-It can say which candidate had the highest descriptive mean, which candidate won the release-compatible key, and whether the winning key cleared the incumbent and the minimum threshold.
+A useful campaign report exposes three labels rather than one: which candidate had the highest descriptive mean, which candidate won the release-compatible key, and whether the winning key cleared the incumbent and the minimum threshold.
 Those labels may agree, but a reader should not have to infer that they always do.
 
-The public change keeps the historical scalar-mean default for consumers where a fail-closed reduction would be inappropriate.
-That is a design constraint, not an omission.
-The ranking key belongs to the consumer because the consumer owns the meaning of success.
-
 If a new consumer introduces a different release contract, its tests should include at least one table where the old default and the new contract disagree.
-The disagreement is the regression fixture's value.
+That disagreement is the regression fixture's value.
 It proves that the new path uses the new unit of success rather than merely renaming the old average.
 
 ## A runnable table and ranking example
 
-This TypeScript example carries the public fixture's decision shape without importing any project code.
-It calculates the cell mean, counts rows where every repetition passed, and ranks candidates by the fail-closed count before the mean.
+This TypeScript example carries the public fixture's decision shape without importing project code.
+It computes the cell mean, counts instances where every repetition passed, and ranks candidates by the fail-closed count before the mean.
 
 Save it as `winner-rule.ts` and run it with `npx --yes tsx winner-rule.ts`.
 
 ~~~typescript
 import assert from 'node:assert/strict'
 
-type Candidate = {
-  name: string
-  cells: boolean[][]
-}
+type Candidate = { name: string; cells: boolean[][] }
 
-function mean(cells: boolean[][]): number {
-  const flat = cells.flat()
-  return flat.filter(Boolean).length / flat.length
-}
-
-function failClosed(cells: boolean[][]): number {
-  return cells.filter((repetitions) => repetitions.every(Boolean)).length
-}
-
-function rank(candidate: Candidate): [number, number] {
-  return [failClosed(candidate.cells), mean(candidate.cells)]
-}
-
-function compare(left: [number, number], right: [number, number]): number {
-  return left[0] - right[0] || left[1] - right[1]
-}
+// Mean over every cell: the historical winner key.
+const mean = (cells: boolean[][]) => cells.flat().filter(Boolean).length / cells.flat().length
+// Instances where every repetition passed: the release contract.
+const failClosed = (cells: boolean[][]) => cells.filter((reps) => reps.every(Boolean)).length
+const rank = (c: Candidate): [number, number] => [failClosed(c.cells), mean(c.cells)]
+const better = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1] - b[1]
 
 const claude: Candidate = {
   name: 'CLAUDE',
-  cells: [
-    [true, true],
-    [true, true],
-    [true, false],
-    [false, false],
-    [false, false],
-    [false, false],
-  ],
+  cells: [[true, true], [true, true], [true, false], [false, false], [false, false], [false, false]],
 }
-
 const merge: Candidate = {
   name: 'MERGE',
-  cells: [
-    [true, true],
-    [true, false],
-    [false, true],
-    [true, false],
-    [false, true],
-    [false, false],
-  ],
+  cells: [[true, true], [true, false], [false, true], [true, false], [false, true], [false, false]],
 }
 
 assert.equal(mean(claude.cells).toFixed(3), '0.417')
 assert.equal(mean(merge.cells).toFixed(3), '0.500')
-assert.equal(failClosed(claude.cells), 2)
-assert.equal(failClosed(merge.cells), 1)
-assert.equal(compare(rank(claude), rank(merge)) > 0, true)
+assert.equal(better(rank(claude), rank(merge)) > 0, true)
 
 console.log({
   claude: { mean: mean(claude.cells), failClosed: failClosed(claude.cells) },
   merge: { mean: mean(merge.cells), failClosed: failClosed(merge.cells) },
-  winner: compare(rank(claude), rank(merge)) > 0 ? claude.name : merge.name,
+  winner: better(rank(claude), rank(merge)) > 0 ? claude.name : merge.name,
 })
 ~~~
 
@@ -274,36 +230,25 @@ The expected output is:
 ~~~
 
 The key is not the tuple syntax.
-The key is that the first element is produced by the same rule that the release decision uses.
+The key is that its first element comes from the same rule the release decision uses.
 If the release contract changes, the ranking key must change with it.
-
-An even safer implementation makes the release reduction a named function and passes that function to both the selector and the gate.
-That avoids having one path count complete instances while another path counts individual cells.
-The public change uses an injectable key rather than duplicating one hard-coded ranking policy for every consumer.
+Pass one named reduction to both the selector and the gate, so one path cannot count instances while another counts cells.
 
 ## What this result does not prove
 
 The six-instance fixture is a regression test for a logic bug.
-It is not a benchmark of CLAUDE versus MERGE.
-It does not establish that one candidate is better across models, prompts, or future cases.
+It is not a benchmark of CLAUDE versus MERGE, and it does not establish that one candidate is better across models, prompts, or future cases.
 
-The fixture uses binary resolved/not-resolved outcomes.
+The fixture uses binary outcomes.
 If your outcome is a continuous score, fail-closed counting may throw away useful information.
 If your outcome is a safety property where one failure must block release, fail-closed counting may be the appropriate primary rule.
 
-The fixture also has only two repetitions per instance.
-More repetitions can expose more instability, but they cost more and can create their own sampling questions.
+Two repetitions per instance is also a small sample.
+More repetitions can expose more instability, but they cost more and create their own sampling questions.
 The right number depends on the decision and the failure cost.
 
-The result does not say that the mean should disappear from reports.
 The mean remains useful for showing partial progress, diagnosing where a candidate succeeds, and breaking ties after the release-compatible primary metric.
-
-It does not say that a fail-closed winner must ship.
-Winner selection and promotion are still separate decisions.
-The selected candidate can fail a minimum threshold, a safety check, a cost limit, or a human review.
-
-The [NIST AI RMF](https://www.nist.gov/itl/ai-risk-management-framework) is useful here because it treats measurement as part of risk management rather than as a single number that settles every question.
-The campaign should say what the score means, what it does not mean, and who is allowed to act on it.
+A fail-closed winner is not automatically shipped: thresholds, safety checks, cost limits, and human review still apply.
 
 ## A practical review before you trust a winner
 
@@ -335,7 +280,6 @@ For more context, read [AI Coding Agent Benchmark: What CodeTraceBench Measures]
 The first explains why a metric can omit the work a product cares about.
 The second explains why the release gate is part of the system being measured.
 
-The honest decision is simple.
 Use averages when averages define success.
 Use a fail-closed key when repeatable completion defines success.
 Do not let a convenient selector silently rewrite the promise your release rule makes.
@@ -368,6 +312,3 @@ One failed repetition prevents that instance from counting as resolved.
 No.
 It is only the candidate that best matches the chosen release-compatible ranking key.
 Thresholds, safety checks, cost limits, coverage, and human review can still reject it.
-
-The selector is part of the instrument.
-When it and the release rule disagree, the campaign can report a result that its own gate refuses to recognize.

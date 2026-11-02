@@ -4,6 +4,7 @@ slug: when-best-of-five-sampling-pays
 summary: >-
   Best-of-five sampling improves AI code generation when every candidate faces the same deterministic check; learn the measured lift, cost, limits, and rule.
 date: '2026-08-09'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -16,12 +17,12 @@ series: When Structure Pays
 seriesOrder: 1
 ---
 
+import Example from '../../components/Example.astro'
+
 If a coding agent can produce five plausible answers, run the same deterministic checker on all five, and keep the highest-scoring valid answer, the extra attempts can pay.
 The public Tangle measurements show gains from 8.5 to 21.3 percentage points across four model-and-benchmark pairs, with one pair moving from 51.8% to 73.1%.
 That result supports a narrow engineering rule: use five attempts when checks are cheap, comparable, and visible before generation; use one attempt when checking is expensive or no check can distinguish candidates.
 It does not say five samples make every agent better.
-
-A coding agent is software that gives a language model a task, lets it use tools, and returns a result.
 
 ## The decision is five tries or one
 
@@ -31,7 +32,6 @@ The team already has a test command that runs without a human reviewer.
 
 The first design sends one request and ships the answer if the tests pass.
 The second design sends five independent requests, runs the same tests on each answer, and keeps the strongest answer that passes.
-The second design spends more compute before it returns anything.
 The question is whether the extra compute buys a higher chance of returning a correct answer.
 
 This article calls the second design **best-of-five sampling**.
@@ -43,11 +43,13 @@ The distinction matters because generating five answers alone is not a quality m
 Without a common check, a system can only ask another model to choose a favorite, which adds another uncertain judgment.
 With a common check, the runtime has an observable signal that can be applied consistently.
 
-Here, Tangle refers to the public open-source project that publishes the runtime and benchmark evidence discussed in this article.
 The [Tangle agent runtime](https://github.com/tangle-network/agent-runtime) is a public TypeScript runtime for running agents, recording their work, and comparing changes against checks.
 Its public quickstart shows the same basic shape: a worker is a model-driven process that produces one answer, and a driver is the process that owns the top-level loop and makes the decision.
 The check returns pass or fail, and the driver decides whether to keep refining or pick a winner.
 The measurements discussed here use that shape as an inference-time structure around a model call.
+On Tangle, the candidates come from Sandbox SDK agents: `client.fleets.create` starts several agents at once, and `fleet.run()` emits an `agent.finished` event with each agent's result as it ends.
+agent-eval's `defineAgentEval` contract runs the matched comparison.
+The four jobs below map onto those calls.
 
 ## Four jobs that should stay separate
 
@@ -61,6 +63,12 @@ Each response receives an identifier such as `candidate-0` through `candidate-4`
 
 The generator does not decide whether an answer is correct.
 It only creates alternatives.
+
+The fleet below is the generation step on Tangle: five agents under one `budgetUsd` of 3, each result printed as its agent ends. Its tasks differ by package, so it shows parallel generation, not five samples of one task.
+
+<Example path="fleets/fan-out" title="Five agents at once, one budget" />
+
+The output shows which agents finished and what each returned, not whether any finding is correct.
 
 ### 2. Validation runs one deterministic checker
 
@@ -84,6 +92,12 @@ An implementation can add deterministic secondary terms such as a complexity pen
 Validity and score are different fields.
 A candidate that fails a required check is invalid even if it has a high partial score.
 The winner-picker, the routine that returns one candidate, must filter invalid candidates before comparing scores.
+
+A model judge can read the whole run instead of a test. This example sends the answer and every tool call to a judge on the Router.
+
+<Example path="evals/score-a-trace" title="A judge reads the answer and every tool call" />
+
+The model judge is not deterministic, so use it to compare arms, not to pick the winner of a best-of-five pool. It scores one trace; it does not show that the judge agrees with a human.
 
 ### 4. Winner-picking handles ties and absence
 
@@ -142,20 +156,16 @@ The public rows for the other three cells provide the lift, p-value, and denomin
 
 The table is a comparison of measured cells, not a promise about a package version or a universal model property.
 Here a p-value is the exact sign-test probability assigned to a discordant split at least as extreme under a no-direction null.
-The baseline and full loop must be read together because the full loop includes more than generation.
-It samples candidates, checks them, chooses a valid candidate, and may perform a limited repair step.
 
 A `pass@k` estimate is the chance that at least one of `k` sampled candidates passes.
 The same public report says every positive cell captures at least 93% of its pass@k bound and that selection accounts for 85–92% of the effect.
-Those are useful decomposition claims because they separate the value of having several chances from the smaller value of repairing a selected answer.
+Those decomposition claims separate the value of several chances from the smaller value of repairing a selected answer.
 They are also bounded by the report's task set, model settings, checker design, and grading procedure.
 
 ## Why the effect appears
 
 Language-model generation has two relevant properties.
 The model can produce different answers for the same task, and those answers are not equally likely to be correct.
-The first property creates a pool of alternatives.
-The second property creates room for a checker to improve the final choice.
 
 If every candidate is wrong in the same way, five tries do not help.
 If at least one candidate contains the needed fix and the checker can recognize it, the pool gives the system a chance to recover.
@@ -174,15 +184,20 @@ The public result is therefore stronger than a generic “more samples are bette
 The effect also has a natural diminishing-return curve.
 The first additional candidate can rescue a common mistake.
 The fourth and fifth candidates are more likely to repeat a pattern already present in the pool.
-Each added candidate still costs generation and checking time, so the marginal gain should be measured rather than assumed.
+Each added candidate costs generation and checking time, so measure the marginal gain.
 
 ## Comparison fairness is part of the method
 
-Best-of-five is easy to make look better or worse through an unfair comparison.
 The baseline must use one candidate from the same model and task distribution.
 The five-candidate arm must use the same visible information and the same output budget per candidate.
 The checker must receive equivalent inputs and limits for every candidate.
 The final grading set must remain separate from the checks used to choose a candidate.
+
+This Tangle example keeps cases, harness and judge fixed and changes only the model.
+
+<Example path="evals/compare-models" title="One harness, one judge, two models" />
+
+It prints one mean per model and computes no sign test, so the paired statistics in the table above come from the public report.
 
 The report should preserve the candidate-level records.
 At minimum, retain each candidate identifier, generation settings, checker results, score, validity, selection outcome, and total time.
@@ -198,10 +213,6 @@ The public measurements use HumanEval, a Python function benchmark, and MBPP, wh
 The [HumanEval repository](https://github.com/openai/human-eval) publishes the benchmark tasks and evaluation code.
 The [MBPP implementation](https://github.com/google-research/google-research/tree/master/mbpp) publishes the benchmark source and evaluation material.
 The original [pass@k paper](https://arxiv.org/abs/2107.03374) explains how code-generation evaluation estimates the chance that at least one of several samples is correct.
-
-Those sources define benchmark and sampling concepts.
-The Tangle report is the source for the four cells in the table above.
-Keeping those roles separate prevents a general benchmark definition from being mistaken for a measurement of this specific runtime loop.
 
 ## When one attempt is the better choice
 
@@ -230,9 +241,6 @@ Open-ended writing and taste judgments need a more careful rubric before a best-
 
 The following TypeScript program keeps generation, checking, scoring, tie handling, and failure explicit.
 The generator is a fixed stand-in for five model calls, so the example runs without an API key.
-The checker runs four deterministic input-output cases.
-The normal path has two equally valid candidates, and the stable identifier rule resolves the tie.
-The failure path produces five invalid candidates and returns an explicit error.
 
 Save it as `best-of-five.ts` and run it with Node 22.12 or newer:
 
@@ -254,7 +262,7 @@ type Check = {
 }
 
 type Selection = {
-  winner: Candidate
+  winner: Candidate & { check: Check }
   checked: Array<Candidate & { check: Check }>
 }
 
@@ -345,7 +353,6 @@ The cells also do not isolate every component of the full loop.
 The public decomposition says selection accounts for 85–92% of the effect and repair supplies a smaller increment, but the full loop still contains both.
 An implementation that removes repair must measure its own result rather than importing the full-loop lift.
 
-This is why the correct causal story is modest.
 Sampling created alternatives.
 The deterministic checker supplied a shared signal.
 Selection retained a valid high-scoring alternative.
@@ -364,9 +371,6 @@ Choose best-of-five when all of the following are true:
 Choose one attempt when any of those conditions fails.
 If the tradeoff is uncertain, run a small paired pilot with frozen tasks, complete candidate records, and a predeclared stopping rule.
 Measure quality, invalid outputs, total calls, and wall time together.
-
-The useful structure is small: five chances, one common check, one explicit winner rule, and one explicit no-winner state.
-Everything beyond that should earn its place with a measured change in the decision the user cares about.
 
 ## FAQ
 
