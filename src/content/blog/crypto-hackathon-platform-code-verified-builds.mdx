@@ -4,6 +4,7 @@ slug: crypto-hackathon-platform-code-verified-builds
 summary: >-
   Compare submissions with separate proof of code, runtime execution, wallet state, and deployment; use task-specific checks to judge correctness.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - blueprint-agent
@@ -11,10 +12,9 @@ tags:
   - web3-developer-tools
 series: Blueprint Agent
 seriesOrder: 5
-coverImage: /images/covers/editorial/blueprint-agent-v2.webp
-heroImage: /images/covers/editorial/blueprint-agent-v2.webp
-imageAlt: 'An editorial still life about a runnable service blueprint'
 ---
+
+import Example from '../../components/Example.astro'
 
 Suppose a judging room has 180 submissions, 40 demo links, and one afternoon.
 Every team says its wallet flow works.
@@ -27,10 +27,10 @@ The judges still make the prize decision.
 Standardized reruns and the submission packet let judges inspect behavior before weighing the presentation.
 
 [Blueprint Agent](https://docs.tangle.tools/blueprint-agent/introduction) is Tangle’s browser-based coding workspace.
-Its public documentation describes a workflow in which a developer gives an agent a brief, edits and runs a real project, reviews the result, and takes it to a repository or deployment.
-That makes it a useful build surface for a sponsor who wants a hackathon challenge to end in running software.
-An SDK, or software development kit, is the package and documentation a sponsor expects teams to use when integrating with its product.
-An API, or application programming interface, is the documented boundary through which one program requests data or actions from another.
+Its public documentation describes a brief-to-repository workflow: an agent edits and runs a real project, and a developer reviews the result.
+It suits a sponsor whose challenge should end in running software.
+A submission is verified when its build and tests run in a sandbox the judges control, not on the team’s laptop.
+The Sandbox SDK (`@tangle-network/sandbox`) provides that machine: `client.create()` starts a fresh Linux sandbox, `box.exec(command)` returns the command’s `exitCode` and `stdout`, and `box.delete()` removes it.
 For how repeated quest failures expose onboarding friction, read [Developer Onboarding Platform With Code-Verified Quests](/blog/developer-onboarding-platform-code-verified-quests).
 For the task and verifier design itself, read [Developer Quest Platform With Code Verification](/blog/developer-quest-platform-code-verification).
 
@@ -44,8 +44,6 @@ A submission should answer five questions before a judge opens the code.
 4. Where can the result be inspected?
 5. What remains broken or untested?
 
-The submission packet should make those answers visible.
-
 | Artifact | What a judge can learn | Boundary |
 | --- | --- | --- |
 | Brief and scope | The intended product behavior | It does not prove implementation |
@@ -56,6 +54,12 @@ The submission packet should make those answers visible.
 | Preview or artifact | A judge can inspect the result | The target may expire or drift |
 | Trace | How the work and failures unfolded | It is evidence of process, not correctness |
 
+The build and test rows come from a run like this one.
+The example’s command stands in for the build command; each named test runs the same way.
+
+<Example path="sandboxes/run-code" />
+
+Exit code 0 shows the command succeeded in that sandbox, not that the named tests cover the requirement.
 The packet should record skipped checks as skipped.
 Silence around a missing browser run is more misleading than a visible failure.
 
@@ -63,7 +67,6 @@ Silence around a missing browser run is more misleading than a visible failure.
 
 A team may need a package registry, a wallet provider, a remote procedure call (RPC) endpoint, a testnet account on a network reserved for testing, test tokens from a faucet, a contract address, an indexer that makes blockchain data searchable, and a browser.
 Those boundaries can fail through version drift, a wrong network, missing funds, malformed provider responses, or an upstream outage.
-An RPC endpoint is a network address that accepts remote procedure calls, such as requests to a blockchain node.
 
 Sponsors should publish a starter project and a short environment contract.
 The contract should state the expected Node.js or Rust version, package versions, network identifier, test accounts, faucet limits, contract addresses, and cleanup rules.
@@ -73,7 +76,6 @@ An agent workspace follows the same principle while adding an assistant, task in
 
 An **agent profile** is the saved configuration for an agent run, including its model, instructions, tools, permissions, and budget.
 A **runtime** is the environment that starts the agent and provides its files, processes, network policy, and resource limits.
-An **evaluation** is a repeatable check against an expected result.
 The starting flow can look like this.
 
 ```text
@@ -109,8 +111,7 @@ Separate infrastructure health from builder behavior.
 If the RPC endpoint or indexer is unavailable, mark the dependency outage and preserve the submission for rerun.
 Do not turn an infrastructure failure into a technical score without an explicit rule.
 That rule should be written before the event, when no particular team is waiting on the outcome.
-The judge packet should also preserve the test conditions, because two submissions can appear different when one ran with a warm cache and the other started from an empty workspace.
-Comparable judging depends on comparable inputs, versions, network state, and time limits.
+The judge packet should also record test conditions: a warm cache and an empty workspace can make two submissions look different.
 
 ## Write a challenge as a behavior
 
@@ -133,11 +134,10 @@ For a wallet-heavy challenge, the checks might be:
 | Confirm result | The user interface shows the returned transaction or job identifier |
 | Recover | Reloading or a failed request leaves the app in a usable state |
 
-The provider behavior in the wallet checks should follow the public [Ethereum Improvement Proposal 1193 (EIP-1193) provider API](https://eips.ethereum.org/EIPS/eip-1193).
+Wallet checks should follow the public [Ethereum Improvement Proposal 1193 (EIP-1193) provider API](https://eips.ethereum.org/EIPS/eip-1193).
 Browser automation can use [Playwright](https://playwright.dev/docs/intro), which documents browser tests, assertions, isolation, and reports for local or continuous integration (CI) execution.
 
-The following is a deliberately small illustrative check.
-It uses a standard provider boundary and leaves the event-specific contract method for the sponsor to define.
+The illustrative check below uses a standard provider boundary; the sponsor defines the event-specific contract method.
 
 ```typescript
 type Provider = {
@@ -176,14 +176,24 @@ The platform should never decide the creative criterion from raw agent activity.
 Tool-call count, prompt length, and model choice are process details.
 They can help explain a failure, while the product result and human review should carry the award decision.
 
+## Verify many submissions under one budget
+
+Verifying a whole room means many agent runs, and each run costs money.
+A fleet groups agents under one lifecycle and one `budgetUsd`; the Platform refuses any charge past it, mid-turn included.
+The example starts four agents under one budget and reads the spend after the run.
+Its tasks are placeholders; a judging run would give each agent one submission to verify.
+
+<Example path="fleets/under-a-budget" />
+
+The cap bounds spend.
+It does not show that any submission passed; the checks in the packet do that.
+
 ## Keep an evidence trace, with privacy rules
 
 A **trace** is the ordered record of a run, including prompts, tool calls, file changes, command output, evaluations, and artifacts.
-For a hackathon, the trace can save a judge from reconstructing every debugging step.
-It can also help the sponsor improve the challenge after the event.
+For a hackathon, the trace saves a judge from reconstructing every debugging step and helps the sponsor improve the challenge.
 
 The trace should identify the evaluation version and outcome.
-The submission should show whether a check passed, failed, or was skipped.
 
 Use a redacted trace for judging.
 Wallet keys, private API tokens, personal information, and unpublished business logic do not belong in a public packet.
@@ -225,13 +235,6 @@ The [Tangle execution confidentiality guide](https://docs.tangle.tools/developer
 ## Judge the unhappy path before the stage demo
 
 Run wrong-network, rejection, missing-funds, malformed-response, and expiry cases before launch.
-
-Ask a fresh team to use the wrong network.
-Deny a wallet request.
-Let a test account run out of funds.
-Return a malformed response from a mock or fixture.
-Stop the preview and see whether the judge packet says why.
-
 The platform should preserve each failure as a named outcome.
 
 | Failure | Useful evidence | Sponsor action |
@@ -264,7 +267,6 @@ Keep a form and demo video for lightweight community challenges where implementa
 For protocol or SDK challenges, publish the starter environment, define the behavior, test the unhappy path, and give judges a packet that names every check.
 
 The event is ready when a fresh builder can reach the first product-specific check and a fresh judge can understand the result without opening ten unrelated tabs.
-
 
 ## What is a crypto hackathon platform?
 

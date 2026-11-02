@@ -113,15 +113,6 @@ for (const image of [...body.matchAll(/!\[[^\]]*]\((\/images\/[^)]+)\)/g)].map((
   }
 }
 
-for (const field of ['coverImage', 'heroImage']) {
-  const image = data[field]
-  if (image?.startsWith('/images/')) {
-    const imagePath = path.join(process.cwd(), 'public', image.replace(/^\/images\//, 'images/'))
-    if (!fs.existsSync(imagePath)) {
-      fail(`${field} does not exist: ${image}`)
-    }
-  }
-}
 
 console.log(`Checked ${file}${slug ? ` (${slug})` : ''}`)
 

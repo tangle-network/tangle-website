@@ -1,8 +1,8 @@
 ---
-import BaseLayout from './BaseLayout.astro';
-import BlogCover from '../components/BlogCover.astro';
-import { Tag } from '@tangle-network/ui/primitives';
-import { formatDate } from '../utils/date';
+import BaseLayout from "./BaseLayout.astro";
+import PostList from "../components/PostList.astro";
+import { formatDate } from "../utils/date";
+import { blogSeriesSlug, getBlogSeriesDetails } from "../data/blogSeries";
 
 interface Props {
   title: string;
@@ -11,209 +11,92 @@ interface Props {
   updated?: string;
   author: string;
   tags: string[];
+  slug: string;
   series?: string;
-  seriesOrder?: number;
-  coverImage?: string;
-  heroImage?: string;
-  imageAlt?: string;
+  seriesPosts: { data: { slug: string; title: string; date: string } }[];
 }
 
-const { title, summary, date, updated, author, tags, series, seriesOrder, coverImage, heroImage, imageAlt } = Astro.props;
-const displayImage = heroImage || coverImage;
-const keywords = [...new Set(tags)];
+const { title, summary, date, updated, author, tags, slug, series, seriesPosts } = Astro.props;
+const seriesName = series?.replace(/^['"]|['"]$/g, "") || "";
+const seriesTitle = seriesName ? getBlogSeriesDetails(seriesName)?.title ?? seriesName : "";
+const part = seriesPosts.findIndex((post) => post.data.slug === slug) + 1;
+const next = part > 0 ? seriesPosts[part] : undefined;
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).toString();
-const imageUrl = displayImage ? new URL(displayImage, Astro.site).toString() : undefined;
 
 const articleJsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'Article',
+  "@context": "https://schema.org",
+  "@type": "Article",
   headline: title,
   description: summary,
-  keywords,
-  author: { '@type': 'Person', name: author },
+  keywords: [...new Set(tags)],
+  author: { "@type": "Person", name: author },
   datePublished: date,
   dateModified: updated || date,
-  inLanguage: 'en-US',
-  ...(imageUrl && { image: imageUrl }),
-  publisher: {
-    '@type': 'Organization',
-    name: 'Tangle Network',
-    url: 'https://tangle.tools',
-  },
+  inLanguage: "en-US",
+  publisher: { "@type": "Organization", name: "Tangle Network", url: "https://tangle.tools" },
   mainEntityOfPage: canonicalUrl,
 };
-
 ---
 
-<BaseLayout
-  title={title}
-  description={summary}
-  image={displayImage}
-  imageAlt={imageAlt || title}
-  ogType="article"
-  contentType="blog"
-  bodyClass="page-editorial"
->
+<BaseLayout paper title={title} description={summary} ogType="article" contentType="blog" bodyClass="page-editorial">
   <script type="application/ld+json" set:html={JSON.stringify(articleJsonLd)} />
-  <div class="blog-page" data-theme="website">
-    <section class="blog-hero">
-      <div class="blog-hero-inner">
-        <header class="blog-hero-copy">
-          <a href="/blog" class="blog-back-link">All articles</a>
-          <h1>{title}</h1>
-          <p>{summary}</p>
-          <div class="blog-meta">
-            <span>{author}</span>
-            <span aria-hidden="true">/</span>
-            <time datetime={date}>{formatDate(date)}</time>
-            {updated && (
-              <>
-                <span aria-hidden="true">/</span>
-                <span>Updated <time datetime={updated}>{formatDate(updated)}</time></span>
-              </>
-            )}
-          </div>
-          {keywords.length > 0 && (
-            <ul class="blog-tags" aria-label="Post tags">
-              {keywords.map((tag) => (
-                <li><Tag>{tag}</Tag></li>
-              ))}
-            </ul>
-          )}
-        </header>
-        <BlogCover
-          title={title}
-          summary={summary}
-          series={series}
-          seriesOrder={seriesOrder}
-          tags={tags}
-          coverImage={displayImage}
-          imageAlt={imageAlt || title}
-          variant="hero"
-        />
-      </div>
-    </section>
+  <div class="post">
+    <header class="post-head">
+      <p class="post-crumb">
+        <a href="/blog">Blog</a>
+        {seriesName && <><span aria-hidden="true"> / </span><a href={`/blog/series/${blogSeriesSlug(seriesName)}`}>{seriesTitle}</a></>}
+        {part > 0 && seriesPosts.length > 1 && <span class="post-part">part {part} of {seriesPosts.length}</span>}
+      </p>
+      <h1>{title}</h1>
+      <p class="post-summary">{summary}</p>
+      <p class="post-meta">
+        <span>{author}</span>
+        <time datetime={date}>{formatDate(date)}</time>
+        {updated && <span>updated <time datetime={updated}>{formatDate(updated)}</time></span>}
+      </p>
+    </header>
 
-    <section class="blog-article-shell">
-      <article class="blog-article">
+    <div class="post-body">
+      <article class="post-article">
         <div class="blog-content">
           <slot />
         </div>
+        {next && <p class="post-next">Next in {seriesTitle}: <a href={`/blog/${next.data.slug}`}>{next.data.title}</a></p>}
       </article>
-    </section>
+      {seriesPosts.length > 1 && (
+        <aside class="post-rail" aria-label={`Posts in ${seriesTitle}`}>
+          <p><a href={`/blog/series/${blogSeriesSlug(seriesName)}`}>{seriesTitle}</a></p>
+          <PostList posts={seriesPosts} current={slug} compact />
+        </aside>
+      )}
+    </div>
   </div>
 </BaseLayout>
 
 <style>
-  .blog-page {
-    min-height: 100vh;
-    overflow-x: clip;
-    background: var(--depth-1);
-    color: var(--text-primary);
+  .post { width: min(72rem, 92vw); margin: 0 auto; padding: 6.5rem 0 6rem; color: var(--text-primary); }
+  .post-head { max-width: 46rem; }
+  .post-crumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.4rem; margin: 0 0 1.2rem; font-size: 0.9rem; color: var(--text-muted); }
+  .post-crumb a { color: var(--accent-text); font-weight: 600; text-decoration: none; }
+  .post-crumb a:hover { text-decoration: underline; }
+  .post-part { margin-left: 0.6rem; font-family: var(--font-mono); font-size: 0.8rem; }
+  .post-head h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 4vw, 3.1rem); font-weight: 600; line-height: 1.08; letter-spacing: -0.03em; overflow-wrap: break-word; }
+  .post-summary { margin: 1rem 0 0; font-size: clamp(1.05rem, 1.4vw, 1.2rem); line-height: 1.6; color: var(--text-secondary); }
+  .post-meta { display: flex; flex-wrap: wrap; gap: 0 1rem; margin: 1rem 0 0; font-family: var(--font-mono); font-size: 0.82rem; color: var(--text-muted); }
+  .post-body { display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); gap: 4rem; margin-top: 2.5rem; padding-top: 2.5rem; border-top: 1px solid var(--chart-ink-muted); }
+  .post-article { min-width: 0; }
+  .post-rail { position: sticky; top: 5rem; align-self: start; max-height: calc(100vh - 6rem); overflow-y: auto; font-size: 0.9rem; }
+  .post-rail > p { margin: 0 0 0.4rem; font-weight: 600; }
+  .post-rail > p a { color: var(--text-primary); text-decoration: none; }
+  .post-rail > p a:hover { color: var(--accent-text); }
+  .post-next { margin: 3rem 0 0; padding-top: 1.2rem; border-top: 1px solid var(--border-subtle); font-size: 1rem; }
+  .post-next a { color: var(--accent-text); font-weight: 600; }
+  .blog-content { color: var(--text-primary); font-size: 1.08rem; line-height: 1.7; }
+  @media (max-width: 1000px) {
+    .post-body { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+    .post-rail { position: static; max-height: none; padding-top: 1.5rem; border-top: 1px solid var(--border-subtle); }
+    .post { padding-top: 5rem; }
   }
-
-  .blog-hero {
-    padding: clamp(5.25rem, 7vw, 6.25rem) 5% 2.5rem;
-    background:
-      linear-gradient(180deg, var(--bg-card), var(--depth-1)),
-      var(--depth-1);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .blog-hero-inner {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(20rem, 29rem);
-    gap: clamp(2rem, 5vw, 4rem);
-    align-items: start;
-    max-width: 80rem;
-    margin: 0 auto;
-  }
-
-  .blog-hero-copy {
-    min-width: 0;
-  }
-
-  .blog-back-link {
-    display: inline-flex;
-    align-items: center;
-    margin-bottom: 1rem;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--accent-text);
-    text-decoration: none;
-  }
-
-  .blog-back-link:hover {
-    color: var(--text-primary);
-  }
-
-  .blog-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin: 1rem 0 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .blog-tags li {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  .blog-hero h1 {
-    max-width: 56rem;
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: clamp(2.05rem, 4.1vw, 3.45rem);
-    font-weight: 600;
-    line-height: 1.06;
-    letter-spacing: 0;
-    color: var(--text-primary);
-    overflow-wrap: break-word;
-  }
-
-  .blog-hero p {
-    max-width: 44rem;
-    margin: 1rem 0 0;
-    font-family: var(--font-sans);
-    font-size: clamp(1rem, 1.4vw, 1.15rem);
-    line-height: 1.62;
-    color: var(--text-secondary);
-  }
-
-  .blog-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.65rem;
-    margin-top: 1.1rem;
-    font-family: var(--font-sans);
-    font-size: 0.9rem;
-    color: var(--text-muted);
-  }
-
-  .blog-content {
-    color: var(--text-primary);
-    font-size: 18px;
-    line-height: 1.7;
-  }
-
-  .blog-article-shell {
-    padding: 3.5rem 5% 5.5rem;
-    background: var(--depth-1);
-  }
-
-  .blog-article {
-    max-width: min(100%, 62rem);
-    margin: 0 auto;
-    padding: clamp(1.5rem, 3vw, 3rem);
-    border: 1px solid var(--border-subtle);
-    border-radius: 8px;
-    background: var(--bg-card);
-    box-shadow: 0 18px 60px rgba(15, 23, 42, 0.08);
-  }
-
   .blog-content :global(h2) {
     font-family: var(--font-display);
     font-size: 2rem;

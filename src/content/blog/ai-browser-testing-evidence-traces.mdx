@@ -5,6 +5,7 @@ summary: >-
   Design the base record for one browser run: initial state, ordered actions,
   screenshots, a final assertion, and a failure another reviewer can replay.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - browser-agent
@@ -12,21 +13,19 @@ tags:
   - ai-browser-testing
 series: Browser Agent
 seriesOrder: 4
-coverImage: /images/covers/editorial/browser-agent-v2.webp
-heroImage: /images/covers/editorial/browser-agent-v2.webp
-imageAlt: 'An editorial still life about an agent operating a web browser'
 ---
+
+import Example from '../../components/Example.astro'
 
 A checkout test can turn green after the agent clicks “Continue” even when the order total is wrong.
 The result looks reassuring until someone asks what the browser displayed, which account was used, or whether the final page ever loaded.
 
 AI browser testing is useful when the run keeps those answers.
 An agent operates a real browser from a user goal, records what it saw and did, checks the requested outcome, and leaves artifacts that another person can inspect.
-The artifacts are the evidence trace, the ordered record of what the browser observed and did.
+Those artifacts form the evidence trace.
 
 Tangle Browser Agent is Tangle’s browser automation driver for natural-language browser tasks, UI checks, wallet flows, and evidence capture.
-Its `bad` command is the command-line interface (CLI) for one-off browser runs, while its software development kit (SDK) lets an application start a run from code.
-This post explains what an evidence trace needs to contain, how to design a case that can be judged, and where the claim stops.
+Its `bad` command is the command-line interface (CLI) for one-off browser runs. Its software development kit (SDK) lets an application start a run from code, and a Sandbox run (`client.create`, then `box.prompt`) returns a screenshot and extracted data as files the caller reads.
 For the lower-level browser loop, read [Browser Automation for AI Agents: Evidence and Safe Stops](/blog/browser-automation-for-ai-agents).
 
 ## A green sentence is too small a result
@@ -48,14 +47,12 @@ Forbidden actions: purchase a plan, invite a real person, or delete existing dat
 Evidence: the signup page, the completed form, the dashboard, and the stop reason.
 ~~~
 
-This wording gives the agent room to navigate while giving the reviewer a fixed condition to inspect.
 The final condition belongs to the test case, not the model, so the model cannot redefine success after the run.
 
 ## What an evidence trace records
 
 A trace is the ordered record of one run.
 It connects the requested goal to the observations, actions, outcomes, recoveries, and stopping point.
-It is closer to a flight recorder than to a paragraph written after the flight.
 
 | Trace event | Minimum record | Reviewer question |
 | --- | --- | --- |
@@ -67,8 +64,7 @@ It is closer to a flight recorder than to a paragraph written after the flight.
 | final check | expected condition, observed condition, and result | Did the user-visible goal hold? |
 | stop | pass, fail, blocked, or inconclusive plus reason | Why did the run end here? |
 
-The exact storage format can vary.
-The causal chain cannot.
+The storage format can vary; the causal chain cannot.
 A screenshot without the preceding action is hard to interpret, and an action log without the resulting page state cannot show whether the click mattered.
 
 An illustrative record might look like this:
@@ -119,7 +115,6 @@ An illustrative record might look like this:
 ~~~
 
 This is an illustrative evidence shape, not a promise about a particular output file.
-The useful part is the relationship between each observation and the action that followed it.
 
 ## Evidence depends on the claim
 
@@ -164,14 +159,18 @@ bad run \
   --url https://example.com
 ~~~
 
-The help commands inspect local CLI options without opening a site.
 The final command is a real browser task and needs a model-provider key in the runner environment.
 Start with a public, read-only page so a setup mistake cannot change customer data.
 
-The driver also exposes a library surface.
-The following example follows the public repository’s PlaywrightDriver and BrowserAgent API.
+The Sandbox version runs the task on a machine it creates. `client.create` starts a Claude Code backend whose egress allowlist admits only the browser download and the one page it reads. `box.prompt` asks the agent to write a screenshot and five titles to files, `box.fs.download` copies the screenshot out, and `box.delete` retires the machine in `finally`.
 
-~~~typescript
+<Example path="sandboxes/browser-task" />
+
+The output is one screenshot and a JSON array of five titles. It shows the run wrote both files, not that the titles match the screenshot.
+
+The driver also exposes a library surface. The example below uses the PlaywrightDriver and BrowserAgent exports for one read-only goal on a public page.
+
+~~~ts
 import { chromium } from 'playwright'
 import {
   BrowserAgent,
@@ -180,12 +179,13 @@ import {
 
 const browser = await chromium.launch()
 const page = await browser.newPage()
-const driver = new PlaywrightDriver(page)
-
 const agent = new BrowserAgent({
-  driver,
+  driver: new PlaywrightDriver(page),
   config: {
-    model: process.env.BROWSER_AGENT_MODEL ?? 'gpt-5.4',
+    provider: 'openai',
+    baseUrl: 'https://router.tangle.tools/v1',
+    apiKey: process.env.TANGLE_API_KEY!,
+    model: 'gpt-5.4-mini',
     observationMode: 'hybrid',
     plannerEnabled: true,
   },
@@ -204,11 +204,8 @@ try {
 ~~~
 
 Here `hybrid` combines structured page information with a screenshot, while `plannerEnabled` allows a short plan before actions.
-The [public driver README](https://github.com/tangle-network/browser-agent-driver) is the authority for options exposed by the installed version.
 
 ## Read a failure without rerunning it
-
-A useful trace lets a team classify a failed run from the saved record.
 
 | Observation | Likely classification | Next action |
 | --- | --- | --- |
@@ -233,10 +230,15 @@ The final status comes from that comparison, not from the agent’s prose summar
 An evaluation can be deterministic, such as checking visible text, or model-assisted, such as judging whether a screenshot satisfies a visual requirement.
 When a model helps judge the result, keep the expected condition and the supporting artifact visible to a reviewer.
 
+The judge scores two dimensions, `grounded` and `economical`, and reads the task, answer, and every tool invocation from `box.prompt`.
+
+<Example path="evals/score-a-trace" />
+
+The score rates this one answer and its tool calls. The example is a code-search run, but a browser trace has the same record shape: task, answer, tool calls.
+
 ## Package the trace for handoff
 
-A trace becomes part of an engineering workflow when a person can open it without asking the test author to reconstruct the run.
-Keep a small handoff record beside the screenshots and page observations.
+Keep a small handoff record beside the screenshots and page observations, so a person can open the run without asking the author to reconstruct it.
 
 | Handoff field | Example | Why it matters |
 | --- | --- | --- |
@@ -252,7 +254,6 @@ If a form accepted the value but the dashboard never changed, include the reques
 If a modal blocked the action, include the screenshot before dismissal and the screenshot after the bounded recovery.
 If the test stopped at a wallet prompt, include the requested chain and on-chain program context without exposing a private key.
 
-This format also makes reruns more disciplined.
 The next run can change one variable, such as the fixture or browser version, and keep the original trace as a comparison point.
 Without the original conditions, a rerun can answer a different question while appearing to confirm the first result.
 
@@ -261,7 +262,6 @@ Without the original conditions, a rerun can answer a different question while a
 A local `bad` run proves what its own browser session observed.
 If a team exposes the check as a reusable Tangle service, it should define the inputs, outputs, artifact retention, and execution owner separately from the browser assertion.
 A [Blueprint](/blog/blueprint-protocol-operator-services) is a reusable Tangle service definition, and an operator is the provider that runs a live service instance from that definition.
-Those terms describe how a job is packaged and executed.
 They do not prove that the tested application reached the requested state or that an on-chain program produced the expected result.
 
 ## Where the evidence claim stops
@@ -272,8 +272,7 @@ It does not prove a transaction settled on a chain unless the test records confi
 It does not prove an on-chain program is safe.
 It does not make a private credential safe to expose to an agent.
 
-The trace should therefore include the browser version, model or agent profile, observation mode, starting state, URL, test account class, and stop reason.
-Those fields let a reviewer separate a product defect from a bad fixture, an unavailable dependency, a model mistake, or an untested condition.
+The handoff fields let a reviewer separate a product defect from a bad fixture, an unavailable dependency, a model mistake, or an untested condition.
 
 
 ## What is AI browser testing?
@@ -299,10 +298,6 @@ Use a public or disposable, read-only page.
 Move to authenticated flows only after the trace, stop policy, and failure classification work on the harmless case.
 
 ## Choose the smallest honest evidence boundary
-
-Use deterministic browser tests when page queries and outcomes are stable.
-Use AI browser testing when the user-facing path changes often or requires page interpretation.
-Use both when flexible navigation needs a fixed assertion at the end.
 
 The first release-blocking run should be the smallest case whose screenshots, page state, actions, and final check let another engineer decide whether the product worked.
 

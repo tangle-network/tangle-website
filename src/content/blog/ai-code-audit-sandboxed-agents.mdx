@@ -4,6 +4,7 @@ slug: ai-code-audit-sandboxed-agents
 summary: >-
   An AI code audit turns scanner alerts into findings by testing reachability in an isolated environment, recording impact, and preserving rejected candidates.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - code-auditor
@@ -11,33 +12,34 @@ tags:
   - ai-audit
 series: Code Auditor
 seriesOrder: 1
-coverImage: /images/covers/editorial/code-auditor-v2.webp
-heroImage: /images/covers/editorial/code-auditor-v2.webp
-imageAlt: 'An editorial still life about reviewing code and producing evidence'
 ---
+
+import Example from '../../components/Example.astro'
 
 A security scan reports that a withdrawal function sends funds to an untrusted address.
 The alert may be useful, but it does not say whether an attacker can reach the function, whether state changes happen before the external call, or whether a test can reproduce a loss.
 
 An **AI code audit** turns that alert into a bounded engineering decision.
-The agent reads the project, runs its tools in an isolated workspace, tests the suspected path, and returns either evidence for the claim or evidence that narrows or rejects it.
+The agent reads the project, runs its tools in an isolated workspace, tests the suspected path, and returns evidence that supports the claim or narrows or rejects it.
+At release time, an unreproduced warning extends review, while a reproduced finding gives an engineer a failure and a fix target.
 
-At release time, an unreproduced warning extends review, while a tested finding identifies a failure and a fix target.
-An unexplained warning adds review work, while a finding with a reproducible test gives an engineer a concrete failure to fix.
+In Tangle's Sandbox, the audit agent clones the target into a machine with an egress policy, runs the project's commands with `box.exec`, and gets back an exit code and captured output.
+A judge model on the Router then reads the answer and every tool call.
+The reader can check three things: the exit code, the `costUsd` of each agent turn, and the judge's per-dimension scores.
+The primitives are public. The audit workflow built from them is a design direction, not a public audit endpoint.
 
-This article uses a withdrawal example to show the workflow, then maps it to Tangle’s public Sandbox, an isolated machine for agent work, and related service vocabulary.
-The Code Auditor described here is a design direction for agent-assisted review, not a claim that a public audit endpoint is available.
+This article uses a withdrawal example to show the workflow, then maps it to the Sandbox and its related service vocabulary.
 
 ## Start with the path an attacker would need
 
-A scanner is a program that examines source code, dependencies, or generated analysis data for patterns associated with bugs.
-Static analysis performs that examination without running the complete application against live traffic.
+A scanner examines source code, dependencies, or generated analysis data for patterns associated with bugs.
+Static analysis does this without running the complete application against live traffic.
 
 [CodeQL](https://codeql.github.com/docs/codeql-overview/about-codeql/) builds a queryable database, runs queries, and interprets the results as possible issues or data-flow paths.
 [Semgrep’s rule glossary](https://semgrep.dev/docs/writing-rules/glossary) describes a finding as the result produced when a rule matches code.
 
 Their rules and queries inspect every matching file, path, or data-flow edge on each run.
-Their output is still a candidate until someone establishes the path from an external input to an affected asset.
+The output is still a candidate until someone establishes the path from an external input to an affected asset.
 
 | Audit state | Question answered | Evidence worth keeping |
 | --- | --- | --- |
@@ -46,13 +48,11 @@ Their output is still a candidate until someone establishes the path from an ext
 | Reproduced | Does the suspected action create the claimed state change? | Test, command output, request, or transaction trace |
 | Rejected | Which check, wrapper, or assumption blocks the claim? | Negative test and the reason the candidate was closed |
 
-The state is a reporting aid, not a verdict supplied by the language model.
-It makes the evidence that changed the conclusion visible to the next reviewer.
+The state is a reporting aid. It shows which evidence changed the conclusion, so the next reviewer can check that evidence.
 
 ## Work one withdrawal alert all the way through
 
-Consider this small Solidity example.
-Solidity is the programming language, and the Ethereum Virtual Machine, or EVM, is the execution environment used by Ethereum-compatible contracts.
+Consider this small Solidity example. Solidity is the programming language, and the Ethereum Virtual Machine, or EVM, is the execution environment used by Ethereum-compatible contracts.
 
 ```solidity
 pragma solidity ^0.8.0;
@@ -76,9 +76,9 @@ This is a teaching example with no deposit path or deployment configuration.
 The suspicious sequence is the external call followed by the balance update.
 
 Reentrancy is the failure mode in which code called by a contract calls back into that contract before the first invocation has finished updating its state.
-The scanner can point at the call, but the audit still has to show whether an attacker-controlled recipient can enter again and whether the second call changes the balance.
+The scanner can point at the call. The audit still has to show whether an attacker-controlled recipient can enter again and whether the second call changes the balance.
 
-A disciplined agent follows the same questions a human reviewer would ask:
+The agent should ask the questions a human reviewer would ask:
 
 1. Which function is public, and which caller controls the input?
 2. What storage value represents the asset or permission at risk?
@@ -90,14 +90,13 @@ The minimum proof is one fixture, one command, and assertions for the attacker�
 For this example, fund the local vault with 20 ether, give the attacker 10 ether of recorded credit, and ask it to withdraw while its receiver calls `withdraw` once more.
 One ordinary withdrawal should remove 10 ether and leave zero credit.
 If both calls read the stale credit before either update completes, the observed result is a 20-ether decrease even though the attacker had only 10 ether of credit.
-The test needs assertions for the initial credit, final credit, and vault balance, not a model-generated label.
-The test should record the call depth or a transaction trace when the toolchain makes that information available.
+The assertions check the initial credit, final credit, and vault balance. The test should also record the call depth or a transaction trace when the toolchain provides one.
 
-The report should not write “reentrancy confirmed” because a model recognized a familiar pattern.
+The report should not say “reentrancy confirmed” because a model recognized a familiar pattern.
 It should state the caller, amount, initial state, sequence of calls, observed state change, and the code path that caused it.
 
-The same process catches the false positive.
-If an owner check rejects the attacker or a non-reentrant lock blocks the callback, the agent should preserve that negative test and the reason the path stopped.
+The same process catches false positives.
+If an owner check rejects the attacker, or a non-reentrant lock blocks the callback, the agent keeps the negative test and the reason the path stopped.
 
 | Test outcome | Safe report language |
 | --- | --- |
@@ -106,57 +105,23 @@ If an owner check rejects the attacker or a non-reentrant lock blocks the callba
 | Authorization or initialization blocks the path | “Candidate rejected by the tested guard” |
 | The build or fixture fails before the path runs | “Reproduction incomplete because setup failed” |
 
-That language keeps setup failure separate from security evidence.
-
 ## Keep the experiment away from the host
 
-An audit agent needs to read files, install dependencies, run compilers, and execute commands that were written by someone else.
+An audit agent reads files, installs dependencies, runs compilers, and executes commands written by someone else.
 A sandbox is a separate computer or process boundary for that work, with its own filesystem, processes, resource limits, and network policy.
 
 [Tangle Sandbox](https://docs.tangle.tools/sandbox) documents this model as an isolated machine for an agent, implemented with a container or microVM and driven through an SDK, command-line interface, or dashboard.
 The public [AI Agent Sandbox guide](/blog/ai-agent-sandbox) explains the same lifecycle in Tangle terms.
 
-The smallest public SDK flow looks like this:
+The `fix-a-test` example shows the calls an audit needs: `client.create` with a repository, `box.prompt` for the agent, and `box.exec` to run the tests itself.
+The check is the exit code of `npm test`, not the agent’s reply.
+The example fixes a failing test rather than auditing, so it shows the mechanism, not a withdrawal finding.
+It does not set the egress policy that an audit would pass to `client.create`.
 
-```bash
-npm install @tangle-network/sandbox
-```
+<Example path="sandboxes/fix-a-test" title="The agent’s claim, checked by box.exec" />
 
-```typescript
-import { Sandbox } from '@tangle-network/sandbox'
-
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: process.env.SANDBOX_BASE_URL ?? 'https://sandbox.tangle.tools',
-})
-
-const box = await client.create({
-  image: 'universal',
-  name: 'audit-smoke',
-  resources: { cpuCores: 2, memoryMB: 4096, diskGB: 20 },
-})
-
-try {
-  const result = await box.exec('npm ci && npm test', {
-    cwd: '/workspace',
-    timeoutMs: 300000,
-    env: { CI: 'true' },
-  })
-
-  console.log(JSON.stringify({
-    exitCode: result.exitCode,
-    stdout: result.stdout,
-  }))
-} finally {
-  await box.delete()
-}
-```
-
-The API names and cleanup pattern come from the [Tangle Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart) and [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference).
-The example assumes the reviewed project is already present at `/workspace`; it does not pretend that the public snippet uploads source code for you.
-
-The isolation boundary reduces the damage a test can do to the machine that holds credentials or unrelated source.
-It does not make the project trustworthy, and it does not make the agent’s conclusion true.
+The exit code shows that the command ran and passed or failed inside that machine.
+It does not show that the withdrawal path changes state. The assertions in the reproduction section still carry that claim.
 
 Keep secrets out of the workspace whenever a fixture or mocked service can replace them.
 If a live account, private registry, or chain fork is required, record that fact, grant the narrowest temporary permission, and state which production behavior remained untested.
@@ -173,9 +138,8 @@ Retain the artifacts before deleting the workspace:
 
 ## Let the Sandbox run the test without becoming the verdict
 
-Tangle’s public Sandbox is the execution boundary for this workflow.
-Its [quickstart](https://docs.tangle.tools/sandbox/quickstart) shows a client creating a machine, running a command, capturing its output, and deleting the machine afterward.
-That lifecycle gives the audit a place to run untrusted build and test commands, but it does not make the project or the conclusion trustworthy by itself.
+The isolation boundary limits the damage a test can do to the machine that holds credentials or unrelated source.
+It does not make the project trustworthy, and it does not make the agent’s conclusion true.
 
 A **Blueprint** is Tangle’s service package that defines jobs, metadata, contracts, and runtime rules.
 An **operator** is the person or service that runs the actual instance for other users.
@@ -184,20 +148,20 @@ The **runtime** is the environment that starts processes, exposes tools, and ret
 The public [AI Agent Sandbox Blueprint overview](https://docs.tangle.tools/blueprints/ai-agent-sandbox) describes how those pieces split protocol lifecycle from live machine I/O.
 
 An **agent profile** is the declared combination of model, instructions, tools, permissions, and resource limits used for one audit run.
-Pinning the profile helps a reviewer understand why two runs may differ, but it is not a security proof.
+Pinning the profile explains why two runs may differ, but it is not a security proof.
 
 A **trace** is the chronological record of a run, including actions, inputs, outputs, and results.
-Tangle’s Sandbox docs say a run can emit a trace so a failed run remains inspectable instead of disappearing with the client connection.
+Tangle’s Sandbox docs say a run can emit a trace, so a failed run stays inspectable after the client connection is gone.
 
-An **evaluation** is a repeatable set of audit tasks with expected properties used to compare runs.
-For an audit workflow, useful evaluation measures include the fraction of candidates with reproducible evidence, the fraction of rejected candidates with a recorded reason, time to a reviewer decision, and findings missed by the workflow.
+An **evaluation** is a repeatable set of audit tasks with expected properties, used to compare runs.
+Useful measures include the fraction of candidates with reproducible evidence, the fraction of rejected candidates with a recorded reason, time to a reviewer decision, and findings the workflow missed.
 
 ## Give every specialist the same evidence shape
 
-Different codebases need different tools, but the report should not change its meaning when the language changes.
-The specialist’s job is to produce evidence for a narrow question, then return it in the same record shape as every other specialist.
+Different codebases need different tools, but the report should mean the same thing in every language.
+Each specialist answers one narrow question and returns evidence in the same record shape as every other specialist.
 
-Solana programs are smart contracts for the Solana blockchain, Move packages are projects written in the Move contract language, and a zero-knowledge circuit is a set of constraints that checks a statement without revealing its private witness.
+Solana programs, Move packages, and zero-knowledge circuits each need different checks.
 
 | Code area | Narrow question | Useful evidence |
 | --- | --- | --- |
@@ -208,13 +172,11 @@ Solana programs are smart contracts for the Solana blockchain, Move packages are
 | Zero-knowledge circuit | Does an invalid witness satisfy the circuit constraints? | Constraint test, witness, and proof result |
 
 The coordinator should route by detected language and build system, not by a fixed set of agent names.
-The coordinator also needs to merge duplicates by root cause.
-Three alerts that point to the same missing authorization check are one engineering problem, even if three tools reported different lines.
+It also merges duplicates by root cause. Three alerts that point to one missing authorization check are one engineering problem, even if the tools reported different lines.
 
 ## Severity follows the observed impact
 
-Severity is a communication about impact, prerequisites, and scope.
-It is not a decoration added after a model writes an alarming paragraph.
+Severity communicates impact, prerequisites, and scope. It is not a label added after a model writes an alarming paragraph.
 
 | Observed evidence | Claim it supports |
 | --- | --- |
@@ -223,28 +185,27 @@ It is not a decoration added after a model writes an alarming paragraph.
 | A scanner matches a dangerous API but the path is blocked | The pattern exists, but the tested attack path did not reach it |
 | The build fails before the proof runs | The security claim remains untested |
 
-The report should name the affected asset, attacker prerequisites, tested configurations, and untested configurations.
+The report names the affected asset, attacker prerequisites, tested configurations, and untested configurations.
 “High severity” without those details asks the reviewer to supply the missing reasoning.
 
 ## Know where the workflow stops
 
-An AI code audit can miss a dependency defect, a production-only configuration, a race between services, an economic attack, or a path absent from the test fixtures.
-It can also produce a plausible explanation for a test that never ran if the runtime does not capture exit status and output separately from model text.
+An AI code audit can miss a dependency defect, a production-only configuration, a race between services, an economic attack, or a path absent from the fixtures.
+It can also write a plausible explanation for a test that never ran, if the runtime does not capture exit status and output apart from model text.
 
 A clean sandbox does not cover a missing network integration.
 A passing unit test does not cover a different compiler version or deployment configuration.
-A protected execution claim does not establish contract correctness.
-A paid request does not establish reviewer agreement.
+A protected execution claim does not establish contract correctness, and a paid request does not establish reviewer agreement.
 
-Human review, monitoring, incident response, and independent testing remain necessary for systems handling money, credentials, or personal data.
+Human review, monitoring, incident response, and independent testing remain necessary for systems that handle money, credentials, or personal data.
 The audit narrows the next review by preserving the source digest, command, output, state difference, and remaining uncertainty.
 
 ## Make each command explainable after cleanup
 
-The most useful audit record is not a transcript of every token the model produced.
-It is a small map from an assertion to the command, input, output, and state that support it.
+The useful audit record is not a transcript of every token the model produced.
+It maps each assertion to the command, input, output, and state that support it.
 
-For the withdrawal example, the record can be organized by phase:
+For the withdrawal example, organize the record by phase:
 
 | Phase | Input to preserve | Observable result |
 | --- | --- | --- |
@@ -254,24 +215,22 @@ For the withdrawal example, the record can be organized by phase:
 | Impact | Before-and-after balances, permissions, records, or files | Specific state change and affected scope |
 | Repair | Patch revision and original proof | Exploit proof fails while intended behavior remains |
 
-This shape gives a reviewer a way to challenge one claim without rerunning the entire agent session.
-It also prevents a common reporting error in which the model’s summary survives while the command that should support it has been discarded.
+A reviewer can challenge one claim without rerunning the whole agent session.
+The shape also prevents a common error: the model’s summary survives while the command that should support it is discarded.
 
 Keep model messages, tool output, and test assertions in separate fields.
-Model text can explain why the agent chose a test, but the exit code and captured output show whether the test ran.
-An assertion can show that a balance changed, but the source revision and initial state show which code and conditions produced it.
+Model text can explain why the agent chose a test. The exit code and captured output show whether the test ran.
+An assertion shows that a balance changed. The source revision and initial state show which code and conditions produced it.
 
 When the workspace is deleted, preserve the source digest, dependency lockfile digest, tool versions, command list, redacted inputs, and artifact checksums.
-Do not preserve secrets as proof.
-If a command can print a token, scrub the value while retaining the fact that the command accessed a secret-dependent path.
+Do not preserve secrets as proof. If a command can print a token, scrub the value and keep the fact that the command accessed a secret-dependent path.
 
-Replay also needs a boundary.
-If the original run used a local chain fork at one block, a later run against a different block is a new experiment even if the command text is identical.
-If the run used a database fixture, record its schema and seed version rather than calling it production behavior.
-If a reviewer changes the agent profile, source revision, or network policy, the new result should receive a new run identifier.
+Replay has a boundary too.
+A run against a local chain fork at one block is a new experiment if a later run uses a different block, even with identical command text.
+A database fixture needs its schema and seed version recorded, and it is not production behavior.
+A changed agent profile, source revision, or network policy gets a new run identifier.
 
-That discipline helps an evaluation distinguish a stronger audit from a lucky answer.
-The system can be measured on whether it kept the evidence required for replay, not on how persuasive its explanation sounded.
+An evaluation can then tell a stronger audit from a lucky answer, by whether the run kept the evidence needed for replay.
 
 ## The practical decision
 
@@ -281,6 +240,7 @@ Keep rejected candidates with their negative evidence.
 
 For the execution boundary, start with the [Tangle Sandbox quickstart](https://docs.tangle.tools/sandbox/quickstart).
 For the reporting standard, continue to [AI Security Audit With Reproducible Findings](/blog/ai-security-audit-reproducible-findings).
+For the scanner-versus-audit choice, read [AI Vulnerability Scanner vs. Agent Audit](/blog/ai-vulnerability-scanner-vs-agent-audit).
 For contract-specific proof, use [Automated Smart Contract Audit With PoC Validation](/blog/automated-smart-contract-audit-poc-validation).
 
 

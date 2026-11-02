@@ -4,14 +4,14 @@ slug: self-improving-stack-skill-optimization
 summary: >-
   Skill optimization improves reusable agent procedures and their activation rules while keeping model weights fixed.
 date: '2026-05-28'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'skills', 'evals', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 3
-coverImage: /images/covers/editorial/self-improving-stack-v2.webp
-heroImage: /images/covers/editorial/self-improving-stack-v2.webp
-imageAlt: 'An editorial still life about how an agent system improves'
 ---
+
+import Example from '../../components/Example.astro'
 
 The support agent knows the refund policy.
 It still forgets to check whether the order shipped before promising a refund.
@@ -23,20 +23,21 @@ The recurring omission calls for a durable procedure that can be loaded on futur
 Skill optimization tests whether that procedure can persist across future tasks without activating on unrelated work.
 
 A **skill** is a reusable procedure with a scope: when a task matches this situation, take these steps, use these tools, and check these conditions.
-A **prompt** steers one model call or run.
-**Memory** stores facts, observations, or previous outcomes.
-**Model weights** are the learned parameters that shape how the model responds.
-A **tool** performs an action or returns an observation.
 An **agent runtime**, the software controlling the agent loop, loads those materials, invokes tools, spends the budget, and records the run.
 An **agent profile** is the versioned bundle of model, instructions, skills, tools, permissions, runtime, and budgets used for a run.
 An **evaluation** is a repeatable assessment of those runs against tasks, checks, costs, and safety rules.
 A **holdout set** is a protected group of tasks kept out of candidate search until the release decision.
 A **baseline** is the version already in use, and a **candidate** is a proposed replacement.
 
-Skill optimization changes the procedure that survives the current context.
-It does not change model weights, and it does not create a tool that the runtime does not expose.
+Skill optimization changes only the procedure.
+The model weights stay fixed, and it does not create a tool that the runtime does not expose.
 
 **Activation** is the decision to load a skill for a particular task.
+
+## Where a skill test runs on Tangle
+
+A skill body is a string, so it can be the `surface` that `defineAgentEval` evaluates against a shipped baseline.
+Each scenario runs in a fresh Tangle sandbox. The output is `aggregates.byJudge`, a mean per judge, and `run.toolInvocations`, the calls a judge reads for activation.
 
 ## A skill is a procedure with a trigger
 
@@ -51,10 +52,7 @@ The word “skill” covers several artifacts that should not be evaluated the s
 | Runtime | Loop, budgets, and control flow | What runs | Instructions that sound operational but are not enforced |
 
 An agent skill can be a Markdown procedure packaged with optional scripts, references, and templates.
-The open [Agent Skills specification](https://agentskills.io/specification) uses a directory with a `SKILL.md` file containing metadata and instructions as its basic shape.
-The format makes the procedure portable enough to review and version, while the agent client decides how discovery and loading work.
-
-A useful mental model is:
+The open [Agent Skills specification](https://agentskills.io/specification) uses a directory with a `SKILL.md` file holding metadata and instructions.
 
 ```text
 skill = procedure + activation condition + scope + version
@@ -65,8 +63,7 @@ If it persists only as a fact, it is memory.
 If it directly changes the world, it is a tool.
 If it controls the order, budget, or lifetime of work, it belongs to the runtime.
 
-The boundaries can overlap in implementation.
-They still need separate names in an evaluation because each one has a different rollback and failure path.
+The boundaries can overlap, but they still need separate names in an evaluation because each one has a different rollback and failure path.
 
 ## The activation rule is part of the product
 
@@ -87,8 +84,7 @@ activation precision = relevant activations / all activations
 activation recall = relevant activations / all relevant tasks
 ```
 
-The labels do not have to be perfect to be useful.
-They do have to be defined before a candidate is compared.
+The labels must be defined before a candidate is compared, though they need not be perfect.
 
 A broad description can make recall look good by loading the skill everywhere.
 A narrow description can make precision look good by avoiding the skill entirely.
@@ -113,12 +109,10 @@ Before recommending a refund:
 5. Do not submit a refund or change an order without the required approval.
 ```
 
-The body is intentionally procedural.
 It names the trigger, the sequence, the evidence, and the side-effect boundary.
 It does not pretend that “check the order” is possible unless the agent profile includes an order tool.
 
-The public Agent Skills guidance recommends keeping the discovery metadata small and loading detailed material only when a task matches.
-That progressive disclosure pattern reduces always-on context, but it does not remove the need to test whether matching works.
+Progressive disclosure keeps always-on context small, but it does not show that matching works.
 
 The first evaluation should include three slices:
 
@@ -128,8 +122,14 @@ The first evaluation should include three slices:
 | Near miss | A billing question with no refund request | Stay quiet or use another procedure |
 | Dangerous | A request to issue a refund immediately | Follow approval and side-effect rules |
 
-The near miss matters as much as the relevant case.
 A procedure that fires everywhere becomes a permanent context tax and can override more specific instructions.
+
+The example below sends the task, the answer, and every tool call to a model judge on the Router. Its dimensions are `grounded` and `economical`.
+For activation, the same judge would take `loaded`, which passes only when the refund procedure ran before the refund decision, and `quiet`, which passes only when it stayed unloaded on the billing case. Those two are a proposal for this skill, not part of the example.
+
+<Example path="evals/score-a-trace" title="Score a run's tool calls with a model judge" />
+
+The judge is a model, so it can misread a tool call. Read its notes next to the raw `toolInvocations`.
 
 ## What SkillOpt changes in the loop
 
@@ -156,9 +156,9 @@ An edit budget plays a role similar to a learning rate: it limits how far the te
 
 The public SkillOpt project page reports best or tied-best results in 52 of 52 model, benchmark, and execution-setting cells across six benchmarks and seven target models.
 That is a project-reported result, not a guarantee for a new agent.
-The same page also reports transfer across model scales and execution clients, which makes transfer a testable claim rather than an assumption.
+The page also reports transfer across model scales and execution clients.
 
-The important architectural result is simpler than any particular score:
+The deployed agent receives:
 
 ```text
 the deployed agent receives the final skill,
@@ -194,7 +194,7 @@ If the failure is confined to wording or examples, [prompt optimization](/blog/s
 The public [Tangle agent-eval repository](https://github.com/tangle-network/agent-eval) treats a changed skill as a changed behavior surface.
 Its evaluation examples compare a baseline surface with a candidate on the same scenarios, and the public [agent-runtime repository](https://github.com/tangle-network/agent-runtime) documents improvement over named profile surfaces such as prompts and skills.
 
-The public evaluation package documents this installation path:
+Install the package with:
 
 ```bash
 pnpm add @tangle-network/agent-eval
@@ -203,13 +203,8 @@ pnpm add @tangle-network/agent-eval
 Changing the active skill should therefore create a new profile cell, even when the model is unchanged.
 The trace should record which skill version activated, which instructions were loaded, and which tools ran.
 
-If a skill becomes part of a Tangle service, the deployment vocabulary adds another boundary.
-A **Blueprint** is a reusable service template that defines runnable artifacts and jobs.
-An **operator** is the service host that runs a live instance from that template.
-The skill is behavior-bearing software inside the service, not passive documentation attached after the fact.
-
-That distinction matters for review.
-An operator can identify the declared artifact for a service instance, while an evaluation still has to prove that the skill helps the intended tasks and does not expand unsafe behavior.
+If a skill ships inside a Tangle **Blueprint**, a reusable service template with runnable artifacts and jobs, the **operator** that runs the live instance can identify the declared artifact.
+The skill is still behavior-bearing software, so the evaluation has to show that it helps the intended tasks and does not expand unsafe behavior.
 
 ## The security problem is semantic
 
@@ -237,8 +232,6 @@ Record provenance and version for every active skill.
 
 ## A release test for a skill
 
-The comparison must isolate the skill while testing its future blast radius.
-
 ```text
 1. Freeze the model, prompt, tools, runtime, and evaluator.
 2. Register the baseline profile and current skill version.
@@ -249,6 +242,12 @@ The comparison must isolate the skill while testing its future blast radius.
 7. Promote only when held-out lift and activation limits pass.
 8. Keep the old skill and a tested rollback reference.
 ```
+
+`evals/regression-gate` runs this comparison in CI on real sandboxes. For a skill, the candidate is the skill body, and the build fails when the candidate's `aggregates.byJudge` mean is below the shipped surface's.
+
+<Example path="evals/regression-gate" title="Fail the build when a candidate scores below the shipped surface" />
+
+The gate proves lift only on the two scenarios it lists. It says nothing about activation, transfer, or cost.
 
 For paired task results:
 
@@ -268,9 +267,6 @@ promote(skill) if:
   and security_regressions == 0
   and cost <= cost_limit
 ```
-
-The metric choices can change by product.
-The need to measure activation and interference does not.
 
 ## Where durable procedures go wrong
 
@@ -292,8 +288,7 @@ The need to measure activation and interference does not.
 
 **Registry poisoning** lets an attacker make a malicious skill look relevant or trustworthy.
 
-The right response is not to ban durable procedures.
-It is to treat them as behavior-bearing releases with scope, tests, provenance, and rollback.
+Treat durable procedures as behavior-bearing releases with scope, tests, provenance, and rollback.
 
 ## Keep procedures at the skill layer when they recur
 
@@ -305,9 +300,8 @@ Use memory when the missing input is a source-backed fact.
 Use runtime work when the procedure requires a new action, worker, budget, or stop condition.
 Use post-training when the behavior belongs in model parameters and the team can accept the stronger data and rollback obligations.
 
-Skill optimization is the middle layer between a one-off instruction and a hard-coded application feature.
-Its test is not whether the file sounds wise.
-Its test is whether the right agent loads the right procedure, performs better on unseen work, stays quiet elsewhere, and can be rolled back when the environment changes.
+Before a skill ships, run `evals/regression-gate` with the skill body as the candidate, read the activation judge's dimensions on the near-miss trace, and keep the previous skill as the rollback.
+Do not ship a skill whose near-miss activations you have not read.
 
 ## Sources
 

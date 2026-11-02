@@ -4,6 +4,7 @@ slug: agent-runtime-delivery-after-failure
 summary: >-
   An AI agent can write a valid artifact and still exceed its budget. Separate delivery, resource compliance, and failure propagation so each result stays true.
 date: '2026-08-09'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-runtime
@@ -12,22 +13,23 @@ tags:
   - ai-infrastructure
 series: Agent Runtime Infrastructure
 seriesOrder: 7
-coverImage: /images/covers/editorial/agent-runtime-v2.webp
-heroImage: /images/covers/editorial/agent-runtime-v2.webp
-imageAlt: 'An editorial still life about the software that runs an agent'
 ---
+
+import Example from '../../components/Example.astro'
 
 A child worker is one delegated execution, and it can write the file its parent asked for before dying because it exceeded a budget.
 If the runtime checks the file only after a clean completion, it reports that the work was missing even when the artifact is present.
 That single verdict erases two different facts: what the worker delivered and whether it obeyed the resource policy.
 
+In agent-runtime, the delivery check is an argument to the call that starts the worker.
+`supervise` from `@tangle-network/agent-runtime/kernel` takes a `deliverable.check` that reads the worker's output.
+The result is `kind: 'winner'` only when that check passes, and every result carries `spentTotal`, the spend for the run, whichever branch it takes.
+The Sandbox SDK form is a `box.exec` after `box.prompt`, shown below.
+
 The public [agent-runtime ordering change](https://github.com/tangle-network/agent-runtime/commit/2430ee5ee166beed91ed973d8d1a0f2c7468b472) fixes the ordering.
 Its controlled child artifact was exactly `PROOF-RECURSIVE-CHILD`.
 The public source record describes a parent-authored 12,000-token budget and 76,657 tokens spent before the child was stopped.
 The new code checks the artifact from both a streaming cleanup path and a rejected one-shot path, while the original execution error still propagates.
-
-This article defines the result dimensions, walks through the failure, and includes a runnable TypeScript model.
-The model is deliberately small so a reader can see why “delivered” and “within budget” must be stored separately.
 
 > Delivery answers whether the requested artifact exists and passes its check.
 > Resource compliance answers whether the worker stayed within its limits.
@@ -35,8 +37,6 @@ The model is deliberately small so a reader can see why “delivered” and “w
 
 ## Start with the artifact, not the exit signal
 
-An **agent** is a program that uses a language model and tools to complete a task.
-An **agent runtime** is the software that starts the program, supplies its state and limits, records events, and settles the result.
 A **parent run** is the execution that coordinates one or more children.
 A **child worker** is the delegated execution that performs one part of the parent task.
 
@@ -84,6 +84,18 @@ The child wrote its required artifact and then overran its parent-authored budge
 The stream aborted before the delivery check ran, and the run recorded no winner over a file that was correct on disk.
 The defect was the missing question, not a weak output check.
 
+## Check the artifact after the sandbox turn
+
+The Sandbox SDK has the same shape.
+`sandboxes/fix-a-test` clones a repository, asks `claude-code` to fix a failing test, and then runs `npm test` itself instead of trusting the turn's success flag.
+The check is the `box.exec("npm test")` call that throws on a nonzero exit code.
+
+<Example path="sandboxes/fix-a-test" />
+
+The example proves that the tests passed on the box after the turn.
+It does not decide delivery from `run.usage` or `run.costUsd`, which only report spend.
+It also stops before the check when `run.success` is false, so the failed-worker row in the table below belongs to the runtime form.
+
 The distinction is easiest to see as a result table:
 
 | Worker state | Artifact check | Resource check | Error propagation | Correct stored result |
@@ -112,7 +124,7 @@ For a one-shot call, the wrapper catches a rejected `execute()` promise long eno
 It then rethrows the same error.
 The caller still knows that execution failed, while the settled artifact retains an independent delivery verdict.
 
-The [open completion-gate implementation](https://github.com/tangle-network/agent-runtime/blob/2430ee5ee166beed91ed973d8d1a0f2c7468b472/src/runtime/supervise/completion-gate.ts) also keeps the check fail-closed.
+The [open completion-gate implementation](https://github.com/tangle-network/agent-runtime/blob/2430ee5ee166beed91ed973d8d1a0f2c7468b472/src/runtime/supervise/completion-gate.ts) keeps the check fail-closed.
 If reading the artifact throws, the wrapper leaves delivery invalid.
 If the check itself throws, the wrapper treats the artifact as undelivered rather than turning a broken checker into a pass.
 
@@ -122,11 +134,10 @@ The test expects the error to propagate and the artifact verdict to be valid.
 Another worker dies with a different value and remains invalid.
 The one-shot test follows the same rule after a rejected promise.
 
-The test file also checks the ordinary cases.
+The same file checks the ordinary cases.
 A high self-score does not override a failed delivery check.
 A low-score artifact that passes the check can still become the selected output.
 A child that ran without delivering does not become a winner merely because it consumed resources.
-Those cases protect the output contract from both silent failure and self-reported success.
 
 ## Delivery and resource compliance are separate results
 
@@ -145,100 +156,64 @@ It may retain a delivered artifact for diagnosis while refusing to promote it.
 It may allow a reviewer to inspect the file before deciding whether the overrun was acceptable.
 It may retry the work with a larger budget and compare both artifacts.
 
-The runtime should not choose among those business decisions by hiding one of the facts.
-Its job is to report the evidence at the boundary it owns.
-
-The distinction also protects accounting.
 An artifact check does not refund tokens, erase elapsed time, or make an over-budget worker compliant.
-The resource ledger should settle actual usage independently of the output verdict.
-The delivery wrapper should ask whether the artifact passed independently of that ledger.
+The resource ledger settles actual usage independently of the output verdict.
+The delivery wrapper asks whether the artifact passed, and that answer does not depend on the ledger.
 
 This is the same boundary that makes an [agent profile delivery contract](/blog/agent-profile-materialization-contracts/) useful.
 A profile contract says which settings reached the worker.
 A delivery contract says which artifact came back.
 Resource accounting says what the run consumed.
-Each contract can be true or false without changing the meaning of the others.
 
-## A runnable toy model of independent outcomes
+## The runtime form of the check
 
-The following TypeScript program models one artifact check, one resource policy, and one propagated failure.
-It uses no package imports beyond Node's built-in assertions.
-The `delivered` field is calculated from the artifact, while `resourceCompliant` is calculated from usage and the limit.
+`supervise` runs the worker and gates its output through `deliverable.check`.
+A `router-tools` worker settles `{ content }`, so the check reads that field; passing the whole wrapper to `String()` would never match.
+The call below runs one worker through the Router with no tools.
+It needs a `TANGLE_API_KEY` and prints either the delivered line or the reason no winner was returned.
 
-```typescript
-import assert from 'node:assert/strict'
+```ts
+import { type ExecutorConfig, supervise } from '@tangle-network/agent-runtime/kernel'
 
-type Execution =
-  | { status: 'completed' }
-  | { status: 'failed'; reason: 'budget-exhausted' | 'deadline' }
+const routerBaseUrl = 'https://router.tangle.tools/v1'
+const routerKey = process.env.TANGLE_API_KEY!
+const model = 'glm-5.3'
 
-type WorkerOutcome = {
-  artifact: string | null
-  usedTokens: number
-  tokenLimit: number
-  execution: Execution
+// Where the worker runs: a Router model with no tools.
+const backend: ExecutorConfig = {
+  backend: 'router-tools',
+  routerBaseUrl,
+  routerKey,
+  tools: [],
+  executeToolCall: (name) => Promise.resolve(`unknown tool ${name}`),
 }
 
-type Settlement = {
-  delivered: boolean
-  resourceCompliant: boolean
-  failure: string | undefined
-}
+const result = await supervise(
+  {
+    name: 'supervisor',
+    harness: 'cli-base',
+    model: { provider: 'tangle-router', default: model },
+    tools: { agent_runtime_coordination_spawn_worker: true, agent_runtime_coordination_stop: true },
+    prompt: { systemPrompt: 'Delegate the task to one worker, then stop once it delivers.' },
+  },
+  'Produce the exact line: READY',
+  {
+    budget: { maxIterations: 50, maxTokens: 500_000, maxUsd: 0.5 },
+    router: { routerBaseUrl, routerKey },
+    backend,
+    deliverable: {
+      check: (out) => String((out as { content?: unknown })?.content ?? out).includes('READY'),
+      describe: 'output is READY',
+    },
+  },
+)
 
-function settle(outcome: WorkerOutcome): Settlement {
-  const delivered = outcome.artifact === 'PROOF-RECURSIVE-CHILD'
-  const resourceCompliant = outcome.usedTokens <= outcome.tokenLimit
-  const failure = outcome.execution.status === 'failed' ? outcome.execution.reason : undefined
-  return { delivered, resourceCompliant, failure }
-}
-
-const deliveredAfterOverrun = settle({
-  artifact: 'PROOF-RECURSIVE-CHILD',
-  usedTokens: 76_657,
-  tokenLimit: 12_000,
-  execution: { status: 'failed', reason: 'budget-exhausted' },
-})
-assert.deepEqual(deliveredAfterOverrun, {
-  delivered: true,
-  resourceCompliant: false,
-  failure: 'budget-exhausted',
-})
-
-const killedBeforeDelivery = settle({
-  artifact: null,
-  usedTokens: 12_001,
-  tokenLimit: 12_000,
-  execution: { status: 'failed', reason: 'budget-exhausted' },
-})
-assert.deepEqual(killedBeforeDelivery, {
-  delivered: false,
-  resourceCompliant: false,
-  failure: 'budget-exhausted',
-})
-
-const cleanSuccess = settle({
-  artifact: 'PROOF-RECURSIVE-CHILD',
-  usedTokens: 900,
-  tokenLimit: 12_000,
-  execution: { status: 'completed' },
-})
-assert.deepEqual(cleanSuccess, {
-  delivered: true,
-  resourceCompliant: true,
-  failure: undefined,
-})
-console.log('delivery example: 3 checks passed')
+if (result.kind === 'winner') console.log(`delivered: ${JSON.stringify(result.out)}`)
+else console.log(`no winner (${result.reason}), spent $${result.spentTotal.usd.toFixed(4)}`)
 ```
 
-Save it as `delivery-outcomes-example.ts` and run `npx --yes tsx delivery-outcomes-example.ts`.
-The first case intentionally has a true delivery field beside a false resource field and a propagated failure reason.
-The second case proves that cleanup does not manufacture delivery when the artifact is absent.
-The third case shows the ordinary clean path.
-
-The conditional type in `Settlement` is intentionally modest.
-The object stores the failure reason as optional data because a completed run has no error.
-A production runtime may use a discriminated union that carries timestamps, iteration counts, artifact IDs, and a ledger reference.
-The important property survives either representation: the fields answer different questions.
+A `winner` proves that the worker's output passed the check.
+It does not prove the output is correct beyond what the check tests, and `spentTotal` reports spend on both branches, so a reader still checks it against the budget.
 
 ## A recursive parent must preserve the distinction
 
@@ -247,9 +222,7 @@ For example, a root run can ask a middle worker to coordinate a leaf worker that
 If the leaf fails its delivery check, the middle worker must not settle as delivered merely because it received a message from the leaf.
 If the leaf writes a valid file and then exceeds a resource limit, the middle worker can report that delivery passed while carrying the overrun and failure upward.
 
-The public test file exercises this recursive shape before the kill-specific tests.
-It checks that an undelivered leaf prevents a sub-driver from becoming a winner at the root.
-That test protects the meaning of delivery across delegation boundaries.
+The public test file checks that an undelivered leaf prevents a sub-driver from becoming a winner at the root.
 The parent must pass a checked result upward, not a sentence that says “the child finished.”
 
 This matters for retries and selection.
@@ -258,10 +231,6 @@ One produces a high self-score but fails its artifact check.
 The other produces a lower score and passes the artifact check.
 The public test expects the delivered child to win.
 The score remains useful as a secondary ranking value, but it cannot outrank the output contract.
-
-The same ordering applies when one child is a coordinator.
-An intermediate process may have produced a valid coordination note, but that note is not necessarily the final artifact.
-Each level needs a declared output contract, and each level should settle against the contract it owns.
 
 ## What the fix does not approve
 
@@ -284,25 +253,18 @@ That is why artifact storage and trace recording need an explicit boundary aroun
 The [worker observability article](/blog/agent-runtime-worker-observability/) describes the companion rule for live state.
 Progress and trace signals should remain visible while the worker is active, while the final artifact and resource settlement should remain available after it stops.
 
-## The cleanup path needs one source of output truth
+## Read the artifact once, from the executor
 
 The delivery check should read the executor's retained artifact rather than reconstructing output from the last event it happened to see.
 A stream can end between two events, and a one-shot promise can reject after the executor has written its final file.
 The artifact accessor is the boundary that answers what the worker left behind.
 
-The wrapper should also run that accessor once per settlement.
-Running a check twice can create a different answer when the checker reads a changing file, consumes a one-time stream, or records a side effect.
-The public implementation stores the gated verdict and returns it from the settled artifact, so later readers see the same result that cleanup computed.
+The wrapper runs that accessor once per settlement.
+Running a check twice can produce two answers when the checker reads a changing file, consumes a one-time stream, or records a side effect.
+The public implementation stores the gated verdict on the settled artifact, so later readers see the same result that cleanup computed.
 
-Cleanup must happen before the error is handed back to the parent, but the error must still be handed back.
-That order gives the parent a complete record without changing control flow.
-The parent can log the artifact verdict, reconcile resource usage, and decide whether to retry after the original exception remains visible.
-
-This ordering also makes tests more realistic.
-A success-only test can pass while a kill path remains blind.
-The open tests create a streaming worker that yields an event, throws, and exposes an artifact afterward.
-They create a one-shot worker whose promise rejects while the artifact accessor still returns the proof string.
-Those shapes exercise the boundary where production failures happen rather than only the clean path.
+Cleanup happens before the error goes back to the parent, and the error still goes back.
+The parent gets a complete record, can log the artifact verdict and reconcile usage, and then decides whether to retry with the original exception visible.
 
 ## Pick the policy after you preserve the facts
 
@@ -319,7 +281,8 @@ For a disposable experiment, retain it for diagnosis.
 For a production deployment, reject promotion and ask the parent to raise the budget or simplify the context.
 For a human review workflow, show the artifact beside the explicit overrun.
 
-The decision should be visible because “the file exists” and “the worker obeyed the contract” are both useful facts, and neither one can stand in for the other.
+Read `delivered`, `resourceCompliant`, and `failure` as three fields before promoting anything.
+For prompt or model changes, put the score in CI with `evals/regression-gate`, which fails the build when the candidate scores below the shipped prompt.
 
 ## FAQ
 

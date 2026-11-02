@@ -4,14 +4,14 @@ slug: self-improving-stack-prompt-optimization
 summary: >-
   Prompt optimization searches instructions, examples, schemas, tool descriptions, and rubrics for better agent behavior while the model and runtime stay fixed.
 date: '2026-05-27'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'prompts', 'evals', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 2
-coverImage: /images/covers/editorial/self-improving-stack-v2.webp
-heroImage: /images/covers/editorial/self-improving-stack-v2.webp
-imageAlt: 'An editorial still life about how an agent system improves'
 ---
+
+import Example from '../../components/Example.astro'
 
 The support agent answers the customer’s question, uses the right tone, and still forgets to include the one field the downstream system needs.
 The team rewrites the system prompt, sees a higher score on twenty examples, and ships the change.
@@ -21,18 +21,16 @@ Prompt optimization is the right first experiment only when the missing behavior
 It can improve behavior caused by language-shaped instructions, examples, tool descriptions, output schemas, and judging rules.
 It cannot create a missing tool, a parallel worker, a larger token budget, or an honest evaluator.
 
-A **prompt** is the text that gives a model a task, context, constraints, or output format.
 An **agent runtime** is the software that calls the model, exposes tools, controls turns and budgets, and records the run.
 An **agent profile** is the complete configuration for one behavior cell, including the model, prompt, tools, skills, permissions, and limits.
-A **trace** is the run record that keeps model calls, tool actions, observations, artifacts, costs, and the final outcome.
 An **evaluation** is a repeatable assessment of those outcomes against a task set and a scoring rule.
 A **selection rule** is a deployable rule that chooses a candidate result from the results the runtime produced.
-A **checker** is a repeatable check that tests a result against an explicit condition.
 A **holdout set** is a protected group of tasks kept out of candidate search until the release decision.
 A **judge** is a scorer for qualities that a deterministic checker cannot fully measure.
 A **baseline** is the version already in use, and a **candidate** is a proposed replacement.
 
 Prompt optimization is a search over text-bearing controls, but its causal reach stops at the capabilities the agent already has.
+Tangle’s surface for that question is `defineAgentEval` in `@tangle-network/agent-eval`: `evaluate({ surface })` runs the shipped `baselineSurface` and a candidate `surface` over the same scenarios and returns `aggregates.byJudge`, a per-judge mean for each surface.
 
 ## The question a prompt optimizer can answer
 
@@ -43,7 +41,6 @@ A prompt search estimates something like:
 p* = argmax_p  E[S(run(m, r, p, x))] - cost_penalty
 ```
 
-The fixed terms are as important as the variable.
 If `m` changes, the experiment no longer isolates the prompt.
 If `r` changes its turn limit or tool set, the candidate received a different action space.
 If `S` changes its rubric, the score is not comparable.
@@ -60,12 +57,11 @@ It becomes a different problem when the path is:
 prompt text -> request to verify -> no checker exists -> unsupported output -> generous judge score
 ```
 
-The second system needs a tool or a better judge before it needs a cleverer sentence.
+The second system needs a tool or a better judge, not a cleverer sentence.
 
 ## “Prompt” names several different surfaces
 
-Production agents rarely send one undifferentiated string.
-They assemble a program from multiple text-bearing components.
+Production agents assemble a program from several text-bearing components, not one string.
 
 | Surface | Example change | Typical blast radius |
 | --- | --- | --- |
@@ -78,14 +74,13 @@ They assemble a program from multiple text-bearing components.
 | Retrieval instruction | Choose sources and citation behavior | Knowledge-heavy tasks |
 
 The surface has to be named before it is optimized.
-A field description, a coordinator policy, and a judge rubric may all be text, but they have different owners, constraints, and failure modes.
+A field description, a coordinator policy, and a judge rubric have different owners, constraints, and failure modes.
 
 The structured-program view is why [DSPy’s MIPROv2 documentation](https://dspy.ai/api/optimizers/MIPROv2/) describes joint optimization of instructions and few-shot examples inside a program.
-The optimizer is choosing components and combinations, not searching a single magic sentence.
 
 ## What GEPA, MIPRO, and the older methods change
 
-The family resemblance is simple:
+The family shares one loop:
 
 ```text
 propose a text candidate
@@ -111,8 +106,7 @@ The proposal and feedback mechanisms differ.
 [TextGrad](https://arxiv.org/abs/2406.07496) passes textual feedback through a computation graph in a gradient-like role.
 [GEPA](https://arxiv.org/abs/2507.19457) adds trajectory-level reflection, prompt mutation, and Pareto-style preservation of complementary candidates.
 
-Those descriptions identify the search operator.
-They do not establish that one method wins on your product.
+Those descriptions identify the search operator, not which method wins on your product.
 The task distribution, evaluator, model, runtime, and cost limit still decide the result.
 
 ## A worked example: one missing ticket field
@@ -121,10 +115,9 @@ Suppose a support agent must return a structured object with the answer and the 
 The model already has a ticket lookup tool.
 The tool call is present in the trace, but the final response sometimes drops the identifier.
 
-That is a good prompt-optimization candidate because the missing behavior is representational.
-The capability exists, and the failure appears between available evidence and the output format.
+That is a good prompt-optimization candidate: the capability exists, and the failure is representational, between available evidence and the output format.
 
-The smallest evaluation can be deterministic:
+The smallest evaluation runs without a sandbox:
 
 ```ts
 import { defineAgentEval } from '@tangle-network/agent-eval/contract'
@@ -157,21 +150,22 @@ const candidate = await evalKit.evaluate({
 })
 ```
 
-This example uses the public `defineAgentEval` contract from the [Tangle agent-eval repository](https://github.com/tangle-network/agent-eval).
-The production agent and judge can be replaced with a real model call and a schema validator, while the comparison remains the same.
+The string agent proves only the wiring. Install with `pnpm add @tangle-network/agent-eval`, then replace the agent with a real model call and a schema validator.
 
-The public package documents this installation path:
-
-```bash
-pnpm add @tangle-network/agent-eval
-```
-
-The candidate should then be tested on a protected set of tickets with the same model, tools, runtime, and output parser.
+Test the candidate on a protected set of tickets with the same model, tools, runtime, and output parser.
 The full trace should confirm that the ticket lookup still happened and that the candidate did not pass by omitting the tool call.
 
 If the candidate improves only when the judge reads the new phrase, the prompt may be learning the judge rather than the task.
 If it improves on support tickets but breaks a separate escalation schema, the candidate needs a regression slice.
 If it needs twice the output budget because the instruction made every answer verbose, the quality result has a cost attached.
+
+## Measure the candidate on real sandboxes
+
+`evals/regression-gate` runs the same comparison with a real agent. Each scenario creates a Claude Code sandbox from the sandbox-demo repository, sends the task with the surface appended, and passes only when `npm test` exits 0 there. `CANDIDATE_PROMPT` supplies the candidate.
+
+<Example path="evals/regression-gate" title="Regression gate: shipped prompt against candidate" />
+
+The script prints the `shipped` and `candidate` means and exits 1 when the candidate is lower. That shows the candidate did not lose on two failing tests in this run. It is not a lift: two scenarios cannot support a lower confidence bound, so the promotion rule below still decides.
 
 ## Tangle’s public placement
 
@@ -187,7 +181,6 @@ A **Blueprint** is a reusable service template that defines the jobs and artifac
 Tangle also uses the word **router** for a job traffic director inside a Blueprint Runner.
 A router validates a job call and sends it to the handler registered for that job identifier.
 That is different from a prompt optimizer and different from a model-routing policy.
-Keeping those meanings separate prevents a prompt experiment from quietly changing the service path.
 
 ## The optimizer cannot repair a missing action
 
@@ -244,7 +237,7 @@ delta_i = score(candidate, task_i) - score(baseline, task_i)
 A lower confidence bound is a conservative estimate of the lift after accounting for sampling uncertainty.
 Promote only when the lower confidence bound for the paired lift clears the product threshold, hard checks pass, and the candidate stays inside cost and latency limits.
 The exact confidence method can be bootstrap, permutation-based, or another justified method.
-The important part is that the rule is fixed before the holdout results are read.
+The rule must be fixed before the holdout is read.
 
 Keep three roles distinct:
 
@@ -260,8 +253,6 @@ The production agent cannot use information it would not have at deployment time
 
 ## When prompt search produces the wrong lesson
 
-Prompt optimizers fail in repeatable ways.
-
 **Benchmark phrasing overfit** occurs when the candidate copies patterns from the search examples and transfers poorly.
 
 **Judge coupling** occurs when the candidate learns the evaluator’s favorite wording without improving the user’s outcome.
@@ -276,23 +267,21 @@ Prompt optimizers fail in repeatable ways.
 
 **Safety regression** occurs when a candidate becomes more compliant with the task by weakening refusal, permission, uncertainty, or privacy behavior.
 
-The trace should make these failures inspectable.
-The release rule should reject them even when the aggregate score rises.
+The trace should make these failures inspectable, and the release rule should reject them even when the aggregate score rises.
 
 ## Choose prompt optimization when text is causal
 
 Use prompt optimization when the failure is visible in the text-to-behavior path and the needed capability already exists.
-Start with the smallest surface that can plausibly cause the fix.
+Start with the smallest plausible surface.
 Keep the model, runtime, tool graph, evaluator, and budget fixed while searching.
 Use traces to explain why a candidate changed behavior.
-Use a holdout and deterministic checks before promotion.
+
+Before a prompt change ships, run the regression gate on the candidate, then the paired holdout check.
+Keep the shipped prompt when the candidate mean is lower or the lower confidence bound misses the threshold, and read the trace for the missing control.
 
 Move to [skill optimization](/blog/self-improving-stack-skill-optimization) when the procedure must persist across future runs.
 Move to [test-time compute](/blog/self-improving-stack-test-time-compute) when the system needs more attempts, search, or verification under a measured budget.
 Move to [post-training](/blog/self-improving-stack-post-training) when the behavior needs to generalize through model parameters and the team can accept the harder rollback and data obligations.
-
-Prompt optimization is one coordinate in the self-improving stack.
-It earns its place when the prompt is the cause, the evaluator can see the difference, and the candidate remains better after the search set is gone.
 
 ## Sources
 

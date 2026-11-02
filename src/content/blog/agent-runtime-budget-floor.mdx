@@ -4,6 +4,7 @@ slug: agent-runtime-budget-floor
 summary: >-
   An AI agent token budget can be impossible before work starts. A measured runtime floor lets a parent reject unsafe child budgets and preserve unknowns.
 date: '2026-08-09'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-runtime
@@ -12,10 +13,9 @@ tags:
   - ai-infrastructure
 series: Agent Runtime Infrastructure
 seriesOrder: 6
-coverImage: /images/covers/editorial/agent-runtime-v2.webp
-heroImage: /images/covers/editorial/agent-runtime-v2.webp
-imageAlt: 'An editorial still life about the software that runs an agent'
 ---
+
+import Example from '../../components/Example.astro'
 
 A parent process can give a child worker a token budget that no run of that worker can satisfy.
 The child then spends its allowance loading instructions, tool definitions, and workspace context before it reaches the task.
@@ -27,13 +27,9 @@ Six measured settlements for one `pi` and `tangle-router/glm-5.2` pairing landed
 The smallest observed settlement therefore became a conservative lower bound for that pairing, and the runtime added `below-runtime-floor` as a rejection that tells the caller to raise the budget.
 
 This article explains what that number means, where it does not apply, and how to implement the same decision with a small TypeScript example.
-The example uses toy values and runs without Tangle credentials or private code.
-
-> A child budget is a promise about the whole run, so the parent needs evidence about the fixed cost that arrives before the task.
 
 ## The budget is a promise made by the parent
 
-An **agent** is a program that uses a language model and tools to complete a task.
 An **agent runtime** is the software that starts that program, gives it state and limits, observes its events, and records its result.
 An **agent profile** is the saved description of the model, instructions, tools, files, and policies a worker should receive.
 The [profile materialization article](/blog/agent-profile-materialization-contracts/) covers the earlier boundary where those settings must be deliverable through the selected execution path.
@@ -51,7 +47,6 @@ A **token budget** is the maximum input or total usage a parent authorizes for o
 It is a resource promise, not a request for the model to be brief.
 If the fixed material sent before each turn already exceeds that promise, the child cannot reach the task regardless of how concise its answer would have been.
 
-That distinction matters in a recursive system.
 The parent may look at the child task and think a 2,000-token limit is generous because the requested code change is small.
 The worker may receive a system instruction, a tool catalog, repository or workspace context, and the same scaffolding again on later turns.
 Those bytes arrive before the worker can make a useful edit.
@@ -61,6 +56,10 @@ Can the shared budget pool afford this reservation?
 Can this execution path do any useful work within the requested ceiling?
 The first question is ordinary resource accounting.
 The second question needs measurements tied to the path and model that will run.
+
+On Tangle, the Platform answers the first question for a fleet.
+`client.fleets.create({ budgetUsd })` mints a budgeted key for the fleet, and every router call and compute charge from its sandboxes debits that key.
+`fleet.spend()` then returns `capUsd`, `spentUsd`, and `remainingUsd` as the Platform metered them, from any process.
 
 ## A token budget can be spent before the task appears
 
@@ -98,7 +97,6 @@ The input-token values were:
 | 6 | 62,616 | The upper end is more than twice the minimum |
 
 The same source record reports 515–1,128 output tokens across one to four iterations.
-The table above is about the input side because that is the amount the runtime uses for the measured floor.
 It does not claim that output is free or that the six rows describe every model request made by the worker.
 
 The smallest value, 31,211, is deliberately conservative.
@@ -107,7 +105,6 @@ Using the minimum avoids refusing a budget merely because it is below a median t
 
 The public test file at [the linked budget-floor test](https://github.com/tangle-network/agent-runtime/blob/012762f00b012507d924edd6f060e5f7edec9b3a/tests/kernel/budget-floor.test.ts) checks all four authored budgets against 31,211.
 It also checks that a budget at or above the floor is admitted and that unmeasured entries remain `null`.
-The test is small, but the design decision is larger: a measured census can make one refusal precise without pretending to know the other entries.
 
 ## Four authored budgets were impossible at that boundary
 
@@ -120,7 +117,6 @@ The public record says four separate parent runs authored the following child bu
 | 12,000 | 19,211 below the measured minimum | `below-runtime-floor` |
 | 20,000 | 11,211 below the measured minimum | `below-runtime-floor` |
 
-The arithmetic is only a toy comparison against the recorded minimum.
 It does not estimate a new floor, and it does not say how many tokens a future child will use.
 It answers the narrower question that the runtime needs before launching: is the requested ceiling below the lowest settlement we have seen for this exact measured pairing?
 
@@ -134,7 +130,6 @@ The settlement also remains distinct from ordinary pool exhaustion, because the 
 
 ## Unknown floors stay `null`
 
-The most important value in the public table may be the value that is absent.
 The public change leaves entries such as `codex` and `claude-code` as `null` because no measured floor was available for them at the time.
 The inline router arm also has no floor of this kind because it carries coordination work without resending the same coding-agent scaffolding.
 
@@ -160,7 +155,6 @@ Keeping those records distinct prevents a failed admission study from becoming a
 This provenance is useful when the floor changes.
 If a new tool catalog adds 10,000 input tokens, an operator can point to the context change instead of treating the higher floor as random model behavior.
 If a provider changes its token accounting, the old rows can be retired or relabeled rather than silently mixed with new values.
-The floor is a small table, but the table must carry the conditions that make its numbers comparable.
 
 The reverse risk also matters.
 If a team copies 31,211 into every backend entry, a successful short run on another path could be refused without reason.
@@ -171,7 +165,6 @@ Changes to model, system instructions, tools, workspace size, turn replay, or pr
 
 The following program models the same decision with intentionally small values.
 It distinguishes a known floor, an unknown floor, and a child whose requested budget is too small.
-It uses only Node's built-in assertion library.
 
 ```typescript
 import assert from 'node:assert/strict'
@@ -218,6 +211,22 @@ The caller should still be able to distinguish “the pool had no room” from �
 
 A floor is an admission aid, not a complete cost model.
 The shared pool still has to reserve the requested amount, consume usage events, reconcile actual spend, and release what was not used.
+The enforcer has to sit outside the agent, because an agent that reports its own spend can under-report it.
+
+This fleet runs four agents under one `budgetUsd: 1`.
+The Platform refuses any charge past the cap, mid-turn included, and `fleet.spend()` reads the settled totals back.
+
+<Example path="fleets/under-a-budget" />
+
+The recorded run finished at $0.06 across four agents, and the totals came from the Platform's key rather than from the agents' reports.
+`remainingUsd` subtracts charges still in flight (`inFlightUsd`), so it is what the Platform will still admit, not a forecast of what the agents will use.
+
+A hard refusal stops charges, but it does not stop the agents from trying.
+The next example polls `fleet.spend()` every five seconds and calls `fleet.cancel()` at a soft $1 line, while the Platform's $5 cap remains the hard limit.
+
+<Example path="fleets/cancel-on-cap" />
+
+The recorded run finished at $1.01 against the $1 soft line.
 The [generic executor article](/blog/agent-runtime-generic-executor-deletion/) describes why those boundaries belong to the shared runtime rather than to one special coding path.
 
 The floor also does not guarantee completion.
@@ -230,7 +239,6 @@ Only a settlement that tells you how much the path consumed before a useful end 
 
 The public change's measurements also do not establish a universal property of `pi`, `glm-5.2`, or Tangle Router in every deployment.
 They establish a lower bound for the observed combination under the measured context policy.
-That boundary is why the number is useful and why the number must be re-measured after material changes.
 
 ## Choose a ceiling from evidence
 
@@ -239,9 +247,6 @@ Give the parent the named reason and the measured value so it can raise the budg
 
 When the pairing is unmeasured, keep the floor `null`, allow the normal pool policy to decide, and capture the settlement with enough context to classify it later.
 Do not turn missing measurements into zeroes.
-
-When the path changes its model, tool set, workspace context, or turn-replay policy, treat the old floor as stale evidence until a fresh run confirms that it still bounds the new path.
-The runtime should make that re-measurement cheap because the alternative is a stream of child failures that look like model quality problems.
 
 The immediate builder decision is simple.
 Use a measured floor to prevent an impossible child budget from entering the queue, and use `null` to say honestly that the evidence has not arrived yet.

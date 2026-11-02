@@ -1,71 +1,116 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import BenchmarkReport from '../../components/BenchmarkReport.astro';
-import { boards } from '../../data/benchmarks/index';
-import { benchmarkDescription } from '../../data/benchmarks/catalog';
-import { taskPromptsFor } from '../../data/benchmarks/task-sources';
+import Bars from '../../components/Bars.astro';
+import { branches, burst100, bursts, day, feed, firstCall, firstCommand, firstText, forks, lifecycle, seconds } from '../../data/benchmarks/sandbox';
 
-const entries = boards.map((board) => ({ board, ...benchmarkDescription(board), tasks: taskPromptsFor(board) }));
-const categories = [...new Set(entries.map((entry) => entry.category))];
+const run = (l: { run_id: string; started_at: string; served_sha: string }) => `run ${l.run_id}, ${day(l.started_at)}, serving ${l.served_sha.slice(0, 12)}`;
+const latest = burst100.tangle[0];
+const board = burst100.computesdk;
+// Where the newest Tangle 100-burst would sit on the public board, by p50.
+const place = board.rows.filter((r) => r.median_ms < latest.p50_ms).length + 1;
 ---
 
-<BaseLayout title="Agent benchmarks" description="Explore agent benchmarks by task. Compare success rates, model costs, and the prompts used in each evaluation.">
-  <BenchmarkReport wide>
-    <Fragment slot="hero">
-      <h1 class="bench-h1">Agent benchmarks</h1>
-      <p class="catalog-intro">Compare agents on real tasks.</p>
-    </Fragment>
-    {categories.map((category) => (
-      <section class="catalog-category" aria-labelledby={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>
-        <h2 id={`category-${category.toLowerCase().replaceAll(' ', '-')}`}>{category}</h2>
-        <div class="catalog-grid">
-          {entries.filter((entry) => entry.category === category).map((entry) => (
-            <a class="benchmark-card" href={`/benchmarks/${entry.board.suite.id}/`}>
-              <div class="card-heading">
-                <h3>{entry.title}</h3>
-                <span class="card-arrow" aria-hidden="true">↗</span>
-              </div>
-              <p class="card-description">{entry.description}</p>
-              <div class="card-tasks">
-                <span class="task-heading">Example tasks</span>
-                <ul role="list">
-                  {entry.tasks.slice(0, 3).map((task) => <li>{task.name}</li>)}
-                </ul>
-              </div>
-              <div class="card-footer">
-                <span>{entry.board.tasks.length} tasks · {entry.board.profiles.length} agent setups</span>
-                <span class="card-action">View results <span aria-hidden="true">→</span></span>
-              </div>
-            </a>
+<BaseLayout paper title="Sandbox benchmarks" description={`How fast a Tangle sandbox creates, answers its first command, streams a harness's first text, snapshots, branches and deletes, measured on production and published with n, p50 and p95. Feed published ${day(feed.published_at)}.`} bodyClass="page-editorial">
+  <article class="bench">
+    <header class="bench-head">
+      <h1>Sandbox benchmarks</h1>
+      <p>Every number here was measured on the production fleet by the public SDK, on the date shown, and published as JSON with every sample. Nothing is authored: the page reads the <a href={feed.source}>facts feed</a> and prints its rows with n, p50 and p95. Rows marked ✱ hold a record that failed one of the run's checks; they stay on the page.</p>
+      <dl class="bench-headline">
+        <div><dt>create a sandbox</dt><dd>{seconds(firstCommand.create.p50_ms!)}</dd></div>
+        <div><dt>then its first command</dt><dd>{seconds(firstCommand.exec.p50_ms!)}</dd></div>
+        <div><dt>cold provision, p50 / p95, n={firstCommand.cold.n}</dt><dd>{seconds(firstCommand.cold.p50_ms!)} / {seconds(firstCommand.cold.p95_ms!)}</dd></div>
+        <div><dt>warm claim, p50 / p95, n={firstCommand.warm.n}</dt><dd>{seconds(firstCommand.warm.p50_ms!)} / {seconds(firstCommand.warm.p95_ms!)}</dd></div>
+      </dl>
+      <p class="bench-src">{run(firstCommand.run)}. A keyed SDK <code>create()</code> on the default path, then <code>exec("true")</code>.</p>
+    </header>
+
+    <section aria-labelledby="first-text">
+      <h2 id="first-text">Time to a harness's first text</h2>
+      <p>Create a sandbox with a coding harness installed, send one prompt, and wait for the first streamed text. Each row is one harness on one fresh sandbox, from the newest run.</p>
+      <Bars rows={firstText.rows} caption={run(firstText.run)} />
+    </section>
+
+    <section aria-labelledby="lifecycle">
+      <h2 id="lifecycle">One sandbox through every verb</h2>
+      <p>The same sandbox is created, snapshotted, stopped, resumed, restored from the snapshot, branched into a child, then the child, the snapshot and the sandbox are deleted. Each row is that verb's wall time.</p>
+      <Bars rows={lifecycle.rows} caption={`${run(lifecycle.run)}, default shape, n = sandboxes per verb`} />
+      <details>
+        <summary>The same journey on the desktop shape</summary>
+        <Bars rows={lifecycle.desktop} caption={`${run(lifecycle.run)}, desktop profile`} />
+      </details>
+    </section>
+
+    <section aria-labelledby="many">
+      <h2 id="many">Many at once</h2>
+      <p>A burst asks for several sandboxes in one moment and times each to its first command. Branching copies a live sandbox into children at once and waits until the slowest child's first command has read the parent's files.</p>
+      <Bars rows={bursts.rows} caption={`${run(bursts.run)}; n = sandboxes that reached a first command`} whisker="p90" />
+      <Bars rows={branches.rows} caption={`${run(branches.run)}: branch call to the slowest child's first command; n = parents`} />
+      <Bars rows={forks.rows} caption="A new sandbox from a saved snapshot or a running checkpoint, to runtime ready" />
+    </section>
+
+    <section aria-labelledby="board">
+      <h2 id="board">100 at once, against the public board</h2>
+      <p><a href={board.source}>ComputeSDK's burst board</a> creates {board.iterations} sandboxes at once on each provider and reports the median time to interactive. Tangle runs the same method against production as the <code>create.burst_matched</code> lane. The newest Tangle attempt is placed by its p50; its record failed the run's check that every sandbox reached a first command, so it is a measurement, not a pass.</p>
+      <table class="board">
+        <caption>Board read {day(board.timestamp)} from <a href={board.data}>its published results</a>; Tangle rows from the facts feed.</caption>
+        <thead><tr><th scope="col">#</th><th scope="col">provider</th><th scope="col" class="num">median</th><th scope="col" class="num">p95</th><th scope="col" class="num">reached</th></tr></thead>
+        <tbody>
+          {board.rows.map((r, i) => (
+            <>
+              {i + 1 === place && burst100.tangle.map((t, k) => (
+                <tr class="tangle">
+                  <td>{k === 0 ? place : ''}</td>
+                  <th scope="row">Tangle, {t.date}{t.passed ? '' : ' ✱'}</th>
+                  <td class="num">{seconds(t.p50_ms)}</td>
+                  <td class="num">{seconds(t.p95_ms)}</td>
+                  <td class="num">{t.passed ? '100%' : 'not all'}</td>
+                </tr>
+              ))}
+              <tr><td>{i + 1 + (i + 1 >= place ? 1 : 0)}</td><th scope="row">{r.provider}</th><td class="num">{seconds(r.median_ms)}</td><td class="num">{seconds(r.p95_ms)}</td><td class="num">{Math.round(r.success_rate * 100)}%</td></tr>
+            </>
           ))}
-        </div>
-      </section>
-    ))}
-    {entries.length === 0 && <p class="catalog-intro">No benchmark results are available yet.</p>}
-  </BenchmarkReport>
+        </tbody>
+      </table>
+      <p class="bench-src">Failed checks on the Tangle rows: {[...new Set(burst100.tangle.flatMap((t) => t.failed_checks))].join(', ') || 'none'}. Providers the board could not measure are left out.</p>
+    </section>
+
+    <section aria-labelledby="first-call">
+      <h2 id="first-call">First Router call from a fresh sandbox</h2>
+      <p>Each sandbox carries its own API key. This is the time from create to its first authenticated Router call, by the path the command took to the sandbox.</p>
+      <Bars rows={firstCall.rows} caption={run(firstCall.run)} />
+    </section>
+
+    <section aria-labelledby="method">
+      <h2 id="method">Method</h2>
+      <p>{feed.cohort}</p>
+      <p>{feed.percentiles}</p>
+      <p>Each run names the orchestrator revision it hit, so a change in a number can be read against a deploy. The feed is refreshed by the production benchmark workflow after every run; this page is rebuilt from a snapshot pulled on {day(feed.published_at)} with <code>pnpm pull:benchmarks</code>. The SDK that took every measurement is the one you install: <code>npm install @tangle-network/sandbox</code>.</p>
+    </section>
+  </article>
 </BaseLayout>
 
 <style>
-  .catalog-intro { margin: 14px 0 0; color: var(--text-secondary); font-size: 20px; line-height: 1.5; }
-  .catalog-category { margin-top: 40px; }
-  .catalog-category h2 { margin: 0 0 18px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-  .catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
-  .benchmark-card { display: flex; flex-direction: column; min-width: 0; padding: 28px; color: var(--text-primary); background: var(--depth-2); border: 1px solid var(--chart-rule); border-radius: 16px; text-decoration: none; transition: border-color .15s, background .15s; }
-  .benchmark-card:hover { border-color: var(--accent-text); background: var(--depth-3); }
-  .benchmark-card:focus-visible { outline: 3px solid var(--accent-text); outline-offset: 4px; }
-  .card-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-  .card-heading h3 { margin: 0; font-size: 27px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em; }
-  .card-arrow { color: var(--accent-text); font-size: 28px; }
-  .card-description { margin: 16px 0 0; color: var(--text-secondary); font-size: 18px; line-height: 1.6; }
-  .card-tasks { margin: 28px 0; padding: 22px 0 0; border-top: 1px solid var(--chart-rule); }
-  .task-heading { font-size: 16px; color: var(--text-secondary); }
-  .card-tasks ul { padding: 0; margin: 12px 0 0; list-style: none; display: grid; gap: 12px; }
-  .card-tasks li { font-size: 17px; line-height: 1.5; }
-  .card-footer { margin-top: auto; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; color: var(--text-secondary); font-size: 16px; }
-  .card-action { color: var(--accent-text); white-space: nowrap; }
-  @media (max-width: 760px) {
-    .catalog-grid { grid-template-columns: 1fr; gap: 20px; }
-    .benchmark-card { padding: 24px; }
-    .catalog-category { margin-top: 32px; }
-  }
+  .bench { width: min(52rem, 92vw); margin: 0 auto; padding: 6.5rem 0 5rem; color: var(--text-primary); }
+  .bench h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2.2rem, 4vw, 3rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.05; }
+  .bench h2 { margin: 0 0 0.6rem; font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+  .bench p { margin: 0 0 1rem; font-size: 1.02rem; line-height: 1.6; color: var(--text-secondary); max-width: 44rem; }
+  .bench a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 0.15em; }
+  .bench code { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-primary); }
+  .bench-head > p:first-of-type { margin-top: 1.2rem; }
+  .bench-headline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; margin: 2rem 0 0.8rem; padding: 1.2rem 0; border-top: 1px solid var(--chart-ink-muted); border-bottom: 1px solid var(--chart-rule); }
+  .bench-headline dt { font-size: 0.82rem; color: var(--text-muted); line-height: 1.3; }
+  .bench-headline dd { margin: 0.25rem 0 0; font-family: var(--font-mono); font-feature-settings: 'tnum'; font-size: 1.6rem; font-weight: 500; letter-spacing: -0.02em; }
+  .bench-src { font-size: 0.88rem !important; color: var(--text-muted) !important; }
+  .bench section { margin-top: 3.5rem; }
+  .bench section > :global(table) { margin-top: 1.2rem; }
+  .bench details { margin-top: 1rem; }
+  .bench summary { cursor: pointer; color: var(--accent-text); font-size: 0.95rem; }
+  .board { width: 100%; border-collapse: collapse; margin-top: 1.2rem; font-size: 0.95rem; }
+  .board caption { caption-side: top; text-align: left; padding: 0 0 0.6rem; color: var(--text-secondary); font-size: 0.9rem; }
+  .board th, .board td { padding: 0.4rem 0.6rem 0.4rem 0; text-align: left; font-weight: 500; border-bottom: 1px solid var(--chart-rule); }
+  .board thead th { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.72rem; border-bottom-color: var(--chart-ink-muted); }
+  .board td:first-child { font-family: var(--font-mono); color: var(--text-muted); width: 2.5rem; }
+  .board .num { font-family: var(--font-mono); font-feature-settings: 'tnum'; text-align: right; white-space: nowrap; }
+  .board .tangle th, .board .tangle td { background: var(--accent-surface-soft); }
+  @media (max-width: 720px) { .bench-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } .bench { padding-top: 5rem; } }
 </style>

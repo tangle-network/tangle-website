@@ -5,6 +5,7 @@ summary: >-
   An AI agent runtime environment gives a model tools, files, permissions, and records for real work.
   Follow a toy tax-document review workflow.
 date: '2026-06-23'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -12,19 +13,19 @@ tags:
   - infrastructure
 series: Agent Intent Infrastructure
 seriesOrder: 7
-coverImage: /images/covers/editorial/agent-intent-v2.webp
-heroImage: /images/covers/editorial/agent-intent-v2.webp
-imageAlt: 'An editorial still life about describing and running an agent task'
 ---
+
+import Example from '../../components/Example.astro'
 
 A tax preparer gives an assistant twelve documents and asks for a review packet.
 The assistant has to copy the files, identify the document types, ask a model about uncertain pages, calculate totals, remember which file produced which result, and show a human what happened before anything is filed.
-The final paragraph is the smallest part of the job.
 
 An **AI agent runtime environment** is the software and machine around a model that makes this multi-step work possible.
 It supplies tools and state, enforces permissions, manages resources, routes model requests, records actions, and decides what survives after the run.
 The model proposes decisions.
 The runtime determines which decisions can become side effects.
+
+On Tangle, the runtime is a Sandbox: an isolated machine with its own filesystem and shell. `client.create` starts one, `box.exec` runs a command and returns its `exitCode` and `stdout`, and `box.prompt` runs a coding agent inside that machine and returns the turn's `usage` and `costUsd`.
 
 The tax example is illustrative and is not tax advice or a filing service.
 Coding, browser automation, paid APIs, and model evaluation each need scoped tools, state, permissions, and retained evidence.
@@ -50,7 +51,6 @@ It should give each task an identifier, record the actor and action, pass approv
 ## A small dictionary for the system
 
 Agent infrastructure uses ordinary words for different control layers.
-Define them before combining them.
 
 | Term | Meaning in this workflow | Boundary to preserve |
 | --- | --- | --- |
@@ -66,7 +66,6 @@ It should not inherit the user’s home directory, filing credentials, or email 
 
 ## Per-document runtime record
 
-The record should point to the artifact and its result, alongside the conversation.
 
 | Stage | Input | Action | Output to retain |
 | --- | --- | --- | --- |
@@ -81,77 +80,13 @@ The calculation row is deliberately separate from the model row.
 A model can extract a number from a document, but a normal program should add, compare, and round it when the rule is deterministic.
 The reviewer then sees which values came from interpretation and which came from a calculation.
 
-## A vendor-neutral runtime sketch
+## Check a claim inside the sandbox
 
-The following TypeScript is a teaching example, not a Tangle API.
-It makes the important boundaries visible without hiding them behind a generic `runAgent` function.
+The example below runs one coding task in a Tangle sandbox. It clones a repository, asks Claude Code to fix a failing test with `box.prompt`, and then runs `npm test` itself with `box.exec`, because a finished turn is not a finished task. The script throws unless that command exits 0, writes the patch with `git diff`, and deletes the box in `finally`.
 
-```typescript
-type ReviewTask = {
-  id: string
-  inputFiles: string[]
-  outputDirectory: string
-  allowedActions: Array<
-    'read-inputs' | 'classify' | 'validate' | 'calculate' | 'write-packet'
-  >
-}
+<Example path="sandboxes/fix-a-test" title="Fix a failing test, then check it" />
 
-type RunEvent = {
-  at: string
-  action: string
-  status: 'started' | 'completed' | 'failed' | 'blocked'
-  detail?: string
-}
-
-type ReviewRun = {
-  task: ReviewTask
-  events: RunEvent[]
-  artifacts: string[]
-}
-
-async function prepareReviewPacket(task: ReviewTask): Promise<ReviewRun> {
-  const run: ReviewRun = { task, events: [], artifacts: [] }
-
-  requireAction(task, 'read-inputs')
-  record(run, 'read-inputs', 'started')
-  const documents = await readOnlyInputCopies(task.inputFiles)
-  record(run, 'read-inputs', 'completed', `${documents.length} files copied`)
-
-  requireAction(task, 'classify')
-  record(run, 'classify', 'started')
-  const classifications = await classifyDocuments(documents)
-  record(run, 'classify', 'completed')
-
-  requireAction(task, 'validate')
-  const fields = validateFields(classifications)
-  record(run, 'validate', 'completed')
-
-  requireAction(task, 'calculate')
-  const totals = calculateFromStructuredFields(fields)
-  record(run, 'calculate', 'completed')
-
-  requireAction(task, 'write-packet')
-  const packet = await writeReviewPacket(task.outputDirectory, fields, totals)
-  run.artifacts.push(packet)
-  record(run, 'write-packet', 'completed', packet)
-
-  return run
-}
-
-function requireAction(task: ReviewTask, action: ReviewTask['allowedActions'][number]) {
-  if (!task.allowedActions.includes(action)) {
-    throw new Error(`blocked action: ${action}`)
-  }
-}
-
-function record(run: ReviewRun, action: string, status: RunEvent['status'], detail?: string) {
-  run.events.push({ at: new Date().toISOString(), action, status, detail })
-}
-```
-
-The application functions in the example are placeholders for parser, model, validation, calculation, and rendering code.
-The action list omits submission in this example, but the TypeScript type is only a compile-time check.
-The process that owns the filesystem and network still has to enforce the same rule outside the model context.
+The retained record is the exit code of the test command that ran in the box, the patch, and the metered cost of the agent turn. It does not show that the patch is the change a maintainer wanted, or that the agent's explanation is accurate.
 
 ## Treat the profile as a contract
 
@@ -180,8 +115,7 @@ Keeping that distinction prevents a later score from hiding a change in authorit
 
 ## How Tangle surfaces fit the runtime
 
-Tangle’s products map to different responsibilities.
-Each surface should be added because the task needs it, not because “agent stack” sounds incomplete without it.
+Add the surface a task needs, not every row below.
 
 | Runtime need | Tangle surface | Concrete contribution | What it does not prove |
 | --- | --- | --- | --- |
@@ -210,7 +144,6 @@ The official [x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it
 A **TEE attestation** is signed evidence about a Trusted Execution Environment, such as a code measurement or hardware-backed execution state.
 It can answer “what execution boundary and measurement did the verification service accept?”
 It cannot answer “was the document classification right?”
-Use the [Tangle attestation explanation](/blog/tee-attestation-ai-services) when the trust claim depends on confidential execution.
 
 ## Smoke-test the boundaries before composing them
 
@@ -224,10 +157,7 @@ npm install @tangle-network/sandbox
 npm install @tangle-network/agent-eval
 ```
 
-A Router health response says that the service can answer a health request.
-The model list says which model records are currently published and routeable according to that service.
-The Sandbox health response says that the public API answers.
-The install commands make package provenance explicit.
+The Router health response and model list show which model routes the service currently publishes. The Sandbox health response shows that the public API answers.
 
 None of these calls runs the tax workflow.
 The next test should create one authenticated workspace, copy one non-sensitive sample file, run one deterministic parser, save the output, and delete the workspace.
@@ -256,7 +186,6 @@ The evaluation record should include:
 | Failure category | Separates model, tool, policy, infrastructure, and evaluator failures |
 
 The [agent-eval repository](https://github.com/tangle-network/agent-eval) describes a trace-first approach that compares changes on the same cases and preserves run data for analysis.
-Preserve traces, artifacts, profiles, and check versions so evaluation results remain comparable and inspectable.
 For the concrete workspace lifecycle behind these records, read [AI agent sandbox](/blog/ai-agent-sandbox).
 
 ## Failures need to stay in their own columns
@@ -274,7 +203,6 @@ Assign each failure to the model, provisioning, workload, payment, or measuremen
 | Eval score rises while traces are incomplete | Measurement failure | Missing-span or missing-artifact record and a failed comparison |
 
 Replacing any of those failures with a generic “agent failed” loses the information needed for the next fix.
-The runtime should preserve the failure even when the product later shows a shorter user-facing message.
 
 ## Choose the smallest complete environment
 

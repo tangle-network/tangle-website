@@ -12,13 +12,13 @@ tags:
   - infrastructure
 series: Agent Intent Infrastructure
 seriesOrder: 4
-coverImage: /images/covers/editorial/agent-intent-v2.webp
-heroImage: /images/covers/editorial/agent-intent-v2.webp
-imageAlt: 'An editorial still life about describing and running an agent task'
+updated: '2026-11-01'
 ---
 
+import Example from '../../components/Example.astro'
+
 At 10:03, a coding agent reaches the part of a task that calls a language model.
-The code contains `model: "anthropic/claude-sonnet-4-6"`, the billing account is wired to one provider, and the fallback logic is scattered across three workers.
+The code contains `model: "glm-5.3"`, the billing account is wired to one provider, and the fallback logic is scattered across three workers.
 At 10:04, that model is unavailable in the region where the process runs.
 The agent does not need a better prompt at that moment.
 It needs a controlled way to discover a usable model, choose a route, record what happened, and decide whether a fallback is safe.
@@ -28,7 +28,6 @@ Tangle Router exposes an OpenAI-style `/v1/chat/completions` endpoint, a live `/
 That lets an existing client change its base URL while the platform owns provider selection.
 It does not make every model interchangeable, and it does not turn a fallback into a correct answer.
 
-The practical decision is simple.
 Use a router when model choice, provider failure, usage attribution, or policy needs to change independently of every agent call site.
 Keep a direct provider connection when one model, one account, and one failure policy are genuinely enough.
 
@@ -45,7 +44,6 @@ A router should therefore sit between the profile and the provider.
 The profile can say “use a model that supports tool calls and stays below this per-task budget.”
 The router can translate that requirement into a current model and provider route.
 The task code can keep its normal request shape.
-The related guide on [how AI agents discover products](/blog/how-ai-agents-discover-products) explains why those machine-readable discovery surfaces matter.
 The [AI agent sandbox](/blog/ai-agent-sandbox) article follows the same model-call boundary inside a longer tool workflow.
 
 That separation only helps if the router exposes the information needed to make the choice.
@@ -66,33 +64,40 @@ Tangle’s public API reference documents a `POST https://router.tangle.tools/v1
 It also documents gateway-specific routing options and headers in the same request contract.
 Read the [Tangle request reference](https://docs.tangle.tools/gateway/api-chat) beside the [OpenAI reference](https://developers.openai.com/api/reference/resources/chat) before assuming a feature is portable.
 
-The smallest public integration looks like this:
-
-```
-npm install openai
-```
+The smallest public integration is one HTTP request:
 
 ```typescript
-import OpenAI from 'openai'
-
-const client = new OpenAI({
-  baseURL: 'https://router.tangle.tools/v1',
-  apiKey: process.env.TANGLE_API_KEY,
+const response = await fetch('https://router.tangle.tools/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.TANGLE_API_KEY}`,
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'glm-5.3',
+    messages: [{ role: 'user', content: 'List the risks in this deployment plan.' }],
+  }),
 })
 
-const response = await client.chat.completions.create({
-  model: 'anthropic/claude-sonnet-4-6',
-  messages: [
-    { role: 'user', content: 'List the risks in this deployment plan.' },
-  ],
-})
-
-console.log(response.choices[0]?.message.content)
+const { choices } = await response.json()
+console.log(choices[0]?.message.content)
 ```
 
 This example uses the public base URL and model format shown in [Tangle Router’s live quickstart](https://router.tangle.tools/).
+It prints the reply text.
 The model name is a current example, not a promise that it will remain available.
 Production code should discover a routeable model and check its supported features before it sends an agent task.
+
+## A model that uses a sandbox as its tools
+
+A routed model can only answer with text unless the caller runs its tool calls.
+The example below gives the model the sandbox's exec, read, write, search and run-code tools through `openaiTools(box)`, and `handleAssistantMessage` returns each tool result for the next request.
+The loop ends when the model replies without a tool call, or after 40 steps.
+
+<Example path="products/worker-loop" />
+
+The example shows a routed model driving a real sandbox end to end.
+It does not show that the model's change is correct; the task's own checks still have to decide that.
 
 ## Discover before you choose
 
@@ -208,8 +213,7 @@ After the call, compare the requested policy with the served model and route.
 If the served model changed families while `allowModelFamilyChange` was false, mark the task as a routing violation even if the HTTP request succeeded.
 If the request failed after the provider accepted it, keep the route decision and transport state together so a retry can query the original job or charge record before sending work again.
 
-This record is not a Router response schema.
-It is the caller’s explanation for why a route was allowed.
+This record is the caller’s explanation for why a route was allowed, not a Router response schema.
 Keeping it beside the evaluation result makes a later cost or quality regression attributable to a policy change rather than to an unexplained model swap.
 
 Consider a support profile that requires tool calls, accepts two providers, and allows a model-family change only for a low-risk summarization step.
@@ -221,14 +225,7 @@ If the preferred provider returns a transport error before accepting the request
 If the provider accepts the request and the client loses the response, the runtime should query the generation or job record before sending a second tool call.
 If the model returns valid JSON with the wrong business decision, the failure belongs to evaluation, not route availability.
 
-That example separates three decisions that are often collapsed into “fallback”: capability selection, transport recovery, and task quality.
-Each one has a different safe action and a different record to retain.
-
 ## Keep the route visible
-
-Agents run in a runtime.
-A runtime is the software that starts the agent, provides its tools, controls its budget, and records what it did.
-The router is one component of that runtime, not the entire runtime.
 
 A trace is a structured record of a run’s important events.
 For a routed model call, that may include the selected model, route, timing, usage, and error state.
@@ -251,8 +248,7 @@ It proves that the team can investigate the path that produced the answer.
 
 ## The evaluation that catches a bad fallback
 
-An evaluation is a structured assessment of task results, cost, and policy compliance.
-The [Tangle evaluation terminology](https://docs.tangle.tools/vision/core-concepts) uses that meaning.
+The [Tangle evaluation terminology](https://docs.tangle.tools/vision/core-concepts) is the reference for the term.
 A single successful completion is a smoke check.
 An evaluation runs a repeatable task set and records whether the workflow met its expected conditions.
 
@@ -276,7 +272,7 @@ A useful candidate record is small:
 {
   "profile": "support-triage-v3",
   "requestedModel": "auto",
-  "servedModel": "anthropic/claude-sonnet-4-6",
+  "servedModel": "glm-5.3",
   "route": "operator-or-provider-record",
   "toolCalls": 2,
   "validOutput": true,
@@ -286,7 +282,6 @@ A useful candidate record is small:
 ```
 
 The field names above are an application record, not a Tangle response schema.
-The point is to keep route choice and task outcome in the same row.
 
 ## Where routers fail
 
@@ -322,7 +317,6 @@ A direct provider client is often the better design when:
 - the provider’s native API is required for a feature the compatibility layer does not expose.
 
 A router becomes useful when the cost of changing providers inside every agent is higher than the cost of operating the routing policy in one place.
-That is an architectural decision, not a badge of maturity.
 
 
 ## What is an OpenAI-compatible router for agents?

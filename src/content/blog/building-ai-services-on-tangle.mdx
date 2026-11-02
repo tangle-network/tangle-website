@@ -5,6 +5,7 @@ summary: >-
   Build AI agent infrastructure on Tangle for model inference and generated code execution,
   with operator evidence, job boundaries, and failure checks.
 date: '2026-02-26'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - ai
@@ -12,10 +13,9 @@ tags:
   - sdk
 series: Tangle Re-Introduction
 seriesOrder: 5
-coverImage: /images/covers/editorial/tangle-reintroduction-v2.webp
-heroImage: /images/covers/editorial/tangle-reintroduction-v2.webp
-imageAlt: 'An editorial still life about building a service on Tangle'
 ---
+
+import Example from '../../components/Example.astro'
 
 An agent receives a private spreadsheet and is asked to explain why revenue changed between two months.
 It calls a model to write an analysis, runs generated code to calculate the numbers, and returns a confident paragraph with a chart.
@@ -33,25 +33,28 @@ A **sandbox execution service** runs customer-supplied or model-generated code i
 They can be composed into one agent workflow, but they should not share one vague “verified” label.
 
 Tangle is a coordination network for services that independent parties run.
-Its contracts record selected registration, service, payment, verification, and lifecycle state while application work runs outside the chain.
-Off-chain means computed outside the blockchain, while on-chain means recorded in blockchain state.
-Tangle records the service contract and lifecycle state, while operators perform inference and sandbox execution off-chain and return evidence through the Job result.
+Its contracts record selected registration, service, payment, verification, and lifecycle state.
+Operators perform inference and sandbox execution off-chain, meaning outside the blockchain, and return evidence through the Job result.
 A **Blueprint** is a reusable service template that defines jobs, artifacts, metadata, and optional protocol rules.
 An **operator** is the party that runs the Blueprint and executes its jobs.
 A **Service** is one configured instance with an owner, operator set, payment terms, and lifecycle state.
 A **Job** is one callable unit of work inside the Service.
-The **Blueprint Manager** is the operator-facing process that keeps the running service aligned with protocol state.
-The **Blueprint Runner** receives job calls, routes them to handlers, and returns results.
+The **Blueprint Manager** is the operator-facing process that keeps the service aligned with protocol state.
+The **Blueprint Runner** receives job calls and returns results.
 The [Tangle Blueprint documentation](https://docs.tangle.tools/developers/blueprints/introduction) defines those objects.
 
 The goal is a claim a customer can inspect: what ran, which policy applied, what evidence came back, and what the evidence still does not prove.
+
+The sandbox half runs on the Tangle Sandbox SDK.
+`client.create()` starts a machine, `box.exec()` runs a command and returns its `exitCode` and `stdout`, and `box.delete()` removes the machine.
+The reader sees an exit code and output from a machine that exists only for that call.
 
 ## Separate inference from sandbox execution
 
 The agent profile is the versioned bundle of model choice, instructions, tools, permissions, resource limits, and output schema that guides the workflow.
 The runtime is the process and environment that carries out that profile.
 A **trusted execution environment**, or **TEE**, is a hardware-backed area that isolates a workload from ordinary host software.
-An **attestation report** is signed evidence about that environment and the measurements of the code or configuration that started there.
+An **attestation report** is signed evidence about that environment and the measured code or configuration that started in it.
 A **task evaluation** is a repeatable test or judging procedure for the property a customer cares about.
 A **trace** is a time-ordered record of the execution path.
 An **accounting invariant** is a condition that must remain true, such as a total equaling the sum of its line items.
@@ -66,14 +69,11 @@ For the spreadsheet example, the profile might say:
 5. Return the code, result, evidence, and an uncertainty note.
 ```
 
-The model call and the code run create different risks.
-
 | Stage | What the customer sends | Primary risk | Evidence that fits |
 | --- | --- | --- | --- |
 | Inference | Prompt, files, model options, or structured data | The wrong model ran, the input was exposed, or the output changed | Model identity, execution policy, attestation where required, and task evaluation |
 | Sandbox | Code, input files, and resource policy | Code escaped into the host, or the operator changed the run | Isolation policy, artifact identity, resource record, trace, and output check |
 
-The separation prevents a familiar category error.
 A TEE can provide evidence about a protected workload.
 It does not prove a model’s answer is helpful.
 A sandbox can restrict network access.
@@ -89,13 +89,13 @@ An inference job should make four claims separately:
 4. The output meets the task’s quality rule.
 
 A model fingerprint is a cryptographic summary of the model files or image that the service says it loaded.
-When the model identity is included in the measured claim, a client can compare the attestation report with the approved model or container identity before releasing a secret.
+A client can compare an attestation report that includes the model identity with the approved identity before releasing a secret.
 
 The [TEE article in this series](/blog/trusted-execution-on-tangle) explains why that check is narrower than “the answer is correct.”
-The [Amazon Web Services (AWS) Nitro attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) shows one public provider flow in which an external service compares signed measurements with an access policy.
-The [Blueprint lifecycle guide](/blog/how-blueprints-work) shows where that inference Job sits in the larger operator and Service path.
+The [Amazon Web Services (AWS) Nitro attestation guide](https://docs.aws.amazon.com/enclaves/latest/user/set-up-attestation.html) shows an external service comparing signed measurements with an access policy.
+The [Blueprint lifecycle guide](/blog/how-blueprints-work) shows where that Job sits in the operator and Service path.
 
-An inference response can expose evidence such as:
+An inference response can expose:
 
 | Field | What it supports | What it does not support |
 | --- | --- | --- |
@@ -112,10 +112,14 @@ If no quality check ran, return “not evaluated” rather than a green status.
 
 ## Sandbox execution needs a written policy
 
-A sandbox is a restricted execution environment for untrusted or model-generated code.
-The word “sandbox” is incomplete until the policy states what the process may access.
+A sandbox is a restricted execution environment for untrusted or model-generated code, and the word is incomplete until a policy states what the process may access.
 
-For the spreadsheet job, a reasonable first policy might be:
+The Lifetime row of the policy below is the rule this code applies.
+It passes no policy options, so it shows a machine starts and returns an exit code and output, not the network, filesystem, or process limits.
+
+<Example path="sandboxes/run-code" />
+
+The spreadsheet job’s first policy might be:
 
 | Policy area | Example decision |
 | --- | --- |
@@ -137,8 +141,7 @@ If the sandbox allows unrestricted network access, generated code can send the s
 
 ## A trace makes the execution inspectable
 
-The trace for the sandbox is the time-ordered record of what happened during a run.
-For the sandbox, it can include:
+The sandbox trace can include:
 
 ```text
 job_call_id:        17
@@ -156,17 +159,15 @@ evaluation:         accounting-invariants / passed
 The values in the trace are illustrative.
 The important fields are the links between the Job, artifact, policy, input, output, and evaluation.
 
-A trace is evidence about an execution path.
-It is not automatically independent evidence because the operator may write it.
+A trace is evidence about an execution path, not independent evidence, because the operator may write it.
 Protect selected fields with signatures, attestation, protocol events, or a reproducible check when the customer needs stronger provenance.
 
 For the spreadsheet, it might assert that monthly totals equal the sum of line items, that percentages stay within a valid range, and that the generated code includes the source columns it used.
-The evaluation should be versioned alongside the service and report which cases it covered.
+The evaluation should be versioned with the service and report its covered cases.
 
 ## A job router connects public jobs to private handlers
 
-A **job router** is the traffic director inside the Blueprint Runner.
-It maps a job identifier to the handler that should execute it.
+A **job router** is the traffic director inside the Blueprint Runner: it maps a job identifier to its handler.
 The [current Tangle router reference](https://docs.tangle.tools/developers/blueprint-runner/routers) shows the minimal Blueprint software development kit (SDK) shape:
 
 ```rust
@@ -178,11 +179,10 @@ let router = Router::new()
 ```
 
 For an AI Blueprint, the routes might represent `infer`, `run_sandbox`, and `get_result`.
-The placeholders in the snippet are from the public documentation and are not a complete inference implementation.
+The snippet’s placeholders come from the public documentation and are not a complete inference implementation.
 
-The job router can make the job boundary explicit and reject unknown IDs.
-It does not decide whether the model output is accurate or whether the sandbox policy was strong enough.
-Those checks belong to the handler, runner, manager, evaluation, and protocol configuration around the route.
+The router makes the job boundary explicit and rejects unknown IDs.
+It does not check output accuracy or policy strength; the handler, runner, manager, evaluation, and protocol configuration do that.
 
 ## Payment can be machine-readable without proving the work
 
@@ -194,9 +194,9 @@ The server or a facilitator verifies and settles the payment before serving or e
 The [official x402 flow](https://docs.cdp.coinbase.com/x402/core-concepts/how-it-works) documents `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE` headers.
 
 Tangle exposes x402 as an optional, operator-run HTTP gateway for paid job execution.
-A **facilitator** is the service that verifies and settles an x402 payment for the gateway.
+A **facilitator** verifies and settles an x402 payment for the gateway.
 A `JobCall` is the internal message that carries an accepted paid request into the Blueprint Runner.
-The [Tangle x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) says that the gateway verifies and settles payment through a facilitator and then injects a `JobCall` into the Blueprint Runner.
+The [Tangle x402 documentation](https://docs.tangle.tools/developers/blueprint-runner/x402) describes the same flow.
 
 The gateway’s current endpoint shape is:
 
@@ -229,9 +229,9 @@ tangle_rpc_url = "https://rpc.tangle.tools"
 tangle_contract = "0xYourTangleContract"
 ```
 
-The values are taken from the public documentation as a configuration shape.
+The values come from the public documentation as a configuration shape.
 Use the target release’s current field names and contract address.
-The default-disabled policy is a good boundary because a new Job is not accidentally exposed for paid public calls.
+The default-disabled policy is a good boundary: a new Job is not exposed to paid public calls by accident.
 
 Payment and execution should remain separate in the trace:
 
@@ -251,28 +251,37 @@ It should wait for a completion state, retrieve the result, inspect the evidence
 
 ## Combining inference and sandbox execution
 
-Return to the spreadsheet assistant.
-The workflow can be implemented as two Tangle Jobs in one Blueprint or as two Services with different operator and confidentiality policies.
+The spreadsheet assistant can be two Tangle Jobs in one Blueprint, or two Services with different operator and confidentiality policies.
 
-### Step one: ask the model for a plan
+A product shape for this is one kept sandbox per customer.
+The example below keys an instance to the customer, writes the contract into it, and polls the same turn ID until the turn leaves `running`.
+The platform keeps that sandbox, resumes it, and replaces it if it stops starting.
+It proves a turn ran in the customer’s sandbox, not that the review is correct; the evaluation below checks that.
 
-The inference Job receives a schema describing the available columns and asks the model to produce a plan and code.
+<Example path="products/legal-agent" />
+
+The Lifetime row destroys the environment after one result.
+A kept customer sandbox needs its own rule for reset, resume, and deletion.
+
+### Ask the model for a plan
+
+The inference Job receives a schema of the available columns and asks for a plan and code.
 The service returns both the proposed code and a structured explanation of the inputs it used.
 
 The customer can then inspect the code before it runs.
 An automatic evaluator can reject code that imports network libraries, reads outside the input directory, or writes files outside the output directory.
 
-### Step two: run the code under a policy
+### Run the code under a policy
 
 The sandbox Job receives the approved code, the spreadsheet, and the sandbox policy.
 The runtime starts from a clean environment, denies the network, applies resource limits, and returns the output plus a trace.
 
-### Step three: check the result
+### Check the result
 
 The evaluation checks accounting invariants and compares selected values with a reference calculation.
-If the code produces a plausible chart but violates an invariant, the service returns a failed evaluation rather than a successful answer.
+If the chart looks plausible but breaks an invariant, the service returns a failed evaluation.
 
-### Step four: expose the evidence
+### Expose the evidence
 
 The response should distinguish model output, generated code, sandbox output, and evaluation state.
 One useful response shape is:
@@ -294,8 +303,8 @@ One useful response shape is:
 }
 ```
 
-This is an illustrative response shape.
-It demonstrates the boundary the public interface should expose; it does not claim that the current Tangle gateway returns these exact fields.
+This is an illustrative shape of the boundary the public interface should expose.
+It does not claim the current Tangle gateway returns these exact fields.
 
 The `analysis` field is generated output.
 The `evidence` fields should link to records the client can check.
@@ -342,7 +351,6 @@ The caller needs a timeout, status endpoint, retry policy, and a way to distingu
 
 If a field is missing, record it as unknown.
 Do not turn an absent network record or resource metric into a false zero.
-The customer should know which evidence the operator could not capture.
 
 ## Pick the first service from the risk
 
@@ -359,9 +367,7 @@ Use a conventional hosted service when inputs are public, the workflow is low ri
 Tangle becomes useful when independent operators, explicit execution policy, machine payment, or inspectable result handling changes the customer’s decision.
 
 Start with one model, one language, one policy, one evaluation, and one failure path.
-The minimum useful deployment contains one model, one execution policy, one trace, one evaluation rule, and one result endpoint.
-Those records let a customer answer what ran, where it ran, what it touched, and why the result was accepted.
-
+The minimum deployment also has one trace and one result endpoint, which let a customer answer what ran, where it ran, what it touched, and why the result was accepted.
 
 ## What is AI agent infrastructure?
 
@@ -410,5 +416,5 @@ The [Tangle Runner router reference](https://docs.tangle.tools/developers/bluepr
 The [Coinbase x402 documentation](https://docs.cdp.coinbase.com/x402/welcome) documents the payment protocol and header flow.
 The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) is the source for current examples and release behavior.
 
-Inference and sandbox execution become trustworthy at different boundaries.
-The service is ready to expose when those boundaries are explicit, the smallest public example works, and every missing or failed check remains visible to the caller.
+Run the sandbox example once with a `TANGLE_API_KEY` and read the exit code it prints.
+Then write the network and filesystem rows of the policy before you expose the service.

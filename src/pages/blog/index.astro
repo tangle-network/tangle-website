@@ -1,399 +1,95 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro'
-import BlogCover from '../../components/BlogCover.astro'
-import TopicFilter from '../../components/TopicFilter'
+import PostList from '../../components/PostList.astro'
 import { getCollection } from 'astro:content'
-import { formatDate } from '../../utils/date'
 import { blogSeriesSlug, getBlogSeriesDetails } from '../../data/blogSeries'
 
+// The index is a table of contents: every series in reading order, newest series first, then the posts outside any series.
 const posts = await getCollection('blog', ({ data }) => !data.draft)
-
-const sortedPosts = posts.sort(
-  (a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime(),
-)
-
-const normalizeSeries = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || 'Standalone'
-const topicLabels: Record<string, string> = {
-  agents: 'Agents',
-  'browser-agent': 'Browser',
-  x402: 'x402',
-  'tax-agent': 'Tax agent',
-  'blueprint-agent': 'Blueprint agent',
-  'tangle-protocol': 'Protocol',
-  'code-auditor': 'Code audit',
+const normalize = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || ''
+const inOrder = (a: (typeof posts)[number], b: (typeof posts)[number]) =>
+  (a.data.seriesOrder ?? 999) - (b.data.seriesOrder ?? 999) || b.data.date.localeCompare(a.data.date)
+const grouped = new Map<string, typeof posts>()
+for (const post of posts) {
+  const key = normalize(post.data.series)
+  if (!grouped.has(key)) grouped.set(key, [])
+  grouped.get(key)!.push(post)
 }
-
-const topicOptions = Object.keys(topicLabels).filter((topic) =>
-  sortedPosts.some((post) => post.data.tags.includes(topic)),
-)
-
-const seriesMap = new Map<string, typeof sortedPosts>()
-for (const post of sortedPosts) {
-  const series = normalizeSeries(post.data.series)
-  if (!seriesMap.has(series)) seriesMap.set(series, [])
-  seriesMap.get(series)?.push(post)
-}
-
-const seriesGroups = [...seriesMap.entries()]
-  .filter(([name]) => name !== 'Standalone')
-  .map(([name, entries]) => {
-    const ordered = [...entries].sort((a, b) => {
-      const orderA = a.data.seriesOrder ?? 999
-      const orderB = b.data.seriesOrder ?? 999
-      if (orderA !== orderB) return orderA - orderB
-      return new Date(b.data.date).getTime() - new Date(a.data.date).getTime()
-    })
-
-    const representative = ordered.find((post) => post.data.coverImage || post.data.heroImage) ?? ordered[0]
-    const latest = [...entries].sort(
-      (a, b) => new Date(b.data.date).getTime() - new Date(a.data.date).getTime(),
-    )[0]
-
-    return {
-      name,
-      details: getBlogSeriesDetails(name),
-      representative,
-      latest,
-      topics: [...new Set(entries.flatMap((post) => post.data.tags))],
-    }
-  })
-  .sort((a, b) => {
-    if (a.name === 'Standalone') return 1
-    if (b.name === 'Standalone') return -1
-    return a.name.localeCompare(b.name)
-  })
+const series = [...grouped.entries()]
+  .filter(([name]) => name)
+  .map(([name, entries]) => ({
+    name,
+    slug: blogSeriesSlug(name),
+    details: getBlogSeriesDetails(name),
+    posts: entries.sort(inOrder),
+    latest: entries.reduce((m, p) => (p.data.date > m ? p.data.date : m), ''),
+  }))
+  .sort((a, b) => b.latest.localeCompare(a.latest))
+const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeCompare(a.data.date))
 ---
 
 <BaseLayout
+  paper
   title="Blog"
-  description="Implementation notes, product essays, research threads, and field reports from the Tangle stack."
+  description="Implementation notes and measurements from building agent infrastructure on Tangle, in series that read in order."
   bodyClass="page-editorial"
 >
-  <section class="blog-page" data-theme="website" aria-labelledby="blog-title">
-    <div class="blog-shell">
-      <header class="blog-hero">
-        <h1 id="blog-title">Technical guides for building reliable AI agents.</h1>
-        <p>Tangle builds AI agent infrastructure across sandbox, runtime, router, integrations, and observability. These guides explain implementation choices, measurements, and limits. See the <a class="definition-link" href="/what-is-tangle/">current Tangle definition</a> for layer access and product status.</p>
-        <p class="blog-start">New here? Start with <a href="/blog/series/tangle-re-introduction">Tangle Re-Introduction</a> for the protocol or <a href="/blog/series/agent-intent-infrastructure">Agent Intent Infrastructure</a> for agent services.</p>
-      </header>
-
-      {topicOptions.length > 0 && (
-        <TopicFilter
-          client:visible
-          topics={topicOptions.map((topic) => ({ id: topic, label: topicLabels[topic] }))}
-        />
-      )}
-
-      <section class="series-index" aria-labelledby="series-title">
-        <div class="section-heading">
-          <div>
-            <h2 id="series-title">Choose a learning path</h2>
-            <p>Each series follows one technical subject from first principles through implementation, measurement, and limits.</p>
-          </div>
-        </div>
-
-        <div class="series-grid">
-          {seriesGroups.map((group) => (
-            <a
-              href={`/blog/series/${blogSeriesSlug(group.name)}`}
-              class="series-card"
-              data-series-card
-              data-series={group.name}
-              data-topics={group.topics.join(' ')}
-            >
-              <BlogCover
-                title={group.details?.title ?? group.name}
-                summary={group.details?.premise ?? group.latest.data.summary}
-                series={group.name}
-                tags={group.topics}
-                coverImage={group.representative.data.coverImage}
-                imageAlt={group.representative.data.imageAlt || group.name}
-              />
-              <div class="series-card-copy">
-                <h3>{group.details?.title ?? group.name}</h3>
-                <p>{group.details?.premise ?? group.latest.data.summary}</p>
-                <time datetime={group.latest.data.date}>{formatDate(group.latest.data.date, 'short')}</time>
-              </div>
-            </a>
+  <div class="blog">
+    <header class="blog-head">
+      <h1>Blog</h1>
+      <p>Notes from building and running agent infrastructure: what we measured, what broke, and the code that runs on Tangle. Each series reads in order.</p>
+    </header>
+    <div class="blog-body">
+      <nav class="blog-nav" aria-label="Series">
+        <ol>
+          {series.map((s) => (
+            <li><a href={`#${s.slug}`}><span>{s.details?.title ?? s.name}</span><span class="count">{s.posts.length}</span></a></li>
           ))}
-        </div>
-      </section>
-
-      <section class="post-index" aria-labelledby="post-index-title">
-        <div class="section-heading post-index-heading">
-          <div>
-            <h2 id="post-index-title">All technical articles</h2>
-            <p>Browse every article by publication date, or use the topic filter above to narrow the list.</p>
-          </div>
-        </div>
-
-        <div class="post-list" data-post-list>
-          {sortedPosts.map((post) => (
-            <a
-              href={`/blog/${post.data.slug}`}
-              class="post-row"
-              data-post-row
-              data-series={normalizeSeries(post.data.series)}
-              data-topics={post.data.tags.join(' ')}
-            >
-                  <time datetime={post.data.date}>{formatDate(post.data.date, 'short')}</time>
-              <div>
-                <h3>{post.data.title}</h3>
-                <p>{post.data.summary}</p>
-              </div>
-            </a>
-          ))}
-        </div>
-      </section>
+          {standalone.length > 0 && <li><a href="#standalone"><span>Standalone</span><span class="count">{standalone.length}</span></a></li>}
+        </ol>
+      </nav>
+      <div class="blog-lists">
+        {series.map((s) => (
+          <section id={s.slug} class="series" aria-labelledby={`h-${s.slug}`}>
+            <h2 id={`h-${s.slug}`}><a href={`/blog/series/${s.slug}`}>{s.details?.title ?? s.name}</a></h2>
+            {s.details && <p>{s.details.description}</p>}
+            <PostList posts={s.posts} />
+          </section>
+        ))}
+        {standalone.length > 0 && (
+          <section id="standalone" class="series" aria-labelledby="h-standalone">
+            <h2 id="h-standalone">Standalone</h2>
+            <PostList posts={standalone} />
+          </section>
+        )}
+      </div>
     </div>
-  </section>
-
+  </div>
 </BaseLayout>
 
 <style>
-  .blog-page {
-    min-height: 100vh;
-    padding: 8rem 6% 6rem;
-    background: var(--depth-1);
-    color: var(--text-primary);
-  }
-
-  .blog-shell {
-    width: min(78rem, 100%);
-    margin: 0 auto;
-  }
-
-  .blog-hero {
-    max-width: 55rem;
-    margin-bottom: 3.5rem;
-  }
-
-  .blog-hero h1,
-  .section-heading h2,
-  .series-card h3,
-  .post-row h3 {
-    margin: 0;
-    font-family: var(--font-display);
-    letter-spacing: 0;
-    color: var(--text-primary);
-    text-wrap: balance;
-  }
-
-  .blog-hero h1 {
-    font-size: clamp(3.2rem, 6vw, 5.5rem);
-    font-weight: 600;
-    line-height: 1;
-  }
-
-  .blog-hero p,
-  .section-heading p,
-  .series-card p,
-  .post-row p {
-    color: var(--text-muted);
-  }
-
-  .blog-hero p {
-    max-width: 44rem;
-    margin: 1.25rem 0 0;
-    font-size: clamp(1.08rem, 2vw, 1.28rem);
-    line-height: 1.58;
-  }
-
-  .blog-hero .definition-link {
-    color: var(--accent-text);
-    font-weight: 600;
-    text-decoration: underline;
-    text-underline-offset: 0.16em;
-  }
-
-  .blog-hero .blog-start {
-    font-size: 1rem;
-  }
-
-  .blog-start a {
-    color: var(--accent-text);
-    font-weight: 600;
-  }
-
-  .series-index {
-    margin-top: 3rem;
-  }
-
-  .section-heading {
-    display: flex;
-    align-items: end;
-    justify-content: space-between;
-    gap: 2rem;
-    margin-bottom: 1.2rem;
-  }
-
-  .section-heading h2 {
-    font-size: clamp(1.7rem, 3vw, 2.55rem);
-    font-weight: 600;
-    line-height: 1.05;
-  }
-
-  .section-heading p {
-    max-width: 34rem;
-    margin: 0.45rem 0 0;
-    font-size: 1rem;
-    line-height: 1.55;
-  }
-
-  .series-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1rem;
-  }
-
-  .series-card {
-    min-width: 0;
-    overflow: hidden;
-    border: 1px solid var(--border-default);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.74);
-    color: inherit;
-    text-decoration: none;
-    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.06);
-  }
-
-  .series-card:hover h3,
-  .post-row:hover h3 {
-    color: var(--accent-text);
-  }
-
-  .series-card-copy {
-    padding: 1rem 1rem 1.1rem;
-  }
-
-  .series-card h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
-    line-height: 1.18;
-  }
-
-  .series-card p {
-    margin: 0.55rem 0 0;
-    font-size: 0.92rem;
-    line-height: 1.5;
-  }
-
-  .series-card time,
-  .post-row time {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    font-weight: 700;
-    letter-spacing: 0;
-    text-transform: uppercase;
-    color: var(--text-muted);
-  }
-
-  .series-card time {
-    margin-top: 0.9rem;
-  }
-
-  .post-index {
-    margin-top: 4.5rem;
-  }
-
-  .post-index-heading {
-    align-items: start;
-    padding-bottom: 1.1rem;
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  /* Topic filter governs the whole index (both Series and Archive), so it sits
-     directly under the hero and sticks to the top — reachable while reading the
-     long archive, instead of buried beside the Archive heading two screens down. */
-  .blog-shell :global(.topic-filter) {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin: 0 0 3rem;
-    padding: 0.9rem 0;
-    background: var(--depth-1);
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  .post-list {
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  .post-row {
-    display: grid;
-    grid-template-columns: 8.5rem minmax(0, 1fr);
-    gap: 2rem;
-    padding: 1.35rem 0;
-    border-top: 1px solid var(--border-default);
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .post-row h3 {
-    font-size: clamp(1.15rem, 2vw, 1.55rem);
-    font-weight: 600;
-    line-height: 1.18;
-  }
-
-  .post-row p {
-    max-width: 54rem;
-    margin: 0.55rem 0 0;
-    font-size: 0.98rem;
-    line-height: 1.55;
-  }
-
-  [hidden] {
-    display: none !important;
-  }
-
-  @media (max-width: 980px) {
-    .series-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .section-heading {
-      align-items: start;
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .blog-shell :global(.topic-filter) {
-      justify-content: flex-start;
-    }
-  }
-
-  @media (max-width: 640px) {
-    /* Don't pin the wrapped pill bar on phones — it would eat ~3 rows of a
-       small viewport. Still sits under the hero, so it's seen on landing. */
-    .blog-shell :global(.topic-filter) {
-      position: static;
-      margin-bottom: 2.4rem;
-    }
-
-    .blog-page {
-      padding: 6.25rem 1rem 4rem;
-    }
-
-    .blog-hero {
-      margin-bottom: 2.4rem;
-    }
-
-    .blog-hero h1 {
-      font-size: clamp(2.8rem, 16vw, 4.4rem);
-    }
-
-    .series-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .post-row {
-      grid-template-columns: 1fr;
-      gap: 0.45rem;
-      padding: 1.1rem 0;
-    }
+  .blog { width: min(72rem, 92vw); margin: 0 auto; padding: 6.5rem 0 6rem; color: var(--text-primary); }
+  .blog-head { max-width: 40rem; padding-bottom: 2rem; border-bottom: 1px solid var(--chart-ink-muted); }
+  .blog-head h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2.2rem, 4vw, 3rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.05; }
+  .blog-head p { margin: 1rem 0 0; color: var(--text-secondary); font-size: 1.08rem; line-height: 1.6; }
+  .blog-body { display: grid; grid-template-columns: 16rem minmax(0, 1fr); gap: 3rem; margin-top: 2rem; }
+  .blog-nav { position: sticky; top: 5rem; align-self: start; max-height: calc(100vh - 6rem); overflow-y: auto; }
+  .blog-nav ol { margin: 0; padding: 0; list-style: none; }
+  .blog-nav a { display: flex; justify-content: space-between; gap: 0.8rem; padding: 0.4rem 0; font-size: 0.92rem; line-height: 1.35; color: var(--text-secondary); text-decoration: none; }
+  .blog-nav a:hover, .blog-nav a:focus-visible { color: var(--accent-text); }
+  .blog-nav .count { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted); }
+  .blog-lists { max-width: 46rem; }
+  .series { scroll-margin-top: 5rem; }
+  .series + .series { margin-top: 3rem; }
+  .series h2 { margin: 0 0 0.4rem; font-family: var(--font-display); font-size: 1.45rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; }
+  .series h2 a { color: inherit; text-decoration: none; }
+  .series h2 a:hover { color: var(--accent-text); }
+  .series > p { margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.55; }
+  @media (max-width: 900px) {
+    .blog-body { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+    .blog-nav { position: static; max-height: none; }
+    .blog-nav ol { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; }
+    .blog-nav a { padding: 0.2rem 0; }
+    .blog { padding-top: 5rem; }
   }
 </style>

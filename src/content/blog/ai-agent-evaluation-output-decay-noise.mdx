@@ -4,6 +4,7 @@ slug: ai-agent-evaluation-output-decay-noise
 summary: >-
   Three shrinking model responses are weak evidence of agent decay; five calls plus a 60% endpoint make this behavioral check harder to fool today.
 date: '2026-08-09'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agent-eval
@@ -13,10 +14,9 @@ tags:
   - measurement
 series: The Instrument Problem
 seriesOrder: 2
-coverImage: /images/covers/editorial/instrument-problem-v2.webp
-heroImage: /images/covers/editorial/instrument-problem-v2.webp
-imageAlt: 'An editorial still life about checking whether an agent measurement is real'
 ---
+
+import Example from '../../components/Example.astro'
 
 An agent trace is a time-ordered record of model calls, tool use, and outputs.
 One public regression test reported three model-call outputs of 784, 700, and 646 tokens in that trace.
@@ -25,50 +25,38 @@ That label sounds precise, but the three values can appear in decreasing order b
 
 The public fix in [agent-eval's regression change](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089) raises the bar to five serial calls and requires the last output to be no more than 60% of the first.
 That change does not prove that a model is losing capability.
-It makes a behavioral check less willing to turn a common shape in a trace into a confident finding.
+It makes a behavioral check less willing to turn a common trace shape into a confident finding.
 
 [agent-eval](https://github.com/tangle-network/agent-eval) is Tangle's public TypeScript toolkit for running agents on representative cases, scoring results, comparing candidates, and analyzing traces.
-This post uses one of its public behavioral metrics to examine how an evaluation instrument should set its evidence boundary.
+On Tangle sandboxes, `defineAgentEval` runs each case on its own machine, and its `evaluate({ surface })` returns `aggregates.byJudge` for one model or prompt.
+The reader observes an exit code per case and a mean pass rate per surface.
+This post uses one of agent-eval's public behavioral metrics to show how an evaluation instrument should set its evidence boundary.
 
 If you are building an AI agent evaluation system, copy the reasoning rather than a project-specific implementation: use enough observations that direction alone is uncommon, require a material endpoint change, and report the result as a signal that needs interpretation.
 
-The distinction matters because a behavioral check is an instrument.
-An instrument can be useful while still producing false alarms.
-When the alarm becomes a release decision, the false alarm is part of the product behavior.
+A behavioral check is an instrument.
+An instrument can be useful while still producing false alarms, and once the alarm drives a release decision, the false alarm is part of the product behavior.
 
 ## What an output-length check is trying to notice
 
-A **trace** is a time-ordered record of one agent run.
-It may contain model requests, tool calls, tool results, files, errors, retries, and the final response.
-The trace gives an evaluator a way to inspect what happened after the run rather than guessing from the final answer alone.
-
-A **behavioral check** is a small rule that reads observable events in a trace and asks whether their shape resembles a known operating problem.
-For example, a check might look for a model that keeps sending larger prompts while its answers become shorter.
-The check does not read the model's mind.
+A **trace** is a time-ordered record of one agent run: model requests, tool calls, tool results, errors, retries, and the final response.
+A **behavioral check** is a small rule that reads observable trace events and asks whether their shape resembles a known operating problem.
 It watches a measurable proxy and emits a signal when the proxy crosses a boundary.
 
-The output-length check in this story watches model calls that belong to the same serial sequence.
-For each call it records an input length and an output length.
-It can then ask two different questions.
+The output-length check watches the model calls in one serial sequence.
+For each call it records an input length and an output length, then asks two questions: did the input grow, and did the output shrink in the same direction?
 
-First, did the input grow as the sequence continued?
-Second, did the output shrink in the same direction?
-
-The first pattern can be consistent with accumulating context in a long agent loop.
-The second pattern can be consistent with a late-stage model that has less room to complete useful work.
+Growing input can be consistent with accumulating context in a long agent loop.
+Shrinking output can be consistent with a late-stage model that has less room to finish useful work.
 Together they might deserve attention.
-Neither pattern, by itself, establishes that the agent degraded.
+Neither pattern alone establishes that the agent degraded.
 
-That is the job of a check: narrow a large trace into a smaller question that a person or a later rule can investigate.
-It is not the job of a check to upgrade a small coincidence into a causal explanation.
-
-The [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) make the same practical boundary visible from another angle.
-They describe token counts and model-call attributes as recorded properties of a span.
-Those properties help reconstruct a run, but a recorded token count is not itself a diagnosis.
+The [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) draw the same boundary.
+They record token counts as span properties, which help reconstruct a run, but a recorded token count is not a diagnosis.
 
 ## Why three decreasing values are weak evidence
 
-Suppose three output lengths are distinct and the only thing we know is that they can arrive in any order.
+Suppose three output lengths are distinct and can arrive in any order.
 There are six possible orderings.
 
 | Ordering of three distinct values | Counted as decreasing? |
@@ -81,101 +69,67 @@ There are six possible orderings.
 | smallest, middle, largest | no |
 
 Only one of the six orderings is strictly decreasing.
-The chance is therefore `1 / 6`, or about 16.7%, under this simple random-order model.
+Under this simple random-order model the chance is `1 / 6`, about 16.7%.
 
 The model is deliberately simple.
-Real model outputs are not independent dice rolls, output lengths are often tied or bounded, and serial calls share context.
-Those details mean that `1 / 6` is not a universal false-positive rate for every trace.
-It is a warning about how little a three-value direction test can establish.
+Real outputs are not independent rolls, lengths often tie or hit a bound, and serial calls share context.
+So `1 / 6` is not a false-positive rate for every trace.
+It shows how little a three-value direction test can establish.
+The [NIST Engineering Statistics Handbook discussion of runs tests](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm) makes the same point: an ordered pattern is judged against a model of randomness and the amount of data observed.
 
-The [NIST Engineering Statistics Handbook discussion of runs tests](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm) treats ordered patterns as evidence that must be judged against a model of randomness and the amount of data observed.
-The lesson applies here without requiring a formal statistical test: a short run has few possible arrangements, so one arrangement can occur often enough to be routine.
+The old check also paired output decrease with monotonic input growth.
+In a serial loop, later calls usually include the earlier conversation, tool results, and accumulated instructions, so input growth is a structural consequence of the loop, not independent confirmation.
+The [linked change](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089) says so: context accumulation makes the input-growth guard largely structural evidence.
 
-The old check had another problem.
-It paired output decrease with monotonic input growth.
-In a serial agent loop, later calls commonly include the earlier conversation, tool results, or accumulated instructions.
-Input growth is therefore close to a structural consequence of the loop, not independent confirmation that the outputs are failing.
-
-The linked change describes this plainly: context accumulation makes the input-growth guard largely structural evidence.
-The paired condition looked like two observations, but one of them was largely supplied by the shape of the system.
-
-Here is the concrete false alarm.
-The observed output lengths were 784, 700, and 646.
-They decrease strictly, so the old direction rule fires.
-The endpoint retains `646 / 784`, or about 82.4%, of the first output.
-That is a modest change, and the run has only three observations.
-
-The check reported a full-confidence finding from that shape.
-The change then made the observed 784-to-646 sequence a regression fixture that must be rejected.
-The fixture is useful because it prevents the correction from quietly disappearing in a later refactor.
+The concrete false alarm: output lengths 784, 700, and 646 decrease strictly, so the old rule fired.
+The endpoint keeps `646 / 784`, about 82.4%, of the first output, from only three observations.
+The check still reported a full-confidence finding.
+The change turned this sequence into a regression fixture that must be rejected, so a later refactor cannot quietly reintroduce the false alarm.
 
 ## Five calls change the direction question
 
-For five distinct values, there are `5!`, or 120, possible orderings.
-Only one is strictly decreasing.
-Under the same simple random-order model, a five-call decreasing sequence has probability `1 / 120`, about 0.83%.
-That is below 1%, which is a much more defensible threshold for a signal that is described as unusual.
+For five distinct values there are `5!`, or 120, orderings, and only one is strictly decreasing.
+Under the same model a five-call decrease has probability `1 / 120`, about 0.83%, below the 1% threshold that makes a signal defensible.
 
 The public implementation adds a second condition.
-The final output must be at most 60% of the first output.
-The check therefore asks for both of these properties:
+A signal now needs both properties:
 
 1. At least five calls belong to the serial sequence.
 2. Every output length is no greater than the previous one, and the last is at most 60% of the first.
 
 The second condition guards against shallow drift.
-Five outputs of 100, 95, 90, 85, and 80 are decreasing, but the endpoint retains 80% of the first output.
-The new rule rejects that shape.
+Outputs of 100, 95, 90, 85, and 80 decrease, but the endpoint keeps 80% of the first output, so the rule rejects them.
+Outputs of 100, 90, 80, 70, and 60 meet the endpoint exactly and pass, which is evidence about this proxy, not proof that the model failed.
 
-Five outputs of 100, 90, 80, 70, and 60 meet the endpoint exactly.
-The endpoint is not evidence that the model failed, either.
-It is evidence that this particular proxy crossed a material boundary after a sequence long enough to make a simple ordering less ordinary.
+The [public regression tests for the change](https://github.com/tangle-network/agent-eval/blob/b44898e419af67315c5083e68710ec72e9ee0089/src/trace-analyst/behavioral-metrics.test.ts) encode both rejected shapes: the observed three-call 784-to-646 run and the five-call 100-to-80 run.
+They also keep five-call sequences that reach the boundary, so the signal stays testable rather than disabled.
 
-The [public regression tests for the change](https://github.com/tangle-network/agent-eval/blob/b44898e419af67315c5083e68710ec72e9ee0089/src/trace-analyst/behavioral-metrics.test.ts) encode both rejected shapes.
-One test uses the observed three-call 784-to-646 run.
-Another uses five calls that decrease from 100 to 80.
-The tests also keep five-call sequences that reach the stronger boundary, so the signal remains testable rather than being disabled.
-
-This is a useful design pattern for checks.
-Name the shape that created the false alarm, add it as a regression case, and encode the smallest additional condition that separates the old false alarm from the named failure.
+The reusable pattern: name the shape that caused the false alarm, add it as a regression case, and encode the smallest extra condition that separates it from the named failure.
 
 ## Why “full confidence” needs a higher bar
 
-Confidence is a statement about the strength of evidence, not a decoration on a log line.
-When a check emits a confidence-1.0 finding, a reader reasonably expects the observed shape to be difficult to obtain without the named problem.
+Confidence measures evidence strength.
+A confidence-1.0 finding tells a reader the observed shape is hard to get without the named problem.
+The old rule did not earn that: one in six distinct triples decreases even when outputs are unrelated, and the input-growth condition adds nothing in a loop that already grows its inputs.
 
-The old three-call rule did not earn that label.
-Even if the outputs were unrelated and equally likely to occupy any order, one in six distinct triples would decrease.
-The serial input-growth condition did not rescue the rule because the loop itself tends to make later inputs larger.
-The rule had a common pattern and a correlated second condition, then presented the result as certainty.
+The fix makes a narrower promise.
+Five calls make direction alone uncommon under the toy model, and the 60% endpoint blocks shallow trends.
 
-The fix makes a more modest promise.
-Five calls make direction alone uncommon under the stated toy model.
-The 60% endpoint makes a shallow trend ineligible.
-The resulting signal is stronger than the old one, but it is still a proxy whose meaning depends on the trace and the task.
+The [NIST Statistical Test Suite](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) shows the right separation: a statistic is distinct from the interpretation of that statistic, and the analyst states the assumptions.
+An evaluator should record the same separation.
 
-This is why the [NIST Statistical Test Suite](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) is a useful reference even though this check is not a randomness test suite.
-The suite separates a statistic from the interpretation of that statistic and expects the analyst to state the assumptions and test conditions.
-An evaluator should make the same separation in its record.
+Store the sequence length, the first and last output lengths, the model and provider, the sequence boundary, and whether any usage values were missing.
+Without those fields a reviewer cannot tell a real five-call sequence from three calls grouped by accident with an unrelated retry.
 
-At minimum, store the sequence length, the first and last output lengths, the model and provider, the sequence boundary, and whether any usage values were missing.
-Without those fields, a reviewer cannot tell a real five-call sequence from three calls accidentally grouped with an unrelated retry.
-
-The check should also be calibrated against known examples.
-Run it on traces where the task is known to converge normally, traces with a forced response cap, traces with retries, and traces with missing usage.
+Calibrate the check on traces where the task converges normally, traces with a forced response cap, traces with retries, and traces with missing usage.
 Count how often it fires in each group.
-That exercise does not prove a universal false-positive rate, but it exposes whether the signal is mostly detecting a transport or prompt convention.
-
-Finally, decide what happens when the signal fires.
-If it opens an investigation, call it a review signal.
-If it blocks a release, require a second measurement tied to task quality.
-If nobody can act on it, keep it as exploratory telemetry and do not let its confidence field imply more than the evidence supports.
+That does not give a universal false-positive rate, but it shows whether the signal mostly detects a transport or prompt convention.
 
 ## A runnable toy check
 
-The following TypeScript program is a small model of the rule.
-It is intentionally not a copy of the evaluator's code or data structures.
-It accepts a list of output lengths, checks the minimum call count, checks monotonic decrease, checks the endpoint, and prints the result.
+This TypeScript program models the rule.
+It is not a copy of the evaluator's code.
+It checks the minimum call count, the monotonic decrease, and the endpoint, then prints the result.
 
 Save it as `output-decay.ts` and run it with `npx --yes tsx output-decay.ts`.
 
@@ -219,42 +173,97 @@ The expected output is:
 }
 ~~~
 
-The assertions matter more than the printed object.
-They make the two historical false-positive shapes fail loudly if someone changes the rule.
+The assertions make both historical false-positive shapes fail loudly if the rule changes.
+The program computes no p-value and models no correlated outputs, ties, retries, or different models.
 
-The program does not calculate a p-value.
-It does not model correlated outputs, ties, retries, or different models.
-It teaches the boundary that the public patch established: a short decreasing sequence is not enough, and a longer shallow sequence is not enough.
+## Compare models on the same cases
+
+The toy check reads one trace.
+It cannot say whether a score change came from the model, the prompt, or the case mix.
+`compare-models` answers that by holding the cases, harness, and judge fixed and changing only the model.
+Each case gets a fresh sandbox (`client.create`), the agent runs the fix (`box.prompt`), and `box.exec` runs that case's test, so the exit code is the score.
+`evaluate({ surface })` runs the cases for one model, and `aggregates.byJudge.suite.mean` is its pass rate.
+
+This version runs `glm-5.3` against `gpt-5.4-mini`. It is typechecked against the published packages, not run on production.
+
+```ts
+import { Sandbox } from "@tangle-network/sandbox";
+import { defineAgentEval, type Scenario } from "@tangle-network/agent-eval/contract";
+
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: "https://sandbox.tangle.tools",
+});
+
+// Same cases, same harness, same judge. Only the model changes.
+const evalKit = defineAgentEval<Scenario & { task: string }, number>({
+  scenarios: [
+    { id: "cli-flag", kind: "fix", task: "The test tagged cli-flag fails." },
+    { id: "null-guard", kind: "fix", task: "The test tagged null-guard fails." },
+    { id: "timezone", kind: "fix", task: "The test tagged timezone fails." },
+  ],
+  baselineSurface: "glm-5.3",
+  agent: async (model, scenario) => {
+    const box = await client.create({
+      git: { url: "https://github.com/tangle-network/sandbox-demo" },
+      backend: { type: "opencode", model: { model: String(model) } },
+    });
+    try {
+      await box.prompt(`${scenario.task} Fix the cause.`);
+      return (await box.exec(`npm test -- --test-name-pattern=${scenario.id}`)).exitCode;
+    } finally {
+      await box.delete();
+    }
+  },
+  judge: {
+    name: "suite",
+    dimensions: [{ key: "pass", description: "the tagged test passes after the turn" }],
+    score: ({ artifact }) => {
+      const pass = artifact === 0 ? 1 : 0;
+      return { dimensions: { pass }, composite: pass, notes: "" };
+    },
+  },
+  expectUsage: "off", // the sandbox meters each turn itself
+});
+
+for (const model of ["glm-5.3", "gpt-5.4-mini"]) {
+  const result = await evalKit.evaluate({ surface: model });
+  console.log(model, result.aggregates.byJudge.suite?.mean);
+}
+```
+
+The script prints one line per model with its mean pass rate across the three cases.
+A gap between the two lines is a model effect on these cases, not evidence of decay in one trace.
+Three cases are still few, so a gap of one case is noise until more cases confirm it.
 
 ## What the new signal can and cannot tell you
 
-The new rule can tell you that one serial sequence has a rare-looking, materially shrinking output-length pattern under the rule's assumptions.
-That is useful triage information.
-It can direct a reviewer to inspect the late calls, context size, tool results, stop reasons, and model configuration.
+The rule tells you that one serial sequence has a rare-looking, materially shrinking output-length pattern under its assumptions.
+That is triage: it points a reviewer at the late calls, context size, tool results, stop reasons, and model configuration.
 
 It cannot tell you why the outputs shrank.
-The model may have completed the task early.
-The later prompts may have become more specific.
-The model may have hit a response limit.
-The trace may contain retries or a different model.
-The output-token field may be missing or measured differently across providers.
-
-It also cannot tell you that the final answer is wrong.
-Some correct workflows become shorter as the agent converges.
-Some failures produce long, confident responses.
+The model may have finished early, the prompts may have become more specific, the model may have hit a response limit, the trace may contain retries or a different model, or the output-token field may be measured differently by each provider.
+It also cannot tell you the final answer is wrong.
+Correct workflows can get shorter as the agent converges, and failures can produce long, confident responses.
 Output length is a behavioral proxy, not a quality label.
 
-The [NIST Statistical Test Suite documentation](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) is a useful reminder that a pattern test needs a stated test family, data assumptions, and interpretation discipline.
-The suite does not turn one observed pattern into a universal claim about a generator.
-Neither does this check.
+The [NIST Statistical Test Suite documentation](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) is a reminder that a pattern test needs a stated test family and data assumptions.
+One observed pattern is not a universal claim about a generator, and neither is this check.
 
-The strongest operational use is therefore a two-step path.
-First, the deterministic check marks a trace for review.
-Second, a human or a separately validated evaluator inspects evidence and decides whether the run contains a real failure.
+The strongest use is two steps: the deterministic check marks a trace for review, then a human or a validated evaluator inspects the evidence.
+That separation matters most when a finding changes which agent version is promoted: at that point the signal is part of the control loop, and its false positives have a cost.
 
-That separation is especially important when an evaluator can influence a campaign decision.
-If a finding changes which agent version is promoted, the finding is no longer merely descriptive telemetry.
-It is part of the control loop, and its false positives have a cost.
+## Gate a candidate prompt in CI
+
+`regression-gate` puts the same comparison into CI.
+It scores the shipped prompt and a candidate on the same cases and exits 1 when the candidate's mean is lower.
+The candidate comes from `CANDIDATE_PROMPT`, so a change can ship through review without changing the harness or the judge.
+
+<Example path="evals/regression-gate" />
+
+The gate proves that the candidate passed no fewer cases in this run.
+With two pass-or-fail cases, the mean moves in steps of 0.5, so it cannot detect a small regression.
+Widen the case list before you rely on it for that.
 
 ## The decision rule for builders
 
@@ -271,14 +280,13 @@ Before shipping a similar check, write down four things.
 | What happens after it fires? | A review, retry, or experiment that can confirm or reject the signal. |
 
 The public change answers the first three for this narrow signal.
-It makes the fourth a product decision rather than pretending that the detector made it.
+It leaves the fourth to the product, because the detector cannot make that decision.
 
-If your system cannot provide that follow-up, log the pattern as low-confidence telemetry.
-Do not name it a finding.
+If your system cannot provide that follow-up, log the pattern as low-confidence telemetry and do not call it a finding.
 
 For a broader view of why the release rule matters, read [Evaluation Gates: The Rule That Decides Whether an Agent Improves](/blog/self-improving-stack-evaluation-gates).
 For the earlier benchmark boundary, start with [AI Coding Agent Benchmark: What CodeTraceBench Measures](/blog/codetracebench-benchmark-measured-wrong-capability).
-Those posts ask adjacent questions, but they share the same practical constraint: a number must measure the decision you intend to make.
+Both ask adjacent questions under the same constraint: a number must measure the decision it feeds.
 
 ## FAQ
 
@@ -307,5 +315,5 @@ It identifies a trace shape worth inspecting, while the cause and the effect on 
 Use it for teaching and local tests.
 For production, define your trace schema, missing-data behavior, retries, model boundaries, and follow-up review before treating the signal as an operational control.
 
-The smallest honest conclusion is also the most useful one.
-Three shrinking outputs are a prompt to look closer, not permission to declare decay.
+Run a same-case comparison such as `compare-models` before you attribute a score change to a model, and gate prompt changes with `regression-gate` before they ship.
+Do not report an output-length check as a finding.

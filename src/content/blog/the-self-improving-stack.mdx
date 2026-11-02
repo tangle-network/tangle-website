@@ -4,14 +4,14 @@ slug: the-self-improving-stack
 summary: >-
   The self-improving stack is the set of agent layers that can change, from prompts and skills to runtime, traces, evaluation, model training, and governance.
 date: '2026-05-26'
+updated: '2026-11-01'
 author: Drew Stone
 tags: ['agents', 'evals', 'systems', 'self-improvement']
 series: 'the-self-improving-stack'
 seriesOrder: 1
-coverImage: /images/covers/editorial/self-improving-stack-v2.webp
-heroImage: /images/covers/editorial/self-improving-stack-v2.webp
-imageAlt: 'An editorial still life about how an agent system improves'
 ---
+
+import Example from '../../components/Example.astro'
 
 Suppose a coding agent finishes a ticket and reports that the tests pass.
 On the next similar ticket, it repeats the mistake, uses more model calls, and leaves no record of why it stopped.
@@ -21,7 +21,6 @@ That sentence sounds like a plan until someone asks what is allowed to change, w
 
 The self-improving stack names the mutable layers around an agent, together with the evidence and release rules that decide which changes persist.
 
-An **agent** is software that uses a model, tools, and a control loop to complete a task.
 An **agent runtime** is the software that starts that loop, supplies tools, enforces budgets, and decides when execution ends.
 An **agent profile** is the configuration that makes one agent run identifiable, including its model, instructions, tools, skills, permissions, and resource limits.
 A **trace** is the record of one run, including the task, model calls, tool actions, observations, artifacts, costs, and outcome.
@@ -29,7 +28,7 @@ An **evaluation** is a structured assessment of those outcomes against tasks, ch
 A **baseline** is the version already in use, and a **candidate** is a proposed replacement.
 A **promotion rule** is the explicit rule that decides whether the candidate may replace the baseline.
 A **checker** is a repeatable check that tests an artifact or action against an explicit condition.
-An **holdout set** is a protected group of tasks kept out of candidate search until the release decision.
+A **holdout set** is a protected group of tasks kept out of candidate search until the release decision.
 **Integration code** connects an agent to its tools, evaluators, storage, and release controls.
 **Governance** sets authority limits, approvals, ownership, and incident-response rules around changes.
 
@@ -55,7 +54,6 @@ compare candidate with baseline
 keep the candidate only if the release rule passes
 ```
 
-The verbs need concrete owners.
 The runtime executes the task.
 The trace store preserves the path.
 The evaluator turns outputs and events into evidence.
@@ -64,7 +62,7 @@ The promotion rule protects the comparison and decides whether the change ships.
 
 This is a useful model for a support agent that must answer refund questions.
 The first version gives fluent answers but forgets to cite the order policy.
-The team can try several fixes, but each fix makes a different claim:
+Each fix makes a different claim:
 
 | Observed failure | Candidate change | Evidence required |
 | --- | --- | --- |
@@ -89,9 +87,7 @@ s_{t+1} = c_t  when ReleaseRule(Evaluate(c_t), Evaluate(s_t)) passes
 s_{t+1} = s_t  otherwise
 ```
 
-That equation is intentionally plain.
-It says the system does not improve because a model produced a confident reflection.
-It improves when a measured candidate earns the right to persist.
+The equation says a system improves when a measured candidate earns the right to persist, not when a model writes a confident reflection.
 
 The comparison should identify the state being changed:
 
@@ -112,12 +108,25 @@ If the model changes while the prompt changes, the result is a system comparison
 If the runtime silently doubles the turn limit, the candidate bought extra work.
 If the evaluator changes its rubric, the score no longer has the same meaning.
 
+The `evals/regression-gate` example runs that comparison in CI.
+It scores a shipped prompt and a candidate with `defineAgentEval`, running each scenario in a fresh Sandbox box on the `claude-code` harness.
+The judge awards 1 when `npm test` exits 0 for the tagged test.
+`evaluate({ surface })` scores one prompt, and `aggregates.byJudge.suite.mean` is the number the gate compares.
+The reader sees both means, and the process exits 1 when the candidate scores lower.
+
+<Example path="evals/regression-gate" title="The CI gate for a candidate prompt" />
+
+The gate proves a narrow claim: the candidate did not score lower on these two tagged tests under this judge.
+Two cases cannot show a lift, and the example records no cost, holdout, or hard check, so the promotion record above is still required.
+
+The harness is declared, not inferred.
+In `runtime/any-cloud`, `providerAsSandboxClient(provider, { defaults: { profile: { name: "repo-reader", harness: "claude-code" } } })` sets it as a profile field, and `box.streamPrompt` reports `totalCostUsd` on the `done` event.
+A candidate that changes the harness is a profile change and needs its own cost line.
+
 The [Tangle agent-eval repository](https://github.com/tangle-network/agent-eval) describes this discipline in public terms: run the same cases, score every result, compare a candidate with a baseline using paired statistics, and keep final test cases away from the optimizer.
 The [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) supplies the execution side for one-shot tasks, chat turns, teams, bounded rounds, and improvement experiments.
 
 ## The stack is a map of mutable surfaces
-
-The layers are easier to understand when each one has a different object to change.
 
 | Layer | What can change | What the layer cannot provide by itself |
 | --- | --- | --- |
@@ -131,17 +140,6 @@ The layers are easier to understand when each one has a different object to chan
 | Post-training | Model weights or learned adapters | Local rollback and easy attribution for every new behavior |
 | Memory and knowledge | Facts, procedures, retrieval indexes, and persistent lessons | Truth from storage alone |
 | Governance | Authority limits, approvals, ownership, and incident response | A quality lift without a useful product loop |
-
-The series follows these layers in the order a builder encounters them.
-[Optimization theory for agent builders](/blog/self-improving-stack-optimization-theory) gives the language of objectives, search, and regret.
-[Prompt optimization](/blog/self-improving-stack-prompt-optimization) and [skill optimization](/blog/self-improving-stack-skill-optimization) cover external text and procedure.
-[Runtime execution](/blog/self-improving-stack-agent-runtime-topology) and [multi-agent coordination](/blog/self-improving-stack-multi-agent-coordination) cover the actions and relationships the system can execute.
-[Test-time compute](/blog/self-improving-stack-test-time-compute) asks whether a complex strategy beats a simpler way to spend the same budget.
-[Evaluation rules](/blog/self-improving-stack-evaluation-gates) and [agent traces](/blog/self-improving-stack-trace-systems) cover selection and evidence.
-[Integration code evolution](/blog/self-improving-stack-harness-evolution) covers changes to the surrounding software.
-[Post-training agents](/blog/self-improving-stack-post-training) covers model-level changes.
-[Memory flywheels](/blog/self-improving-stack-memory-flywheels) covers persistent facts and lessons.
-[Governance](/blog/self-improving-stack-governance) covers the authority outside the loop.
 
 ### A compact worked example
 
@@ -175,8 +173,7 @@ A promotion record should preserve more than a single accuracy number:
 ```
 
 The `review` decision is deliberate.
-Ten cases are enough to find a likely failure, but not enough to support a general claim about a production distribution.
-The record makes the next decision visible instead of turning a small experiment into a headline.
+Ten cases are enough to find a likely failure, not to support a general claim about production. The record makes the next decision visible.
 
 ## Tangle makes the service boundary explicit
 
@@ -192,7 +189,7 @@ The [Tangle Blueprint introduction](https://docs.tangle.tools/developers/bluepri
 
 A **router** in a Tangle Blueprint Runner is a traffic director for jobs.
 It validates a job call, sends it to the handler registered for that job identifier, and returns the handler’s result.
-It is not automatically a model chooser, and it does not make a weak agent evaluator strong.
+It does not choose models, and it does not make a weak evaluator strong.
 
 **x402** is an optional web payment path for a job.
 The caller sends a payment that the gateway verifies and settles before the paid request becomes a job call.
@@ -207,7 +204,6 @@ Tangle’s [confidential-compute documentation](https://docs.tangle.tools/operat
 
 For agents, the profile still matters.
 Tangle’s [AI documentation](https://docs.tangle.tools/ai) describes profiles as the controls for models, tools, budgets, and policies, and describes evaluation as the structured information used to refine prompts, policies, and workflows.
-Those are the same distinctions the self-improving loop needs whether the service runs locally or through an operator.
 
 The public TypeScript packages document this installation path:
 
@@ -217,7 +213,6 @@ pnpm add @tangle-network/agent-runtime @tangle-network/agent-eval @tangle-networ
 
 ## The most common layer mistakes
 
-Layer confusion produces expensive experiments.
 The following fixes sound plausible and often target the wrong variable:
 
 | Symptom | First guess | Better diagnosis |
@@ -244,10 +239,7 @@ Persistent skills and memories can become stale.
 An evaluator can be systematically wrong even when its confidence is high.
 An operator can meet a deployment condition while the product still fails its user-level check.
 
-The stack makes those risks explicit in the release record.
-It does not turn a proxy score into truth.
-It does not make an autonomous agent safe merely because every step has a log.
-It does not make decentralization a substitute for application-level validation.
+The stack makes those risks explicit in the release record. It does not turn a proxy score into truth, make an autonomous agent safe because every step has a log, or make decentralization a substitute for application-level validation.
 
 ## Choose the next layer from the failure
 
@@ -274,8 +266,7 @@ understand the cost and failure tradeoff,
 and roll the change back?
 ```
 
-If the answer is no, the system may still be learning in an informal sense.
-It is not yet running a controlled self-improvement loop.
+If the answer is no, the system may still learn informally, but it is not yet running a controlled self-improvement loop.
 
 ## Sources
 

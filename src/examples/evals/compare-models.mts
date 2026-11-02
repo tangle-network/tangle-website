@@ -37,7 +37,7 @@ const evalKit = defineAgentEval<Scenario & { task: string }, number>({
   expectUsage: "off", // the sandbox meters each turn itself
 });
 
-for (const model of ["glm-5.3", "deepseek-v4-flash"]) {
+for (const model of ["glm-5.3", "deepseek/deepseek-v4.1-flash"]) {
   const result = await evalKit.evaluate({ surface: model });
   console.log(model, result.aggregates.byJudge.suite?.mean);
 }

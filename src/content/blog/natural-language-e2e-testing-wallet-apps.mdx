@@ -4,6 +4,7 @@ slug: natural-language-e2e-testing-wallet-apps
 summary: >-
   Natural-language E2E testing for wallet apps lets agents drive browser flows while stopping before destructive signing and preserving evidence.
 date: '2026-06-22'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -11,10 +12,9 @@ tags:
   - testing
 series: Agent Intent Infrastructure
 seriesOrder: 6
-coverImage: /images/covers/editorial/agent-intent-v2.webp
-heroImage: /images/covers/editorial/agent-intent-v2.webp
-imageAlt: 'An editorial still life about describing and running an agent task'
 ---
+
+import Example from '../../components/Example.astro'
 
 A wallet-app smoke test can pass the visible part of a swap and still miss the bug that matters.
 The site may ask the wallet to switch from the wrong network, display an approval for an unexpected token, or show a transaction whose recipient and amount do not match the page.
@@ -25,14 +25,22 @@ For wallet apps, the first useful target is a trace, the ordered record of one t
 
 Tangle Browser Agent can drive a real Chromium session with a natural-language goal, structured page observations, screenshots, and a result record.
 Tangle Sandbox can run the test project and keep screenshots, snapshots, and logs in the same isolated workspace.
+The Sandbox SDK call behind this is `box.prompt` on a `claude-code` machine: the agent installs Chromium and drives it inside the sandbox, and the call returns `success` and an error string. The production record of the embedded example keeps its exit code and model cost.
 A natural-language goal is not a permission boundary.
 Here, the runner is the process that owns the browser and enforces the test’s allowed actions.
 For a no-signing smoke, keep wallet automation disabled or use a separate test configuration that rejects signing and value-transfer actions.
 The public wallet guide exposes `--wallet-auto-approve` and `autoApprove` as explicit test options, so do not enable them for this smoke.
 
+## Run the browser agent in a sandbox
+
+The example starts a fresh `claude-code` machine, which installs Playwright with Chromium, opens a public news page, and writes a screenshot and five story titles. Its egress policy allows the default allowlist, the browser download hosts, and that one site.
+
+<Example path="sandboxes/browser-task" />
+
+It proves that an agent installed a browser, loaded a page, and wrote a parseable result the caller can read back. It is not a wallet-extension test: no account connects, no provider prompt opens, and no chain ID is checked.
+
 ## Dapp pages and wallet prompts are separate interfaces
 
-An ordinary form usually keeps the interaction inside one page.
 A **dapp** is a browser application that reads blockchain state or calls smart contracts through a wallet’s provider interface.
 The application page and the wallet prompt are separate interfaces with different ownership and evidence.
 
@@ -50,8 +58,7 @@ The [EIP-1193 provider specification](https://eips.ethereum.org/EIPS/eip-1193) d
 The [Ethereum JSON-RPC documentation](https://ethereum.org/developers/docs/apis/json-rpc/) describes methods for reading network state and interacting with clients.
 Wallet-specific behavior belongs in the provider’s documentation, such as the [MetaMask provider API reference](https://docs.metamask.io/metamask-connect/evm/reference/provider-api/) or the [WalletConnect documentation](https://docs.walletconnect.network/).
 
-Those sources define the interfaces a test may encounter.
-They do not make a test wallet safe to use with real funds.
+Those sources do not make a test wallet safe to use with real funds.
 
 ## Stop before the irreversible edge
 
@@ -67,7 +74,6 @@ Forbidden actions: sign a message, approve a token, submit a transaction, or use
 Stop reason: wallet confirmation is visible and the required evidence is saved.
 ```
 
-The runner should reject a signing action even if the page tells the model to click it.
 The page is untrusted input from the runner’s point of view.
 Prompt injection can appear in a token symbol, a transaction description, or a web page’s text and ask the agent to ignore its own instructions.
 The runner must reject signing, seed-phrase requests, and production-chain switches before dispatch, even when page text asks the agent to proceed.
@@ -108,7 +114,6 @@ The public wallet guide documents MetaMask and Rabby against a local Anvil fork 
 ## Evidence must cross the wallet boundary
 
 A screenshot of the dapp is insufficient when the approval lives in a wallet window.
-Capture the evidence that explains both sides of the interaction.
 
 | Evidence | Example | Claim it supports |
 | --- | --- | --- |
@@ -145,10 +150,8 @@ The evidence should make it clear whether the failure came from the dapp, provid
 
 A **trace** is the ordered record of those observations, actions, results, and stop reasons for one run.
 It should include the test-case ID, browser version, model and agent profile, URL, chain, wallet type, input values, screenshots, and redacted logs.
-The trace is the thing a reviewer can inspect after the browser has closed.
 
 An **agent profile** is the versioned run configuration that names the model, tools, credentials, allowed actions, observation mode, time budget, and where evidence is written.
-Wallet testing needs a profile that explicitly blocks signing and value transfer.
 Treat any change to allowed actions, credentials, or wallet configuration as a new safety profile, even when the natural-language goal stays the same.
 
 An illustrative result envelope might look like this:
@@ -184,7 +187,7 @@ The important invariant is that `signingAttempted` and the stop reason come from
 ## The stop matrix should be explicit
 
 Different wallet prompts have different consequences.
-Treat them as separate checkpoints instead of one generic “wallet appeared” assertion.
+Treat them as separate checkpoints.
 
 | State | Default action | Evidence to capture | Exception |
 | --- | --- | --- | --- |
@@ -212,11 +215,8 @@ The refusal is part of the product behavior, not an implementation detail hidden
 
 Run these cases on the same browser build, wallet adapter, test chain, and profile used for the allowed flow.
 A policy tested only in a mocked page can fail when the extension opens a new window or the provider returns an unfamiliar method.
-The refusal record should be easy to distinguish from a navigation failure, because the former shows that a control worked and the latter shows that the runner could not observe the required state.
 
 ## Common failures sit outside the page
-
-Wallet E2E tests find bugs that page-only tests miss.
 
 ### The dapp and wallet disagree about the chain
 
@@ -246,9 +246,6 @@ The test should stop with the prompt boundary and record the missing observation
 The [Browser Agent wallet and DeFi guide](https://github.com/tangle-network/browser-agent-driver/blob/main/docs/guides/wallet.md) is an implementation surface, not a substitute for a wallet-specific adapter and test environment.
 
 ## Put natural-language tests above deterministic checks
-
-Use natural-language testing to traverse changing copy, layout, wallet prompts, and RPC failures.
-Use lower-level deterministic checks to prove exact invariants.
 
 | Layer | What it should prove |
 | --- | --- |
@@ -283,7 +280,6 @@ Start with a no-signing goal against a public or staging page.
 Require a screenshot, page snapshot, provider or chain state, final assertion, and stop reason.
 Introduce a test wallet only after the runner can prove that it blocks the irreversible action.
 
-Keep contract and RPC checks below the browser-agent layer.
 Let the natural-language test cover the messy user path, then use deterministic assertions and service receipts to decide whether the run passed.
 
 

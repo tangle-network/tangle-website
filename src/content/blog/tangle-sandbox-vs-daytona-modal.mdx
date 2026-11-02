@@ -5,6 +5,7 @@ summary: >-
   Compare Tangle Sandbox, Daytona, and Modal by work unit: durable agent
   computer, development sandbox, or serverless job or GPU workload.
 date: '2026-06-17'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - agents
@@ -12,10 +13,9 @@ tags:
   - comparison
 series: Agent Intent Infrastructure
 seriesOrder: 9
-heroImage: /images/covers/editorial/agent-intent-v2.webp
-coverImage: /images/covers/editorial/agent-intent-v2.webp
-imageAlt: 'An editorial still life about describing and running an agent task'
 ---
+
+import Example from '../../components/Example.astro'
 
 A coding agent is asked to update a repository, run the tests, open a preview, and explain why one browser check failed.
 Assume the first command succeeds in all three environments.
@@ -31,6 +31,8 @@ Modal provides code-defined serverless functions, jobs, GPU workloads, and its o
 Tangle’s public Sandbox documentation describes an isolated computer for an agent with files, shell, ports, snapshots, selectable coding backends, durable sessions, and traces.
 Those are documented product capabilities, not a guarantee that every configured runtime exposes every option.
 
+On Tangle, the first step is one call. `client.create()` returns a box, `box.exec()` returns the exit code that checks the first command, and `box.prompt()` returns `success`, `usage`, and `costUsd` for the agent’s turn. A finished prompt is not proof that the repair worked, so the claim is checked again with `box.exec()`.
+
 The right comparison is the unit of work.
 Choose Daytona when you need a composable development environment that humans or agents can use.
 Choose Modal when the unit is a function, batch job, inference endpoint, or GPU workload.
@@ -39,16 +41,10 @@ Choose Tangle Sandbox when the agent session itself must persist, reconnect, pro
 This is a product-fit comparison.
 It is not a current price, cold-start, or success-rate benchmark.
 
-## Sandbox, runtime, and agent profile
+## The boundary each product optimizes
 
-A sandbox is an isolated environment in which a program can run without sharing the application’s ordinary files, process space, or permissions.
-The exact boundary may be a container, a virtual machine, or a provider-managed computer.
-The word alone does not tell you how long the environment lives or what survives after the process exits.
-
-A runtime is the software that creates the environment, starts the work, enforces limits, streams events, and cleans up or resumes the session.
-An agent runtime adds the model loop, tool permissions, task state, and stop rules.
-An agent profile is the configuration that selects the model, tools, permissions, budget, and policy for one agent.
-An evaluation is a repeatable task set that checks the result, cost, and policy behavior rather than trusting one successful run.
+A sandbox boundary can be a container, a virtual machine, or a provider-managed computer.
+The word alone does not say how long the environment lives or what survives after the process exits.
 
 The products emphasize different boundaries:
 
@@ -58,18 +54,15 @@ The products emphasize different boundaries:
 | Modal | Function, job, endpoint, GPU task, or sandbox | What code should run, at what scale, and for how long? |
 | Tangle Sandbox | Agent session in an isolated computer | What should the agent be able to do, resume, and prove? |
 
-The unit of work determines which lifecycle, state, and artifacts matter before any feature comparison begins.
-A feature such as “snapshots” is useful only when you know whether it restores a developer workspace, a prebuilt function image, or an agent session.
+A snapshot can restore a developer workspace, a prebuilt function image, or an agent session, so check which one before comparing snapshot features.
 
 ## What the public products document
 
 The current [Daytona sandbox documentation](https://www.daytona.io/docs/en/sandboxes/) describes isolated runtimes with a dedicated kernel, filesystem, network stack, and allocated resources.
 It documents Linux containers by default, Linux and Windows virtual-machine options, and GPU sandboxes.
-That is broader than the old idea of a developer-only workspace.
 
 The [Modal introduction](https://modal.com/docs/guide) describes serverless execution, code-defined container environments, low-latency inference, large parallel jobs, training, notebooks, and thousands of isolated sandboxes for generated code.
 Its [GPU guide](https://modal.com/docs/guide/gpu) documents selecting GPU types and counts in Python.
-Modal supports agent code through functions and isolated sandboxes, and model serving through code-defined containers and GPU resources.
 
 Tangle’s [Sandbox documentation](https://docs.tangle.tools/sandbox) describes a dev container or microVM, a lightweight virtual machine, with a shell, filesystem, ports, snapshots, optional GPU, and a selectable coding backend.
 It also documents durable agent sessions, per-second metering, isolated outbound network access, and traces that can be sent to Tangle Intelligence.
@@ -113,7 +106,13 @@ Use a workload that forces state to survive:
 
 Repository repair exposes whether files, process ports, and review evidence survive a failed test and client disconnect.
 This section is a test plan, not an executed benchmark.
-No provider wins from this article until the same workload runs against the chosen configurations.
+
+The verified example below runs the repair step on production: it clones the repository, prompts Claude Code, checks the claim with `npm test`, and writes the diff.
+
+<Example path="sandboxes/fix-a-test" />
+
+The example proves that one agent turn produced a diff that passes `npm test` in that run.
+It does not prove the preview, the browser check, or the reconnect steps.
 
 The expected result should be recorded as an artifact:
 
@@ -143,9 +142,7 @@ The expected result should be recorded as an artifact:
 }
 ```
 
-This is an application-level test record.
-It is not a shared vendor response format.
-Its value is that a team can compare the same evidence across products.
+This is an application-level record, not a vendor response format.
 
 Record one compact trace for each product rather than comparing setup time alone:
 
@@ -194,68 +191,76 @@ This prevents a fast clean rerun from looking equivalent to a slower repair that
 
 ## Tangle’s small public example
 
-Tangle’s current quickstart uses the public `@tangle-network/sandbox` package:
+Install the public `@tangle-network/sandbox` package and set the API key:
 
 ```bash
 npm install @tangle-network/sandbox
 export TANGLE_API_KEY=sk-tan-...
 ```
 
-```typescript
+The example below creates a fresh Linux machine, runs one command, and deletes the machine. It prints the command’s exit code and the platform string.
+
+<Example path="sandboxes/run-code" />
+
+The [Tangle quickstart](https://docs.tangle.tools/sandbox/quickstart) documents this client shape, the `create` and `delete` lifecycle, and the coding-backend option.
+The [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) documents `exec`, agent prompts, durable sessions, batch runs, snapshots, and GPU leases.
+
+For a long-running agent, dispatch the prompt with a server-owned session identifier and a turn identifier. Then read the events and the final result from the same call site or a later process.
+
+```ts
 import { Sandbox } from '@tangle-network/sandbox'
 
 const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY!,
   baseUrl: 'https://sandbox.tangle.tools',
 })
 
 const box = await client.create({
-  image: 'universal',
-  name: 'repair-preview',
-  backend: { type: 'opencode' },
+  git: { url: 'https://github.com/tangle-network/sandbox-demo' },
+  backend: { type: 'claude-code' },
 })
-
 try {
-  const result = await box.exec('node --version && npm --version')
-  console.log(result.exitCode, result.stdout)
+  const { sessionId, dispatched } = await box.dispatchPrompt(
+    'Repair the failing test and leave the preview ready for review',
+    { sessionId: 'server-owned-task-17', turnId: 'task-17-attempt-1' },
+  )
+  console.log('dispatched', dispatched)
+
+  for await (const event of box.session(sessionId).events()) {
+    console.log(event)
+  }
+
+  const final = await box.session(sessionId).result()
+  console.log(final.success, final.response)
 } finally {
   await box.delete()
 }
 ```
 
-The [Tangle quickstart](https://docs.tangle.tools/sandbox/quickstart) documents this client shape, the `create` and `delete` lifecycle, and the coding-backend option.
-The [SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) documents `exec`, agent prompts, durable sessions, batch runs, snapshots, and GPU leases.
+This fence prints whether the call dispatched the prompt, each session event, then the final success flag and response.
+A repeated `sessionId` while the session is running returns the live status without a second run.
+After the turn finishes, the same `sessionId` dispatches again unless the `turnId` has already completed.
+A caller that retries after a lost response should reuse the `turnId` and read `dispatched` to tell a new run from a skipped one.
 
-For a long-running agent, use a stable server-derived session identifier:
+## The same runtime on Tangle and Daytona
 
-```typescript
-const { sessionId } = await box.dispatchPrompt(
-  'Repair the failing test and leave the preview ready for review',
-  { sessionId: 'server-owned-task-17' },
-)
+The runtime layer lets one agent loop run on either cloud.
+The Tangle adapter runs the full harness: it reads the profile, runs the coding agent, and reports cost.
+The Daytona adapter runs the command it is given and nothing else: it does not install the harness, read the profile, or report cost.
 
-for await (const event of box.session(sessionId).events()) {
-  console.log(event)
-}
+<Example path="runtime/any-cloud" title="Tangle runtime adapter" />
 
-const final = await box.session(sessionId).result()
-console.log(final)
-```
+<Example path="runtime/any-cloud-daytona" title="Daytona runtime adapter" />
 
-The session identifier example is illustrative.
-The public SDK documentation says a repeated session identifier returns the in-flight or completed session rather than running the work twice.
-That property matters for a webhook or payment-triggered task where the caller may retry after a lost response.
+Compare the two only after both carry the cost and recovery records from the workload above.
+Without those records, the Daytona run shows a working command and no spend.
 
 ## Where Daytona belongs
 
 Start with Daytona when users need files, terminals, services, and pause or resume controls.
 A developer may need to inspect files, install packages, start services, use a terminal, and pause or resume a computer.
-An agent may need the same controls with an explicit resource and network policy.
 
 The choice is especially clear when the team wants a programmable environment but does not need Tangle’s surrounding workflow.
-Model routing means choosing which model endpoint handles a task.
-A trace destination is the system that stores the run record.
-A protocol service model turns a job into a discoverable service with its own inputs, outputs, and operator boundary.
 Daytona’s container, VM, Windows, and GPU choices let the team tune the environment to the workload.
 The team still owns the agent loop, evidence format, and evaluation.
 
@@ -287,9 +292,6 @@ This example tests a function.
 It does not create a durable agent workspace with an edit history, browser report, or reconnectable task session.
 Those things can be built around Modal, but they are additional application design.
 
-Choose Modal when the workload is naturally a function, queue, batch, inference service, or GPU task.
-Choose a different abstraction when the agent needs to keep negotiating with a changing workspace for an hour and a reviewer needs the whole path.
-
 ## The failure cases change the answer
 
 A green process exit is not enough for the shared workload.
@@ -304,7 +306,6 @@ A GPU task can exceed its budget if the lease or function timeout is not enforce
 For each failure, use the earlier lifecycle table to locate the original environment, job, or session identifier before retrying.
 The [Tangle SDK reference](https://docs.tangle.tools/sandbox/sdk-reference) documents server-derived session IDs and `events()`, `result()`, and `status()` queries from another process.
 Check those returned records in the deployed configuration before treating a lost client connection as recovered.
-Modal’s function and job model addresses a bounded invocation.
 [Daytona’s lifecycle guide](https://www.daytona.io/docs/sandboxes) documents stop, start, pause, and resume by sandbox class.
 Its [persistence guide](https://www.daytona.io/docs/en/persistence/) says containers retain files after stop, VM sandboxes can preserve memory when paused, and GPU sandboxes are ephemeral on stop.
 Test recovery against the exact class and lifecycle settings you select.
@@ -339,8 +340,6 @@ The internal posts [AI agent sandbox](/blog/ai-agent-sandbox), [agent runtime en
 
 Use the same task, inputs, model policy, resource limits, timeout, retry rules, and output contract.
 Compare task success, recovery after failure, evidence quality, cost, latency, and duplicate-work behavior.
-Daytona’s current documentation describes sandboxes for AI agents as well as developers.
-Modal documents serverless inference, batch work, training, notebooks, GPU execution, and isolated sandboxes.
 The deciding issue is the lifecycle, evidence, and control policy of the selected surface.
 
 Run the repair-preview workload in the exact configuration you plan to ship.

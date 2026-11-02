@@ -4,6 +4,7 @@ slug: blueprint-deployment-architecture-remote-providers
 summary: >-
   Deploy an AI agent service with paid HTTP ingress, remote operators, reproducible runtimes, health checks, and rollback for failed jobs.
 date: '2026-03-30'
+updated: '2026-11-01'
 author: Drew Stone
 tags:
   - x402
@@ -15,9 +16,6 @@ tags:
   - infrastructure
 series: x402 Production Runway
 seriesOrder: 9
-coverImage: /images/covers/editorial/x402-production-runway-v2.webp
-heroImage: /images/covers/editorial/x402-production-runway-v2.webp
-imageAlt: 'An editorial still life about taking a paid agent service to production'
 ---
 
 Your agent service works on a laptop.
@@ -29,49 +27,40 @@ Which artifact did the remote service team start?
 What happens when payment succeeds but the execution process crashes before producing a result?
 How do you know whether a timeout happened at the client, the payment service, the queue, or the model runtime?
 
-This is the deployment problem for an AI agent service.
 The answer is a deliberate boundary between the public request, the paid ingress, the Tangle service, and the machine that runs the work.
+On Tangle, that boundary is the public x402 gateway, which settles payment before execution and admits one job into the Blueprint runner. The trace records that job with timestamps for payment, queueing, execution, and result delivery, so a timeout can be assigned to one stage.
 
 ## Deploy around the job lifetime
 
-Use a long-lived runner when the service must receive jobs from Tangle and from paid HTTP (Hypertext Transfer Protocol) clients.
-Place that runner on a virtual machine when you need the simplest remote control plane, or on managed Kubernetes when you need replica management, rolling updates, and stronger scheduling.
-Keep the payment gateway at the edge of the runner, settle the payment before invoking a paid job, and make the artifact, configuration, health signal, and rollback version explicit.
+Use a long-lived runner when the service must receive jobs from Tangle and from paid HTTP clients.
+Put it on a virtual machine for the simplest remote control plane, or on managed Kubernetes for replica management, rolling updates, and stronger scheduling.
+Keep the payment gateway at the edge of the runner, settle payment before invoking a paid job, and make the artifact, configuration, health signal, and rollback version explicit.
 
-Do not choose a deployment target from the word “AI.”
-Choose it from the job’s lifetime, state, accelerator needs, network boundary, and recovery plan.
+Choose the target from the job's lifetime, state, accelerator needs, network boundary, and recovery plan, not from the word “AI.”
 
 ## Define the boundaries before choosing a host
 
-A **Blueprint** is a public service definition that describes the jobs a Tangle service can run and the rules around operators, payments, and verification.
+A **Blueprint** is the public service definition: the jobs a Tangle service can run and the rules for operators, payments, and verification.
 
-An **operator** is the person or team that supplies infrastructure and runs a Blueprint service instance.
-A **service instance** is one deployed copy of that Blueprint with its own configuration, identity, and job queue.
+An **operator** supplies infrastructure and runs a Blueprint service instance. A **service instance** is one deployed copy with its own configuration, identity, and job queue.
 
-A **runtime** is the process and execution environment that turns a job into a result.
-It includes the runner, dependencies, model files, network permissions, and any accelerator driver.
+A **runtime** is the process and environment that turns a job into a result. It includes the runner, dependencies, model files, network permissions, and any accelerator driver.
 
-A **GPU**, or graphics processing unit, is an accelerator that may be required for model inference.
+A **job router** maps an incoming job type to the function or worker that handles it. It is not an internet router or a model router, and it does not choose a cloud provider.
 
-A **job router** is the dispatch table that maps an incoming job type to the function or worker that handles it.
-It is not an internet router or a model/provider router, and it does not decide which cloud provider to use.
+An **agent profile** is client-side configuration: endpoint, wallet, accepted networks, budget, timeout, and result checks. It tells the agent how to call a service. The Blueprint tells the operator what to run.
 
-An **agent profile** is client-side configuration for an agent, such as its endpoint, wallet, accepted networks, budget, timeout, and result checks.
-It tells the agent how to call a service, while the Blueprint tells an operator what service to run.
+An **x402 payment** is an HTTP payment flow built on status code 402. The service states what it accepts, and the client retries with payment authorization. The payment authorizes work; it does not prove the work was correct.
 
-An **x402 payment** is an HTTP payment flow built around status code 402, in which a service explains what payment it accepts and a client retries with payment authorization.
-The payment is an authorization to perform work, not proof that the work was correct.
+A **trace** is the record of one request and job, with identifiers and timestamps for payment, queueing, execution, and result delivery. Without one, “the service was slow” is a guess.
 
-A **trace** is the record of one request and job, with identifiers and timestamps for payment, queueing, execution, and result delivery.
-Without a trace, “the service was slow” is only a guess.
-
-## Boundary map for a paid Job
+## Boundary map for a paid job
 
 Suppose an agent asks for a private document to be summarized.
-The agent sends an HTTP request to `https://summarize.example.com/jobs`.
+It sends an HTTP request to `https://summarize.example.com/jobs`.
 The sample service quotes 0.05 USD Coin (USDC), receives a valid payment authorization, queues a job, runs the model, and returns a result.
 
-The request crosses the client, gateway, runner, and remote provider:
+The request crosses four boundaries:
 
 | Boundary | Responsibility | Failure to make visible |
 | --- | --- | --- |
@@ -81,8 +70,7 @@ The request crosses the client, gateway, runner, and remote provider:
 | Runtime to consumer | Return a result with evidence and status | A timeout is mistaken for a bad answer |
 
 The same shape can receive a job from Tangle instead of HTTP.
-The useful design property is that both sources reach the same typed job handler after their own admission checks.
-The HTTP payment path does not need to become a second implementation of the computation.
+Both sources reach the same typed job handler after their own admission checks, so the HTTP payment path does not become a second implementation of the computation.
 
 ```text
 agent profile
@@ -109,8 +97,8 @@ The exact deployment wrapper is your responsibility.
 
 ## Pick the machine from the job
 
-The [Blueprint remote-provider README](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/README.md) currently documents virtual-machine and managed-Kubernetes targets across several public cloud providers.
-That package is useful for provisioning and tracking infrastructure, but it does not erase the differences between the targets.
+The [Blueprint remote-provider README](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/README.md) documents virtual-machine and managed-Kubernetes targets across several public cloud providers.
+The package tracks infrastructure, but it does not erase the differences between targets.
 
 | Target | Good fit | Main operational cost | First failure to rehearse |
 | --- | --- | --- | --- |
@@ -119,21 +107,20 @@ That package is useful for provisioning and tracking infrastructure, but it does
 | Managed Kubernetes | Several replicas, rolling releases, queue workers, mixed workloads | More networking, identity, and scheduling complexity | A rollout sends traffic to an unready pod |
 | Short-lived HTTP worker | Stateless, bounded jobs with external queue and storage | You must rebuild runner identity and long-job handling | Request lifetime ends before computation |
 
-A virtual machine is often the right first remote target for an agent service with a single GPU.
+A virtual machine is often the right first remote target for a single-GPU agent service.
 It gives the operator a stable host, a straightforward private tunnel, and a place to cache model weights.
 The price is that the host becomes a larger unit of failure.
 
-Managed Kubernetes becomes worthwhile when replicas, rolling updates, workload isolation, or multiple accelerator pools are real requirements.
-It is not automatically more reliable.
-A cluster with an incorrect readiness probe is a faster way to route paid jobs into a broken release.
+Managed Kubernetes pays off when replicas, rolling updates, workload isolation, or multiple accelerator pools are real requirements.
+It is not automatically more reliable: a cluster with an incorrect readiness probe routes paid jobs into a broken release faster.
 
-A short-lived worker can be a sensible adapter for a stateless function, but do not confuse an HTTP request lifetime with a job lifetime.
+A short-lived worker can suit a stateless function, but do not confuse the HTTP request lifetime with the job lifetime.
 If the work can outlive the request, persist the job and result outside the worker and make retries idempotent.
 If it cannot, reject work before taking payment when the remaining execution window is too small.
 
 ## Make the artifact and runtime reproducible
 
-An operator should be able to answer three questions before starting your service.
+An operator should be able to answer three questions before starting your service:
 
 1. What exact artifact am I running?
 2. What inputs and credentials does it require?
@@ -143,8 +130,7 @@ Publish an immutable image digest or release artifact, a dependency lockfile, a 
 The [Cargo lockfile guide](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html) explains why a Rust service should keep its resolved dependency graph with the project.
 For container deployments, the [Docker image reference](https://docs.docker.com/reference/cli/docker/image/) explains image identity and pull behavior.
 
-The following is an illustrative deployment contract, not a claim that every field is a current Blueprint SDK setting.
-It shows the information an operator needs to reproduce the runtime.
+This deployment contract is illustrative. Its fields are not all current Blueprint SDK settings. It shows the information an operator needs to reproduce the runtime.
 
 ```yaml
 artifact:
@@ -168,19 +154,18 @@ rollback:
 ```
 
 The model digest matters as much as the service image when the model changes the answer.
-The timeout belongs in the job policy because an agent needs to know whether retrying is sensible.
-The previous artifact belongs in the release record because “we can rebuild the old version” is not the same as having tested a rollback.
+The timeout belongs in the job policy, because an agent needs to know whether retrying is sensible.
+The previous artifact belongs in the release record. “We can rebuild the old version” is not the same as having tested a rollback.
 
 ## Put x402 at the admission boundary
 
-The current x402 flow uses three HTTP messages with distinct roles.
+The x402 flow uses three HTTP messages with distinct roles.
 The resource server returns `PAYMENT-REQUIRED` in a 402 response.
 The client retries with `PAYMENT-SIGNATURE`.
 The server returns `PAYMENT-RESPONSE` after verification and settlement.
 The [x402 protocol repository](https://github.com/x402-foundation/x402) documents this sequence and the optional role of a facilitator.
 
-For a paid Blueprint job, decide the order explicitly.
-One safe sequence is:
+For a paid Blueprint job, decide the order explicitly. One safe sequence:
 
 1. Validate the request shape and reject clearly oversized input.
 2. Return payment requirements without running the job.
@@ -190,17 +175,17 @@ One safe sequence is:
 6. Execute through the job router and return the result with a trace identifier.
 
 The public Tangle gateway exposes a settle-before-execution path for its x402 integration.
-That choice reduces the risk of doing expensive work for an authorization that cannot settle.
-It also creates a sharper failure case: after settlement, the system owes the client a durable result or a clearly defined recovery path.
+That reduces the risk of expensive work for an authorization that cannot settle.
+It also creates a sharper failure case: after settlement, the system owes the client a durable result or a defined recovery path.
 
 Do not treat the 402 response as an independent price source.
-The client should check the network, token, amount, recipient, expiration, and job identity against its agent profile before signing.
-An agent profile that only says “pay USDC” is incomplete because the chain, contract, amount, and recipient are part of the decision.
+Before signing, the client checks the network, token, amount, recipient, expiration, and job identity against its agent profile.
+A profile that only says “pay USDC” is incomplete. The chain, contract, amount, and recipient are part of the decision.
 
 ## A paid job needs an outcome policy
 
 Payment and execution are different state machines.
-Write the state transition before wiring the HTTP handler.
+Write the transitions before wiring the HTTP handler.
 
 ```text
 REQUESTED
@@ -221,19 +206,17 @@ REQUESTED
 ```
 
 The important transition is `SETTLED -> ADMITTED`.
-It should be durable before the worker begins, so a process restart can find the obligation again.
+It must be durable before the worker begins, so a restart can find the obligation again.
 An in-memory queue is acceptable for a local experiment and dangerous as the only record after accepting production money.
 
 Idempotency is equally important.
 If the client times out after settlement, it may retry with the same payment authorization.
-The service should recognize the payment and job key it already admitted rather than charging twice or running the job twice.
-Whether that key is a payment digest, a client request ID, or a protocol-specific identifier depends on the integration.
-The invariant does not change: one accepted authorization must map to one known job outcome.
+The service should recognize the payment and job key it already admitted, instead of charging or running the job twice.
+The key can be a payment digest, a client request ID, or a protocol-specific identifier. The invariant does not change: one accepted authorization maps to one known job outcome.
 
 ## Remote providers add a control plane
 
-The operator’s machine needs two networks, even if they share one host.
-
+The operator’s machine needs two networks, even when they share one host.
 The data plane carries job inputs, model calls, and results.
 The control plane carries deployment commands, health checks, artifact updates, and recovery actions.
 
@@ -244,8 +227,8 @@ Use mutually authenticated transport for a private runner connection when the pr
 Do not put a cloud SSH key, facilitator credential, and operator signing key into one undifferentiated secret.
 
 The remote-provider package documents deployment tracking, health checks, blue-green updates, and rollback primitives.
-Those are operational mechanisms, not a guarantee that a particular provider is available or that a service is healthy.
-The [remote-provider README](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/README.md) is the appropriate place to verify current target support.
+Those are mechanisms, not a guarantee that a provider is available or that a service is healthy.
+Verify current target support in the [remote-provider README](https://github.com/tangle-network/blueprint/blob/main/crates/blueprint-remote-providers/README.md).
 
 For a VM, a useful release sequence is:
 
@@ -258,14 +241,14 @@ For a VM, a useful release sequence is:
 7. Keep the old machine available until the new one has survived the agreed observation window.
 
 For Kubernetes, the same sequence becomes a deployment with a readiness check and a rollback revision.
-Both targets must expose readiness, rollout, rollback, and trace evidence even though their resource names differ.
+Both targets must expose readiness, rollout, rollback, and trace evidence, even though their resource names differ.
 
 ## Test the path a user will pay for
 
 A unit test that squares `4` proves a handler can square `4`.
 It does not prove that an agent can discover the price, authorize payment, survive a retry, reach the runner, execute the model, and receive a result.
 
-Use a small test matrix before production.
+Use a small test matrix before production:
 
 | Test | What it answers | Failure that should stop promotion |
 | --- | --- | --- |
@@ -278,8 +261,7 @@ Use a small test matrix before production.
 | Artifact rollback | Can the last known version serve a test job? | Recovery depends on an untested build |
 
 An **evaluation** is a check with an expected condition, such as “a 402 contains the approved token and a 90-second job timeout.”
-An evaluation does not prove a broad property merely because one request passed.
-Record the input, version, environment, and observed result for each important evaluation.
+One passing request does not prove a broad property. Record the input, version, environment, and observed result for each important evaluation.
 
 The trace should let you reconstruct a paid request like this:
 
@@ -296,8 +278,8 @@ outcome: succeeded
 artifact: sha256:<immutable-digest>
 ```
 
-The trace contains operational evidence, not the user’s private prompt.
-Redact sensitive inputs and retain only the identifiers needed to correlate the payment, job, runtime, and result.
+The trace holds operational evidence, not the user’s private prompt.
+Redact sensitive inputs and keep only the identifiers needed to correlate the payment, job, runtime, and result.
 
 ## Failure cases that change the architecture
 
@@ -306,7 +288,7 @@ Persist the job and return a status handle, or reject the request before payment
 Do not leave the client guessing whether a timeout means “still running” or “lost.”
 
 **Payment settles and the GPU disappears.**
-The service needs a recovery policy that can retry on a replacement worker, refund when the payment system supports it, or expose a compensation path.
+The service needs a recovery policy: retry on a replacement worker, refund when the payment system supports it, or expose a compensation path.
 An HTTP 500 cannot erase an already-settled payment.
 
 **The artifact starts but the model is missing.**
@@ -317,7 +299,7 @@ Use a known job with an expected response shape during rollout.
 Process liveness is not job correctness.
 
 **The remote host can execute but cannot reach the chain.**
-Separate provider networking from application networking and test the actual RPC path from the runner.
+Separate provider networking from application networking, and test the actual RPC path from the runner.
 “The port is open” does not prove that payment or result submission can complete.
 
 **The facilitator is slow or unavailable.**
@@ -330,9 +312,7 @@ Choose a VM for the first serious deployment when one operator needs a stable ru
 Choose managed Kubernetes when replica scheduling and release management are already concrete requirements.
 Use a short-lived worker only when job durability, payment recovery, and result delivery live outside the request process.
 
-In every target, keep the same contract: the client sees payment requirements, the gateway admits one settled job, the job router selects one handler, the runtime identifies its artifact, and the trace records the result.
-That contract is what makes an AI agent service operable by someone who did not build it on their laptop.
-
+In every target, the client sees payment requirements, the gateway admits one settled job, the job router selects one handler, the runtime identifies its artifact, and the trace records the result.
 
 ## Can an x402 payment directly execute a Blueprint job?
 
@@ -343,7 +323,7 @@ Payment alone does not define the handler, guarantee execution, or prove the res
 ## Should I deploy a Blueprint on Kubernetes from day one?
 
 Only if you already need its scheduling and rollout features.
-A VM is easier to reason about for one long-lived runner, while Kubernetes adds useful control at the cost of more network and identity state.
+A VM is easier to reason about for one long-lived runner. Kubernetes adds useful control at the cost of more network and identity state.
 
 ## Does a remote provider verify my AI result?
 
@@ -354,8 +334,8 @@ Result correctness requires a Blueprint-specific verification method, such as de
 ## Is a health check enough to accept paid traffic?
 
 No.
-A health check can show that a process responds.
-It should be paired with a known job, payment-path test, artifact identity, and rollback test before enabling production ingress.
+A health check shows that a process responds.
+Pair it with a known job, a payment-path test, artifact identity, and a rollback test before enabling production ingress.
 
 ## What should an agent profile contain?
 
