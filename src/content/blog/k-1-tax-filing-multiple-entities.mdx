@@ -2,7 +2,7 @@
 title: 'K-1 Tax Filing For Multiple Entities'
 slug: k-1-tax-filing-multiple-entities
 summary: >-
-  Index every K-1 and attachment, link each to basis, passive-loss, and state workpapers, and carry late corrections through the draft.
+  How do you reconcile K-1s from several entities, with their attachments and a late corrected K-1, before any amount reaches the return?
 date: '2026-06-17'
 updated: '2026-11-01'
 author: Drew Stone
@@ -14,8 +14,6 @@ series: Building an AI Tax Agent
 seriesOrder: 9
 ---
 
-import Example from '../../components/Example.astro'
-
 A late or corrected K-1 can invalidate draft amounts, state workpapers, and loss calculations when the workflow lacks document versioning and dependency tracking.
 The taxpayer has a partnership Schedule K-1 from a fund, an S corporation Schedule K-1 from a company they own, a corrected statement from an operating partnership, and a page of state or international footnotes.
 Entering the visible box amounts into a tax program feels like progress.
@@ -24,19 +22,11 @@ Without source identifiers, a page inventory, and attachment checks, box entry c
 A **Schedule K-1** is a tax schedule that an entity gives an owner or beneficiary to report that person’s share of income, deductions, credits, and other items.
 The form is not one universal document.
 Schedule K-1 (Form 1065) comes from a partnership, Schedule K-1 (Form 1120-S) comes from an S corporation, and Schedule K-1 (Form 1041) can come from an estate or trust.
+The current [partner instructions for Schedule K-1 (Form 1065)](https://www.irs.gov/instructions/i1065sk1) and [Form 1120-S instructions](https://www.irs.gov/instructions/i1120s) are the references for their respective forms.
 
-Here, **pass-through** is shorthand for an entity-level reporting arrangement in which items are reported to owners or beneficiaries for use on their returns.
-The current [partner instructions for Schedule K-1 (Form 1065)](https://www.irs.gov/instructions/i1065sk1) and [Form 1120-S instructions](https://www.irs.gov/instructions/i1120s) are the right references for their respective forms.
-
-In this series, **Tangle Tax Agent** means a proposed workflow from Tangle, the project behind this series, that inventories tax records, maps attached statements, prepares reconciliation workpapers, and waits for review before a filing decision.
-It does not mean a public Tangle product can determine every partner-level limit or state filing position from a document alone.
-
-This is not tax advice.
-Multiple K-1s can require professional review, especially when basis, passive activity, foreign information, ownership changes, or amended statements are involved.
-
-This argument rests on one kept Sandbox per client, opened with `client.instances.ensure({ key })`.
-Arithmetic runs as code with `box.exec`, which returns an exit code and output the reader can check.
-Filing waits behind `submit_proposal`, which needs human approval.
+In this series, **Tangle Tax Agent** means a proposed workflow that inventories tax records, maps attached statements, prepares reconciliation workpapers, and waits for review before a filing decision.
+It keeps one Tangle sandbox, a Linux machine, per client.
+Every total is computed by code run in that sandbox, and nothing is filed until a person approves the draft.
 
 ## Reconcile each K-1 against its entity, year, and attachments
 
@@ -84,17 +74,60 @@ The software should therefore create one record per source and one reconciliatio
 It should never flatten every K-1 into a single “other income” bucket.
 
 An agent may state a total, but the total counts only after code computes it.
-The sandbox example below applies that check to a claimed fix: it passes only when `box.exec` exits with code 0.
-For a K-1 packet, the command is the arithmetic.
+The check below runs in Priya's sandbox.
+`client.instances.ensure` returns the sandbox kept under her key, and `box.exec` runs the script and returns its exit code and output.
+The script fails unless the Northstar correction is exactly $9,000.
 
-<Example path="sandboxes/fix-a-test" title="Checking a claim by running it" />
+```ts
+import { Sandbox } from "@tangle-network/sandbox";
 
-The run shows the claimed command passed in that clone.
-It does not check the K-1 values.
+const client = new Sandbox({
+  apiKey: process.env.TANGLE_API_KEY!,
+  baseUrl: "https://sandbox.tangle.tools",
+});
+
+// One sandbox per client, kept under this key.
+const instance = await client.instances.ensure({
+  key: "client:priya",
+  create: { resources: { cpuCores: 1, memoryMB: 2048, diskGB: 10 } },
+});
+await instance.box.write("/home/agent/k1_totals.py", `
+k1s = {  # (entity, version): ordinary income or loss
+    ("Harbor Software", 1): 80000,
+    ("Cedar Ventures", 1): 42000,
+    ("Northstar Fund", 1): -18000,
+    ("Northstar Fund", 2): -9000,  # corrected K-1
+}
+latest = {}
+for (entity, version), amount in sorted(k1s.items()):
+    latest[entity] = amount  # sorted by version, so the corrected K-1 wins
+print("every row added:", sum(k1s.values()))
+print("latest versions:", sum(latest.values()))
+change = latest["Northstar Fund"] - k1s[("Northstar Fund", 1)]
+assert change == 9000, f"expected a 9000 correction, got {change}"
+print("Northstar change:", change)
+`);
+const { exitCode, stdout } = await instance.box.exec("python3 /home/agent/k1_totals.py");
+console.log(exitCode, stdout);
+```
+
+The script exits 0 and prints:
+
+```text
+every row added: 95000
+latest versions: 113000
+Northstar change: 9000
+```
+
+Adding every row counts Northstar twice.
+Keeping only the latest version gives $113,000, and the assertion confirms the $9,000 change.
+That figure is a box total for the source index, not a return input, for the reasons above.
 
 ## Reconcile the corrected K-1 before adding it
 
-The original statement reported an $18,000 loss, and the corrected statement reported $9,000.
+A **final K-1** reports the entity’s final position for the relevant period.
+An **amended K-1** corrects or changes a previously issued statement.
+Northstar's original statement reported an $18,000 loss, and the corrected statement reported $9,000.
 The application should treat the second document as a new version of the same entity-and-year record, not as another loss.
 
 | Version | Ordinary loss | Product action | Downstream review |
@@ -106,8 +139,47 @@ The application should treat the second document as a new version of the same en
 The difference is a $9,000 reduction in the reported loss, but that is not automatically a $9,000 increase in currently usable income.
 The passive-activity statement, basis, state allocation, and any K-3 information still travel with the corrected version.
 
+The IRS partner instructions also warn against combining prior-year limited amounts with current-year K-1 amounts as one current-year figure, except where they provide a different treatment for passive activity items.
+
 A stable source identifier should combine the entity, form type, tax year, and version, while each extracted item should retain its page reference.
-When the corrected statement arrives, the system can compare fields and attachments, mark dependent calculations stale, and ask for approval before replacing the draft mapping.
+Northstar's record keeps both versions and the changed field:
+
+```json
+{
+  "entity": {
+    "name": "Northstar Fund",
+    "type": "partnership",
+    "form": "Schedule K-1 (Form 1065)",
+    "taxYear": 2025
+  },
+  "sourceVersions": [
+    {
+      "id": "northstar-original",
+      "status": "superseded",
+      "document": "northstar-k1-original.pdf",
+      "receivedAt": "2026-02-21"
+    },
+    {
+      "id": "northstar-amended",
+      "status": "needs-review",
+      "document": "northstar-k1-amended.pdf",
+      "receivedAt": "2026-03-04"
+    }
+  ],
+  "changes": [
+    {
+      "field": "ordinary-loss",
+      "from": -18000,
+      "to": -9000,
+      "source": "northstar-amended#page=2"
+    }
+  ],
+  "openQuestions": [
+    "Confirm passive-activity treatment.",
+    "Review the international-information request notice and attachment."
+  ]
+}
+```
 
 ## The source index is the first deliverable
 
@@ -170,83 +242,9 @@ The current [2025 partnership K-2 and K-3 instructions](https://www.irs.gov/inst
 The software should not treat an international-information request notice as proof of a final foreign tax result.
 It should mark the international item as pending and identify what statement or advisor decision is missing.
 
-## Late and amended K-1s need version control
-
-A **final K-1** reports the entity’s final position for the relevant period.
-An **amended K-1** corrects or changes a previously issued statement.
-The exact consequences depend on the entity, the item, and the taxpayer’s return.
-
-The workflow should keep both versions and show the changes between them.
-
-| Version event | Required product behavior |
-| --- | --- |
-| Expected K-1 has not arrived | Keep the return in draft status and list the missing entity |
-| First K-1 arrives | Map the boxes and attachments to the entity record |
-| Corrected K-1 arrives | Compare values and source pages with the prior version |
-| Reviewer accepts correction | Recalculate affected federal, state, basis, and estimate workpapers |
-| Taxpayer approves new draft | Record the version and the changed artifacts |
-
-The IRS partner instructions warn that prior-year limited amounts should not be combined with current-year K-1 amounts as though they were one current-year figure, except where the instructions provide a different treatment for passive activity items.
-
-## A reviewable source record
-
-A small illustrative record for a review packet follows.
-
-```json
-{
-  "entity": {
-    "name": "Northstar Fund",
-    "type": "partnership",
-    "form": "Schedule K-1 (Form 1065)",
-    "taxYear": 2025
-  },
-  "sourceVersions": [
-    {
-      "id": "northstar-original",
-      "status": "superseded",
-      "document": "northstar-k1-original.pdf",
-      "receivedAt": "2026-02-21"
-    },
-    {
-      "id": "northstar-amended",
-      "status": "needs-review",
-      "document": "northstar-k1-amended.pdf",
-      "receivedAt": "2026-03-04"
-    }
-  ],
-  "changes": [
-    {
-      "field": "ordinary-loss",
-      "from": -18000,
-      "to": -9000,
-      "source": "northstar-amended#page=2"
-    }
-  ],
-  "openQuestions": [
-    "Confirm passive-activity treatment.",
-    "Review the international-information request notice and attachment."
-  ]
-}
-```
-
-An illustrative review API could return that version history before any form is finalized.
-This is a product-design example, not a public Tangle endpoint.
-
-```http
-POST /k1-review-packets
-Content-Type: application/json
-
-{
-  "taxYear": 2025,
-  "expectedEntities": ["Harbor Software", "Cedar Ventures", "Northstar Fund"],
-  "requireAttachments": true
-}
-```
-
 ## Make correction history the Tangle output
 
-The proposed Tangle Tax Agent workflow should treat multiple K-1s as a reconciliation session.
-It should collect the complete package, classify entity and tax year, extract boxes and attachments, build basis and activity questions, reconcile corrections, and prepare a review packet before filing.
+The proposed Tangle Tax Agent workflow treats multiple K-1s as one reconciliation session:
 
 ```text
 collect expected and received K-1s
@@ -258,35 +256,15 @@ collect expected and received K-1s
 -> obtain approval before the filing package is finalized
 ```
 
-The agent should link sources, attachments, versions, open questions, and affected return lines into one review packet.
+The agent should link sources, attachments, versions, open questions, and affected return lines into one review packet in the client's sandbox.
+
+## What the software cannot decide
+
+A readable K-1 is not a correct K-1, and a completed run does not certify that the taxpayer applied every limitation.
+The software cannot establish material participation, a complete basis workpaper, or a state allocation from a federal footnote alone.
 It should not decide that a loss is deductible, a state footnote is irrelevant, or an amended K-1 can be ignored.
-
-Each client’s packet lives in one kept sandbox.
-The example below opens it with `client.instances.ensure`, writes the source file with `instance.box.write`, and polls `instance.turn` until the turn completes.
-It reviews contracts rather than K-1s, so only the call pattern carries over.
-
-<Example path="products/legal-agent" title="One kept sandbox per client" />
-
-The example shows the turn finishing, not the reconciliation being right.
-
-For the S corporation side, read [S Corp Tax Software For Basis And K-1s](/blog/s-corp-tax-software-basis-k1).
-For the founder context, read [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns).
-For the general source-linked preparation model, read [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
-
-If the workflow is later packaged as a public service, its output remains the evidence packet and correction history.
-The existence of an automated run does not certify that an entity issued a correct K-1 or that the taxpayer applied every limitation correctly.
-
-## Reconciliation starts after the K-1 opens
-
-The software cannot prove that an entity’s K-1 is correct merely because the document is readable.
-It cannot prove that a taxpayer materially participated, that a basis workpaper is complete, or that a state allocation is correct from a federal footnote alone.
-
-It cannot recover a missing K-1 from a guess.
-It can record the expected document, show which calculations are blocked, and give the taxpayer a clean handoff for an advisor.
-
-It also cannot treat every K-1 as interchangeable.
-Partnership, S corporation, trust, and estate schedules use different reporting paths and supporting information.
-The form type belongs in every source record.
+It cannot recover a missing K-1 from a guess; it records the expected document, shows which calculations are blocked, and hands the questions to an advisor.
+This is not tax advice, and multiple K-1s can require professional review, especially with basis, passive activity, foreign information, ownership changes, or amended statements.
 
 ## Choose reconciliation over data entry
 
@@ -294,21 +272,7 @@ Use K-1 tax filing software for multiple entities only when it preserves each so
 If the product offers one combined total with no source-to-line map, it is an entry shortcut rather than a review system.
 If one entity supplies a complete, unchanged K-1 with no material attachments, conventional filing software may be enough.
 For the foreign-corporation schedule path that can sit beside those K-1s, see [controlled foreign corporation tax software for Form 5471](/blog/controlled-foreign-corporation-taxes-form-5471).
-
-## What is K-1 tax filing?
-
-It is the process of reporting items from one or more Schedule K-1 forms on the taxpayer’s federal and, when required, state returns.
-The correct reporting path depends on whether the K-1 came from a partnership, S corporation, trust, or estate.
-
-## Why are multiple K-1s difficult?
-
-They can come from different entity types and tax years, include attached statements, carry state or international details, and interact with basis and passive-activity limits.
-Amended forms can also change a return after the first draft.
-
-## Can software read K-1 documents?
-
-Software should extract each value with its source page, preserve the original text, and flag candidate facts for review.
-The result still needs to be checked against the source pages, entity records, basis workpapers, and the current IRS instructions.
+For the S corporation side, read [S Corp Tax Software For Basis And K-1s](/blog/s-corp-tax-software-basis-k1); for the founder context, [Complex Tax Situations Software For Founders](/blog/complex-tax-situations-software-founder-returns); for the general source-linked model, [AI Accountant For Complex Tax Returns](/blog/ai-accountant-complex-tax-returns).
 
 ## What should I inspect before filing?
 

@@ -10,8 +10,9 @@ import '../../styles/bench.css';
 
 const usd = (x: number) => `$${x.toFixed(2)}`;
 const wide = (b: AppliedBoard) => b.rows.length > 3;
-const facts = (b: AppliedBoard, r: AppliedBoard['rows'][number]) => [`Harness: ${harnessLabel(r)}`, ...(r.cost === undefined ? [] : [`Cost: ${usd(r.cost)}`]), `Run: ${b.date}`];
-const named = (b: AppliedBoard) => Object.fromEntries(b.rows.map((r) => [r.id, identity(r)]));
+type Row = AppliedBoard['rows'][number];
+const named = (rows: Row[]) => Object.fromEntries(rows.map((r) => [r.id, identity(r)]));
+const observed = (r: Row) => ({ count: Number(r.samples.match(/\d+/g)!.at(-1)), label: r.samples.replace(/^[\d of]+/, '').trim() });
 
 const scores = (b: AppliedBoard) => {
   const format = (v: number) => (b.percent ? `${(v * 100).toFixed(1)}%` : v.toFixed(1));
@@ -20,26 +21,30 @@ const scores = (b: AppliedBoard) => {
     id: r.id, label: `${r.model} on ${harnessLabel(r)}`, value: r.score,
     ...(r.detail ? { detail: r.detail } : {}),
     interval: { lower: r.lower, upper: r.upper, level: 0.95, method: b.interval },
-    observations: { count: Number(r.samples.match(/\d+/g)!.at(-1)), label: r.samples.replace(/^[\d of]+/, '').trim() },
-    facts: facts(b, r),
-  })), { id: b.id, measure: b.measure, unit: '', domain: [0, b.max], formatValue: format, identities: named(b), width: drawnWidth(wide(b) ? 6 : 2) });
+    observations: observed(r),
+  })), { id: b.id, measure: b.measure, unit: '', domain: [0, b.max], formatValue: format, identities: named(rows), width: drawnWidth(wide(b) ? 6 : 2) });
 };
 
 const costs = (b: AppliedBoard) => {
   const rows = b.rows.filter((r) => r.cost !== undefined).sort((x, y) => x.cost! - y.cost!);
-  return metricBars(rows.map((r) => ({ id: r.id, label: `${r.model} on ${harnessLabel(r)}`, value: r.cost!, observations: { count: Number(r.samples.match(/\d+/g)!.at(-1)), label: r.samples.replace(/^[\d of]+/, '').trim() }, facts: facts(b, r) })),
-    { id: `${b.id}-cost`, measure: 'US dollars', unit: '', domain: [0, niceMax(Math.max(...rows.map((r) => r.cost!)))], formatValue: usd, identities: Object.fromEntries(rows.map((r) => [r.id, identity(r)])), width: drawnWidth(wide(b) ? 6 : 3) });
+  return metricBars(rows.map((r) => ({ id: r.id, label: `${r.model} on ${harnessLabel(r)}`, value: r.cost!, observations: observed(r) })),
+    { id: `${b.id}-cost`, measure: b.costTitle!, unit: '', domain: [0, niceMax(Math.max(...rows.map((r) => r.cost!)))], formatValue: usd, identities: named(rows), width: drawnWidth(wide(b) ? 6 : 3) });
 };
 
-const best = (b: AppliedBoard) => b.rows.reduce((x, y) => (y.score > x.score ? y : x));
-const updated = boards.map((b) => b.date).sort().at(-1)!;
-const tax = boards.find((b) => b.id === 'tax')!;
-const summary = `Agent profiles compared on tax, legal and app-building work: ${best(tax).model} on ${harnessLabel(best(tax))} leads tax returns at ${(best(tax).score * 100).toFixed(1)}% line accuracy.`;
+const tax = boards.find((b) => b.id === 'tax')!, legal = boards.find((b) => b.id === 'legal')!;
+const count = (b: AppliedBoard) => b.rows[0].samples.match(/\d+/)![0];
+const best = tax.rows.reduce((x, y) => (y.score > x.score ? y : x));
+const summary = `Models and agents scored on ${count(tax)} tax returns and ${count(legal)} legal cases: ${best.model} on ${harnessLabel(best)} gets ${(best.score * 100).toFixed(1)}% of tax return lines right.`;
+// What each board measures, from its source: TaxCalcBench's README and build-tax-board.mjs; the legal agent's matrix record.
+const method: Record<string, string> = {
+  tax: `${count(tax)} returns from tax year 2024. Line accuracy is the share of graded Form 1040 lines that match the expected amount; cost is the mean per return. Direct API call is one model call per return, with no agent or tools. Setups that did not finish every return are left out.`,
+  legal: `${count(legal)} synthetic client cases, each scored out of 100 by a deterministic checker on six measures, such as fee and jurisdiction accuracy.`,
+};
 ---
 
 <BaseLayout paper title="Applied AI benchmarks" description={summary}>
   <article class="bench">
-    <BenchHead regime="applied" title="Applied AI benchmarks" status={`Each bar is a model and harness. Whiskers are 95% confidence. Updated ${updated}.`} />
+    <BenchHead regime="applied" title="Applied AI benchmarks" status={`Models and agents scored on ${count(tax)} tax returns and ${count(legal)} legal cases.`} />
 
     <div class="bench-grid">
       {boards.map((b) => <Figure title={b.title} span={wide(b) ? 6 : 2} figure={scores(b)} />)}
@@ -47,7 +52,7 @@ const summary = `Agent profiles compared on tax, legal and app-building work: ${
     </div>
 
     <footer class="bench-method">
-      <p>{boards.map((b, i) => <>{i ? ' ' : ''}{b.title}: <a href={b.url}>{b.by}</a>, {b.date}.</>)} Tax shows the five configurations that finished all 51 returns; three others did not finish.</p>
+      <p>{boards.map((b, i) => <>{i ? ' ' : ''}{b.title}: <a href={b.url}>{b.by}</a>, {b.date}. {method[b.id] ?? ''}</>)} Whiskers are 95% confidence intervals.</p>
     </footer>
   </article>
 </BaseLayout>
