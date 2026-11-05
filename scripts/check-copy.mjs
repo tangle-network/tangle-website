@@ -1,25 +1,10 @@
 #!/usr/bin/env node
 /**
- * Full-site copy audit. Sends each built page's visible copy to a model
- * with a route-appropriate rubric for technical articles, editorial
- * indexes, legal policies, or product pages. Retains one machine-readable
- * result per requested route so CI failures remain diagnosable.
- *
- * Run: pnpm check:copy
- *   - All pages by default
- *   - One or more pages: pnpm check:copy /blog/ai-agent-sandbox /blog/agent-runtime-environments
- *
- * Env:
- *   COPY_AUDIT_API_KEY  — defaults to TANGLE_API_KEY /
- *                          TANGLE_ROUTER_USER_KEY pulled from
- *                          ~/company/devops/secrets/agent-state.env
- *   COPY_AUDIT_MODEL    — default and only accepted model: zai/glm-5.3 (the Router's flat Z.ai coding plan)
- *   COPY_AUDIT_TIMEOUT_MS — per-page provider timeout (default 45000)
- *   COPY_AUDIT_THRESHOLD — pages below this score fail (default 7.5)
- *   COPY_AUDIT_ROOT      — rendered-site root (default dist/client)
- *
- * Output: per-page score 1–10, flagged phrases with line context.
- * Exits non-zero if any page scores below threshold.
+ * Full-site copy audit: zai/glm-5.3 scores each built page's visible copy with a
+ * route rubric (technical article, editorial index, legal policy, product page) and
+ * keeps one result per route. `pnpm check:copy [routes...]`; pages below 7.5 fail.
+ * Key: COPY_AUDIT_API_KEY, else TANGLE_API_KEY from the agent-state vault; other
+ * COPY_AUDIT_* overrides are read below.
  */
 import { extractCopy } from './extract-copy.mjs';
 import { COPY_AUDIT_MODEL, isCopyAuditModel } from './copy-audit-model.mjs';
@@ -31,7 +16,7 @@ const ROOT = resolve(process.env.COPY_AUDIT_ROOT ?? 'dist/client');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/copy-audit.json');
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
-const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
+const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 120_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
@@ -511,13 +496,15 @@ if (redirectConfigurationErrors.length > 0) {
   process.exit(2);
 }
 
-for (const { route, file, redirectDeclaration } of auditTargets) {
-  process.stdout.write(`  ▸ ${route.padEnd(38)} `);
+// Routes are scored by a pool of 8: one at a time took 40-95 min for 127 routes.
+const report = (route, line) => console.log(`  ▸ ${route.padEnd(38)} ${line}`);
+let stopReason = null;
+async function auditTarget({ route, file, redirectDeclaration }) {
   const pageStartedAt = Date.now();
   try {
     const redirect = redirectDeclaration ?? redirects.get(route);
     if (redirect) {
-      console.log(`redirect ${redirect.status} → ${redirect.target}`);
+      report(route, `redirect ${redirect.status} → ${redirect.target}`);
       results.push({
         route,
         status: 'redirect',
@@ -534,7 +521,7 @@ for (const { route, file, redirectDeclaration } of auditTargets) {
         durationMs: Date.now() - pageStartedAt,
       });
       writeAuditArtifact('running');
-      continue;
+      return;
     }
 
     if (!file || !existsSync(file)) {
@@ -546,13 +533,11 @@ for (const { route, file, redirectDeclaration } of auditTargets) {
       throw new Error(`rendered page has only ${copy.length} visible characters and no declared redirect`);
     }
     const { audit, attempts, rubric, providerMetadata } = await auditPage(route, copy);
-    // Polite throttle — keep router happy across many pages.
-    await sleep(400);
     const score = Number(audit.score) || 0;
     const dedCount = (audit.deductions ?? []).length;
     const winCount = (audit.wins ?? []).length;
     const ok = score >= THRESHOLD;
-    console.log(`${ok ? '✓' : '✗'} ${score.toFixed(1).padStart(4)}/10  · ${dedCount} flag${dedCount === 1 ? '' : 's'} · ${winCount} win${winCount === 1 ? '' : 's'}`);
+    report(route, `${ok ? '✓' : '✗'} ${score.toFixed(1).padStart(4)}/10  · ${dedCount} flag${dedCount === 1 ? '' : 's'} · ${winCount} win${winCount === 1 ? '' : 's'}`);
     results.push({
       route,
       status: 'scored',
@@ -568,7 +553,7 @@ for (const { route, file, redirectDeclaration } of auditTargets) {
     writeAuditArtifact('running');
   }
   catch (err) {
-    console.log(`error: ${err.message.slice(0, 80)}`);
+    report(route, `error: ${err.message.slice(0, 80)}`);
     results.push({
       route,
       status: 'error',
@@ -587,19 +572,26 @@ for (const { route, file, redirectDeclaration } of auditTargets) {
     });
     writeAuditArtifact('running');
     if (err.configurationAuditFailure) {
-      console.log('stop (copy-audit credentials were rejected)');
-      break;
+      stopReason ??= 'copy-audit credentials were rejected';
+      return;
     }
     const recentResults = results.slice(-TRANSIENT_FAILURE_SHORT_CIRCUIT);
     if (
       recentResults.length === TRANSIENT_FAILURE_SHORT_CIRCUIT
       && recentResults.every((r) => r.status === 'error' && r.transientAuditFailure)
     ) {
-      console.log(`stop (auditor unavailable after ${TRANSIENT_FAILURE_SHORT_CIRCUIT} consecutive transient failures)`);
-      break;
+      stopReason ??= `auditor unavailable after ${TRANSIENT_FAILURE_SHORT_CIRCUIT} consecutive transient failures`;
     }
   }
 }
+
+let nextTarget = 0;
+await Promise.all(Array.from({ length: 8 }, async () => {
+  while (!stopReason && nextTarget < auditTargets.length) await auditTarget(auditTargets[nextTarget++]);
+}));
+if (stopReason) console.log(`stop (${stopReason})`);
+const targetOrder = new Map(auditTargets.map((t, i) => [t.route, i]));
+results.sort((a, b) => targetOrder.get(a.route) - targetOrder.get(b.route));
 
 const scored = results.filter((r) => r.status === 'scored');
 const failing = scored.filter((r) => !r.ok);

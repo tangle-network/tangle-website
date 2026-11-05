@@ -9,7 +9,7 @@ const HARNESSES: Record<string, { label: string; src?: string }> = {
   codex: { label: 'Codex', src: '/images/harness/codex.png' },
   opencode: { label: 'OpenCode', src: '/images/harness/opencode.svg' },
   router: { label: 'Direct API call' },
-  'legal-agent': { label: 'Legal agent' },
+  'legal-agent': { label: 'Tangle legal agent' },
 };
 const MAKERS: Record<string, string> = { Claude: 'anthropic', GPT: 'openai', Gemini: 'google', GLM: 'zhipu' };
 

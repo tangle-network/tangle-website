@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { StatusPill } from '@tangle-network/ui/primitives';
 import status from '../../public/status/history.json';
+import config from '../data/status-services.json';
 
 const generatedAt = new Date(status.generatedAt);
 const generatedLabel = Number.isNaN(generatedAt.valueOf())
@@ -15,90 +16,92 @@ const generatedLabel = Number.isNaN(generatedAt.valueOf())
 // Collector state -> shared StatusPill tone. A state the collector did not record stays neutral.
 const tones = {
   operational: { label: 'Operational', tone: 'success' },
-  down: { label: 'Unavailable', tone: 'danger' },
+  down: { label: 'Check failed', tone: 'danger' },
 } as const;
 const unknownTone = { label: 'Not checked', tone: 'neutral' } as const;
 
-const services = status.services.map((service) => {
-  const current = service.current as Partial<typeof service.current> | undefined;
-  const tone = tones[current?.status as keyof typeof tones] ?? unknownTone;
+type Check = { ok?: boolean; status?: string; httpStatus?: number | null; latencyMs?: number; checkedAt?: string; reason?: string };
+const latest = new Map<string, Check>(status.services.map((service) => [service.id, service.current] as const));
+
+const services = config.map((service) => {
+  const current = latest.get(service.id);
+  const http = current?.httpStatus;
+  // Checks recorded before the collector wrote `reason`: a failed 2xx JSON check means the status field was wrong.
+  const reason = current?.reason ?? (current?.ok === false && service.jsonStatusField && http && http < 300 ? `${service.jsonStatusField} not ${service.jsonStatusValue}` : undefined);
   return {
     ...service,
-    tone,
-    http: current?.httpStatus ?? 'No response',
+    tone: tones[current?.status as keyof typeof tones] ?? unknownTone,
+    reason,
+    http: http ?? 'No response',
     latency: typeof current?.latencyMs === 'number' ? `${current.latencyMs} ms` : 'No reading',
     checkedAt: current?.checkedAt ? new Date(current.checkedAt).toISOString().replace('.000Z', 'Z') : 'Not checked',
   };
 });
 ---
 
-<BaseLayout title="Service Status" description="Latest public endpoint checks for Tangle services.">
+<BaseLayout title="Service Status" description="Latest health check of each Tangle service, run every six hours.">
   <section class="max-w-5xl mx-auto px-6 pt-32 pb-24">
-    <h1 class="text-4xl md:text-5xl font-bold">Latest public endpoint checks</h1>
+    <h1 class="text-4xl md:text-5xl font-bold">Latest endpoint checks</h1>
     <p class="mt-5 max-w-2xl text-(--text-secondary) leading-relaxed">
-      This page reports the latest HTTP endpoint check for each listed service.
-      Checks send GET requests to the configured endpoint. A 2xx response counts as operational.
-      The router also requires JSON status <code>ok</code>. Each request has a 12-second timeout.
-      It is not an uptime guarantee or incident history.
+      Every six hours, a Tangle CI server sends a GET request to each endpoint below with a 12-second timeout.
+      A 2xx response passes. The router check also needs <code>"status": "ok"</code> in the response body.
     </p>
 
-    {services.length === 0 ? (
-      <p class="mt-12 border border-(--border-default) px-5 py-8 text-(--text-secondary)">No services are configured for public checks.</p>
-    ) : (
-      <>
-        <ul class="mt-12 border border-(--border-default) bg-surface-container-low divide-y divide-(--border-subtle) md:hidden">
-          {services.map((service) => (
-            <li class="px-5 py-5">
-              <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <a class="font-medium text-fg break-words hover:text-brand-cool" href={service.href}>{service.name}</a>
-                  <div class="mt-1 font-mono text-xs text-fg-muted break-all">{service.domain}</div>
-                </div>
-                <StatusPill className="shrink-0" tone={service.tone.tone}>{service.tone.label}</StatusPill>
-              </div>
-              <dl class="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-                <dt class="text-fg-muted">HTTP</dt><dd class="text-(--text-secondary)">{service.http}</dd>
-                <dt class="text-fg-muted">Latency</dt><dd class="text-(--text-secondary)">{service.latency}</dd>
-                <dt class="text-fg-muted">Checked</dt><dd class="text-(--text-secondary) font-mono text-xs leading-5 break-all">{service.checkedAt}</dd>
-              </dl>
-            </li>
-          ))}
-        </ul>
+    <ul class="mt-12 border border-(--border-default) bg-surface-container-low divide-y divide-(--border-subtle) md:hidden">
+      {services.map((service) => (
+        <li class="px-5 py-5">
+          <div class="flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <a class="font-medium text-fg break-words hover:text-brand-cool" href={service.href}>{service.name}</a>
+              <div class="mt-1 text-sm text-(--text-secondary)">{service.description}</div>
+              <div class="mt-1 font-mono text-xs text-fg-muted break-all">{service.domain}</div>
+            </div>
+            <StatusPill className="shrink-0" tone={service.tone.tone}>{service.tone.label}</StatusPill>
+          </div>
+          <dl class="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            {service.reason && <><dt class="text-fg-muted">Reason</dt><dd class="text-(--text-secondary) font-mono text-xs leading-5">{service.reason}</dd></>}
+            <dt class="text-fg-muted">HTTP</dt><dd class="text-(--text-secondary)">{service.http}</dd>
+            <dt class="text-fg-muted">Latency</dt><dd class="text-(--text-secondary)">{service.latency}</dd>
+            <dt class="text-fg-muted">Checked</dt><dd class="text-(--text-secondary) font-mono text-xs leading-5 break-all">{service.checkedAt}</dd>
+          </dl>
+        </li>
+      ))}
+    </ul>
 
-        <div class="mt-12 hidden md:block border border-(--border-default) bg-surface-container-low">
-          <table class="w-full text-left">
-            <thead class="border-b border-(--border-default) text-xs uppercase tracking-wide text-fg-muted">
-              <tr>
-                <th class="px-5 py-4 font-medium">Service</th>
-                <th class="px-5 py-4 font-medium">Status</th>
-                <th class="px-5 py-4 font-medium">HTTP</th>
-                <th class="px-5 py-4 font-medium">Latency</th>
-                <th class="px-5 py-4 font-medium">Checked at (UTC)</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-(--border-subtle)">
-              {services.map((service) => (
-                <tr>
-                  <td class="px-5 py-5 max-w-[16rem]">
-                    <a class="font-medium text-fg break-words hover:text-brand-cool" href={service.href}>{service.name}</a>
-                    <div class="mt-1 font-mono text-xs text-fg-muted break-all">{service.domain}</div>
-                  </td>
-                  <td class="px-5 py-5">
-                    <StatusPill tone={service.tone.tone}>{service.tone.label}</StatusPill>
-                  </td>
-                  <td class="px-5 py-5 text-(--text-secondary)">{service.http}</td>
-                  <td class="px-5 py-5 text-(--text-secondary) whitespace-nowrap">{service.latency}</td>
-                  <td class="px-5 py-5 text-(--text-secondary) whitespace-nowrap">{service.checkedAt}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </>
-    )}
+    <div class="mt-12 hidden md:block border border-(--border-default) bg-surface-container-low">
+      <table class="w-full text-left">
+        <thead class="border-b border-(--border-default) text-xs uppercase tracking-wide text-fg-muted">
+          <tr>
+            <th class="px-5 py-4 font-medium">Service</th>
+            <th class="px-5 py-4 font-medium">Status</th>
+            <th class="px-5 py-4 font-medium">HTTP</th>
+            <th class="px-5 py-4 font-medium">Latency</th>
+            <th class="px-5 py-4 font-medium">Checked at (UTC)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-(--border-subtle)">
+          {services.map((service) => (
+            <tr>
+              <td class="px-5 py-5 max-w-[20rem]">
+                <a class="font-medium text-fg break-words hover:text-brand-cool" href={service.href}>{service.name}</a>
+                <div class="mt-1 text-sm text-(--text-secondary)">{service.description}</div>
+                <div class="mt-1 font-mono text-xs text-fg-muted break-all">{service.domain}</div>
+              </td>
+              <td class="px-5 py-5">
+                <StatusPill tone={service.tone.tone}>{service.tone.label}</StatusPill>
+                {service.reason && <div class="mt-2 font-mono text-xs text-(--text-secondary)">{service.reason}</div>}
+              </td>
+              <td class="px-5 py-5 text-(--text-secondary)">{service.http}</td>
+              <td class="px-5 py-5 text-(--text-secondary) whitespace-nowrap">{service.latency}</td>
+              <td class="px-5 py-5 text-(--text-secondary) whitespace-nowrap">{service.checkedAt}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
 
     <div class="mt-8 grid gap-8 md:grid-cols-2 border-t border-(--border-default) pt-8 text-sm leading-relaxed text-(--text-secondary)">
-      <p>Latest collection: <span class="text-fg">{generatedLabel}</span>. Each result records a request to the public endpoint shown above.</p>
+      <p>Last run: <span class="text-fg">{generatedLabel}</span>.</p>
       <p>For a security concern or service-impacting issue, email <a class="underline text-fg" href="mailto:security@tangle.tools">security@tangle.tools</a>.</p>
     </div>
   </section>
