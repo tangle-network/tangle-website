@@ -16,7 +16,7 @@ const ROOT = resolve(process.env.COPY_AUDIT_ROOT ?? 'dist/client');
 const SECRETS_PATH = `${process.env.HOME}/company/devops/secrets/agent-state.env`;
 const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/copy-audit.json');
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
-const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 45_000);
+const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 120_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
 let MODEL = process.env.COPY_AUDIT_MODEL;
 
