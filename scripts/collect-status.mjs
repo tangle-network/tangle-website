@@ -5,58 +5,7 @@ const outputPath = new URL('../public/status/history.json', import.meta.url);
 const windowDays = 90;
 const timeoutMs = 12_000;
 
-const services = [
-  {
-    id: 'blueprint-agent',
-    name: 'Blueprint Agent',
-    domain: 'ai.tangle.tools',
-    href: 'https://ai.tangle.tools',
-    checkUrl: 'https://ai.tangle.tools',
-    description: 'Hosted workbench for Blueprint agent workflows.',
-  },
-  {
-    id: 'sandbox',
-    name: 'Sandbox Infrastructure',
-    domain: 'sandbox.tangle.tools',
-    href: 'https://sandbox.tangle.tools',
-    checkUrl: 'https://sandbox.tangle.tools',
-    description: 'Isolated execution infrastructure for agent and dev-container workloads.',
-  },
-  {
-    id: 'router',
-    name: 'Router Infrastructure',
-    domain: 'router.tangle.tools',
-    href: 'https://router.tangle.tools',
-    checkUrl: 'https://router.tangle.tools/api/health',
-    description: 'Hosted routing layer for model and agent traffic.',
-    jsonStatusField: 'status',
-    jsonStatusValue: 'ok',
-  },
-  {
-    id: 'browser-agent',
-    name: 'Browser Agent',
-    domain: 'browser.tangle.tools',
-    href: 'https://browser.tangle.tools',
-    checkUrl: 'https://browser.tangle.tools',
-    description: 'Browser automation surface for QA, workflows, and screenshots.',
-  },
-  {
-    id: 'audit-agent',
-    name: 'Audit Agent',
-    domain: 'audits.tangle.tools',
-    href: 'https://audits.tangle.tools',
-    checkUrl: 'https://audits.tangle.tools/v1/health',
-    description: 'Security audit workflows and audit report generation.',
-  },
-  {
-    id: 'docs',
-    name: 'Docs',
-    domain: 'docs.tangle.tools',
-    href: 'https://docs.tangle.tools',
-    checkUrl: 'https://docs.tangle.tools',
-    description: 'Documentation, release notes, and developer reference material.',
-  },
-];
+const services = JSON.parse(await readFile(new URL('../src/data/status-services.json', import.meta.url), 'utf8'));
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -89,9 +38,14 @@ const checkService = async (service) => {
     });
 
     let ok = response.ok;
+    let reason;
     if (ok && service.jsonStatusField) {
-      const body = await response.json();
-      ok = body?.[service.jsonStatusField] === service.jsonStatusValue;
+      // A 2xx JSON health check fails on its status field; record the value and any false `checks` entries.
+      const body = await response.json().catch(() => null);
+      const value = body?.[service.jsonStatusField];
+      ok = value === service.jsonStatusValue;
+      const failing = Object.keys(body?.checks ?? {}).filter((name) => body.checks[name] === false);
+      if (!ok) reason = body ? `${service.jsonStatusField}: ${value}${failing.length ? ` (${failing.join(', ')} failing)` : ''}` : 'body is not JSON';
     }
 
     return {
@@ -100,6 +54,7 @@ const checkService = async (service) => {
       httpStatus: response.status,
       latencyMs: Date.now() - startedAt,
       checkedAt: new Date().toISOString(),
+      ...(reason && { reason }),
     };
   } catch (error) {
     return {
@@ -108,7 +63,7 @@ const checkService = async (service) => {
       httpStatus: null,
       latencyMs: Date.now() - startedAt,
       checkedAt: new Date().toISOString(),
-      error: error?.name === 'AbortError' ? 'timeout' : 'network-error',
+      reason: error?.name === 'AbortError' ? 'timeout' : 'network error',
     };
   } finally {
     clearTimeout(timeout);

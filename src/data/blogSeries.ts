@@ -6,10 +6,6 @@ export interface BlogSeriesDetails {
   premise: string
   decision: string
   path?: string
-  startHere: {
-    title: string
-    slug: string
-  }
 }
 
 export const blogSeriesDetails: Record<string, BlogSeriesDetails> = details

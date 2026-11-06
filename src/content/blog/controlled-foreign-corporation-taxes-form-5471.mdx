@@ -2,7 +2,7 @@
 title: 'Controlled Foreign Corporation Taxes and Form 5471: A Review Workflow'
 slug: controlled-foreign-corporation-taxes-form-5471
 summary: >-
-  Follow a founder's changing ownership through Form 5471 filing questions, source records, and schedule review without treating a missing dividend as a tax answer.
+  Does a U.S. founder whose foreign company paid no dividend still face Form 5471 and controlled foreign corporation questions after selling down below 50%?
 date: '2026-06-17'
 updated: '2026-11-01'
 author: Drew Stone
@@ -28,12 +28,9 @@ Some U.S. shareholders may have a subpart F or section 951A income inclusion wit
 The [IRS Form 5471 instructions](https://www.irs.gov/instructions/i5471) describe the filing categories and the schedules used for those income questions.
 This article follows the records and review decisions; it does not calculate Sam's tax.
 
-A review packet built on the Tangle Sandbox SDK runs each check in a fresh machine: `client.create()`, `box.exec`, then `box.delete()`.
-<Example path="sandboxes/run-code" />
-
-For this example, assume Atlas uses a calendar tax year and is a foreign corporation for U.S. tax purposes, subject to reviewer confirmation.
+For this example, assume Atlas uses a calendar tax year, is a foreign corporation for U.S. tax purposes, and has no U.S. owners other than Sam and the holding company below, subject to reviewer confirmation.
 A **controlled foreign corporation** (CFC) generally has U.S. shareholders who collectively own more than 50% of its voting power or value on any day of its tax year.
-A **U.S. shareholder** generally owns at least 10% of voting power or value under the applicable direct, indirect, and constructive ownership rules.
+A **U.S. shareholder** is a U.S. person, which includes a domestic company, that generally owns at least 10% of voting power or value under the applicable direct, indirect, and constructive ownership rules.
 The [IRS definitions and exceptions](https://www.irs.gov/instructions/i5471) matter more than a year-end percentage alone.
 
 **Tangle Tax Agent** is a proposed workflow that would collect records, draft workpapers, and stop for taxpayer or advisor review.
@@ -46,48 +43,74 @@ Sam's January 55% voting interest therefore raises a Category 4 filing question 
 The reviewer still must confirm Atlas's U.S. tax classification, the stock records, the relevant tax years, and any filing exception.
 The December 40% field cannot close that question.
 
-The check below applies both thresholds to Sam's figures. It does not choose a filing category.
-
-```ts
-import { Sandbox } from "@tangle-network/sandbox";
-
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: "https://sandbox.tangle.tools",
-});
-
-const box = await client.create();
-try {
-  // CFC: over 50% voting power. U.S. shareholder: at least 10%.
-  const { exitCode, stdout } = await box.exec(
-    "python3 -c \"print('cfc_test', 55 > 50); print('us_shareholder_test', 40 >= 10)\"",
-  );
-  console.log(exitCode, stdout); // 0, then cfc_test True and us_shareholder_test True
-} finally {
-  await box.delete();
-}
-```
-
-Both tests pass on these figures.
-They do not show constructive ownership, which the June holding-company chain can change, or any income inclusion.
-
-Category 5 asks a different question.
-Under the [IRS Category 5 rules](https://www.irs.gov/instructions/i5471), the reviewer examines CFC status during the year and ownership on the last day Atlas was a CFC.
-If the January cap table is accurate, Atlas was a CFC on that day and Sam remained a direct shareholder after the sale.
-Neither category by itself calculates Sam's income inclusion or tax due.
+## Records to collect across Sam's year
 
 - **January 1:** Sam directly holds 55% of Atlas's voting power and serves as a director.
   Keep the cap table, stock rights, and director record.
 - **March 15:** Sam sells shares carrying 15 percentage points of voting power to an unrelated investor.
   Keep the signed sale agreement and updated cap table.
-- **June 30:** A domestic holding company in which Sam has an interest buys 12% of Atlas.
+- **June 30:** A domestic holding company (HoldCo) in which Sam has an interest buys stock carrying 12% of Atlas's voting power.
   Get its purchase agreement and ownership records.
 - **September 10:** Atlas lends money to Sam's U.S. company.
   Keep the loan agreement, ledger entries, and interest records.
 - **December 31:** Atlas reports income and local tax in euros, with no distribution shown.
   Keep the annual accounts, tax receipt, bank records, and prior Form 5471 workpapers.
 
-The June purchase does not establish how much of that stock is attributed to Sam.
+The June purchase does not establish how much of HoldCo's stock is attributed to Sam.
+
+## Test both thresholds on every ownership date
+
+A Tangle sandbox is a Linux machine created for one job and deleted afterward.
+The quickstart creates one, runs a command with `box.exec`, and deletes it.
+
+<Example path="sandboxes/run-code" />
+
+Inside its `try` block, replace the `box.exec` call with this check over the cap table on each date the ownership changed:
+
+```ts
+await box.write("/home/agent/cfc_test.py", `
+# Each block of Atlas voting power: (%, U.S. persons who own it directly or by attribution).
+cap_table = {
+    "Jan 1": [(55, ["Sam"]), (45, [])],
+    "Mar 15, after the sale": [(40, ["Sam"]), (60, [])],
+    "Jun 30": [(40, ["Sam"]), (12, ["HoldCo"]), (48, [])],
+    "Jun 30, HoldCo stock attributed to Sam": [(40, ["Sam"]), (12, ["HoldCo", "Sam"]), (48, [])],
+}
+
+def cfc_test(blocks):
+    owned = {}
+    for pct, owners in blocks:
+        for owner in owners:
+            owned[owner] = owned.get(owner, 0) + pct
+    shareholders = {o for o, pct in owned.items() if pct >= 10}  # U.S. shareholder: 10% or more
+    held = sum(pct for pct, owners in blocks if shareholders & set(owners))  # each block once
+    return owned, held
+
+for day, blocks in cap_table.items():
+    owned, held = cfc_test(blocks)
+    print(f"{day}: {owned}, U.S. shareholders hold {held}%,", "CFC" if held > 50 else "not a CFC")
+`);
+const { exitCode, stdout } = await box.exec("python3 /home/agent/cfc_test.py");
+console.log(exitCode, stdout);
+```
+
+The script exits 0 and prints:
+
+```text
+Jan 1: {'Sam': 55}, U.S. shareholders hold 55%, CFC
+Mar 15, after the sale: {'Sam': 40}, U.S. shareholders hold 40%, not a CFC
+Jun 30: {'Sam': 40, 'HoldCo': 12}, U.S. shareholders hold 52%, CFC
+Jun 30, HoldCo stock attributed to Sam: {'Sam': 52, 'HoldCo': 12}, U.S. shareholders hold 52%, CFC
+```
+
+HoldCo's 12% makes it a U.S. shareholder, so Atlas tests as a CFC again from June 30.
+Attribution moves Sam's own percentage from 40% to as much as 52%, but each block counts once, so Atlas's total stays 52%.
+The script takes attribution as a reviewer input and tests voting power only; value needs the same test.
+
+Category 5 asks a different question.
+Under the [IRS Category 5 rules](https://www.irs.gov/instructions/i5471), the reviewer examines CFC status during the year and ownership on the last day Atlas was a CFC.
+On these inputs that day is December 31, when Sam directly held 40%.
+Neither category by itself calculates Sam's income inclusion or tax due.
 The immediate decision is to keep Categories 4 and 5 as filing candidates and to check the June chain and applicable exceptions.
 
 ## Which Form 5471 schedules belong in Sam's packet?
@@ -153,12 +176,13 @@ An extracted number alone cannot explain why Sam's filing category or E&P balanc
 
 ## Stop the draft where Sam's records stop
 
-In agent-app, the human approval step for a proposal is a `submit_proposal` tool call, which is approval-gated, so a reviewer approves it before it counts as submitted.
-
-For the handoff, read [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns) and [Automated Tax Filing With Review Control](/blog/automated-tax-filing-review-before-submit).
-For the software shape of the same ownership timeline, read [CFC Tax Filing Software for Form 5471](/blog/cfc-tax-filing-software-form-5471).
+The workflow ends with a proposed packet: draft schedules, open questions, and the sources behind each.
+Nothing counts as submitted until a reviewer approves the proposal.
 
 Sam should ask a qualified reviewer to resolve the filing categories, schedules, and U.S. income questions against the applicable year's rules before filing.
 If those records and calculations are already reconciled, conventional tax software with manual Form 5471 review may be enough.
+
+For the handoff, read [AI Tax Preparation For Complex Returns](/blog/ai-tax-preparation-complex-returns) and [Automated Tax Filing With Review Control](/blog/automated-tax-filing-review-before-submit).
+For the software shape of the same ownership timeline, read [Form 5471 Software: Build the Ownership Timeline First](/blog/cfc-tax-filing-software-form-5471).
 
 This is an illustrative workflow, not tax advice.

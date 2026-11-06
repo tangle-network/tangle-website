@@ -2,7 +2,7 @@
 title: 'Blueprint SDK Deployment: Run an Operator Job'
 slug: blueprint-sdk-deployment-guide
 summary: >-
-  Use Tangle's Blueprint SDK to turn a Rust service into an operator-run job with a clear contract, evidence from a deployment on a test network, monitoring, and rollback.
+  What does a Rust service need before another operator can run it as a Tangle Blueprint job?
 date: '2026-06-17'
 updated: '2026-11-01'
 author: Drew Stone
@@ -18,8 +18,8 @@ Your Rust service works on your laptop.
 Another team needs to run it on a different machine, discover its jobs, configure its keys, observe its health, and recover when the first release is wrong.
 That is where “the binary starts” stops being a deployment plan.
 
-This guide follows one service from a local build to a job run by a Tangle service provider.
-Its boundaries are the job contract, the artifact, the runner, the network settings, the first test-network run, and the return path after failure.
+This guide takes one service from a local build to its first test-network job and lists what each step must record.
+It covers the job contract, the artifact, the runner, the network settings, the first test-network run, and the return path after failure.
 
 On Tangle, a **Blueprint** is a reusable definition of software that can run as a service.
 It describes the executable artifact, the jobs it exposes, their inputs and outputs, and what an operator needs to run it.
@@ -27,13 +27,13 @@ A **Service** is one live configured instance of a Blueprint.
 A **Job** is one callable unit of work inside that Service.
 An **operator** supplies the machine, runs the service, responds to jobs, and keeps the instance available.
 
-The argument rests on three surfaces: `cargo tangle blueprint create` scaffolds the project, `cargo tangle blueprint run` starts the runner under the Blueprint Manager against a protocol RPC endpoint, and the job router dispatches each job call to its handler.
+Three pieces do the work: `cargo tangle blueprint create` scaffolds the project, `cargo tangle blueprint run` starts the runner under the Blueprint Manager against a protocol RPC endpoint, and the job router dispatches each job call to its handler.
 What the operator observes from them is the service startup, a job’s typed result or error code, and the failure context in the logs.
-The evidence tables below list what each check must show.
+The tables below list what each check must show.
 
 The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) covers those objects and the roles around them.
 The **Blueprint SDK** is Tangle’s Rust toolkit for building, testing, and running services.
-Its [SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) describes `cargo-tangle`, the command-line interface (CLI) for creating and operating a project; the Blueprint Runner, which connects job triggers, handlers, and results; the Blueprint Manager, the long-lived operator process that watches chain events and runs services; and optional Hypertext Transfer Protocol (HTTP) gateways.
+Its [SDK documentation](https://docs.tangle.tools/developers/blueprint-sdk) describes `cargo-tangle`, the CLI for creating and operating a project; the Blueprint Runner, which connects job triggers, handlers, and results; the Blueprint Manager, the long-lived operator process that watches chain events and runs services; and optional HTTP gateways.
 The companion [How Blueprints Work](/blog/how-blueprints-work) article explains the service lifecycle in broader terms.
 The [Blueprint Protocol guide](/blog/blueprint-protocol-operator-services) covers the operator-facing contract and the evidence a service should publish.
 
@@ -49,7 +49,7 @@ It raises questions that project instructions can leave vague:
 
 - Which document formats are accepted?
 - What is the maximum input size?
-- Is a Uniform Resource Locator (URL) fetched by the operator, and which hosts are allowed?
+- Is a URL fetched by the operator, and which hosts are allowed?
 - What happens when the document is malformed or unavailable?
 - How long may the job run?
 - Does a rejected request cost anything?
@@ -106,11 +106,58 @@ The [Blueprint Runner guide](https://docs.tangle.tools/developers/blueprint-runn
 | Background service | Keeps supporting processes such as an HTTP server or database connection alive |
 
 A **job router** is an in-process dispatch table, not a network router.
-It maps an arriving job identifier to its handler.
-It connects a job call to the code meant to handle it; it does not prove that the handler’s result is correct.
+It maps an arriving job identifier to its handler; it does not prove that the handler’s result is correct.
 
-The [Blueprint SDK source repository](https://github.com/tangle-network/blueprint) holds the SDK, runner, CLI, examples, and operator documentation.
-Use its current project template and versioned documentation for a new service, because command flags and crate names change.
+The [project template](https://github.com/tangle-network/blueprint-template) that `create` copies defines one job in its library crate:
+
+```rust
+use alloy_sol_types::sol;
+use blueprint_sdk::Router;
+use blueprint_sdk::tangle::extract::{Caller, TangleArg, TangleResult};
+
+pub const HELLO_JOB_ID: u8 = 0;
+
+sol! {
+    struct HelloRequest {
+        string name;
+    }
+
+    struct HelloResponse {
+        string message;
+        string operator;
+    }
+}
+
+pub async fn hello(
+    Caller(caller): Caller,
+    TangleArg(request): TangleArg<HelloRequest>,
+) -> TangleResult<HelloResponse> {
+    let message = format!("Hello, {}!", request.name);
+    TangleResult(HelloResponse {
+        message,
+        operator: format_caller(&caller), // template helper: the caller's address as hex
+    })
+}
+
+pub fn router() -> Router {
+    Router::new().route(HELLO_JOB_ID, hello)
+}
+```
+
+Its binary crate hands that router to the runner with a producer and a consumer:
+
+```rust
+// The producer listens for JobSubmitted events; the consumer submits results.
+BlueprintRunner::builder(TangleConfig::default(), env)
+    .router(router())
+    .producer(TangleProducer::new(tangle_client.clone(), service_id))
+    .consumer(TangleConsumer::new(tangle_client))
+    .run()
+    .await
+```
+
+A `classify` job has the same shape: a `sol!` request and response, a job ID constant, a handler, and one `route` call.
+The [Blueprint SDK repository](https://github.com/tangle-network/blueprint) holds the SDK, runner, CLI, examples, and operator documentation; use the current template and versioned documentation, because command flags and crate names change.
 
 ## Prove the local path before adding a network
 
@@ -162,7 +209,7 @@ The [Cargo lockfile guide](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-c
 
 The Blueprint SDK’s local testing flow runs against a seeded [Anvil](https://www.getfoundry.sh/anvil) network, Foundry’s local Ethereum development node.
 The [Testing with Tangle guide](https://docs.tangle.tools/developers/testing-with-tangle) starts Tangle Protocol contracts with pre-seeded state, so Blueprint Manager flows run without a public network.
-The RPC (remote procedure call) endpoint is the address the manager uses to reach an EVM (Ethereum Virtual Machine) node.
+The manager reaches the Ethereum Virtual Machine (EVM) node through its RPC endpoints.
 
 Prerequisites are Rust, Foundry’s `anvil`, and Docker.
 Create a local operator keystore, the protected store for signing key material:
@@ -199,7 +246,7 @@ The local network run should answer two questions: did the process start, and di
 This is the cheapest place to catch a wrong job identifier, a missing setting, a bad RPC URL, or an incompatible artifact.
 Fix those before asking a public operator to diagnose them.
 
-## Publish the operator configuration surface
+## Publish the operator settings
 
 The current Blueprint SDK documentation lists the common Tangle EVM settings: the HTTP and WebSocket RPC URLs, the core Tangle contract, the staking contract, an optional status registry contract, and the keystore path.
 Write each value’s purpose and owner into the runbook.
@@ -220,10 +267,10 @@ Separate developer keys, test keys, operator keys, and consumer keys.
 The **runtime** is where the manager and service processes execute: host, container or virtual machine, filesystem, network policy, and resource limits.
 The runbook should say which of these the Blueprint requires and which are local choices.
 
-## Run the first test-network evidence pass
+## Record the first testnet run
 
 A **testnet** is a blockchain network for exercising a service before production.
-It is the first place where the artifact, operator, lifecycle, network, and job behavior meet, and it should leave an evidence record that a reviewer can read without a local run.
+It is the first place where the artifact, operator, lifecycle, network, and job behavior meet, and the run should leave a record that a reviewer can read without repeating it.
 
 Record the following.
 
@@ -249,7 +296,7 @@ The [operator introduction](https://docs.tangle.tools/operators/introduction) li
 Payment is part of the deployment contract when the service charges for creation, a subscription, a quote, or each job.
 Tangle’s [pricing and payments documentation](https://docs.tangle.tools/developers/blueprints/pricing-and-payments) describes `PayOnce`, `Subscription`, and `EventDriven` pricing models and distinguishes on-chain collection from optional x402 settlement.
 
-**x402** is an open payment standard built around Hypertext Transfer Protocol (HTTP) `402 Payment Required`.
+**x402** is an open payment standard built around HTTP `402 Payment Required`.
 The server returns payment requirements, the client prepares and authorizes a payment payload, and the server verifies and settles it before returning the resource.
 A facilitator is the service that verifies and settles an x402 payment on the server’s behalf.
 The [Blueprint SDK x402 guide](https://docs.tangle.tools/developers/blueprint-runner/x402) documents an optional gateway that advertises job payment requirements, verifies payments through a facilitator, and turns a paid request into a `JobCall`, the runner’s internal representation of one job request.
@@ -306,12 +353,8 @@ A runbook that has never been executed is a hypothesis about recovery.
 ## Keep the release boundary visible
 
 The SDK source, the CLI package, the service artifact, the operator manager, the protocol contracts, and the deployed instance can change at different times.
-Record their versions separately.
-
-Do not describe a source change as a released CLI feature until the installable package contains it.
-Do not describe a healthy local test as a production deployment.
-Do not describe an operator heartbeat as proof that a model or classifier returned a correct result.
-Do not describe an attestation as a complete security review.
+Record their versions separately, and claim only what each record shows: a source change is not a released CLI feature until the installable package contains it, a heartbeat does not show that the classifier answered correctly, and an attestation is not a security review.
+A testnet run shows that the recorded path worked under recorded conditions; production still needs artifact approval, key management, monitoring, payment handling, security review, and rollback evidence.
 
 Check the [Blueprint SDK repository](https://github.com/tangle-network/blueprint), its [examples](https://github.com/tangle-network/blueprint/tree/main/examples), and the [Tangle documentation](https://docs.tangle.tools) again when you pin a version or write an operator runbook.
 
@@ -325,38 +368,3 @@ Record the artifact fingerprint, network, Blueprint and Service identifiers, ope
 
 The next useful deployment is the smallest isolated testnet job that produces those records.
 Promotion can wait until the return path works.
-
-
-## What is a Blueprint in Tangle?
-
-A Blueprint is a reusable definition of software that can run as a service.
-It describes its jobs, inputs, outputs, artifacts, triggers, and optional protocol rules.
-
-## What is a Service?
-
-A Service is one live configured instance of a Blueprint with an owner, operators, settings, payment terms, and lifecycle state.
-
-## What does an operator do?
-
-An operator supplies infrastructure, runs the Blueprint Manager and service artifact, receives jobs, returns results, reports health, and follows the service runbook.
-
-## What does the Blueprint Runner do?
-
-The runner connects job handlers to event producers, result consumers, background services, and the protocol-specific runtime.
-
-## Does a testnet deployment prove production readiness?
-
-No.
-It proves that the defined path ran under the testnet conditions you recorded.
-Production still needs artifact approval, key management, monitoring, payment handling, security review, and rollback evidence.
-
-## Does x402 replace Tangle’s on-chain payment path?
-
-No.
-x402 is an optional HTTP payment path for paid requests.
-The on-chain pricing and service lifecycle paths remain separate choices.
-
-## What does attestation prove?
-
-Attestation supports a claim about the code or environment observed by trusted hardware or its verifier.
-It does not prove arbitrary output correctness or remove every trust assumption.
