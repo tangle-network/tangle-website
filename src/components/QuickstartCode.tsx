@@ -30,7 +30,7 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
   const row = rows[col];
   const idea = subject.ideas[row];
   const cell = `${subject.id}-${idea.id}`;
-  const run = `${idea.install ?? subject.install} && TANGLE_API_KEY=<key> npx tsx ${idea.id}.mts`;
+  const run = `${idea.install ?? subject.install} && ${[...new Set(Array.from(idea.code.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)\b(?!\s*\?\?)/g), ([, name]) => name))].map((name) => `${name}=<${name.slice(name.lastIndexOf('_') + 1).toLowerCase()}>`).join(' ')} npx tsx ${idea.id}.mts`;
   const playing = replay === cell && idea.run;
 
   const pickCol = (next: number) => { setCol(next); document.getElementById(`qs-col-${subjects[next].id}`)?.focus(); };
