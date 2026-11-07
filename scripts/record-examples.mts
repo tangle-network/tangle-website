@@ -359,7 +359,7 @@ async function record(key: string, target: string) {
   const events = compact(fold(source.split("\n"), raw));
   const { id, ids, traceIds, costUsd } = collect(events);
   const exitCode = phases.every((p) => p.exitCode === 0) && !events.some(failed) ? 0 : phases.at(-1)!.exitCode || 1;
-  const versions = Object.fromEntries([...new Set([...source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g)].map((match) => match[1]))].map((name) =>
+  const versions = Object.fromEntries([...new Set(["@tangle-network/sandbox", ...Array.from(source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g), (match) => match[1])])].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sourceDigest(source) },
