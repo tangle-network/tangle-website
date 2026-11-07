@@ -359,12 +359,12 @@ async function record(key: string, target: string) {
   const events = compact(fold(source.split("\n"), raw));
   const { id, ids, traceIds, costUsd } = collect(events);
   const exitCode = phases.every((p) => p.exitCode === 0) && !events.some(failed) ? 0 : phases.at(-1)!.exitCode || 1;
-  const versions = Object.fromEntries(["@tangle-network/sandbox", "@tangle-network/agent-eval", "@tangle-network/agent-runtime", "@tangle-network/agent-provider-tangle"].map((name) =>
+  const versions = Object.fromEntries([...new Set(["@tangle-network/sandbox", ...Array.from(source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g), (match) => match[1])])].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sourceDigest(source) },
     run: { id, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
-      sdk: versions, node: process.version, host: hostname(), baseUrl: "https://sandbox.tangle.tools" },
+      sdk: versions, node: process.version, host: hostname() },
     events,
   };
   mkdirSync(join(RUNS, subject), { recursive: true });
