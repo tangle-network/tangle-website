@@ -1,18 +1,26 @@
 name: Collect status history
 
+# Two jobs share this file because the public-app-production runner group admits only this workflow and deploy.yml.
+# The 6-hourly schedule collects status history; the Monday schedule crawls the public sites (job crawl).
 on:
   schedule:
     - cron: '17 */6 * * *'
+    - cron: '23 6 * * 1'
   workflow_dispatch:
-
-concurrency:
-  group: production-deploy
-  cancel-in-progress: false
+    inputs:
+      job:
+        description: collect (status history) or crawl (public sites)
+        type: choice
+        options: [collect, crawl]
+        default: collect
 
 jobs:
   collect:
     # Production credentials stay on the isolated runner group and trusted master workflows.
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/master' && github.event.schedule != '23 6 * * 1' && (github.event_name != 'workflow_dispatch' || inputs.job == 'collect')
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
     runs-on:
       group: public-app-production
       labels: [self-hosted, ci-deploy]
@@ -90,3 +98,49 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist/client --project-name=tangle-website --branch=production
+
+  # Weekly crawl of tangle.tools, docs.tangle.tools and the Router, Sandbox and Intelligence landing pages.
+  # One issue, "Public surfaces drift", is created or rewritten when a link, a claim or a copy rule drifts,
+  # and closed when the crawl finds nothing. Reads no secret beyond the repository token.
+  crawl:
+    if: github.ref == 'refs/heads/master' && (github.event.schedule == '23 6 * * 1' || (github.event_name == 'workflow_dispatch' && inputs.job == 'crawl'))
+    concurrency:
+      group: public-crawl
+      cancel-in-progress: false
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, ci-deploy]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Crawl the public sites
+        run: node scripts/check-public.mjs live --out public-crawl.json --md public-crawl.md
+
+      - name: Keep the crawl report
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-crawl
+          path: public-crawl.json
+
+      - name: Open, update or close the drift issue
+        run: |
+          title='Public surfaces drift'
+          drift=$(sed -n 's/^<!-- drift:\([0-9]*\) -->$/\1/p' public-crawl.md)
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          head -c 60000 public-crawl.md > public-crawl-body.md
+          if [ "${drift:-0}" -gt 0 ]; then
+            if [ -n "$number" ]; then gh issue edit "$number" --body-file public-crawl-body.md; echo "updated issue #$number"
+            else gh issue create --title "$title" --body-file public-crawl-body.md; fi
+          elif [ -n "$number" ]; then
+            gh issue close "$number" --comment "The crawl on $(date -u +%F) found no drift."
+          fi
