@@ -257,6 +257,8 @@ export const CLAIMS = [
     id: 'router-markup-not-printed',
     source: 'wiki/decision-2026-10-13-router-markup-openrouter-rate.md (the live value is served at router.tangle.tools/v1/models pricing_policy.markup; pages point there)',
     async run(page) {
+      // Markup in a Blueprint example or an operator's own price is not the Router's; only Router pages count.
+      if (!page.route.startsWith('/gateway') && !/router\.tangle\.tools|Tangle Router/.test(page.html)) return { checked: 0, mismatches: [] };
       const pct = String.raw`\d+(?:\.\d+)?\s*%`;
       const re = new RegExp(String.raw`\bmark-?up\b[^.\n]{0,80}${pct}|${pct}[^.\n]{0,40}\bmark-?up\b|\b(?:router|gateway)\b[^.\n]{0,80}\b(?:fee|margin|surcharge)\b[^.\n]{0,40}${pct}|${pct}[^.\n]{0,40}\b(?:router|gateway)\b[^.\n]{0,40}\b(?:fee|margin|surcharge)\b`, 'i');
       const hits = extract(page.html).split('\n').flatMap((l) => re.exec(l)?.[0] ?? []);
@@ -325,7 +327,7 @@ async function distMode(dir, origin) {
   const { resolves, redirects } = distResolver(dir, [join(dir, '_redirects'), 'netlify.toml'].filter(existsSync));
   const pages = walk(dir).filter((f) => !/(^|\/)(404|500)\.html$/.test(f)).map((f) => {
     const rel = relative(dir, f).replace(/\\/g, '/');
-    const route = rel === 'index.html' ? '/' : rel.endsWith('/index.html') ? `/${rel.slice(0, -10)}/` : `/${rel.replace(/\.html$/, '')}`;
+    const route = rel === 'index.html' ? '/' : rel.endsWith('/index.html') ? `/${rel.slice(0, -11)}/` : `/${rel.replace(/\.html$/, '')}`;
     return { site, origin, route, html: readFileSync(f, 'utf8') };
   });
   const result = await analyse(pages, { voice: site !== 'docs.tangle.tools', outbound: false, internalOk: async (key) => ({ status: resolves(key.split('?')[0]) ? 200 : 404 }) });
