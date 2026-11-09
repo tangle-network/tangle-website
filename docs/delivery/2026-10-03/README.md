@@ -29,6 +29,4 @@ No fresh frozen-install/build or production deployment is claimed for this check
 
 ## Preserved history
 
-`rejected-prototypes/` contains authored source from rejected explorations outside application routes.
-It is explicitly excluded from the recommended product direction.
 Raw media, caches, generated output, and private execution receipts remain in the local `.agent/` archive.
