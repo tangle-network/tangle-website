@@ -17,6 +17,10 @@ function rove(count: number, current: number, pick: (index: number) => void, key
   };
 }
 
+export const Install = ({ command, label }: { command: string; label: string }) => (
+  <div className="qs-install" role="group" aria-label={label}><code><span aria-hidden="true">$ </span>{command}</code><CopyButton key={command} text={command} aria-label="Copy command" /></div>
+);
+
 function Tab({ id, panel, selected, onSelect, children }: { id: string; panel: string; selected: boolean; onSelect: () => void; children: ReactNode }) {
   return <button id={id} type="button" role="tab" aria-selected={selected} aria-controls={panel} tabIndex={selected ? 0 : -1} onClick={onSelect}>{children}</button>;
 }
@@ -64,10 +68,7 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
           <section key={cell} className="qs-code" aria-label={`${idea.id}.mts source`} tabIndex={0}>
             <CodeBlock code={idea.code.trimEnd()} language="ts" label="" showLineNumbers className="qs-code-block rounded-none border-0" />
           </section>
-          <div className="qs-install" role="group" aria-label="Install and run">
-            <code><span aria-hidden="true">$ </span>{run}</code>
-            <CopyButton key={run} text={run} aria-label="Copy command" />
-          </div>
+          <Install command={run} label="Install and run" />
         </div>
       </div>
     </div>

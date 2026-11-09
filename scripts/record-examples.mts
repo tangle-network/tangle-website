@@ -1,7 +1,8 @@
 // Runs each home page example file for real and records what it did, so the editor's Play replays a real run.
 //
-//   record: dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
-//   check:  node scripts/record-examples.mts --check   (pnpm check:runs)
+//   record:  dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
+//   session: <a key whose allow-list has the session's model> | node scripts/record-examples.mts --session <name>
+//   check:   node scripts/record-examples.mts --check   (pnpm check:runs)
 //
 // Every example needs a fresh, matching, successful run except the files NO_RUN lists with their reason; check mode
 // prints that list, and a listed file with a record fails the gate so the list only shrinks.
@@ -11,9 +12,16 @@
 // file as an --import preload that wraps the SDK's methods, fetch and stdout. Every call carries the example
 // line it came from (V8 stack), so the replay lights the line that fired it; check mode verifies that the line
 // names the call, the source sha256 (comments and blank lines excluded) matches, the run exited 0 and the record is under 30 days old.
+//
+// A session (scripts/sessions/<name>.sh) is a terminal: each line is a command typed into a shell, recorded with what it
+// printed. Its `tangle` commands run under the same preload, so the record also holds the agent stream the CLI read:
+// every file the agent wrote and every command it ran. Check mode rebuilds the files from that stream and verifies each
+// one against the bytes the session's preview URL served.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { sourceDigest } from "./example-digest.mjs";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { plain, sessionFiles } from "../src/utils/session.mjs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -23,6 +31,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLES = join(ROOT, "src/examples");
 const RUNS = join(ROOT, "src/data/runs");
 const HARNESS = join(ROOT, "scripts/examples-typecheck");
+const SESSIONS = join(ROOT, "scripts/sessions");
+const SESSION_RUNS = join(ROOT, "src/data/sessions");
 const MAX_AGE_DAYS = 30;
 // Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
 const NO_RUN: Record<string, string> = {
@@ -45,20 +55,23 @@ async function instrument(out: string, file: string) {
   const fileUrl = pathToFileURL(file).href;
   const self = import.meta.url;
   const t0 = performance.now();
+  // A session's commands share the recorder's clock and keep whole file contents; the recorder reads their output itself.
+  const session = Number(process.env.TANGLE_RECORD_T0) || 0;
+  const [TEXT, DEPTH] = session ? [Infinity, 8] : [4000, 4];
   const als = new AsyncLocalStorage<{ id: number; streaming: boolean }>();
   let nextId = 1;
   const emit = (event: Omit<Event, "atMs">) =>
-    appendFileSync(out, JSON.stringify({ atMs: Math.round(performance.now() - t0), ...event }) + "\n");
+    appendFileSync(out, JSON.stringify({ atMs: session ? Date.now() - session : Math.round(performance.now() - t0), ...event }) + "\n");
   Error.stackTraceLimit = 80;
 
   // Credential-shaped keys and live handles; token counts (inputTokens, prompt_tokens) stay.
   const HIDDEN = /api_?key|secret|password|authorization|cookie|^(token|\w+Token|bearer)$|^_|^(client|http|signal|controller|fetch)$/i;
   const snap = (value: unknown, depth = 0, seen = new WeakSet<object>()): unknown => {
     if (value === null || typeof value === "number" || typeof value === "boolean") return value;
-    if (typeof value === "string") return value.length > 4000 ? `${value.slice(0, 4000)}… (${value.length} chars)` : value;
+    if (typeof value === "string") return value.length > TEXT ? `${value.slice(0, TEXT)}… (${value.length} chars)` : value;
     if (typeof value !== "object") return undefined;
     if (value instanceof Error) return { error: value.name, message: value.message };
-    if (seen.has(value) || depth > 4) return "…";
+    if (seen.has(value) || depth > DEPTH) return "…";
     seen.add(value);
     if (Array.isArray(value)) return value.slice(0, 40).map((item) => snap(item, depth + 1, seen));
     if (typeof (value as { then?: unknown }).then === "function" || value instanceof AbortSignal) return undefined;
@@ -144,7 +157,8 @@ async function instrument(out: string, file: string) {
     }
   };
   function instrumentValue<T>(value: T): T {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    if (Array.isArray(value)) { value.forEach(instrumentValue); return value; } // a listed sandbox's calls count too
+    if (!value || typeof value !== "object") return value;
     let proto = Object.getPrototypeOf(value);
     if (proto === Object.prototype || proto === null) {
       if (!patched.has(value)) { patched.add(value); patchObject(value); }
@@ -179,10 +193,11 @@ async function instrument(out: string, file: string) {
   });
 
   const require = createRequire(file);
-  for (const entry of ["@tangle-network/sandbox", "@tangle-network/sandbox/agent"]) {
+  for (const entry of session ? ["@tangle-network/sandbox"] : ["@tangle-network/sandbox", "@tangle-network/sandbox/agent"]) {
     const sdk = await import(pathToFileURL(require.resolve(entry)).href);
     instrumentValue(Object.create(sdk.Sandbox.prototype));
   }
+  if (session) return;
 
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -242,10 +257,11 @@ function fold(lines: string[], raw: Event[]): Event[] {
   return events;
 }
 // Coalesce a stream's deltas: one event per text part, tool state and run of tokens, with a count and end time.
-const clip = (value: unknown): unknown => typeof value === "string" ? (value.length > 1500 ? `${value.slice(0, 1500)}… (${value.length} chars)` : value)
-  : Array.isArray(value) ? value.map(clip) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clip(v)])) : value;
+// A session keeps whole strings: its replay rebuilds files from the agent's writes.
+const clip = (value: unknown, limit = 1500): unknown => typeof value === "string" ? (value.length > limit ? `${value.slice(0, limit)}… (${value.length} chars)` : value)
+  : Array.isArray(value) ? value.map((v) => clip(v, limit)) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, clip(v, limit)])) : value;
 const DELTAS = new Set(["message.part.updated", "token", "raw", "model-processing", "task.reasoning", "task.message.delta", "task.tool.updated"]);
-function compact(events: Event[]): Event[] {
+function compact(events: Event[], limit = 1500): Event[] {
   const out: Event[] = [];
   const open = new Map<string, Event>();
   for (const event of events) {
@@ -259,11 +275,11 @@ function compact(events: Event[]): Event[] {
       last.count = Number(last.count ?? 1) + Number(event.count ?? 1);
       last.endMs = event.endMs ?? event.atMs;
       const value = (event.data as { value?: unknown } | undefined)?.value;
-      last.data = event.type === "token" && typeof value === "string" ? { ...(last.data as object), value: `${(last.data as { value?: string }).value ?? ""}${value}` } : clip(event.data);
+      last.data = event.type === "token" && typeof value === "string" ? { ...(last.data as object), value: `${(last.data as { value?: string }).value ?? ""}${value}` } : clip(event.data, limit);
       continue;
     }
     if (part?.id && !data?.taskId) for (const [k] of open) if (k.startsWith(`${event.parent}:`) && !k.includes(":message.part.updated:")) open.delete(k);
-    const kept = { ...event, data: clip(event.data) };
+    const kept = { ...event, data: clip(event.data, limit) };
     out.push(kept);
     open.set(key, kept);
   }
@@ -301,10 +317,10 @@ function collect(record: Event[]) {
   return { id, costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
 }
 
-// A record holds what the pages and check:runs read, minus text naming this machine, a per-host route, a private address
-// or the account's usage, and credential-shaped assignments an agent printed; anything still key-shaped is not written.
+// A record holds what the pages and check:runs read, minus text naming this machine, a per-host route or edge id, a private
+// address or the account's usage, and credential-shaped assignments an agent printed; anything still key-shaped is not written.
 const UNREAD = /^(host(name)?|baseUrl|ids|traceIds|node|parent|args|on)$/, ID = /(?<!^(fleet|trace|agent))I[dD]s?$/;
-const scrub = (text: string) => text.replace(/(\n\S*Connection\S*\n\S*─+\S*)?\n\S*API URL:.*/g, "").replaceAll(hostname(), "[redacted]").replace(/"account": \{(?:[^{}]|\{[^{}]*\})*\}/g, '"account": "…"')
+const scrub = (text: string) => text.replace(/(\n\S*Connection\S*\n\S*─+\S*)?\n\S*API URL:.*|\nPreview ID: .*/g, "").replaceAll(hostname(), "[redacted]").replace(/"account": \{(?:[^{}]|\{[^{}]*\})*\}/g, '"account": "…"')
   .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}|\d+\.h\.tangle\.sh)\b/g, "[redacted]");
 function save(path: string, record: RunRecord, key?: string) {
   const source = readFileSync(join(ROOT, record.source.path), "utf8");
@@ -376,6 +392,90 @@ async function record(key: string, target: string) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Session: type each command of scripts/sessions/<name>.sh into bash and record it, what it printed and, for a `tangle`
+// command, the agent stream inside it, into src/data/sessions/<name>.json. Then fetch every file the agent wrote from
+// the preview URL the session printed, and delete the sandbox it created.
+const commands = (source: string) => source.split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+const sha256 = (text: string | Uint8Array) => createHash("sha256").update(text).digest("hex");
+type Served = { path: string; file: string; status: number; sha256: string | null };
+
+/** What a session publishes: its commands, what they printed, the agent's own text (`say`, printed once) and its tool calls. */
+function sessionEvents(events: Event[]) {
+  const said = new Set(events.map((e) => (e.data as { part?: { type?: string; text?: string } } | undefined)?.part).filter((part) => part?.type === "text").map((part) => String(part!.text).trim()));
+  let last: unknown;
+  return events.flatMap((e) => {
+    if (e.kind === "call" || ((e.kind === "stdout" || e.kind === "stderr") && e.text === last)) return []; // the CLI prints its answer twice
+    if (e.kind !== "stdout" && e.kind !== "stderr") return [e];
+    last = e.text;
+    return [{ ...e, kind: said.has(plain(String(e.text)).trim()) ? "say" : e.kind }];
+  });
+}
+
+async function recordSession(key: string, name: string) {
+  const sourcePath = `scripts/sessions/${name}.sh`;
+  const source = readFileSync(join(ROOT, sourcePath), "utf8");
+  const cli = realpathSync(join(HARNESS, "node_modules/@tangle-network/sandbox-cli/dist/index.mjs")), bin = join(HARNESS, "node_modules/.bin");
+  const home = mkdtempSync(join(tmpdir(), `session-${name}-`)); // the CLI's own ~/.tangle, empty
+  const t0 = Date.now(), recordedAt = new Date(t0).toISOString();
+  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: home, TANGLE_API_KEY: key, FORCE_COLOR: "1", COLUMNS: "96",
+    NODE_OPTIONS: `--import ${import.meta.url}`, TANGLE_RECORD_FILE: cli, TANGLE_RECORD_T0: String(t0) };
+  const raw: Event[] = [];
+  let exitCode = 0, sandbox: string | undefined, url: string | undefined;
+  for (const [index, text] of commands(source).entries()) {
+    const out = join(home, `events-${index}.ndjson`);
+    raw.push({ atMs: Date.now() - t0, kind: "command", text });
+    const child = spawn("bash", ["-c", text], { cwd: home, env: { ...env, TANGLE_RECORD_EVENTS: out }, stdio: ["ignore", "pipe", "pipe"] });
+    let printed = "";
+    for (const stream of ["stdout", "stderr"] as const) child[stream].on("data", (chunk: Buffer) => {
+      raw.push({ atMs: Date.now() - t0, kind: stream, text: chunk.toString() });
+      printed += chunk.toString();
+      process.stderr.write(chunk);
+    });
+    exitCode = await new Promise((done) => child.on("close", (code) => done(code ?? 1)));
+    if (existsSync(out)) raw.push(...readFileSync(out, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Event)
+      .map((e) => ({ ...e, ...(e.id ? { id: e.id + (index + 1) * 1e6 } : {}), ...(e.parent ? { parent: Number(e.parent) + (index + 1) * 1e6 } : {}) })));
+    sandbox ??= plain(printed).match(/Sandbox created: (\S+)/)?.[1];
+    url ??= plain(printed).match(/Preview ready: (\S+)/)?.[1];
+    if (exitCode !== 0) break;
+  }
+  const events = sessionEvents(compact(fold([], raw.sort((a, b) => a.atMs - b.atMs)), Infinity));
+
+  // What the URL serves, against the files the agent wrote beside its index.html.
+  const files = sessionFiles(events);
+  const index = [...files.keys()].find((path) => path.endsWith("/index.html"));
+  const served: Served[] = [];
+  if (url && index) {
+    const root = dirname(index);
+    for (const [path, file] of [["/", index], ...[...files.keys()].filter((f) => f.startsWith(`${root}/`)).map((f) => [`/${relative(root, f)}`, f])]) {
+      const response = await fetch(new URL(path, url)).catch(() => undefined);
+      const body = response?.ok ? new Uint8Array(await response.arrayBuffer()) : undefined;
+      served.push({ path, file, status: response?.status ?? 0, sha256: body ? sha256(body) : null });
+    }
+  }
+  if (sandbox) await new Promise((done) => spawn(join(bin, "tangle"), ["sandbox", "delete", sandbox, "--force"],
+    { env: { PATH: process.env.PATH, HOME: home, TANGLE_API_KEY: key }, stdio: ["ignore", "inherit", "inherit"] }).on("close", done));
+  const result: RunRecord = { source: { path: sourcePath, sha256: sha256(commands(source).join("\n")) }, run: { recordedAt, exitCode, url: url ?? null, served }, events };
+  mkdirSync(SESSION_RUNS, { recursive: true });
+  save(join(SESSION_RUNS, `${name}.json`), result, key);
+  const failures = sessionFailures(name, result);
+  for (const failure of failures) console.error(failure);
+  console.error(`recorded session ${name}: exit ${exitCode}, ${events.length} events, ${files.size} files, ${Math.round((Date.now() - t0) / 1000)} s, ${url ?? "no URL"}`);
+  return exitCode || (failures.length ? 1 : 0);
+}
+
+// A session's record matches its commands, exited 0, and every file its URL served is the file the agent wrote.
+function sessionFailures(name: string, record: RunRecord) {
+  const failures: string[] = [];
+  if (record.source.sha256 !== sha256(commands(readFileSync(join(SESSIONS, `${name}.sh`), "utf8")).join("\n"))) failures.push(`session ${name}: the record is for other commands; re-record it`);
+  if (record.run.exitCode !== 0) failures.push(`session ${name}: the recorded session exited ${record.run.exitCode}`);
+  const files = sessionFiles(record.events);
+  const served = (record.run.served ?? []) as Served[];
+  if (!served.some((s) => s.status === 200)) failures.push(`session ${name}: its URL served none of the files the agent wrote`);
+  for (const s of served) if (s.status === 200 && sha256(files.get(s.file) ?? "") !== s.sha256) failures.push(`session ${name}: ${s.path} served other bytes than the agent wrote to ${s.file}`);
+  return failures;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Check: every example has a fresh, matching, successful record whose call lines name their calls.
 function check() {
   const failures: string[] = [];
@@ -404,10 +504,17 @@ function check() {
   for (const subject of existsSync(RUNS) ? readdirSync(RUNS) : []) {
     for (const f of readdirSync(join(RUNS, subject))) if (!files.has(`${subject}/${f.replace(/\.json$/, "")}`)) failures.push(`${subject}/${f}: a record with no example file`);
   }
+  const sessions = readdirSync(SESSIONS).filter((f) => f.endsWith(".sh")).map((f) => f.slice(0, -3));
+  for (const name of sessions) {
+    const path = join(SESSION_RUNS, `${name}.json`);
+    if (existsSync(path)) failures.push(...sessionFailures(name, JSON.parse(readFileSync(path, "utf8")) as RunRecord));
+    else failures.push(`session ${name}: no record at ${relative(ROOT, path)}`);
+  }
+  for (const f of existsSync(SESSION_RUNS) ? readdirSync(SESSION_RUNS) : []) if (!sessions.includes(f.replace(/\.json$/, ""))) failures.push(`${f}: a session record with no session file`);
   for (const failure of failures) console.error(`check:runs: ${failure}`);
   if (failures.length) process.exit(1);
   const exempt = Object.entries(NO_RUN).map(([target, reason]) => `${target} (${reason})`);
-  console.log(`check:runs: ${files.size - exempt.length} examples have fresh, matching, successful recorded runs; no run, by exemption: ${exempt.join(", ") || "none"}`);
+  console.log(`check:runs: ${files.size - exempt.length} examples have fresh, matching, successful recorded runs; no run, by exemption: ${exempt.join(", ") || "none"}; ${sessions.length} sessions serve the files their agents wrote`);
 }
 
 const preload = process.env.TANGLE_RECORD_EVENTS;
@@ -415,11 +522,19 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
   await instrument(preload, process.env.TANGLE_RECORD_FILE!);
 } else if (process.argv.includes("--check")) {
   check();
-} else if (process.argv.includes("--compact")) {
+} else if (process.argv.includes("--resave")) { // publish every record again through save(), as after a change to it
   for (const target of examples().filter((t) => existsSync(join(RUNS, `${t}.json`)))) {
     const path = join(RUNS, `${target}.json`), { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events } = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
-    save(path, { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events: compact(events) });
+    save(path, { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events });
   }
+  for (const f of readdirSync(SESSION_RUNS)) {
+    const path = join(SESSION_RUNS, f), { source, run: { recordedAt, exitCode, url, served }, events } = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
+    save(path, { source, run: { recordedAt, exitCode, url, served }, events: sessionEvents(events) });
+  }
+} else if (process.argv.includes("--session")) {
+  const key = readFileSync(0, "utf8").trim();
+  if (!key) throw new Error("Pipe the production key on stdin.");
+  process.exit(await recordSession(key, process.argv[process.argv.indexOf("--session") + 1]));
 } else {
   const key = readFileSync(0, "utf8").trim();
   if (!key) throw new Error("Pipe the production key on stdin.");
