@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { sourceDigest } from "./example-digest.mjs";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { hostname, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -113,7 +113,7 @@ async function instrument(out: string, file: string) {
     };
   };
 
-  const wrap = (owner: string, name: string, fn: (...args: unknown[]) => unknown) => function (this: unknown, ...args: unknown[]) {
+  const wrap = (name: string, fn: (...args: unknown[]) => unknown) => function (this: unknown, ...args: unknown[]) {
     const where = site();
     const store = als.getStore();
     if (!where || (!where.direct && (store || !DELEGATED.has(name)))) {
@@ -122,7 +122,7 @@ async function instrument(out: string, file: string) {
       return store && !store.streaming && isStream(inner) ? stream(inner, store.id) : inner;
     }
     const id = nextId++;
-    emit({ kind: "call", id, parent: store?.id ?? null, line: where.line, on: owner, name, args: snap(args), ...(where.direct ? {} : { delegated: true }) });
+    emit({ kind: "call", id, parent: store?.id ?? null, line: where.line, name, ...(where.direct ? {} : { delegated: true }) });
     const settle = (value: unknown) => { emit({ kind: "return", id, result: snap(value) }); return instrumentValue(value); };
     const fail = (error: unknown) => { emit({ kind: "return", id, error: snap(error) }); throw error; };
     let result: unknown;
@@ -132,11 +132,11 @@ async function instrument(out: string, file: string) {
     return settle(result);
   };
 
-  const patchObject = (target: object, owner: string) => {
+  const patchObject = (target: object) => {
     for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(target))) {
       if (/^(constructor|then|catch|finally|_.*)$/.test(key) || !descriptor.configurable) continue;
       if (typeof descriptor.value === "function") {
-        Object.defineProperty(target, key, { ...descriptor, value: wrap(owner, key, descriptor.value) });
+        Object.defineProperty(target, key, { ...descriptor, value: wrap(key, descriptor.value) });
       } else if (descriptor.get) {
         const get = descriptor.get;
         Object.defineProperty(target, key, { ...descriptor, get() { return instrumentValue(get.call(this)); } });
@@ -147,12 +147,12 @@ async function instrument(out: string, file: string) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return value;
     let proto = Object.getPrototypeOf(value);
     if (proto === Object.prototype || proto === null) {
-      if (!patched.has(value)) { patched.add(value); patchObject(value, "object"); }
+      if (!patched.has(value)) { patched.add(value); patchObject(value); }
       return value;
     }
     while (proto && proto !== Object.prototype && !patched.has(proto)) {
       patched.add(proto);
-      patchObject(proto, proto.constructor?.name ?? "object");
+      patchObject(proto);
       proto = Object.getPrototypeOf(proto);
     }
     return value;
@@ -189,10 +189,7 @@ async function instrument(out: string, file: string) {
     const where = site();
     if (!where?.direct || als.getStore()) return realFetch(input, init);
     const id = nextId++;
-    const url = new URL(String(input instanceof Request ? input.url : input));
-    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-    emit({ kind: "call", id, parent: null, line: where.line, on: url.host, name: "fetch", args: snap({
-      method: init?.method ?? "GET", path: url.pathname, model: body?.model, messages: body?.messages?.length, tools: body?.tools?.length }) });
+    emit({ kind: "call", id, parent: null, line: where.line, name: "fetch" });
     const response = await realFetch(input, init);
     const json = await response.clone().json().catch(() => undefined);
     const message = json?.choices?.[0]?.message;
@@ -226,7 +223,7 @@ function fold(lines: string[], raw: Event[]): Event[] {
       const names = [...text.matchAll(/(\w+)\(/g)].map((m) => m[1]);
       const assign = ASSIGN.exec(text)?.[1];
       const call: Event = { atMs: event.atMs, kind: "call", id: event.id, parent: event.parent, line: event.line,
-        name: event.name, label: LABEL(text, String(event.name)), args: event.args, ...(event.delegated ? { delegated: true } : {}) };
+        name: event.name, label: LABEL(text, String(event.name)), ...(event.delegated ? { delegated: true } : {}) };
       // The outermost recorded call on an assignment line (rightmost in a chain) produces the assigned value.
       if (assign && names.lastIndexOf(String(event.name)) === Math.max(...names.map((n, i) => (sdkCalls.has(n) ? i : -1)))) call.assign = assign;
       calls.set(Number(event.id), call);
@@ -275,14 +272,12 @@ function compact(events: Event[]): Event[] {
 
 function collect(record: Event[]) {
   const ids = new Set<string>();
-  const traces = new Set<string>();
   let costUsd: number | undefined;
   let fleetSpend: number | undefined;
   let streamCost: number | undefined;
   const visit = (value: unknown, key = ""): void => {
     if (!value || typeof value !== "object") {
       if (typeof value === "string" && /^(id|sandboxId|fleetId)$/.test(key)) ids.add(value);
-      if (typeof value === "string" && key === "traceId") traces.add(value);
       return;
     }
     for (const [k, v] of Object.entries(value)) visit(v, k);
@@ -303,13 +298,21 @@ function collect(record: Event[]) {
   const cost = fleetSpend ?? costUsd ?? streamCost;
   // The run id is the first sandbox, fleet or platform run the file made.
   const id = [...ids].find((value) => /^(sandbox|fleet|wfrun|run)[-_]/.test(value)) ?? [...ids][0] ?? null;
-  return { id, ids: [...ids], traceIds: [...traces], costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
+  return { id, costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
 }
 
+// A record holds only what the pages and check:runs read: no host, private address, internal id or unread stream event.
 // An agent can print its sandbox's environment: redact credential-shaped assignments and proxy tokens, then refuse
 // to write anything that still looks like a key.
+const UNREAD = /^(host(name)?|baseUrl|parent|args|on)$|(?<!^(fleet|trace|agent))I[dD]s?$/;
 function save(path: string, record: RunRecord, key?: string) {
-  const json = JSON.stringify(record, null, 1)
+  const events = record.events.flatMap((e) => {
+    if (e.kind !== "stream" || /^(agent|fleet)\.(started|finished)$/.test(String(e.type))) return [e];
+    const part = e.type === "message.part.updated" ? (e.data as { part?: Record<string, any> } | undefined)?.part : undefined;
+    return part?.type === "tool" ? [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input } } } }] : [];
+  });
+  const json = JSON.stringify({ ...record, events }, (k, v) => (UNREAD.test(k) ? undefined : v), 1)
+    .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2})\b/g, "[redacted]")
     .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s"\\]+)/g, "$1=[redacted]")
     .replace(/proxy-[a-z-]+-token\.[\w-]+/g, "[redacted]")
     .replace(/"keyId": "[^"]+"/g, '"keyId": "[redacted]"');
@@ -342,14 +345,14 @@ async function record(key: string, target: string) {
 
   const recordedAt = new Date().toISOString();
   const started = Date.now();
-  const phases: { args: string[]; exitCode: number; atMs: number }[] = [];
+  const codes: number[] = [];
   const raw: Event[] = [];
   let args: string[] = [];
   // A file that prints its own follow-up command (worker.mts) is run again with it, as its comment says.
   for (let phase = 0; phase < 2; phase++) {
     const atMs = Date.now() - started;
     const run = await runOnce(key, dir, idea, args);
-    phases.push({ args, exitCode: run.exitCode, atMs });
+    codes.push(run.exitCode);
     raw.push(...run.raw.map((event) => ({ ...event, atMs: event.atMs + atMs, ...(event.id ? { id: event.id + phase * 1e6 } : {}),
       ...(event.parent ? { parent: Number(event.parent) + phase * 1e6 } : {}) })));
     const follow = run.raw.filter((e) => e.kind === "stdout").map((e) => String(e.text)).join("").match(new RegExp(`npx tsx ${idea}\\.mts (.+)`));
@@ -357,14 +360,13 @@ async function record(key: string, target: string) {
     args = follow[1].trim().split(/\s+/);
   }
   const events = compact(fold(source.split("\n"), raw));
-  const { id, ids, traceIds, costUsd } = collect(events);
-  const exitCode = phases.every((p) => p.exitCode === 0) && !events.some(failed) ? 0 : phases.at(-1)!.exitCode || 1;
+  const { id, costUsd } = collect(events);
+  const exitCode = codes.every((code) => code === 0) && !events.some(failed) ? 0 : codes.at(-1)! || 1;
   const versions = Object.fromEntries([...new Set(["@tangle-network/sandbox", ...Array.from(source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g), (match) => match[1])])].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sourceDigest(source) },
-    run: { id, ids, traceIds, recordedAt, durationMs: Date.now() - started, exitCode, phases, costUsd,
-      sdk: versions, node: process.version, host: hostname() },
+    run: { id, recordedAt, exitCode, costUsd, sdk: versions },
     events,
   };
   mkdirSync(join(RUNS, subject), { recursive: true });
@@ -415,10 +417,8 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
   check();
 } else if (process.argv.includes("--compact")) {
   for (const target of examples().filter((t) => existsSync(join(RUNS, `${t}.json`)))) {
-    const path = join(RUNS, `${target}.json`);
-    const kept = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
-    const events = compact(kept.events);
-    save(path, { ...kept, run: { ...kept.run, ...collect(events) }, events });
+    const path = join(RUNS, `${target}.json`), { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events } = JSON.parse(readFileSync(path, "utf8")) as RunRecord;
+    save(path, { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events: compact(events) });
   }
 } else {
   const key = readFileSync(0, "utf8").trim();
