@@ -71,7 +71,7 @@ export default function LiveDemo() {
     loadTurnstile().then((ts) => {
       if (gone || !widget.current) return;
       widgetId.current = ts.render(widget.current, {
-        sitekey: SITE_KEY,
+        sitekey: SITE_KEY, action: 'live-demo',
         appearance: 'interaction-only',
         'refresh-expired': 'auto',
         callback: (t: string) => { token.current = t; },
