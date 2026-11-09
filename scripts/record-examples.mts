@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { sourceDigest } from "./example-digest.mjs";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -301,21 +301,21 @@ function collect(record: Event[]) {
   return { id, costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
 }
 
-// A record holds only what the pages and check:runs read: no host, private address, internal id or unread stream event.
-// An agent can print its sandbox's environment: redact credential-shaped assignments and proxy tokens, then refuse
-// to write anything that still looks like a key.
-const UNREAD = /^(host(name)?|baseUrl|parent|args|on)$|(?<!^(fleet|trace|agent))I[dD]s?$/;
+// A record holds what the pages and check:runs read, minus text naming this machine, a per-host route, a private address
+// or the account's usage, and credential-shaped assignments an agent printed; anything still key-shaped is not written.
+const UNREAD = /^(host(name)?|baseUrl|ids|traceIds|node|parent|args|on)$/, ID = /(?<!^(fleet|trace|agent))I[dD]s?$/;
+const scrub = (text: string) => text.replace(/(\n\S*Connection\S*\n\S*─+\S*)?\n\S*API URL:.*/g, "").replaceAll(hostname(), "[redacted]").replace(/"account": \{(?:[^{}]|\{[^{}]*\})*\}/g, '"account": "…"')
+  .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}|\d+\.h\.tangle\.sh)\b/g, "[redacted]");
 function save(path: string, record: RunRecord, key?: string) {
+  const source = readFileSync(join(ROOT, record.source.path), "utf8");
   const events = record.events.flatMap((e) => {
     if (e.kind !== "stream" || /^(agent|fleet)\.(started|finished)$/.test(String(e.type))) return [e];
     const part = e.type === "message.part.updated" ? (e.data as { part?: Record<string, any> } | undefined)?.part : undefined;
     return part?.type === "tool" ? [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input } } } }] : [];
   });
-  const json = JSON.stringify({ ...record, events }, (k, v) => (UNREAD.test(k) ? undefined : v), 1)
-    .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2})\b/g, "[redacted]")
+  const json = JSON.stringify({ ...record, events }, (k, v) => UNREAD.test(k) || (ID.test(k) && !source.includes(k)) ? undefined : k === "account" ? "…" : typeof v === "string" ? scrub(v) : v, 1)
     .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s"\\]+)/g, "$1=[redacted]")
-    .replace(/proxy-[a-z-]+-token\.[\w-]+/g, "[redacted]")
-    .replace(/"keyId": "[^"]+"/g, '"keyId": "[redacted]"');
+    .replace(/proxy-[a-z-]+-token\.[\w-]+/g, "[redacted]");
   if ((key && json.includes(key)) || /sk-tan-[A-Za-z0-9]{8,}|eyJ[A-Za-z0-9_-]{20,}\./.test(json)) throw new Error(`${path}: the record holds a credential; not written.`);
   writeFileSync(path, json + "\n");
 }
