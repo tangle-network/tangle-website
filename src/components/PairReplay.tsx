@@ -155,7 +155,7 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
       <div className="pr-window">
         <div className="pr-bar" aria-hidden="true"><i /><i /><i /></div>
         <section className="pr-editor" aria-label="Files the agent wrote">
-          <FileTabs className="pr-tabs" label="Files the agent wrote" activeId={shown?.path} onSelect={setPicked} onClose={() => {}}
+          <FileTabs className="pr-tabs" label="Files the agent wrote" activeId={shown?.path} onSelect={setPicked}
             tabs={[...view.files.keys()].map((path) => ({ id: path, name: path.slice(path.lastIndexOf('/') + 1), path }))} />
           <div className="pr-code" ref={code}>
             {lines.map((tokenLine, i) => {
