@@ -27,7 +27,7 @@ Brand tokens and shared components come from `@tangle-network/brand` and `@tangl
 | `pnpm check:copy` | model-scored copy audit of the built pages (needs `pnpm build` and a router key) |
 | `pnpm check:models` | references to deprecated model names |
 | `pnpm check:examples` | the home page's `src/examples/*/*.mts` against the published `@tangle-network/sandbox`, `@tangle-network/agent-eval`, `@tangle-network/agent-runtime`, `@tangle-network/agent-provider-*`, `computesdk` and `@computesdk/e2b` types |
-| `pnpm check:runs` | each example has a production run recorded in `src/data/runs` from its current bytes, exited 0, under 30 days old; re-record with `scripts/record-examples.mts` (the key on stdin, run from a Beelink). The files in `NO_RUN` in that script, each with its reason, have no run and must have no record |
+| `pnpm check:runs` | each example has a production run recorded in `src/data/runs` from its current bytes, exited 0, under 30 days old; re-record with `scripts/record-examples.mts` (the key on stdin, run from a Beelink). The files in `NO_RUN` in that script, each with its reason, have no run and must have no record. Each `scripts/sessions/<name>.sh` has a record in `src/data/sessions` from its current commands that exited 0, and every file its preview URL served is the file the agent wrote (`--session <name>`) |
 | `pnpm pull:benchmarks` | refreshes `src/data/benchmarks/sandbox.json` from the production facts feed and the public ComputeSDK board; `/benchmarks` prints that snapshot |
 
 ## Deploy

@@ -3,7 +3,7 @@
 //
 // Every number comes from the feed's raw records over the last 7 days: production, Docker, not skipped, and marked CLEAN,
 // so a sample taken while a release landed counts nowhere. Failed attempts that recorded a time stay in.
-// A new chart is one entry in `panels`; the page draws whatever is here.
+// A new chart is one entry in `panels`; the page draws whatever is here. The headline's new sandbox pools the By region create rows.
 import { writeFileSync } from 'node:fs';
 
 const FACTS_URL = 'https://facts.tangle.tools/sandbox.json';
@@ -57,7 +57,7 @@ const fanout = journey('branch_fanout');
 const region = (label, name, field) => ['eu1', 'us1'].map((cell) => row(`${label}, ${cell}`, journey(name, (r) => r.cell === cell), field));
 const firstCall = (label, path) => row(label, journey('first_call', (r) => r.scenario_id?.startsWith(`first-call.${path}.`)), 'first_call_ms');
 const size = (name) => row(name[0].toUpperCase() + name.slice(1), journey(`compute.size.${name}`), 'operation_ms');
-const bursts = facts.lanes['create-burst'].burst.map((b) => ({ label: `${b.size} at once`, n: b.ok, p50: Math.round(b.p50_ms), p50_band: null, p95: null, p95_band: null, attempts: b.asked, failed: b.asked - b.ok, p90: Math.round(b.p90_ms) }));
+const bursts = facts.lanes['create-burst'].burst.filter((b) => b.runtime_backend !== 'firecracker').map((b) => ({ label: `${b.size} at once`, n: b.ok, p50: Math.round(b.p50_ms), p50_band: null, p95: null, p95_band: null, attempts: b.asked, failed: b.asked - b.ok, p90: Math.round(b.p90_ms) }));
 const hundred = stats(recent.map((r) => r.burst_matched_n100_p50_ms));
 
 const firstReplies = byAgent(firstText, 'create_to_first_text_ms');
@@ -101,7 +101,7 @@ const out = {
   rate_card: { ...rateCard.body.pools.general, source: rateCard.url, fetched_at: rateCard.fetched_at },
   source: FACTS_URL,
   window: { from, to, samples: recent.length },
-  headline: [['New sandbox', find('Lifecycle, base image', 'Create')], ['First command', find('First command', 'Both')], ['First agent reply', firstReplies[0]], ['Resume', find('Lifecycle, base image', 'Resume')], ['Fork a snapshot', find('Snapshots and checkpoints', 'Fork a snapshot')], ['16 branches', find('Branching', '16 children')]].map(([label, r]) => ({ label, p50: r.p50, p95: r.p95 })),
+  headline: [['New sandbox', row('New sandbox', journey('sandbox_create'), 'provision_ms')], ['First command', find('First command', 'Both')], ['First agent reply', firstReplies[0]], ['Resume', find('Lifecycle, base image', 'Resume')], ['Fork a snapshot', find('Snapshots and checkpoints', 'Fork a snapshot')], ['16 branches', find('Branching', '16 children')]].map(([label, r]) => ({ label, p50: r.p50, p95: r.p95 })),
   panels,
   memory: byAgent(firstText, 'peak_memory_mb'),
   passed,

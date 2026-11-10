@@ -1,6 +1,5 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
-import { fileURLToPath } from 'node:url';
 
 import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
@@ -33,16 +32,6 @@ export default defineConfig({
   })],
 
   vite: {
-    resolve: {
-      alias: {
-        // Only the shared code components are used here; keep this entry
-        // independent of the rest of the Markdown barrel.
-        '@tangle-network/ui/markdown': fileURLToPath(new URL(
-          './node_modules/@tangle-network/ui/dist/markdown/code-block.js',
-          import.meta.url,
-        )),
-      },
-    },
     plugins: [tailwindcss()],
     ssr: {
       noExternal: ['astro:content'],

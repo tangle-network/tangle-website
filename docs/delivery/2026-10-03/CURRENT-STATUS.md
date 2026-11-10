@@ -15,7 +15,6 @@ The historical [status audit](./STATUS-AUDIT.md) retains its 22:24 UTC observati
 | Standalone Sandbox API reference | [ADC 9085](https://github.com/tangle-network/agent-dev-container/pull/9085), merge `84241f4470b53201c8bff65a936b563771f38211` | Merged to develop at 22:57:17 UTC; source build and desktop Safari interaction checks passed. Production deployment and served-page verification remain pending. |
 
 The [archive README](./README.md) describes the website implementation and its dependency/build gaps.
-Rejected prototypes remain under `rejected-prototypes/`; they are historical, unapproved source outside application routes.
 No production homepage change is claimed by these draft checkpoints.
 
 The API reference uses a standalone route with route-scoped `html`/`body` `overflow-x: clip`; this fixes the ancestor overflow that displaced its sticky header and sidebar.
@@ -43,7 +42,6 @@ Existing subsystem issues retain ownership and acceptance checks; this checkpoin
 
 ## Inventory and evidence boundaries
 
-[Worktree inventory](./uncommitted-inventory.md) distinguishes session source, duplicate staging copies, and unrelated concurrent edits.
 One GTR shared-chart worktree status read timed out; its dirty/unpublished state remains unknown.
 Do not infer that all work across all machines or concurrent sessions is committed.
 
