@@ -93,7 +93,7 @@ Residual non-blocking gap:
 Proof checker:
 
 ```bash
-for f in src/content/blog/how-ai-agents-discover-products.mdx src/content/blog/ai-agent-sandbox.mdx src/content/blog/browser-automation-for-ai-agents.mdx src/content/blog/openai-compatible-routers-for-agents.mdx src/content/blog/x402-payments-for-ai-agents.mdx src/content/blog/natural-language-e2e-testing-wallet-apps.mdx src/content/blog/agent-runtime-environments.mdx src/content/blog/tangle-sandbox-vs-e2b.mdx src/content/blog/tangle-sandbox-vs-daytona-modal.mdx src/content/blog/tangle-browser-agent-vs-browserbase-browser-use.mdx src/content/blog/deploy-paid-ai-agent-service.mdx src/content/blog/tee-attestation-ai-services.mdx; do node .codex/skills/tangle-blog-proof/scripts/check-post.mjs "$f" || exit 1; done
+for f in src/content/blog/how-ai-agents-discover-products.mdx src/content/blog/ai-agent-sandbox.mdx src/content/blog/browser-automation-for-ai-agents.mdx src/content/blog/openai-compatible-routers-for-agents.mdx src/content/blog/x402-payments-for-ai-agents.mdx src/content/blog/natural-language-e2e-testing-wallet-apps.mdx src/content/blog/agent-runtime-environments.mdx src/content/blog/tangle-browser-agent-vs-browserbase-browser-use.mdx src/content/blog/deploy-paid-ai-agent-service.mdx src/content/blog/tee-attestation-ai-services.mdx; do node .codex/skills/tangle-blog-proof/scripts/check-post.mjs "$f" || exit 1; done
 ```
 
 Build:
