@@ -1,0 +1,120 @@
+---
+title: 'Agent Profile Design: Author Once, Keep Keys Out'
+slug: agent-profile-design-story
+summary: >-
+  How the agent profile works: you write one file, the sandbox materializes it, and credentials stay with the egress proxy instead of the agent. Includes the tradeoffs.
+date: '2026-11-10'
+author: Drew Stone
+tags:
+  - agent-profiles
+  - sandbox
+  - egress
+  - secrets
+  - coding-agents
+draft: true
+---
+
+{/* DRAFT held for Drew's read. draft: true keeps this page out of the blog index and static routes. Do not remove the flag, publish or deploy without his go. */}
+
+You write one agent profile file. Tangle's sandbox turns it into a running coding agent: the prompt, skills, tools, MCP servers and files are placed where the agent expects them. The credentials the agent needs are not placed in the agent's environment at all. The agent holds a placeholder, and the egress proxy puts the real value on requests to the hosts you named.
+
+This post explains why the profile is shaped that way, the three places it can run, and where the design costs you something.
+
+An **agent profile** is a saved description of an agent: instructions, model hints, tools, MCP servers, connections and files. **Materializing** a profile means turning that description into the concrete things a running agent reads. The **egress proxy** is the process inside the sandbox that every outbound request passes through, and where network policy is enforced.
+
+## Author the profile, let the sandbox do the placing
+
+The [AgentProfiles docs](https://docs.tangle.tools/sandbox/cloud-agents-profiles) describe the profile as the answer to "what is this agent", kept apart from the backend, which says which coding agent runs it and how the model is paid for. A profile can be a short file in your repository:
+
+~~~json
+{
+  "name": "reviewer",
+  "description": "Reviews a change for bugs and missing tests.",
+  "prompt": {
+    "appendSystemPrompt": "You review code. Report bugs with file:line and a failing test for each. Do not edit files.",
+    "instructions": ["Run the test suite before you report."]
+  }
+}
+~~~
+
+You start an agent from it with the backend of your choice:
+
+~~~ts
+const reviewer = JSON.parse(readFileSync("agents/reviewer.json", "utf8"));
+const box = await client.create({
+  backend: { type: "claude-code", profile: reviewer },
+  git: { url: "https://github.com/tangle-network/sandbox-demo" },
+});
+~~~
+
+The same file runs on Claude Code, Codex, OpenCode or Pi. Each of those wants its instructions, skills and tool settings in a different place and format. The author writes the intent once, and the sandbox does the placing. The docs also say what is recorded afterward: `box.getProfileProvenance()` returns the profile's name and SHA-256, the effective profile after any change, and when it was materialized. That record is kept by your SDK process. It is not a signed attestation.
+
+The reason to split authoring from placing is the failure described in [an earlier post on materialization contracts](/blog/agent-profile-materialization-contracts): a profile that lists tools and files can be sent down a route that carries only a prompt and a model, and the run starts anyway with the missing pieces blamed on the model. The rule we hold is that a route refuses a field it cannot honor before the run starts, and says which field.
+
+## Three places a profile can run
+
+The agent-runtime docs say every runtime entry point takes an AgentProfile, so the same profile can run on a Tangle sandbox, in a local process, or on another sandbox cloud through `providerAsSandboxClient` ([agent-runtime docs](https://docs.tangle.tools/sandbox/agent-runtime)). We think about it as three targets, and they do not carry the same things.
+
+1. **In a sandbox.** The full profile: files, skills, MCP servers, tools and permissions land inside a machine of their own, and the secrets design below applies. On Tangle Sandbox, every create option is available.
+2. **In a worker.** The profile is the argument to a worker that a supervisor starts under one budget. In `supervise()`, each worker is a fresh sandbox running the coding agent you chose, and spend for the whole tree is recorded as measured.
+3. **Through inference routing alone.** The profile's prompt and model go to a model call through the Router, with no machine. There is nowhere to put a file or a running tool server, so a profile that needs them cannot honestly run here.
+
+On other clouds the line is explicit. The [provider docs](https://docs.tangle.tools/sandbox/other-providers) list, for each provider package, what it honors and what it refuses. A provider refuses any create field it cannot honor, before it calls the cloud, with an error naming the field. As of the page we read on 2026-11-10, the E2B package refuses `secrets` and every egress mode, and the Daytona package refuses `secrets` while honoring the `open`, `strict` and `blocked` modes. That describes what our provider packages carry today, not what those clouds can do themselves. The practical result: if you move the profile and your design depends on proxy-held credentials, you find out at create time, not in production.
+
+## Why the agent does not hold the credential
+
+A coding agent runs commands you did not write, reads files from repositories you do not control, and calls tools. Anything in its environment is something it can print, log, send in a request or put in a commit. Prompt-injected text in a README can ask for it. Telling the agent not to leak a key is a request, not a boundary.
+
+So the secrets design has two custody modes ([secrets docs](https://docs.tangle.tools/sandbox/secrets)):
+
+- **Box custody.** The sandbox sees the real value as an environment variable. Use it when a tool inside needs the raw value, such as a database URL or a signing key.
+- **Proxy custody.** The sandbox sees a placeholder. The egress proxy swaps in the real value on HTTPS requests to the hosts you name, with an optional policy for methods, paths and a time limit.
+
+You store the secret once with the hosts it may go to, select it by name at create, and list the host in a strict egress policy:
+
+~~~ts
+await client.secrets.create("HF_TOKEN", process.env.HF_TOKEN!, { hosts: ["huggingface.co"] });
+
+const box = await client.create({
+  secrets: ["HF_TOKEN"],
+  egressPolicy: { mode: "strict", allowDomains: ["huggingface.co"] },
+});
+~~~
+
+The profile and the secret meet at the sandbox boundary. The profile says what the agent is. The secret binding says which hosts may receive which credential. Neither one puts the value in the agent's reach. Credential handling for a coding agent also follows the profile's backend: you can run Claude Code on your own Anthropic API key or through the Router, and the egress docs show the provider host going into the allow list when you use your own endpoint.
+
+### What we checked
+
+On 2026-11-10 we ran a boundary check against a production sandbox, as the unprivileged agent user, with a throwaway value minted for the test. We kept only hashes of it. This is from an internal boundary-test record, 2026-11-10.
+
+| Check from inside the sandbox | Result |
+| --- | --- |
+| The environment variable for the secret | Holds a placeholder beginning `proxy-declared-`, not the value |
+| The real value in the readable `/proc/*/environ` entries, and in files | Found in 0 of them |
+| The egress proxy's control directory | Root only; the agent gets `Permission denied` |
+| The proxy credential the agent itself holds | A placeholder too |
+| GET to an allowed host, in-scope path | HTTP 200, and the echo reflected the placeholder, not the value |
+| GET to the same allowed host, out-of-scope path | HTTP 403, policy `secrets` |
+| GET to a host not on the allow list | HTTP 403, `EGRESS_DOMAIN_NOT_ALLOWED`, policy `allowlist` |
+| Cloud metadata routes | Blocked, 403 |
+
+The echo row is the one we like best. The test host reflects request headers back, and what came back was the placeholder. The agent could not learn the value even from a server built to repeat it. The docs say why: when a proxy-held value appears in a response, the proxy masks it in headers, streaming bodies, trailers and decoded WebSocket messages.
+
+### What we did not check
+
+This record shows that the agent cannot read the value. It does not show that the proxy substitutes the real value on the way to the allowed host. From inside the sandbox that is unobservable, by design: if the agent could see the substitution, it could see the value. Substitution is covered by a maintained end-to-end test suite, and we did not re-prove it for this post. It is one production sandbox on one day, not a certification, and it makes no compliance claim. Our security posture is on the [security page](https://tangle.tools/security).
+
+## Tradeoffs
+
+- **Proxy custody fits API credentials, not everything.** It works when the credential travels as an `Authorization` header, another named header, a query parameter or HTTP basic auth, over HTTPS. A tool that needs the raw value, such as a database driver reading a connection string, needs box custody, and then the agent can read it.
+- **The hosts you name are trusted.** The docs say a value the remote service re-encodes, for example as hex, cannot be recognized and masked. Name only hosts you trust with the credential.
+- **A strict policy is more setup.** With an explicit strict policy, `npm install` fails unless you list the registry or keep the built-in developer host list. The proxy does not reach the secret's host for you; it must be in `allowDomains`.
+- **Not every route carries the profile.** The Router-only target drops the machine. Other clouds refuse fields instead of approximating them, which is safer and also means a profile written for the full sandbox may not move unchanged.
+- **Rotation has an edge.** `secrets.update` re-keys running sandboxes without a restart, but a 503 means the value was stored and a running sandbox did not confirm. Read the secret again before you retry.
+- **Provenance is a record, not a proof.** The profile hash lives in your SDK process.
+
+## When to use which
+
+If the agent calls an API with a token and you would not paste that token into a chat with a stranger, use proxy custody and a strict host list. If a tool inside needs the raw value, use box custody and treat the sandbox as holding it. If the job is a single model call with a role prompt, the Router alone is enough and you need no machine.
+
+Next step: put one secret you already pass to an agent behind a host list, and run the same check from inside the sandbox. A longer treatment of the credential and egress model is coming in the docs (docs, forthcoming): credentials and egress, and a glossary of the terms above.
