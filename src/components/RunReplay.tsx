@@ -12,7 +12,7 @@ export type Row = { key: string; atMs: number; kind: string; text: string; detai
 /** A moment the replay shows something new; `hold` keeps the recorded clock still while it types out. */
 export type Mark = { atMs: number; hold?: number; r?: number };
 
-const IDLE_MS = 3000, JUMP_MS = 700; // a stretch over IDLE_MS in which nothing new happens plays in JUMP_MS, the clock sweeping its real length
+type Idle = [ms: number, playsIn: number]; // a stretch over `ms` in which nothing new happens plays in `playsIn`, the clock sweeping its real length
 const usd = (n: unknown) => (typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '');
 const FIELDS = ['id', 'fleetId', 'exitCode', 'state', 'outcome', 'composite', 'costUsd', 'spentUsd', 'interrupted', 'traceId', 'status'];
 const brief = (v: Ev['result'], quote = true): string => v === null || typeof v !== 'object'
@@ -23,7 +23,7 @@ const summary = (input: Record<string, unknown> = {}) => String(input.descriptio
 const done = (e: Ev, t: number) => e.atMs + (e.durationMs ?? 0) <= t;
 
 /** Replay time `r` for each mark, the anchors that map it back to recorded time, and the squeezed stretches. */
-function pace(input: Mark[]) {
+function pace(input: Mark[], [IDLE_MS, JUMP_MS]: Idle) {
   const marks = [...input].sort((a, b) => a.atMs - b.atMs), anchors: [number, number][] = [[0, 0]], jumps: { atMs: number; gap: number }[] = [];
   let r = 0, at = 0;
   for (const mark of marks) {
@@ -43,7 +43,7 @@ const recordAt = (anchors: [number, number][], r: number) => {
 };
 
 /** Loads a record and plays it: `r` is replay time, `t` the recorded time it shows. Reduced motion starts at the end. */
-export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay: boolean) {
+export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay: boolean, idle: Idle = [10_000, 800]) {
   const [events, setEvents] = useState<Ev[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [r, setR] = useState(0);
@@ -53,7 +53,7 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay
   useEffect(() => {
     fetch(url).then((res) => res.json()).then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs)), () => setFailed(true));
   }, [url]);
-  const line = useMemo(() => (events ? pace(marks(events)) : null), [events]);
+  const line = useMemo(() => (events ? pace(marks(events), idle) : null), [events]);
   useEffect(() => { if (line && matchMedia('(prefers-reduced-motion: reduce)').matches) { setStill(true); setR(line.total); setPlaying(false); } }, [line]);
   useEffect(() => {
     if (!playing || !line) return;
@@ -71,11 +71,11 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay
 }
 
 /** Play, scrub, the recorded clock and speed, and a note when the record did not load. */
-export function ReplayBar({ replay, className, children }: { replay: ReturnType<typeof useReplay>; className: string; children?: ReactNode }) {
+export function ReplayBar({ replay, className, autoFocus, children }: { replay: ReturnType<typeof useReplay>; className: string; autoFocus?: boolean; children?: ReactNode }) {
   const { line, r, t, end, playing, setPlaying, setR, speed, setSpeed } = replay;
   return <>
     <div className={className}>
-      <Button variant="ghost" size="icon-sm" autoFocus={!!children} disabled={!line} aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (line && r >= line.total) setR(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</Button>
+      <Button variant="ghost" size="icon-sm" autoFocus={autoFocus} disabled={!line} aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (line && r >= line.total) setR(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</Button>
       <Slider className="rr-scrub" min={0} max={line?.total ?? 1} step={50} value={[r]} thumbLabels={[`Replay position ${clock(t)}`]} onValueChange={([value]) => setR(value)} />
       <span className="rr-time">{clock(t)} / {clock(end)}</span>
       <SegmentedControl aria-label="Speed" value={String(speed)} onValueChange={(value) => setSpeed(Number(value))} options={[{ value: '1', label: '1×' }, { value: '4', label: '4×' }]} />
@@ -155,7 +155,7 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
       <style>{lit}</style>
       <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
         <a href={meta.url}>JSON</a></p>
-      <ReplayBar replay={replay} className="rr-bar"><Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
+      <ReplayBar replay={replay} className="rr-bar" autoFocus><Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
       {events && <>
         <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
         {state.agents.size > 0 && <div className="rr-fleet" aria-label="Fleet agents">

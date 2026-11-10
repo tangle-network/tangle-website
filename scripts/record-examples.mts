@@ -317,11 +317,11 @@ function collect(record: Event[]) {
   return { id, costUsd: cost === undefined ? null : Number(cost.toFixed(4)) };
 }
 
-// A record holds what the pages and check:runs read, minus text naming this machine, a per-host route or edge id, a private
-// address or the account's usage, and credential-shaped assignments an agent printed; anything still key-shaped is not written.
+// A record holds what the pages and check:runs read, minus text naming this machine, a per-host route, a preview edge or
+// agent session id, a private address or the account's usage, and credential-shaped assignments an agent printed; anything still key-shaped is not written.
 const UNREAD = /^(host(name)?|baseUrl|ids|traceIds|node|parent|args|on)$/, ID = /(?<!^(fleet|trace|agent))I[dD]s?$/;
 const scrub = (text: string) => text.replace(/(\n\S*Connection\S*\n\S*─+\S*)?\n\S*API URL:.*|\nPreview ID: .*/g, "").replaceAll(hostname(), "[redacted]").replace(/"account": \{(?:[^{}]|\{[^{}]*\})*\}/g, '"account": "…"')
-  .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}|\d+\.h\.tangle\.sh)\b/g, "[redacted]");
+  .replace(/\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}|\d+\.h\.tangle\.sh|edge-[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}|ses_\w{20,})\b/g, "[redacted]");
 function save(path: string, record: RunRecord, key?: string) {
   const source = readFileSync(join(ROOT, record.source.path), "utf8");
   const events = record.events.flatMap((e) => {

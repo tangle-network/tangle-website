@@ -75,7 +75,7 @@ const Line = memo(function Line({ tokens, cut, n, mark }: { tokens: Token[]; cut
 });
 
 export default function PairReplay({ meta, install }: { meta: SessionMeta; install?: string }) {
-  const replay = useReplay(meta.url, marks, false), { events, line, r, t, still, setPlaying } = replay;
+  const replay = useReplay(meta.url, marks, false, [3000, 700]), { events, line, r, t, still, setPlaying } = replay;
   const [tokens, setTokens] = useState<Map<string, Token[][]>>(new Map());
   const [picked, setPicked] = useState<string>();
   const [run, setRun] = useState(false);
@@ -98,11 +98,11 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
     return () => { live = false; };
   }, [after]);
 
-  // Play once the replay is on screen, pause off screen.
+  // Play once the replay is on screen; off screen, pause, and play again on return unless the reader paused it or it ended.
   useEffect(() => {
     if (!line || still || !root.current) return;
-    let seen = false;
-    const io = new IntersectionObserver(([entry]) => { if (entry.isIntersecting && !seen) { seen = true; setPlaying(true); } else if (!entry.isIntersecting) setPlaying(false); }, { threshold: 0.35 });
+    let resume = true;
+    const io = new IntersectionObserver(([entry]) => entry.isIntersecting ? resume && setPlaying(true) : setPlaying((was) => { resume = was; return false; }), { threshold: 0.35 });
     io.observe(root.current);
     return () => io.disconnect();
   }, [line, still]);
@@ -124,11 +124,11 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
         const text = files.get(path);
         if (text === undefined) continue;
         latest.set(path, step.id);
-        // An edit marks the lines it changed; a write types out from the top.
-        const edit = stepKind(step) === 'edit', lineOf = (n: number) => text.slice(0, Math.max(0, n)).split('\n').length - 1;
-        const changed = lineOf([...text].findIndex((c, j) => c !== before[j])), added = text.split('\n').length - before.split('\n').length;
-        active = { path, id: step.id, text, typed: edit ? text.length : Math.round(p * text.length),
-          mark: edit && p < 1 ? [changed, changed + Math.max(0, added) + String(step.input.new_string ?? step.input.newString ?? '').split('\n').length - 1] : undefined };
+        // An edit marks the lines it changed while it holds; a write types out from the top.
+        const edit = stepKind(step) === 'edit', marking = edit && p < 1;
+        const changed = marking ? text.slice(0, Math.max(0, [...text].findIndex((c, j) => c !== before[j]))).split('\n').length - 1 : 0;
+        active = { path, id: step.id, text, typed: edit ? text.length : Math.round(p * text.length), mark: marking ? [changed, changed
+          + Math.max(0, text.split('\n').length - before.split('\n').length) + String(step.input.new_string ?? step.input.newString ?? '').split('\n').length - 1] : undefined };
       }
     }
     // A tab the reader picked shows that file as it stands; otherwise the file being written.
