@@ -48,31 +48,9 @@ Must include:
 - Scoped package install.
 - CTA: read Sandbox manifest templates.
 
-### 2. Tangle Sandbox vs E2B
+### 2 and 3. Retired: Tangle Sandbox vs E2B, vs Daytona and Modal
 
-Slug: `tangle-sandbox-vs-e2b`
-
-Primary query: `e2b alternative`
-
-Secondary queries: `tangle sandbox vs e2b`, `ai agent sandbox`
-
-Angle: E2B is the reference point for fast code sandboxes. Compare session lifetime, snapshots, sidecar policy, templates, speed, persistence, and SDK shape. Keep the comparison fair and current.
-
-### 3. Tangle Sandbox vs Daytona and Modal
-
-Slug: `tangle-sandbox-vs-daytona-modal`
-
-Primary/secondary query: `ai dev container` and related comparison terms.
-
-Angle: Daytona, Modal, and Tangle overlap only at "runs code." The buying question is whether the workload is a developer workspace, serverless compute job, or autonomous agent workspace.
-
-Must include:
-
-- Decision matrix by workload.
-- Agent workspace definition: files, tools, browser, traces, snapshots, sidecar, credentials.
-- Keep Modal strong for serverless GPU/jobs.
-- Keep Daytona strong for dev environments.
-- Tangle proof: source template slugs `node-typescript` and `python-data-science`.
+Retired 2026-11-10. Rival sandbox comparisons live on tangle.tools/compare/ (`src/data/compare.json`); the old slugs redirect there. Do not write a sandbox comparison post.
 
 ### 4. Browser Automation For AI Agents
 
