@@ -1,0 +1,95 @@
+---
+import { formatSpanDuration as time } from '@tangle-network/charts';
+import BlogLayout from '../../layouts/BlogLayout.astro';
+import bench from '../../data/benchmarks/sandbox.json';
+import compare from '../../data/compare.json';
+import { formatDate } from '../../utils/date';
+
+// /compare/ lists every rival; /compare/<slug>/ compares one. Rival facts and their sources are in compare.json.
+export const getStaticPaths = () => [undefined, ...compare.rivals.map((r) => r.slug)].map((rival) => ({ params: { rival } }));
+
+const { checked, tangle, rivals } = compare;
+const rival = rivals.find((r) => r.slug === Astro.params.rival);
+const others = rival ? [rival] : rivals;
+const name = rival?.name ?? `${rivals.slice(0, 3).map((r) => r.name).join(', ')} and ${rivals.length - 3} more`;
+const where = (src: string) => { const u = new URL(src); return `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.hash}`; };
+// Tangle numbers are rows of the record /benchmarks is built from, so both pages print the same runs.
+const measured = compare.measured.map((m) => {
+  const row = bench.panels.find((p) => p.title === m.panel)?.rows.find((r) => r.label === m.row);
+  if (!row) throw new Error(`compare: /benchmarks has no "${m.panel}" row "${m.row}"`);
+  return { ...row, label: m.label };
+});
+const dates = `${bench.window.from.slice(0, 10)} to ${bench.window.to.slice(0, 10)}`;
+---
+
+<BlogLayout
+  crumb={{ href: '/compare/', label: 'Compare' }}
+  title={`Tangle vs ${name}: which sandbox for coding agents?`}
+  summary={(rival ?? compare).summary}
+  date={checked}
+  author="Drew Stone"
+  tags={['comparison', 'sandbox', 'coding agents', ...others.map((r) => r.name)]}
+  slug={rival?.slug ?? 'compare'}
+  seriesPosts={[]}
+>
+  <p>Last checked {formatDate(checked)}: each {rival ? rival.name : 'rival'} fact links the page it came from, read that day.</p>
+
+  {rival ? (
+    <>
+      <h2>Pick {rival.name} when</h2>
+      <ul>{rival.pick.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+      <h2>Pick Tangle when</h2>
+      <ul>{rival.pickTangle.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+      <h2>{rival.name} and Tangle, row by row</h2>
+      <table class="product-comparison">
+        <thead><tr><th scope="col">Feature</th><th scope="col">{rival.name}</th><th scope="col">Tangle</th></tr></thead>
+        <tbody>
+          {rival.rows.map((r) => {
+            const t = tangle[r.id as keyof typeof tangle];
+            return (
+              <tr>
+                <th scope="row">{t.label}</th>
+                <td data-label={rival.name}>{r.text} (<a href={r.src}>{where(r.src)}</a>)</td>
+                <td data-label="Tangle">{t.text} (<a href={t.src}>{where(t.src)}</a>)</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </>
+  ) : rivals.map((r) => (
+    <>
+      <h2><a href={`/compare/${r.slug}/`}>Tangle vs {r.name}</a></h2>
+      <p>{r.summary}</p>
+    </>
+  ))}
+
+  <h2>Start times: our measurements, their published claims</h2>
+  <table class="product-comparison">
+    <thead><tr><th scope="col">Tangle, measured</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Runs</th><th scope="col">Failed</th></tr></thead>
+    <tbody>
+      {measured.map((m) => (
+        <tr>
+          <th scope="row">{m.label}</th>
+          <td data-label="p50">{time(m.p50)}</td>
+          <td data-label="p95">{time(m.p95)}</td>
+          <td data-label="Runs">{m.n}</td>
+          <td data-label="Failed">{m.failed} of {m.attempts}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+  <p>Production runs from {dates}, the same rows <a href="/benchmarks/">tangle.tools/benchmarks</a> draws.</p>
+  <ul>{others.flatMap((r) => r.published).map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+  <p>These are different tests, and we have not run {name} through our benchmark.{!rival && <> agent-runtime runs the same agent code on Tangle, E2B and Daytona, so you can run your own task on each: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on E2B, Daytona and more</a>.</>}</p>
+
+  <h2>Prices are on each pricing page</h2>
+  <p>Tangle: <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>. {others.map((r) => <>{r.name}: <a href={r.pricing}>{where(r.pricing)}</a>. </>)}</p>
+
+  {rival?.move && (
+    <>
+      <h2>Move from {rival.name}</h2>
+      <p>{rival.move.text} {rival.move.links.map((l, i) => <>{i > 0 && ', '}<a href={l.href}>{l.label}</a></>)}.</p>
+    </>
+  )}
+</BlogLayout>
