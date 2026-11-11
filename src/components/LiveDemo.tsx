@@ -1,6 +1,6 @@
 import type { TerminalViewProps } from '@tangle-network/sandbox-ui/terminal';
 import { Button } from '@tangle-network/ui/primitives';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './live-demo.css';
 
 // A real Pi TUI in a real sandbox, no account: id.tangle.tools issues the session after Turnstile.
@@ -49,6 +49,11 @@ function loadTurnstile(): Promise<Turnstile> {
 
 const left = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 
+/** A demo step for the visitor's journey; a no-op until id.tangle.tools/journey.js has loaded. */
+const track = (name: 'demo_started' | 'demo_first_output' | 'demo_ended', props: Record<string, unknown> = {}) =>
+  (window as unknown as { tangleJourney?: { track: (n: string, f: { props: Record<string, unknown> }) => void } })
+    .tangleJourney?.track(name, { props: { demo: 'pi', ...props } });
+
 export default function LiveDemo() {
   const [view, setView] = useState<View>({ kind: 'ready' });
   const [open, setOpen] = useState<boolean | undefined>();
@@ -86,7 +91,11 @@ export default function LiveDemo() {
     if (!session) return;
     const auth = { Authorization: `Bearer ${session.secret}` };
     const url = `${API}/sessions/${session.id}`;
+    const startedAt = Date.now();
+    let ended = false;
     const end = (text = NOTES.ended) => {
+      if (!ended) track('demo_ended', { durationMs: Date.now() - startedAt });
+      ended = true;
       fetch(url, { method: 'DELETE', headers: auth, keepalive: true }).catch(() => {});
       setView({ kind: 'note', ...text });
     };
@@ -96,7 +105,12 @@ export default function LiveDemo() {
     el?.addEventListener('keydown', touch, true);
     el?.addEventListener('pointerdown', touch, true);
     // Output counts as activity, so a visitor can watch Pi work.
-    const watcher = new MutationObserver(touch);
+    let output = false;
+    const watcher = new MutationObserver(() => {
+      touch();
+      if (!output) track('demo_first_output', { elapsedMs: Date.now() - startedAt });
+      output = true;
+    });
     if (term.current) watcher.observe(term.current, { subtree: true, childList: true, characterData: true });
     let beats = 0;
     const tick = setInterval(() => {
@@ -117,6 +131,22 @@ export default function LiveDemo() {
     };
   }, [session]);
 
+  // The hero's "Try Pi live" sets window.liveDemoStart, then sends live-demo-start for a hydrated island.
+  // The flag is spent once the demo's state is known, so one click starts at most one session.
+  const [asked, setAsked] = useState(0);
+  useEffect(() => {
+    const ask = () => setAsked((n) => n + 1);
+    addEventListener('live-demo-start', ask);
+    return () => removeEventListener('live-demo-start', ask);
+  }, []);
+  // A layout effect, so the section button never paints enabled between the state and the start.
+  useLayoutEffect(() => {
+    const w = window as unknown as { liveDemoStart?: boolean };
+    if (open === undefined || !w.liveDemoStart) return;
+    w.liveDemoStart = false;
+    if (open && view.kind !== 'starting' && view.kind !== 'live') start();
+  }, [open, asked]);
+
   async function start() {
     setView({ kind: 'starting' });
     loadTerminal().catch(() => {});
@@ -132,6 +162,7 @@ export default function LiveDemo() {
     const body = await res?.json().catch(() => undefined);
     if (res?.status === 201) {
       active.current = Date.now();
+      track('demo_started'); // Hero or section is the click row before it; /v1/events refuses any unlisted prop.
       return setView({ kind: 'live', session: body });
     }
     const note = NOTES[body?.error?.code] ?? { text: 'The sandbox did not start. Try again.' };
@@ -160,9 +191,9 @@ export default function LiveDemo() {
   return (
     <div className="live-demo">
       {open === false ? (
-        <a className="live-demo-btn" href={SIGN_UP} target="_blank" rel="noopener noreferrer">Create an account to run Pi</a>
+        <a className="live-demo-btn" href={SIGN_UP} target="_blank" rel="noopener noreferrer" data-track="demo-signup">Create an account to run Pi</a>
       ) : (
-        <Button className="live-demo-btn" disabled={!open || view.kind === 'starting'} onClick={start}>
+        <Button className="live-demo-btn" data-track="demo-start" disabled={!open || view.kind === 'starting'} onClick={() => start()}>
           {view.kind === 'starting' ? 'Starting Pi…' : 'Try Pi live'}
         </Button>
       )}
