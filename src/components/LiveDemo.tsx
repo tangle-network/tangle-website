@@ -144,10 +144,10 @@ export default function LiveDemo() {
     const w = window as unknown as { liveDemoStart?: boolean };
     if (open === undefined || !w.liveDemoStart) return;
     w.liveDemoStart = false;
-    if (open && view.kind !== 'starting' && view.kind !== 'live') start('hero');
+    if (open && view.kind !== 'starting' && view.kind !== 'live') start();
   }, [open, asked]);
 
-  async function start(source: 'hero' | 'section') {
+  async function start() {
     setView({ kind: 'starting' });
     loadTerminal().catch(() => {});
     for (let i = 0; i < 100 && !token.current; i++) await new Promise((r) => setTimeout(r, 200));
@@ -162,7 +162,7 @@ export default function LiveDemo() {
     const body = await res?.json().catch(() => undefined);
     if (res?.status === 201) {
       active.current = Date.now();
-      track('demo_started', { source });
+      track('demo_started'); // Hero or section is the click row before it; /v1/events refuses any unlisted prop.
       return setView({ kind: 'live', session: body });
     }
     const note = NOTES[body?.error?.code] ?? { text: 'The sandbox did not start. Try again.' };
@@ -193,7 +193,7 @@ export default function LiveDemo() {
       {open === false ? (
         <a className="live-demo-btn" href={SIGN_UP} target="_blank" rel="noopener noreferrer" data-track="demo-signup">Create an account to run Pi</a>
       ) : (
-        <Button className="live-demo-btn" data-track="demo-start" disabled={!open || view.kind === 'starting'} onClick={() => start('section')}>
+        <Button className="live-demo-btn" data-track="demo-start" disabled={!open || view.kind === 'starting'} onClick={() => start()}>
           {view.kind === 'starting' ? 'Starting Pi…' : 'Try Pi live'}
         </Button>
       )}
