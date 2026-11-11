@@ -51,7 +51,8 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay
   const [speed, setSpeed] = useState(1);
   const [still, setStill] = useState(false);
   useEffect(() => {
-    fetch(url).then((res) => res.json()).then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs)), () => setFailed(true));
+    fetch(url).then((res) => { if (!res.ok) throw new Error('Replay request failed'); return res.json(); })
+      .then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs))).catch(() => setFailed(true));
   }, [url]);
   const line = useMemo(() => (events ? pace(marks(events), idle) : null), [events]);
   useEffect(() => { if (line && matchMedia('(prefers-reduced-motion: reduce)').matches) { setStill(true); setR(line.total); setPlaying(false); } }, [line]);
