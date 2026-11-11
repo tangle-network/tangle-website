@@ -4,7 +4,7 @@ if (!apiKey) throw new Error("Set TANGLE_API_KEY to your capped Router key.");
 
 const baseUrl = "https://router.tangle.tools/v1";
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-const catalog = await fetch(`${baseUrl}/models?availability=available`, {
+const catalog = await fetch(`${baseUrl}/models/user?availability=available`, {
   headers, signal: AbortSignal.timeout(15_000),
 });
 if (!catalog.ok) throw new Error(`Catalog HTTP ${catalog.status}: ${await catalog.text()}`);
@@ -13,12 +13,13 @@ type Model = {
   pricing: { prompt: string; completion: string };
   seller?: { uncensored?: boolean; cybersecurity?: boolean };
 };
-const { data } = await catalog.json() as { data: Model[] };
+const { data, pricing_policy } = await catalog.json() as { data: Model[]; pricing_policy: unknown };
 const models = data.filter((m) => m.routeable === true && m.availability.status === "available"
   && (m.id.startsWith("abliterated/") || m.seller?.uncensored || m.seller?.cybersecurity));
 console.table(models.map((m) => ({
-  model: m.id, inputUsdPerToken: m.pricing.prompt, outputUsdPerToken: m.pricing.completion,
+  model: m.id, listedInputUsdPerToken: m.pricing.prompt, listedOutputUsdPerToken: m.pricing.completion,
 })));
+console.log("Pricing policy", pricing_policy);
 const model = models.find((m) => m.id === modelId);
 if (!model) throw new Error("Set TANGLE_MODEL to an available security model listed for your key.");
 

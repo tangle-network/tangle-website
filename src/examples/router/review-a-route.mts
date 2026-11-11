@@ -12,7 +12,7 @@ app.post("/profile", requireUser, async (req, res) => {
   res.sendStatus(204);
 });`;
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
-const catalog = await fetch("https://router.tangle.tools/v1/models?availability=available", {
+const catalog = await fetch("https://router.tangle.tools/v1/models/user?availability=available", {
   headers, signal: AbortSignal.timeout(15_000),
 });
 if (!catalog.ok) throw new Error(`Catalog HTTP ${catalog.status}: ${await catalog.text()}`);
@@ -36,4 +36,12 @@ const choice = result.choices?.[0];
 if (choice?.finish_reason !== "stop" || !choice.message?.content) throw new Error("Incomplete review.");
 const report = JSON.parse(choice.message.content) as { findings: unknown[] };
 if (!Array.isArray(report.findings) || report.findings.length > 3) throw new Error("Invalid review format.");
-console.log(JSON.stringify({ model, usage: result.usage, ...report }, null, 2));
+for (const item of report.findings) {
+  const finding = item as Record<string, unknown>;
+  if (!finding || !Number.isInteger(finding.line) || Number(finding.line) < 1
+    || Number(finding.line) > source.split("\n").length
+    || ["title", "evidence", "impact", "fix"].some((key) => typeof finding[key] !== "string")) {
+    throw new Error("Invalid finding format.");
+  }
+}
+console.log(JSON.stringify({ model, usage: result.usage, findings: report.findings }, null, 2));
