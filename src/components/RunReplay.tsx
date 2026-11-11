@@ -154,8 +154,8 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
   return (
     <aside id={id} className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
       <style>{lit}</style>
-      <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
-        <a href={meta.url}>JSON</a></p>
+      <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)} ·{' '}
+        <a href={meta.url}>Run JSON</a></p>
       <ReplayBar replay={replay} className="rr-bar"><Button variant="ghost" size="icon-sm" autoFocus aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
       {events && <>
         <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
