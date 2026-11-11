@@ -1,6 +1,6 @@
 import type { TerminalViewProps } from '@tangle-network/sandbox-ui/terminal';
 import { Button } from '@tangle-network/ui/primitives';
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './live-demo.css';
 
 // A real Pi TUI in a real sandbox, no account: id.tangle.tools issues the session after Turnstile.
@@ -131,7 +131,23 @@ export default function LiveDemo() {
     };
   }, [session]);
 
-  async function start() {
+  // The hero's "Try Pi live" sets window.liveDemoStart, then sends live-demo-start for a hydrated island.
+  // The flag is spent once the demo's state is known, so one click starts at most one session.
+  const [asked, setAsked] = useState(0);
+  useEffect(() => {
+    const ask = () => setAsked((n) => n + 1);
+    addEventListener('live-demo-start', ask);
+    return () => removeEventListener('live-demo-start', ask);
+  }, []);
+  // A layout effect, so the section button never paints enabled between the state and the start.
+  useLayoutEffect(() => {
+    const w = window as unknown as { liveDemoStart?: boolean };
+    if (open === undefined || !w.liveDemoStart) return;
+    w.liveDemoStart = false;
+    if (open && view.kind !== 'starting' && view.kind !== 'live') start('hero');
+  }, [open, asked]);
+
+  async function start(source: 'hero' | 'section') {
     setView({ kind: 'starting' });
     loadTerminal().catch(() => {});
     for (let i = 0; i < 100 && !token.current; i++) await new Promise((r) => setTimeout(r, 200));
@@ -146,7 +162,7 @@ export default function LiveDemo() {
     const body = await res?.json().catch(() => undefined);
     if (res?.status === 201) {
       active.current = Date.now();
-      track('demo_started');
+      track('demo_started', { source });
       return setView({ kind: 'live', session: body });
     }
     const note = NOTES[body?.error?.code] ?? { text: 'The sandbox did not start. Try again.' };
@@ -177,7 +193,7 @@ export default function LiveDemo() {
       {open === false ? (
         <a className="live-demo-btn" href={SIGN_UP} target="_blank" rel="noopener noreferrer" data-track="demo-signup">Create an account to run Pi</a>
       ) : (
-        <Button className="live-demo-btn" data-track="demo-start" disabled={!open || view.kind === 'starting'} onClick={start}>
+        <Button className="live-demo-btn" data-track="demo-start" disabled={!open || view.kind === 'starting'} onClick={() => start('section')}>
           {view.kind === 'starting' ? 'Starting Pi…' : 'Try Pi live'}
         </Button>
       )}
