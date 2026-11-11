@@ -59,7 +59,7 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay
   useEffect(() => {
     if (!playing || !line) return;
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
-      const dt = (now - last) * speed; // React may run the updater after this frame, when `last` has moved on
+      const dt = Math.max(0, now - last) * speed; // The first frame can predate registration; React may apply this update later.
       last = now;
       setR((value) => Math.min(line.total, value + dt));
       raf = requestAnimationFrame(tick);
