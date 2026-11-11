@@ -155,7 +155,7 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
       <style>{lit}</style>
       <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
         <a href={meta.url}>JSON</a></p>
-      <ReplayBar replay={replay} className="rr-bar" autoFocus><Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
+      <ReplayBar replay={replay} className="rr-bar"><Button variant="ghost" size="icon-sm" autoFocus aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
       {events && <>
         <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
         {state.agents.size > 0 && <div className="rr-fleet" aria-label="Fleet agents">
