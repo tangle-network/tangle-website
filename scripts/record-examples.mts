@@ -36,6 +36,8 @@ const SESSION_RUNS = join(ROOT, "src/data/sessions");
 const MAX_AGE_DAYS = 30;
 // Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
 const NO_RUN: Record<string, string> = {
+  "router/security-model": "requires a customer-selected, key-restricted model; no live run recorded",
+  "router/review-a-route": "requires a customer-selected Router model; no live run recorded",
   "runtime/any-cloud-e2b": "no credential in vault",
   "runtime/any-cloud-daytona": "no credential in vault",
   "runtime/any-cloud-computesdk": "no credential in vault",

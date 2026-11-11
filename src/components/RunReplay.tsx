@@ -51,14 +51,15 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay
   const [speed, setSpeed] = useState(1);
   const [still, setStill] = useState(false);
   useEffect(() => {
-    fetch(url).then((res) => res.json()).then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs)), () => setFailed(true));
+    fetch(url).then((res) => { if (!res.ok) throw new Error('Replay request failed'); return res.json(); })
+      .then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs))).catch(() => setFailed(true));
   }, [url]);
   const line = useMemo(() => (events ? pace(marks(events), idle) : null), [events]);
   useEffect(() => { if (line && matchMedia('(prefers-reduced-motion: reduce)').matches) { setStill(true); setR(line.total); setPlaying(false); } }, [line]);
   useEffect(() => {
     if (!playing || !line) return;
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
-      const dt = (now - last) * speed; // React may run the updater after this frame, when `last` has moved on
+      const dt = Math.max(0, now - last) * speed; // The first frame can predate registration; React may apply this update later.
       last = now;
       setR((value) => Math.min(line.total, value + dt));
       raf = requestAnimationFrame(tick);
@@ -153,9 +154,9 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
   return (
     <aside id={id} className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
       <style>{lit}</style>
-      <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · run {meta.runId} · source sha {meta.sha.slice(0, 8)} · SDK {meta.sdk} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)}{' '}
-        <a href={meta.url}>JSON</a></p>
-      <ReplayBar replay={replay} className="rr-bar" autoFocus><Button variant="ghost" size="icon-sm" aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
+      <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)} ·{' '}
+        <a href={meta.url}>Run JSON</a></p>
+      <ReplayBar replay={replay} className="rr-bar"><Button variant="ghost" size="icon-sm" autoFocus aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
       {events && <>
         <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
         {state.agents.size > 0 && <div className="rr-fleet" aria-label="Fleet agents">
