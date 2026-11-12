@@ -140,29 +140,3 @@ export function frame(events: Ev[], t: number, jumps: { atMs: number; gap: numbe
   for (const { atMs, gap } of jumps) if (atMs < t) rows.set(`+${atMs}`, { key: `+${atMs}`, atMs, kind: 'jump', text: `+${elapsed(gap)}` });
   return { values, agents, spend, lines, rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }
-
-// Every call start and end counts as activity, except a poll's: a call repeated from one source line counts only first and last.
-const ticks = (events: Ev[]): Mark[] => {
-  const from = (e: Ev) => events.filter((x) => x.kind === 'call' && x.line === e.line);
-  const poll = (e: Ev) => e.kind === 'call' && !!e.line && from(e).length > 4 && e !== from(e)[0] && e !== from(e).at(-1);
-  return events.filter((e) => !poll(e)).flatMap((e) => [{ atMs: e.atMs }, { atMs: e.atMs + (e.durationMs ?? 0) }]);
-};
-
-export default function RunReplay({ meta }: { meta: RunMeta }) {
-  const replay = useReplay(meta.url, ticks), { events, t, line } = replay;
-  const state = useMemo(() => frame(events ?? [], t, line?.jumps ?? []), [events, t, line]);
-  return (
-    <div className="rr dark" data-theme="website" role="region" aria-label="Recorded output" ref={replay.root} data-at={Math.round(t)}>
-      <div className="rr-head"><span>Recorded output</span><ReplayBar replay={replay} /></div>
-      {!events && <p className="rr-note" role="status">{replay.failed ? 'The recorded output could not load.' : 'Loading recorded output…'}</p>}
-      {events && <>
-        <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
-        {state.agents.size > 0 && <div className="rr-fleet" aria-label="Fleet agents">
-          {state.spend && <p>{usd(state.spend.spentUsd)} spent of {usd(state.spend.capUsd)}</p>}
-          <ul>{[...state.agents].map(([id, a]) => <li key={id} data-state={a.state}><i aria-hidden="true" /><b>{id}</b><span>{a.state === 'running' ? 'running' : `${a.state} ${usd(a.cost)}`}</span></li>)}</ul>
-        </div>}
-        <Feed rows={state.rows} />
-      </>}
-    </div>
-  );
-}
