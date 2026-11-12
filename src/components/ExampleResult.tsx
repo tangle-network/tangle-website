@@ -37,8 +37,6 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
   const artifact = artifacts.items.find((item) => item.id === picked) ?? artifacts.items[0];
   const files = useMemo(() => (artifacts.patch ?? '').split(/(?=^diff --git )/m).filter(Boolean).map((text, index) => ({ id: String(index), text, path: text.match(/^diff --git a\/(.*?) b\/(.*)$/m)?.[2] ?? `File ${index + 1}` })), [artifacts.patch]);
   const selectedFile = files.find((item) => item.id === file) ?? files[0];
-  const pass = artifacts.tests?.result.stdout.match(/^# pass (\d+)$/m)?.[1];
-  const fail = artifacts.tests?.result.stdout.match(/^# fail (\d+)$/m)?.[1];
   return <section className="qs-result" aria-label="Recorded result" aria-busy={!events && !replay.failed}>
     <details className="qs-record-meta"><summary>Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · Details</summary>
       <p>{meta.costUsd !== null && meta.costUsd > 0 ? `Reported usage $${meta.costUsd.toFixed(4)}.` : 'Usage cost not reported.'} Full invoice unknown. Served model not recorded.</p>
@@ -52,7 +50,6 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
       {artifact?.id === 'patch' && files.length > 1 && <FileTabs label="Changed files" activeId={selectedFile.id} onSelect={setFile} tabs={files.map((item) => ({ id: item.id, name: item.path.slice(item.path.lastIndexOf('/') + 1), path: item.path }))} />}
       <div className="qs-output-body" tabIndex={0} aria-label={artifact ? `${artifact.label} from the record` : 'Recorded output'}>
         {artifact ? <>
-          {artifact.id === 'patch' && <p className="qs-output-label"><span>{selectedFile.path}</span>{pass && fail === '0' && artifacts.tests?.result.exitCode === 0 && <span>{pass} tests passed</span>}</p>}
           {artifact.markdown ? <Markdown className="qs-answer">{artifact.text}</Markdown> : artifact.language ? <CodeBlock code={artifact.id === 'patch' ? selectedFile.text : artifact.text} language={artifact.language} label="" showLineNumbers className="rounded-none border-0" /> : <pre>{artifact.text}</pre>}
         </> : <p className="qs-state">This record contains activity without a retained answer or console output.</p>}
       </div>
