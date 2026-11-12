@@ -57,8 +57,8 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
         </> : <p className="qs-state">This record contains activity without a retained answer or console output.</p>}
       </div>
     </>}
-    <details className="qs-activity"><summary>Recorded activity</summary><div ref={replay.root} data-at={Math.round(t)}>
-      <div className="qs-replay-bar"><span>Saved playback</span><ReplayBar replay={replay} /></div>
+    <details className="qs-activity"><summary>Recorded activity</summary><div data-at={Math.round(t)}>
+      <div className="qs-replay-bar" ref={replay.root}><span>Saved playback</span><ReplayBar replay={replay} /></div>
       <Feed rows={state.rows.filter((row) => row.kind !== 'stdout' && row.kind !== 'stderr')} />
     </div></details>
   </section>;
