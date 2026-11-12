@@ -11,9 +11,9 @@ export interface Subject { id: string; label: string; install: string; ideas: Id
 // reader copies is what `pnpm check:examples` compiled. TypeScript only: the Python SDK is not published.
 function rove(count: number, current: number, pick: (index: number) => void, keys: string[]) {
   return (event: KeyboardEvent) => {
-    if (!keys.includes(event.key)) return;
+    if (![...keys, 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    pick((current + (/Left|Up/.test(event.key) ? -1 : 1) + count) % count);
+    pick(event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : (current + (/Left|Up/.test(event.key) ? -1 : 1) + count) % count);
   };
 }
 
@@ -26,10 +26,11 @@ function Tab({ id, panel, selected, onSelect, children }: { id: string; panel: s
 }
 
 export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
-  const uid = useId(); // ids stay unique when the page holds more than one editor
+  const uid = useId();
   const [col, setCol] = useState(0);
   const [rows, setRows] = useState(() => subjects.map(() => 0));
   const [replay, setReplay] = useState<string | null>(null);
+  const [wrap, setWrap] = useState(false);
   const subject = subjects[col];
   const row = rows[col];
   const idea = subject.ideas[row];
@@ -37,31 +38,33 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
   const run = `${idea.install ?? subject.install} && ${[...new Set(Array.from(idea.code.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)\b(?!\s*\?\?)/g), ([, name]) => name))].map((name) => `${name}=<${name.slice(name.lastIndexOf('_') + 1).toLowerCase()}>`).join(' ')} npx tsx ${idea.id}.mts`;
   const playing = replay === cell && idea.run;
 
-  const pickCol = (next: number) => { setCol(next); document.getElementById(`qs-col-${subjects[next].id}`)?.focus(); };
+  const pickCol = (next: number) => { setCol(next); document.getElementById(`${uid}-col-${subjects[next].id}`)?.focus(); };
   const setRow = (next: number) => setRows(rows.map((value, index) => (index === col ? next : value)));
-  const pickRow = (next: number) => { setRow(next); document.getElementById(`qs-row-${subject.id}-${subject.ideas[next].id}`)?.focus(); };
+  const pickRow = (next: number) => { setRow(next); document.getElementById(`${uid}-row-${subject.id}-${subject.ideas[next].id}`)?.focus(); };
 
   return (
-    <div className="qs-editor">
+    <div className={`qs-editor${wrap ? ' qs-wrap' : ''}`}>
       <div className="qs-cols" role="tablist" aria-label="Subjects" onKeyDown={rove(subjects.length, col, pickCol, ['ArrowLeft', 'ArrowRight'])}>
         {subjects.map((item, index) => (
-          <Tab key={item.id} id={`qs-col-${item.id}`} panel={`${uid}-panel`} selected={index === col} onSelect={() => setCol(index)}>{item.label}</Tab>
+          <Tab key={item.id} id={`${uid}-col-${item.id}`} panel={`${uid}-panel`} selected={index === col} onSelect={() => setCol(index)}>{item.label}</Tab>
         ))}
       </div>
       <div className="qs-body">
         <div key={subject.id} className="qs-rows" role="tablist" aria-orientation="vertical" aria-label={`${subject.label} examples`}
           onKeyDown={rove(subject.ideas.length, row, pickRow, ['ArrowUp', 'ArrowDown'])}>
           {subject.ideas.map((item, index) => (
-            <Tab key={item.id} id={`qs-row-${subject.id}-${item.id}`} panel={`${uid}-panel`} selected={index === row} onSelect={() => setRow(index)}>{item.title}</Tab>
+            <Tab key={item.id} id={`${uid}-row-${subject.id}-${item.id}`} panel={`${uid}-panel`} selected={index === row} onSelect={() => setRow(index)}>{item.title}</Tab>
           ))}
         </div>
-        <div className={`qs-main${playing ? ' is-replaying' : ''}`} id={`${uid}-panel`} role="tabpanel" aria-labelledby={`qs-row-${cell}`}>
+        <div className={`qs-main${playing ? ' is-replaying' : ''}`} id={`${uid}-panel`} role="tabpanel" aria-labelledby={`${uid}-row-${cell}`}>
           <div className="qs-actions">
+            <span className="qs-file">{idea.id}.mts</span>
             <select className="qs-pick" aria-label={`${subject.label} example`} value={row} onChange={(event) => setRow(Number(event.target.value))}>
               {subject.ideas.map((item, index) => <option key={item.id} value={index}>{item.title}</option>)}
             </select>
-            {idea.run && <Button id={`${uid}-play`} size="sm" variant={playing ? 'default' : 'outline'} className="qs-play" aria-expanded={!!playing} aria-controls={`${uid}-replay`}
-              onClick={() => setReplay(playing ? null : cell)}>{playing ? 'Close' : '▶ Play'}</Button>}
+            <Button size="sm" variant={wrap ? 'default' : 'outline'} className="qs-option" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>Wrap lines</Button>
+            {idea.run && <Button id={`${uid}-play`} size="sm" variant={playing ? 'default' : 'outline'} className="qs-option qs-play" aria-expanded={!!playing} aria-controls={`${uid}-replay`}
+              onClick={() => setReplay(playing ? null : cell)}>{playing ? 'Close' : '▶ Replay'}</Button>}
             <CopyButton key={cell} text={idea.code} aria-label="Copy file" />
           </div>
           {playing && <RunReplay key={`replay-${cell}`} id={`${uid}-replay`} meta={idea.run!} onClose={() => { setReplay(null); document.getElementById(`${uid}-play`)?.focus(); }} />}
