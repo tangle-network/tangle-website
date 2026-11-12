@@ -36,12 +36,13 @@ const recordAt = (anchors: [number, number][], r: number) => {
 };
 
 /** One clock for both demos. Visibility pauses work; reduced motion opens the finished record. */
-export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Idle = [10_000, 800]) {
+export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Idle = [10_000, 800], [minMs, maxMs]: [number, number] = [0, Infinity]) {
   const root = useRef<HTMLDivElement>(null);
   const [events, setEvents] = useState<Ev[] | null>(null), [failed, setFailed] = useState(false);
   const [r, setR] = useState(0), [enabled, setEnabled] = useState(true);
   const [visible, setVisible] = useState(false), [hidden, setHidden] = useState(false), [still, setStill] = useState(false);
   useEffect(() => {
+    if (!url) return; // a file with no record has nothing to replay
     const controller = new AbortController();
     fetch(url, { signal: controller.signal }).then((res) => { if (!res.ok) throw new Error('Record unavailable'); return res.json(); })
       .then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs)))
@@ -68,7 +69,7 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Id
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
       const dt = Math.max(0, now - last);
       last = now;
-      setR((value) => Math.min(line.total, value + dt));
+      setR((value) => Math.min(line.total, value + dt * (line.total > maxMs ? line.total / maxMs : line.total < minMs ? line.total / minMs : 1))); // every record plays in minMs to maxMs
       raf = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(raf);
