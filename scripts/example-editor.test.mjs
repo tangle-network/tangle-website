@@ -107,7 +107,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     }
     const optionalTelemetry = error => {
       const failedScripts = requestFailures.filter(request => request.method === 'GET' && request.type === 'script' && Math.abs(request.at - error.at) < 1000);
-      return error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(request => /https:\/\/(?:id\.tangle\.tools\/journey\.js|www\.googletagmanager\.com\/gtag\/js|static\.cloudflareinsights\.com\/)/.test(request.url));
+      const knownTelemetry = request => {
+        const { origin, pathname } = new URL(request.url);
+        return (origin === 'https://id.tangle.tools' && pathname === '/journey.js') ||
+          (origin === 'https://www.googletagmanager.com' && pathname === '/gtag/js') ||
+          (origin === 'https://static.cloudflareinsights.com' && /^\/beacon\.min\.js(?:\/|$)/.test(pathname));
+      };
+      return error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(knownTelemetry);
     };
     item.optionalTelemetryErrors = item.errorDetails.filter(optionalTelemetry);
     item.appErrors = item.errorDetails.filter(error => !optionalTelemetry(error));
