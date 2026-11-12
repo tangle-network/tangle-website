@@ -35,19 +35,26 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     ...(width <= 680 ? { isMobile: true, hasTouch: true } : {}),
     ...(engine === chromium ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}),
     ...(name === 'phone' ? { recordVideo: { dir: `${out}/video`, size: { width, height } } } : {}) });
-  await context.route('**/*', route => ['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort());
-  const page = await context.newPage(), errors = [], requestFailures = [], item = { name, width, height, errors, requestFailures, errorDetails: [] };
+  const challengeTraffic = [];
+  await context.route('**/*', route => {
+    const request = route.request(), { origin, pathname } = new URL(request.url());
+    const challenge = request.method() === 'POST' && origin === 'https://challenges.cloudflare.com' && pathname.startsWith('/cdn-cgi/challenge-platform/');
+    if (challenge) challengeTraffic.push({ method: request.method(), origin, path: '/cdn-cgi/challenge-platform/', at: Date.now() });
+    return ['GET', 'HEAD', 'OPTIONS'].includes(request.method()) || challenge ? route.continue() : route.abort();
+  });
+  const page = await context.newPage(), errors = [], requestFailures = [], item = { name, width, height, errors, requestFailures, challengeTraffic, errorDetails: [] };
   report.cases.push(item);
   page.on('pageerror', error => { errors.push(String(error)); item.errorDetails.push({ message: String(error), stack: error.stack, at: Date.now() }); });
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
   try {
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
-    const editor = page.locator('.qs-editor'), run = editor.getByRole('button', { name: 'Run', exact: true });
+    // client:visible starts hydration only after the server-rendered island is visible.
+    await page.locator('.qs-editor').scrollIntoViewIfNeeded();
+    const editor = page.locator('astro-island:not([ssr]) .qs-editor'), run = editor.getByRole('button', { name: 'Run', exact: true });
     await run.waitFor();
-    await editor.scrollIntoViewIfNeeded();
     check(await editor.locator('.qs-result').count() === 0, 'Output must wait for Run', item);
     check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
-    item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth,
+    item.initial = await editor.evaluate(root => ({ hydrated: !root.closest('astro-island').hasAttribute('ssr'), overflow: document.documentElement.scrollWidth - innerWidth,
       codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize,
       codeHeight: root.querySelector('.qs-code').getBoundingClientRect().height,
       taskVisible: (() => { const pane = root.querySelector('.qs-code').getBoundingClientRect(), row = [...root.querySelectorAll('.qs-code pre > code > span')].find(e => e.textContent.includes('await box.prompt('))?.getBoundingClientRect(); return !!row && row.top >= pane.top && row.bottom <= pane.bottom; })() }));
@@ -120,20 +127,20 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(await page.locator('.pr iframe').count() === 0, 'App preview must remain still under reduced motion', item);
       await page.screenshot({ path: `${out}/${name}-app-preview.png` });
     }
-    const optionalTelemetry = error => {
-      const failedScripts = requestFailures.filter(request => request.method === 'GET' && request.type === 'script' && Math.abs(request.at - error.at) < 1000);
-      const knownTelemetry = request => {
-        const { origin, pathname } = new URL(request.url);
-        return (origin === 'https://id.tangle.tools' && pathname === '/journey.js') ||
-          (origin === 'https://www.googletagmanager.com' && pathname === '/gtag/js') ||
-          (origin === 'https://static.cloudflareinsights.com' && /^\/beacon\.min\.js(?:\/|$)/.test(pathname));
-      };
-      return error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(knownTelemetry);
-    };
-    item.optionalTelemetryErrors = item.errorDetails.filter(optionalTelemetry);
-    item.appErrors = item.errorDetails.filter(error => !optionalTelemetry(error));
-    check(item.appErrors.length === 0, 'Browser application errors', item);
   } catch (error) { report.failures.push({ case: name, message: String(error) }); }
+  const optionalTelemetry = error => {
+    const failedScripts = requestFailures.filter(request => request.method === 'GET' && request.type === 'script' && Math.abs(request.at - error.at) < 1000);
+    const knownTelemetry = request => {
+      const { origin, pathname } = new URL(request.url);
+      return (origin === 'https://id.tangle.tools' && pathname === '/journey.js') ||
+        (origin === 'https://www.googletagmanager.com' && pathname === '/gtag/js') ||
+        (origin === 'https://static.cloudflareinsights.com' && /^\/beacon\.min\.js(?:\/|$)/.test(pathname));
+    };
+    return error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(knownTelemetry);
+  };
+  item.optionalTelemetryErrors = item.errorDetails.filter(optionalTelemetry);
+  item.appErrors = item.errorDetails.filter(error => !optionalTelemetry(error));
+  check(item.appErrors.length === 0, 'Browser application errors', item);
   await page.close(); await context.close(); await browser.close();
 }
 await fs.writeFile(`${out}/results.json`, JSON.stringify(report, null, 2));
