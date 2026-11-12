@@ -7,10 +7,11 @@
 //   safeguards are verified, and the compliance owner records approval (register:
 //   company compliance/policies/hipaa-baa-inventory.md). Only then add
 //   { product: 'hipaa', status: 'compliant', href: '/security/#hipaa' }.
-// - SOC 2 report issuance has not been verified. Keep the report-pending
-//   state until the issued report is confirmed; audit progress is not issuance.
+// - The SOC 2 entry links to audit information without asserting report issuance.
 export type ComplianceBadgeProduct = 'hipaa' | 'soc2';
 export type ComplianceBadgeState = 'ready' | 'compliant';
+
+export const TRUST_CENTER_URL = 'https://app.vanta.com/tangle.tools/trust/kzhjp5g62vhwoalztadtz';
 
 export interface ComplianceBadgeEntry {
   product: ComplianceBadgeProduct;
@@ -22,6 +23,6 @@ export const COMPLIANCE_BADGES: ComplianceBadgeEntry[] = [
   {
     product: 'soc2',
     status: 'ready',
-    href: 'https://app.vanta.com/tangle.tools/trust/kzhjp5g62vhwoalztadtz',
+    href: TRUST_CENTER_URL,
   },
 ];
