@@ -52,7 +52,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
     // The run starts when the editor is on screen: the running line is marked and the machine pane fills.
     await editor.locator('.qs-main[data-state="running"] .qs-band[data-on]').waitFor();
-    await editor.locator('.qs-feed li').first().waitFor();
+    await editor.locator('.qs-feed [data-timeline-step]').first().waitFor();
     if (name === 'desktop') {
       await editor.getByRole('button', { name: 'Any cloud', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'runtime/any-cloud.mts' }).waitFor();
@@ -85,6 +85,11 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copied', exact: true }).waitFor();
       check(await page.evaluate(() => navigator.clipboard.readText()) === source, 'Copy must preserve full runnable source', item);
     }
+    check((await editor.locator('.qs-feed').innerText()).includes('Find the cause and fix it.') && await editor.locator('.qs-feed [data-timeline-step="tool"]').count() >= 10, 'The transcript shows the prompt and each step the agent took', item);
+    await editor.getByRole('slider', { name: 'Run position' }).press('Home');
+    check(await main.getAttribute('data-state') !== 'ended' && !(await editor.locator('.qs-clock').innerText()).includes('$'), 'Moving the run position moves the run', item);
+    await editor.getByRole('slider', { name: 'Run position' }).press('End');
+    await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await press('Run again').click();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(/^0:0\d/.test(await editor.locator('.qs-clock').innerText()), 'Run again must restart', item);
@@ -96,13 +101,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await load('sandboxes/run-code');
       const commandRecord = await read('sandboxes/run-code');
       const commandOutput = commandRecord.events.find(event => event.result?.stdout?.includes('Linux')).result.stdout.trim();
-      await editor.locator('.qs-result').getByText(commandOutput, { exact: false }).waitFor();
-      check((await editor.locator('.qs-result').innerText()).split(commandOutput).length - 1 === 1, 'Command output must appear once', item);
+      await editor.locator('.qs-feed').getByText(commandOutput, { exact: false }).waitFor();
+      check((await editor.locator('.qs-feed').innerText()).split(commandOutput).length - 1 === 1, 'Command output must appear once', item);
       await load('sandboxes/worker');
       const workerRecord = await read('sandboxes/worker');
       const workerAnswer = workerRecord.events.find(event => typeof event.result?.response === 'string').result.response;
-      await editor.locator('.qs-result').getByText('Upgrade Complete', { exact: false }).waitFor();
-      check(normalized(await editor.locator('.qs-result').innerText()).split(normalized(workerAnswer)).length - 1 === 1, 'Complete long-job answer must appear once', item);
+      await editor.locator('.qs-feed').getByText('Upgrade Complete', { exact: false }).waitFor();
+      check(normalized(await editor.locator('.qs-feed').innerText()).split(normalized(workerAnswer)).length - 1 === 1, 'Complete long-job answer must appear once', item);
       await load('evals/regression-gate'); await editor.getByText('{ shipped: 1, candidate: 1 }', { exact: false }).waitFor();
       await load('evals/score-a-trace'); await editor.getByText('Score 1', { exact: true }).waitFor();
       check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);

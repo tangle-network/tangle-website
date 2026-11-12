@@ -75,7 +75,8 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Id
     return () => cancelAnimationFrame(raf);
   }, [playing, line]);
   const toggle = () => { if (line && r >= line.total) { setR(0); setEnabled(true); } else setEnabled(!enabled); };
-  return { root, url, events, failed, line, r, t: line ? recordAt(line.anchors, r) : 0, playing, toggle, still, visible: visible && !hidden };
+  const seek = (part: number) => line && setR(part * line.total); // the reader drags the run to any moment
+  return { root, url, events, failed, line, r, t: line ? recordAt(line.anchors, r) : 0, playing, toggle, seek, still, visible: visible && !hidden };
 }
 
 export function ReplayBar({ replay }: { replay: ReturnType<typeof useReplay> }) {

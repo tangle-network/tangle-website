@@ -1,10 +1,11 @@
+import { AgentTimeline, type AgentTimelineItem } from '@tangle-network/ui/chat/agent-timeline';
 import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
-import { Button } from '@tangle-network/ui/primitives';
+import { InlineThinkingItem } from '@tangle-network/ui/run/inline-thinking-item';
+import { Button, Slider } from '@tangle-network/ui/primitives';
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { clock } from '../utils/date';
-import { agentSteps } from '../utils/session.mjs';
 import ExampleResult from './ExampleResult';
-import { Feed, useReplay, type Ev, type Mark, type Row, type RunMeta } from './RunReplay';
+import { useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
 import './quickstart-code.css';
 
 export interface Idea { id: string; title: string; code: string; run?: RunMeta; install?: string }
@@ -14,7 +15,8 @@ export const Install = ({ command, label }: { command: string; label: string }) 
   <div className="qs-install" role="group" aria-label={label}><code><span aria-hidden="true">$ </span>{command}</code><CopyButton key={command} text={command} aria-label="Copy command" /></div>
 );
 
-const PLAY_MS: [number, number] = [5000, 16_000]; // every replay lasts this long: a short record plays slower, a long one faster
+const PLAY_MS: [number, number] = [5000, 20_000]; // every replay lasts this long: a short record plays slower, a long one faster
+const IDLE: [number, number] = [2500, 1200]; // a wait over 2.5 s plays in 1.2 s, long enough to see the agent think
 const marks = (events: Ev[]): Mark[] => events.flatMap((event) => [{ atMs: event.atMs }, { atMs: event.atMs + (event.durationMs ?? 0) }]);
 const seconds = (ms = 0) => (ms < 995 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 9950 ? 1 : 0)} s`);
 const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
@@ -34,30 +36,49 @@ function brief(result: any): string {
 }
 const failed = (event: Ev) => !!event.error || (typeof event.result?.exitCode === 'number' && event.result.exitCode !== 0);
 
-/** The run so far: one row per source line that made calls, and the agent's own steps as they happen. */
-function activity(events: Ev[], t: number) {
-  const lines = new Map<number, { row: Row; done: number; total: number; last?: Ev }>();
-  const rows: Row[] = [];
-  let active: number | undefined;
+type Item = AgentTimelineItem & { atMs: number };
+const tidy = (input: Record<string, unknown> = {}) => Object.fromEntries(Object.entries(input).map(([k, v]) => [k, typeof v === 'string' ? v.replace(/\/home\/agent\//g, '') : v]));
+
+/** The run so far, as the product's own transcript: what each source line did on the machine, and the agent's words, reasoning and tool calls as they happen. */
+function activity(events: Ev[], t: number, source: string[]) {
+  const lines = new Map<number, { atMs: number; label: string; done: number; total: number; turn: boolean; state?: string; last?: Ev }>();
+  const items = new Map<string, Item>();
+  const streamed = events.some((event) => event.data?.part?.type === 'text'); // a newer record carries the agent's own words
+  let active: number | undefined, busy = false;
   for (const event of events) {
     if (event.atMs > t) break;
+    const part = event.type === 'message.part.updated' ? event.data?.part : undefined;
     if (event.kind === 'call' && event.line) {
       const done = event.atMs + (event.durationMs ?? 0) <= t;
       let line = lines.get(event.line);
-      if (!line) { line = { row: { key: `l${event.line}`, atMs: event.atMs, kind: 'call', text: event.label ?? '' }, done: 0, total: 0 }; lines.set(event.line, line); rows.push(line.row); }
+      if (!line) lines.set(event.line, line = { atMs: event.atMs, label: event.label ?? '', done: 0, total: 0, turn: typeof event.result?.response === 'string' });
       line.total++;
       if (done) { line.done++; line.last = event; } else active = event.line;
-    } else if (event.type === 'agent.started') rows.push({ key: event.data.agentId, atMs: event.atMs, kind: 'tool', text: event.data.agentId, detail: event.data.harness, state: 'running' });
-    else if (event.type === 'agent.finished') { const row = rows.find((item) => item.key === event.data.result?.agentId); if (row) row.state = event.data.result.status; }
+      if (done && line.turn && !streamed) items.set(`a${event.atMs}`, { id: `a${event.atMs}`, atMs: event.atMs + (event.durationMs ?? 0), kind: 'message', role: 'assistant', content: event.result.response });
+    } else if (part?.type === 'tool') {
+      const status = part.state?.status === 'completed' ? 'success' : part.state?.status === 'error' ? 'error' : 'running';
+      items.set(part.id, { id: part.id, atMs: items.get(part.id)?.atMs ?? event.atMs, kind: 'tool', call: { id: part.id, type: 'unknown', label: part.tool, status },
+        part: { ...part, state: { ...part.state, input: tidy(part.state?.input) } } });
+    } else if (part?.type === 'text' || part?.type === 'reasoning') {
+      const end = (event as { endMs?: number }).endMs ?? event.atMs, live = t < end;
+      const text = live ? part.text.slice(0, Math.ceil(part.text.length * (t - event.atMs) / (end - event.atMs))) : part.text; // the words arrive over the time they took
+      items.set(part.id, part.type === 'text' ? { id: part.id, atMs: event.atMs, kind: 'message', role: 'assistant', content: text, isStreaming: live }
+        : { id: part.id, atMs: event.atMs, kind: 'custom', content: <InlineThinkingItem part={{ type: 'reasoning', text, time: { start: event.atMs, end: live ? undefined : end } }} /> });
+    } else if (event.type === 'agent.started') items.set(event.data.agentId, { id: event.data.agentId, atMs: event.atMs, kind: 'tool', call: { id: event.data.agentId, type: 'unknown', label: event.data.agentId, detail: event.data.harness, status: 'running' } });
+    else if (event.type === 'agent.finished') { const item = items.get(event.data.result?.agentId); if (item?.kind === 'tool') item.call = { ...item.call, status: event.data.result.status === 'completed' ? 'success' : 'error' }; }
   }
-  for (const { row, done, total, last } of lines.values()) {
-    row.state = done < total ? 'running' : last && failed(last) ? 'failed' : 'completed';
-    row.detail = [total > 1 ? `${done}/${total}` : '', last ? brief(last.result) : '', last && total === 1 ? seconds(last.durationMs) : ''].filter(Boolean).join(' · ');
+  for (const [n, line] of lines) {
+    const { done, total, last } = line, running = done < total;
+    line.state = running ? 'running' : last && failed(last) ? 'failed' : 'completed';
+    const said = source[n - 1]?.match(new RegExp(`\\b${line.label.split('.').pop()}\\(\\s*(["'\`])((?:\\\\.|(?!\\1).)+)\\1`))?.[2]; // the string the call passes: a prompt or a command
+    if (line.turn) { busy ||= running; if (said) items.set(`l${n}`, { id: `l${n}`, atMs: line.atMs, kind: 'message', role: 'user', content: said }); continue; }
+    const exec = /\.exec$/.test(line.label) && said;
+    items.set(`l${n}`, { id: `l${n}`, atMs: line.atMs, kind: 'tool', call: { id: `l${n}`, type: exec ? 'bash' : 'unknown', label: exec ? said : line.label, status: running ? 'running' : line.state === 'failed' ? 'error' : 'success',
+      detail: [total > 1 ? `${done}/${total}` : '', last ? brief(last.result) : '', last && total === 1 ? seconds(last.durationMs) : ''].filter(Boolean).join(' · ') } });
   }
-  for (const step of agentSteps(events)) if (step.atMs <= t) rows.push({ key: step.id, atMs: step.atMs, kind: 'tool', text: step.tool.toLowerCase(),
-    detail: String(step.input.description ?? step.input.command ?? step.input.file_path ?? step.input.filePath ?? step.input.pattern ?? '').replace(/\/home\/agent\//g, ''),
-    state: step.endMs !== undefined && step.endMs <= t ? step.status : 'running' });
-  return { rows: rows.sort((a, b) => a.atMs - b.atMs), lines, active };
+  const list = [...items.values()].sort((a, b) => a.atMs - b.atMs);
+  const quiet = !list.some((item) => (item.kind === 'tool' && item.call.status === 'running') || (item.kind === 'message' && item.isStreaming));
+  return { items: list, lines, active, thinking: busy && quiet };
 }
 
 /** Each source line's top, height and the free width after its text, inside the scrolling code pane, kept current as it reflows. */
@@ -79,12 +100,20 @@ function useLineBoxes(pane: React.RefObject<HTMLElement | null>, code: string) {
 }
 
 function Workspace({ idea, folder, install }: { idea: Idea; folder: string; install: string }) {
-  const source = useRef<HTMLElement>(null);
-  const replay = useReplay(idea.run?.url ?? '', marks, [700, 420], PLAY_MS);
+  const source = useRef<HTMLElement>(null), feed = useRef<HTMLDivElement>(null);
+  const replay = useReplay(idea.run?.url ?? '', marks, IDLE, PLAY_MS);
   const { events, t, line, r } = replay;
   const boxes = useLineBoxes(source, idea.code);
   const ended = !!line && r >= line.total, started = r > 0;
-  const run = useMemo(() => activity(events ?? [], started ? t : -1), [events, t, started]);
+  const code = useMemo(() => idea.code.split('\n'), [idea.code]);
+  const run = useMemo(() => activity(events ?? [], started ? t : -1, code), [events, t, started]);
+  const placed = useRef(0), held = useRef(false); // the reader took the scroll: the transcript stops following until the run restarts or moves
+  if (!started) held.current = false;
+  useLayoutEffect(() => { // follow the newest row; a finished run, or a result taller than the pane, reads from the result's first line
+    const el = feed.current, result = el?.querySelector<HTMLElement>('.qs-result');
+    const top = result && (ended || result.scrollHeight > el!.clientHeight) ? result.offsetTop : Infinity;
+    if (el && !held.current) placed.current = el.scrollTop = Math.min(el.scrollHeight - el.clientHeight, top);
+  });
   const band = run.active !== undefined ? boxes[run.active - 1] : undefined;
   const lastBand = useRef(band);
   if (band) lastBand.current = band;
@@ -107,8 +136,8 @@ function Workspace({ idea, folder, install }: { idea: Idea; folder: string; inst
         <CodeBlock code={idea.code} language="ts" label="" showLineNumbers className="rounded-none border-0" />
         <div className="qs-exec" aria-hidden="true">
           {lastBand.current && <i className="qs-band" data-on={!!band || undefined} style={{ transform: `translateY(${lastBand.current[0]}px)`, height: lastBand.current[1] }} />}
-          {[...run.lines].map(([n, { row, last }]) => boxes[n - 1] && row.state !== 'running' && last &&
-            <span key={n} className="qs-ret" data-state={row.state} style={{ top: boxes[n - 1][0] + boxes[n - 1][1] }}>{boxes[n - 1][2] > 240 && <b>{brief(last.result)}</b>}{seconds(last.durationMs)}</span>)}
+          {[...run.lines].map(([n, { state, last }]) => boxes[n - 1] && state !== 'running' && last &&
+            <span key={n} className="qs-ret" data-state={state} style={{ top: boxes[n - 1][0] + boxes[n - 1][1] }}>{boxes[n - 1][2] > 240 && <b>{brief(last.result)}</b>}{seconds(last.durationMs)}</span>)}
         </div>
       </section>
       <Install command={idea.install ?? install} label="Install" />
@@ -117,12 +146,13 @@ function Workspace({ idea, folder, install }: { idea: Idea; folder: string; inst
         <div className="qs-status">
           <span className="qs-box">{box && started ? box : 'sandbox'}</span>
           <span className="qs-clock">{clock(t)}{ended && idea.run.costUsd ? ` · ${usd(idea.run.costUsd)}` : ''}</span>
-          <i className="qs-progress" style={{ transform: `scaleX(${line ? r / line.total : 0})` }} />
+          <Slider className="qs-progress" aria-label="Run position" max={1} step={0.001} disabled={!line} value={[line ? r / line.total : 0]} onValueChange={([part]) => { held.current = false; replay.seek(part); }} />
         </div>
-        {!events ? <p className="qs-wait" role="status">{replay.failed ? 'The run could not load.' : ''}</p> : <>
-          <Feed rows={run.rows} className="qs-feed" />
-          <ExampleResult events={events} t={started ? t : -1} ended={ended} />
-        </>}
+        {!events ? <p className="qs-wait" role="status">{replay.failed ? 'The run could not load.' : ''}</p> :
+          <div className="qs-feed" ref={feed} role="region" aria-label="Run" tabIndex={0} onPointerDown={() => { held.current = true; }} onScroll={(event) => { if (Math.abs(event.currentTarget.scrollTop - placed.current) > 2) held.current = true; }}>
+            <AgentTimeline items={run.items} isThinking={run.thinking} />
+            <ExampleResult events={events} t={started ? t : -1} />
+          </div>}
     </div>}
   </div>;
 }

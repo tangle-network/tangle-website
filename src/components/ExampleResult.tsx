@@ -1,13 +1,9 @@
-import { CodeBlock, Markdown } from '@tangle-network/ui/markdown';
-import { useFollowTail } from '@tangle-network/ui/hooks/use-follow-tail';
-import { useEffect, useMemo, useRef } from 'react';
-import { agentSteps, stepKind, stepPath } from '../utils/session.mjs';
+import { Markdown } from '@tangle-network/ui/markdown';
+import { useMemo } from 'react';
 import type { Ev } from './RunReplay';
 
-/** What the run has printed, changed and answered by recorded time `t`. */
-export default function ExampleResult({ events, t, ended }: { events: Ev[]; t: number; ended: boolean }) {
-  const panel = useRef<HTMLDivElement>(null);
-  const work = useMemo(() => agentSteps(events).filter((step) => step.atMs <= t && ['edit', 'write'].includes(stepKind(step))), [events, t]);
+/** What the run has produced by recorded time `t`: printed output, test results, the patch, scores and each fleet agent's answer. The timeline beside it shows the work. */
+export default function ExampleResult({ events, t }: { events: Ev[]; t: number }) {
   const result = useMemo(() => {
     const calls = events.filter((event) => event.kind === 'call' && event.atMs + (event.durationMs ?? 0) <= t);
     const outputs = calls.filter((event) => typeof event.result?.stdout === 'string' && event.result.stdout.trim());
@@ -16,8 +12,8 @@ export default function ExampleResult({ events, t, ended }: { events: Ev[]; t: n
     const pass = tests?.match(/^# pass (\d+)/m)?.[1], fail = tests?.match(/^# fail (\d+)/m)?.[1];
     const answers = events.flatMap((event, key) => {
       const agent = event.type === 'agent.finished' && event.atMs <= t ? event.data?.result : undefined;
-      const text = agent?.result?.response ?? (calls.includes(event) ? event.result?.response : undefined);
-      return typeof text === 'string' || agent ? [{ key, text: typeof text === 'string' ? text : '', agent: agent?.agentId, status: agent?.status, error: agent?.error ?? agent?.result?.error }] : [];
+      const text = agent?.result?.response;
+      return agent ? [{ key, text: typeof text === 'string' ? text : '', agent: agent.agentId, status: agent.status, error: agent.error ?? agent.result?.error }] : [];
     });
     const assessments = calls.filter((event) => event.label === 'judge.score');
     const errors = calls.flatMap((event) => {
@@ -34,11 +30,9 @@ export default function ExampleResult({ events, t, ended }: { events: Ev[]; t: n
       output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
   }, [events, t]);
 
-  const empty = !work.length && !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && !result.tests;
-  useFollowTail(panel, { content: `${work.length}:${result.consoleText.length}:${result.output.length}:${ended}`, follow: !ended });
-  useEffect(() => { panel.current?.scrollTo({ top: 0 }); }, [ended, result.answers.length]); // an answer and the finished result read from their first line
+  const empty = !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && !result.tests;
   if (empty) return null;
-  return <div className="qs-result" ref={panel} data-ended={ended || undefined} role="region" aria-label="Example output" tabIndex={0}>
+  return <div className="qs-result">
     <div className="qs-output">
         {result.errors.map((error, index) => <pre key={index} className="qs-error">{error}</pre>)}
         {result.consoleText &&
@@ -53,16 +47,8 @@ export default function ExampleResult({ events, t, ended }: { events: Ev[]; t: n
             <a className="qs-patch" download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>
           </>}
         </> : <>
-          {work.map((step) => {
-            const code = step.input.new_string ?? step.input.newString ?? step.input.content;
-            const path = stepPath(step);
-            return <div key={step.id} className="qs-work">
-              <p>{String(path).replace(/^.*\/sandbox-demo\//, '')}</p>
-              {typeof code === 'string' && <CodeBlock code={code} language="ts" label="" />}
-            </div>;
-          })}
           {result.answers.map((answer) => <div key={answer.key}>
-            {answer.agent && <p className="qs-agent">{answer.agent}{answer.status && answer.status !== 'completed' ? ` · ${answer.status}` : ''}</p>}
+            <p className="qs-agent">{answer.agent}{answer.status && answer.status !== 'completed' ? ` · ${answer.status}` : ''}</p>
             {answer.error && <p className="qs-error">{String(answer.error)}</p>}
             <Markdown>{answer.text}</Markdown>
           </div>)}

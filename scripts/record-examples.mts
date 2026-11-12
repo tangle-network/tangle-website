@@ -329,7 +329,9 @@ function save(path: string, record: RunRecord, key?: string) {
   const events = record.events.flatMap((e) => {
     if (e.kind !== "stream" || /^(agent|fleet)\.(started|finished)$/.test(String(e.type))) return [e];
     const part = e.type === "message.part.updated" ? (e.data as { part?: Record<string, any> } | undefined)?.part : undefined;
-    return part?.type === "tool" ? [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input } } } }] : [];
+    // The editor's timeline reads the agent's words, its reasoning, and each tool's input and (clipped) output.
+    if (part?.type === "tool") return [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input, output: clip(part.state?.output ?? part.state?.error, 1200) } } } }];
+    return (part?.type === "text" || part?.type === "reasoning") && String(part.text ?? "").trim() ? [{ ...e, data: { part: { id: part.id, type: part.type, text: part.text } } }] : [];
   });
   const json = JSON.stringify({ ...record, events }, (k, v) => UNREAD.test(k) || (ID.test(k) && !source.includes(k)) ? undefined : k === "account" ? "…" : typeof v === "string" ? scrub(v) : v, 1)
     .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s"\\]+)/g, "$1=[redacted]")
