@@ -72,7 +72,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await page.waitForTimeout(350);
     check(await output.getAttribute('data-at') === paused, 'Pause must stop the clock', item);
     await page.screenshot({ path: `${out}/${name}-paused.png` });
-    await output.getByRole('button', { name: 'Play recorded demo', exact: true }).click();
+    await output.getByRole('button', { name: 'Play recorded demo', exact: true }).focus();
+    await output.getByRole('button', { name: 'Play recorded demo', exact: true }).press('Space');
     await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: 45000 });
     await output.getByRole('link', { name: 'Download patch', exact: true }).waitFor();
     await output.getByRole('button', { name: 'Replay recorded demo', exact: true }).waitFor();
