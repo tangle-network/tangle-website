@@ -133,7 +133,7 @@ export default function PairReplay({ meta, install, stillUrl }: { meta: SessionM
   return (
     <div className="pr dark" data-theme="website" ref={replay.root} data-open={opened || undefined} data-at={Math.round(t)}>
       <div className="pr-window">
-        <div className="pr-bar"><span>Recorded session</span><ReplayBar replay={replay} /></div>
+        <div className="pr-bar"><ReplayBar replay={replay} /></div>
         <section className="pr-editor" aria-label="Files the agent wrote">
           {view.files.size > 0 && <FileTabs className="pr-tabs" label="Files the agent wrote" activeId={shown?.path} onSelect={setPicked}
             tabs={[...view.files.keys()].map((path) => ({ id: path, name: path.slice(path.lastIndexOf('/') + 1), path }))} />}

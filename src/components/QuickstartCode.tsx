@@ -14,14 +14,22 @@ export const Install = ({ command, label }: { command: string; label: string }) 
 
 function Workspace({ idea }: { idea: Idea }) {
   const uid = useId();
+  const source = useRef<HTMLElement>(null);
   const [runKey, setRunKey] = useState(0);
+  useEffect(() => {
+    if (!idea.run || !source.current) return;
+    const index = idea.code.split('\n').findIndex((line) => /\bawait (?:box|fleet)\.(?:prompt|run|exec|runCode)\(/.test(line));
+    const row = source.current.querySelectorAll<HTMLElement>('pre > code > span')[index];
+    const pre = source.current.querySelector('pre');
+    if (row && pre) source.current.scrollTop += row.getBoundingClientRect().top - source.current.getBoundingClientRect().top - parseFloat(getComputedStyle(pre).paddingTop);
+  }, [idea]);
   return <div className="qs-main">
     <div className="qs-actions">
       <span className="qs-file">{idea.id}.mts</span>
       <CopyButton text={idea.code} aria-label="Copy file" />
       {idea.run && <Button size="sm" title="Play example" aria-expanded={runKey > 0} aria-controls={`${uid}-result`} onClick={() => setRunKey((key) => key + 1)}>{runKey ? 'Run again' : 'Run'}</Button>}
     </div>
-    <section className="qs-code" aria-label={`${idea.id}.mts source`}>
+    <section className="qs-code" ref={source} aria-label={`${idea.id}.mts source`}>
       <CodeBlock code={idea.code} language="ts" label="" showLineNumbers className="rounded-none border-0" />
     </section>
     <div id={`${uid}-result`}>{runKey > 0 && idea.run && <ExampleResult key={runKey} meta={idea.run} />}</div>
