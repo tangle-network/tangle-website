@@ -76,8 +76,9 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await output.getByRole('button', { name: 'Play recorded demo', exact: true }).press('Space');
     await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: 45000 });
     await output.getByRole('link', { name: 'Download patch', exact: true }).waitFor();
-    await output.getByRole('button', { name: 'Replay recorded demo', exact: true }).waitFor();
-    check(await output.getByRole('button', { name: 'Replay recorded demo', exact: true }).evaluate(button => button === document.activeElement), 'Playback completion must preserve keyboard focus', item);
+    await output.locator('.qs-output-actions button').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.matches('.qs-result .qs-output-actions a[download]'));
+    check(await output.getByRole('link', { name: 'Download patch', exact: true }).evaluate(link => link === document.activeElement), 'Playback completion must put keyboard focus on the useful artifact', item);
     check(!/Recorded|Details|Reported usage|invoice|inputTokens/.test(await output.innerText()), 'No recording or accounting metadata in output', item);
     await page.screenshot({ path: `${out}/${name}-result.png` });
     const download = await Promise.all([page.waitForEvent('download'), output.getByRole('link', { name: 'Download patch', exact: true }).click()]).then(([value]) => value);

@@ -9,7 +9,14 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
   const replay = useReplay(meta.url, marks, [1000, 200]);
   const { events, t, line, r } = replay;
   const panel = useRef<HTMLDivElement>(null);
+  const playbackFocused = useRef(false);
   const ended = !!line && r >= line.total;
+  useEffect(() => {
+    if (ended && playbackFocused.current && (!document.activeElement?.isConnected || document.activeElement === document.body)) {
+      const next = panel.current?.querySelector<HTMLElement>('a[download]') ?? panel.current?.querySelector<HTMLElement>('.qs-output');
+      next?.focus({ preventScroll: true });
+    }
+  }, [ended]);
   useEffect(() => { panel.current?.scrollIntoView({ block: 'nearest' }); }, []);
   const work = useMemo(() => agentSteps(events ?? []).filter((step) => step.atMs <= t &&
     (['edit', 'write'].includes(stepKind(step)) || (stepKind(step) === 'bash' && /\b(?:npm|pnpm|bun) test\b/.test(String(step.input.command ?? ''))))), [events, t]);
@@ -39,8 +46,8 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
   }, [events, t]);
 
   return <div className="qs-result" ref={panel} data-at={Math.round(t)} role="region" aria-label="Example output" aria-busy={!events && !replay.failed}>
-    <div className="qs-output-actions" ref={replay.root}>
-      {events && !replay.still && <ReplayBar replay={replay} />}
+    <div className="qs-output-actions" ref={replay.root} onFocusCapture={(event) => { playbackFocused.current = event.target instanceof HTMLButtonElement; }} onBlurCapture={(event) => { if (event.target.isConnected) playbackFocused.current = false; }}>
+      {events && !ended && !replay.still && <ReplayBar replay={replay} />}
       {result.patch && <a download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>}
     </div>
     {!events && <p role="status">{replay.failed ? 'The example could not load. Try Run again.' : 'Loading…'}</p>}
