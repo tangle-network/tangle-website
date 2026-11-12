@@ -43,8 +43,8 @@ const NO_RUN: Record<string, string> = {
   "runtime/any-cloud-daytona": "no credential in vault",
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
-// A call that threw, or returned the SDK's { success: false } turn, failed the run even when the process exited 0.
-const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || (e.result as { success?: boolean } | undefined)?.success === false);
+// A call that threw, or returned the SDK's { success: false } turn or a { status: "failed" } run, failed the run even when the process exited 0.
+const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || ((r) => r?.success === false || r?.status === "failed")(e.result as { success?: boolean; status?: string } | undefined));
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
 
