@@ -1,6 +1,8 @@
 ---
 import { sourceDigest } from '../../scripts/example-digest.mjs';
-import QuickstartCode, { type Subject } from './QuickstartCode';
+import { type Subject } from './QuickstartCode';
+import ExampleStoryPrototype from './ExampleStoryPrototype';
+import fixRecord from '../data/runs/sandboxes/fix-a-test.json';
 
 // Each cell shows one file from src/examples byte for byte; `pnpm check:examples`
 // typechecks every file against the published packages.
@@ -77,9 +79,30 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
     return { id: file, title, code, install, run: recorded(`../data/runs/${id}/${file}.json`, code) };
   }),
 }));
+
+const fix = subjects.find((subject) => subject.id === 'sandboxes')!.ideas.find((idea) => idea.id === 'fix-a-test')!;
+if (!fix.run) throw new Error('The story needs a recording of the current example.');
+type StoryEvent = { kind: string; label?: string; result?: { [key: string]: unknown; stdout?: string; toolInvocations?: { input: { [key: string]: unknown; command?: string }; result: unknown }[] } };
+const events: StoryEvent[] = fixRecord.events;
+const before = events.find((event) => event.label === 'box.prompt')?.result?.toolInvocations
+  ?.filter((call) => call.input.command?.startsWith('npm test') && !call.input.command.includes('tail -15'))
+  .map((call) => typeof call.result === 'string' ? call.result : '').join('\n');
+const executions = events.filter((event) => event.kind === 'call' && event.label === 'box.exec');
+const after = executions.find((event) => event.result?.stdout?.includes('# tests '))?.result?.stdout;
+const patch = executions.find((event) => event.result?.stdout?.startsWith('diff --git '))?.result?.stdout;
+if (!before || !after || !patch) throw new Error('The story needs the original test output and patch.');
+const story = {
+  source: fix.code,
+  excerpt: fix.code.slice(fix.code.indexOf('const box ='), fix.code.indexOf('\n\n  await writeFile')).replace(/^try {\n/m, '').replace(/^  /gm, ''),
+  before: before.split('\n').filter((line) => /^(not ok |# (?:pass|fail) \d)/.test(line)).join('\n'),
+  after: after.split('\n').filter((line) => /^(ok |# (?:pass|fail) \d)/.test(line)).join('\n'),
+  patch,
+  recordUrl: fix.run.url,
+  recordedAt: fix.run.recordedAt,
+};
 ---
 
-<section class="quickstart" data-theme="website" aria-labelledby="quickstart-title">
+<section class="quickstart" data-theme="website" aria-label="Sandbox examples">
   <div class="quickstart-inner">
     <header class="quickstart-heading">
       <h2 id="quickstart-title">Pick a job. Copy the file. Run it.</h2>
@@ -89,7 +112,7 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
         <a href="https://www.npmjs.com/package/@tangle-network/sandbox-cli">CLI <span aria-hidden="true">↗</span></a>
       </div>
     </header>
-    <QuickstartCode client:visible subjects={subjects} />
+    <ExampleStoryPrototype client:visible subjects={subjects} story={story} />
   </div>
 </section>
 
@@ -98,6 +121,12 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
   .quickstart { display: flex; flex-direction: column; height: 100svh; min-height: 44rem; background: var(--depth-1); color: var(--text-primary); padding: 96px 0 88px; }
   .quickstart-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; width: min(88rem, 94vw); margin: 0 auto; }
   .quickstart-inner > :global(astro-island) { display: contents; }
+  .quickstart:has(:global(.es-prototype)) { height: auto; min-height: 0; }
+  .quickstart:has(:global(.es-prototype)) .quickstart-heading { display: none; }
+  .quickstart :global(.es-prototype > h2) { margin-bottom: 32px; }
+  .quickstart :global(.es-prototype-tools) { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 32px; font-size: var(--font-size-sm); }
+  .quickstart :global(.es-prototype-tools a) { color: var(--text-muted); text-underline-offset: 4px; }
+  .quickstart :global(.es-prototype-tools a[aria-current]) { color: var(--accent-text); }
   .quickstart-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 32px; }
   .quickstart h2 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 3.2vw, 3rem); font-weight: 600; line-height: 1; letter-spacing: -0.032em; color: var(--text-primary); text-wrap: balance; }
   .quickstart-links { display: flex; flex-shrink: 0; gap: 24px; padding-bottom: 4px; }
