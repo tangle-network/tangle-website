@@ -32,6 +32,7 @@ const normalized = text => text.replace(/`+|\*\*/g, '').replace(/^\s*[-*]\s+/gm,
 for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], ['phone', chromium, 390, 844], ['narrow', chromium, 320, 740], ['webkit-phone', webkit, 390, 844]]) {
   const browser = await engine.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true,
+    ...(width <= 680 ? { isMobile: true, hasTouch: true } : {}),
     ...(engine === chromium ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}),
     ...(name === 'phone' ? { recordVideo: { dir: `${out}/video`, size: { width, height } } } : {}) });
   await context.route('**/*', route => ['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort());
@@ -54,17 +55,28 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(item.initial.taskVisible, 'Actual agent task should be visible before Run', item);
     if (width <= 680) check(item.initial.codeSize === '13px', 'Phone code size', item);
     await page.screenshot({ path: `${out}/${name}-before-run.png` });
-    await run.click();
+    if (name === 'desktop') {
+      await editor.getByRole('tab', { name: 'Sandboxes', exact: true }).focus();
+      await editor.getByRole('tab', { name: 'Sandboxes', exact: true }).press('End');
+      await editor.locator('.qs-file').filter({ hasText: 'any-cloud.mts' }).waitFor();
+      await editor.getByRole('tab', { name: 'Any cloud', exact: true }).press('Home');
+      await editor.locator('.qs-file').filter({ hasText: 'run-code.mts' }).waitFor();
+      await editor.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
+      await editor.locator('.qs-file').filter({ hasText: 'fix-a-test.mts' }).waitFor();
+    }
+    if (width <= 680) await run.tap(); else await run.click();
     const output = editor.locator('.qs-result');
-    await output.getByRole('button', { name: 'Pause', exact: true }).waitFor();
-    await output.getByRole('button', { name: 'Pause', exact: true }).click();
+    await output.getByRole('button', { name: 'Pause recorded demo', exact: true }).waitFor();
+    await output.getByRole('button', { name: 'Pause recorded demo', exact: true }).click();
     const paused = await output.getAttribute('data-at');
     await page.waitForTimeout(350);
     check(await output.getAttribute('data-at') === paused, 'Pause must stop the clock', item);
     await page.screenshot({ path: `${out}/${name}-paused.png` });
-    await output.getByRole('button', { name: 'Continue', exact: true }).click();
+    await output.getByRole('button', { name: 'Play recorded demo', exact: true }).click();
     await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: 45000 });
     await output.getByRole('link', { name: 'Download patch', exact: true }).waitFor();
+    await output.getByRole('button', { name: 'Replay recorded demo', exact: true }).waitFor();
+    check(await output.getByRole('button', { name: 'Replay recorded demo', exact: true }).evaluate(button => button === document.activeElement), 'Playback completion must preserve keyboard focus', item);
     check(!/Recorded|Details|Reported usage|invoice|inputTokens/.test(await output.innerText()), 'No recording or accounting metadata in output', item);
     await page.screenshot({ path: `${out}/${name}-result.png` });
     const download = await Promise.all([page.waitForEvent('download'), output.getByRole('link', { name: 'Download patch', exact: true }).click()]).then(([value]) => value);
@@ -75,13 +87,14 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check((await output.locator('code').innerText()) === patch, 'View changes must show complete patch', item);
     if (engine === chromium) {
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copy to clipboard', exact: true }).click();
+      await editor.locator('.qs-actions').getByRole('button', { name: 'Copied', exact: true }).waitFor();
       check(await page.evaluate(() => navigator.clipboard.readText()) === source, 'Copy must preserve full runnable source', item);
     }
     await editor.getByRole('button', { name: 'Run again', exact: true }).click();
     check(Number(await editor.locator('.qs-result').getAttribute('data-at')) < 5000, 'Run again must restart', item);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await editor.getByText('9 tests passed', { exact: true }).waitFor();
-    check(await editor.getByRole('button', { name: 'Pause', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
+    check(await editor.getByRole('button', { name: 'Pause recorded demo', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     const load = async key => { await page.goto(`${base}/?example=${key}#quickstart-title`); await editor.locator('.qs-file').filter({ hasText: `${key.split('/').at(-1)}.mts` }).waitFor(); await editor.getByRole('button', { name: 'Run', exact: true }).click(); };
     if (name === 'desktop') {
       await load('sandboxes/run-code');

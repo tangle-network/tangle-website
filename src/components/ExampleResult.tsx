@@ -1,8 +1,7 @@
 import { CodeBlock, Markdown } from '@tangle-network/ui/markdown';
-import { Button } from '@tangle-network/ui/primitives';
 import { useEffect, useMemo, useRef } from 'react';
 import { agentSteps, stepKind, stepPath } from '../utils/session.mjs';
-import { useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
+import { ReplayBar, useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
 
 const marks = (events: Ev[]): Mark[] => events.flatMap((event) => [{ atMs: event.atMs }, { atMs: event.atMs + (event.durationMs ?? 0) }]);
 
@@ -41,7 +40,7 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
 
   return <div className="qs-result" ref={panel} data-at={Math.round(t)} role="region" aria-label="Example output" aria-busy={!events && !replay.failed}>
     <div className="qs-output-actions" ref={replay.root}>
-      {events && !ended && !replay.still && <Button variant="ghost" size="sm" onClick={replay.toggle}>{replay.playing ? 'Pause' : 'Continue'}</Button>}
+      {events && !replay.still && <ReplayBar replay={replay} />}
       {result.patch && <a download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>}
     </div>
     {!events && <p role="status">{replay.failed ? 'The example could not load. Try Run again.' : 'Loading…'}</p>}
