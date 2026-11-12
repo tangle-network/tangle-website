@@ -52,7 +52,6 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
           (/^#{1,6} /m.test(result.consoleText) ? <Markdown>{result.consoleText}</Markdown> : <pre>{result.consoleText}</pre>)}
         {result.tests ? <>
           <p className="qs-test-result" role="status">{result.fail === '0' ? `${result.pass} tests passed` : `${result.fail} tests failed`}</p>
-          <pre>{result.tests.split('\n').filter((line) => /^(?:not )?ok \d/.test(line)).join('\n')}</pre>
           {result.patch && <details><summary>View changes</summary><CodeBlock code={result.patch} language="diff" label="" /></details>}
         </> : <>
           {work.map((step) => {
