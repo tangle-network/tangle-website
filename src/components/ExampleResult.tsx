@@ -34,7 +34,7 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
     const consoleText = (events ?? []).filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
       .map((event) => event.text ?? '').join('');
     const consoleOutput = assessments.length || answers.some((answer) => answer.agent) || /\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(consoleText) ? '' : consoleText;
-    return { patch, tests, pass, fail, answers, assessments, errors, consoleText: consoleOutput,
+    return { patch, tests, pass, fail, answers: answers.filter((answer) => !answer.text.trim() || !consoleOutput.includes(answer.text.trim())), assessments, errors, consoleText: consoleOutput,
       output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
   }, [events, t]);
 
