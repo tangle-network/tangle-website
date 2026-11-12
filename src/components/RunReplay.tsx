@@ -13,14 +13,7 @@ export type Row = { key: string; atMs: number; kind: string; text: string; detai
 export type Mark = { atMs: number; hold?: number; r?: number };
 
 type Idle = [ms: number, playsIn: number]; // a stretch over `ms` in which nothing new happens plays in `playsIn`, the clock sweeping its real length
-const usd = (n: unknown) => (typeof n === 'number' ? `$${n.toFixed(n < 1 ? 4 : 2)}` : '');
-const FIELDS = ['id', 'fleetId', 'exitCode', 'state', 'outcome', 'composite', 'costUsd', 'spentUsd', 'interrupted', 'traceId', 'status'];
-const brief = (v: Ev['result'], quote = true): string => v === null || typeof v !== 'object'
-  ? (typeof v === 'string' && quote ? JSON.stringify(v.length > 56 ? `${v.slice(0, 56)}…` : v) : String(v))
-  : Array.isArray(v) ? `${v.length} × ${[...new Set(v.map((x) => x?.status ?? typeof x))].join(', ')}`
-  : FIELDS.filter((k) => v[k] !== undefined).slice(0, 3).map((k) => `${k} ${k.endsWith('Usd') ? usd(v[k]) : brief(v[k], false)}`).join('  ') || `{ ${Object.keys(v).slice(0, 3).join(', ')} … }`;
 const summary = (input: Record<string, unknown> = {}) => String(input.description ?? input.command ?? input.file_path ?? input.query ?? input.url ?? '');
-const done = (e: Ev, t: number) => e.atMs + (e.durationMs ?? 0) <= t;
 
 /** Replay time `r` for each mark, the anchors that map it back to recorded time, and the squeezed stretches. */
 function pace(input: Mark[], [IDLE_MS, JUMP_MS]: Idle) {
@@ -102,41 +95,16 @@ export function Feed({ rows, className = '' }: { rows: Row[]; className?: string
   );
 }
 
-/** The record's state at `t`: values assigned, agents, spend, the activity feed and the source lines in flight. */
+/** Tool activity at the current point in the app-building demo. */
 export function frame(events: Ev[], t: number, jumps: { atMs: number; gap: number }[]) {
-  const values = new Map<string, { value: string; count: number }>();
-  const agents = new Map<string, { state: string; cost?: number }>();
   const rows = new Map<string, Row>();
-  const lines = new Map<number, string>();
-  let spend: { spentUsd?: number; capUsd?: number } | undefined;
-  events.forEach((e, i) => {
+  events.forEach((e) => {
     if (e.atMs > t) return;
-    const key = String(i);
-    if (e.kind === 'call') {
-      const finished = done(e, t);
-      if (e.line) lines.set(e.line, finished && lines.get(e.line) !== 'running' ? 'done' : 'running');
-      rows.set(key, { key, atMs: e.atMs, kind: 'call', text: e.label ?? '', state: e.error ? 'failed' : finished ? 'done' : 'running',
-        detail: finished ? (e.error ? e.error.message : `${((e.durationMs ?? 0) / 1000).toFixed(1)} s`) : undefined });
-      if (finished && typeof e.result?.spentUsd === 'number') spend = e.result;
-      if (finished && e.assign) e.assign.replace(/[{}\s]/g, '').split(',').forEach((name) => {
-        const value = e.assign!.startsWith('{') ? e.result?.[name] : e.result;
-        values.set(name, { value: brief(value), count: (values.get(name)?.count ?? 0) + 1 });
-      });
-    } else if (e.kind === 'stdout' || e.kind === 'stderr') {
-      rows.set(key, { key, atMs: e.atMs, kind: e.kind, text: e.text?.trimEnd() ?? '' });
-    } else if (e.type === 'agent.started') {
-      agents.set(e.data.agentId, { state: 'running' });
-    } else if (e.type === 'agent.finished') {
-      const r = e.data.result;
-      agents.set(r.agentId, { state: r.status, cost: r.costUsd });
-      rows.set(key, { key, atMs: e.atMs, kind: 'agent', text: r.agentId, state: r.status, detail: usd(r.costUsd) });
-    } else if (e.type === 'fleet.finished' && e.data.spend) {
-      spend = e.data.spend;
-    } else if (e.type === 'message.part.updated' && e.data?.part?.type === 'tool') {
+    if (e.type === 'message.part.updated' && e.data?.part?.type === 'tool') {
       const p = e.data.part;
       rows.set(p.id, { ...(rows.get(p.id) ?? { key: p.id, atMs: e.atMs }), kind: 'tool', text: p.tool, detail: summary(p.state?.input), state: p.state?.status });
     }
   });
   for (const { atMs, gap } of jumps) if (atMs < t) rows.set(`+${atMs}`, { key: `+${atMs}`, atMs, kind: 'jump', text: `+${elapsed(gap)}` });
-  return { values, agents, spend, lines, rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
+  return { rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }

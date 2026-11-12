@@ -1,64 +1,87 @@
-import { FileTabs } from '@tangle-network/ui/files';
 import { CodeBlock, Markdown } from '@tangle-network/ui/markdown';
-import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tangle-network/ui/primitives';
-import { useMemo, useState } from 'react';
-import { formatDate } from '../utils/date';
-import { Feed, ReplayBar, frame, useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
+import { useEffect, useMemo, useRef } from 'react';
+import { agentSteps, stepKind, stepPath } from '../utils/session.mjs';
+import { ReplayBar, useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
 
-type Artifact = { id: string; label: string; text: string; language?: string; markdown?: boolean };
 const marks = (events: Ev[]): Mark[] => events.flatMap((event) => [{ atMs: event.atMs }, { atMs: event.atMs + (event.durationMs ?? 0) }]);
 
 export default function ExampleResult({ meta }: { meta: RunMeta }) {
-  const replay = useReplay(meta.url, marks);
-  const { events, line, t } = replay;
-  const [picked, setPicked] = useState('patch'), [file, setFile] = useState<string>();
-  const state = useMemo(() => frame(events ?? [], t, line?.jumps ?? []), [events, t, line]);
-  const artifacts = useMemo(() => {
-    const calls = (events ?? []).filter((event) => event.kind === 'call');
-    const patch = calls.findLast((event) => typeof event.result?.stdout === 'string' && event.result.stdout.startsWith('diff --git '));
-    const tests = calls.findLast((event) => typeof event.result?.stdout === 'string' && /^# (?:tests|pass|fail) \d/m.test(event.result.stdout));
-    const answers: Artifact[] = (events ?? []).flatMap((event, index) => {
-      const agent = event.type === 'agent.finished' ? event.data?.result : undefined;
-      const text = agent?.result?.response ?? (event.kind === 'call' ? event.result?.response : undefined);
-      return typeof text === 'string' ? [{ id: `answer-${index}`, label: agent ? `${agent.agentId} review` : 'Answer', text, markdown: true }] : [];
+  const replay = useReplay(meta.url, marks, [1000, 200]);
+  const { events, t, line, r } = replay;
+  const panel = useRef<HTMLDivElement>(null);
+  const playbackFocused = useRef(false);
+  const ended = !!line && r >= line.total;
+  useEffect(() => {
+    if (ended && playbackFocused.current && (!document.activeElement?.isConnected || document.activeElement === document.body)) {
+      const next = panel.current?.querySelector<HTMLElement>('a[download]') ?? panel.current?.querySelector<HTMLElement>('.qs-output');
+      next?.focus({ preventScroll: true });
+    }
+  }, [ended]);
+  useEffect(() => { panel.current?.scrollIntoView({ block: 'nearest' }); }, []);
+  const work = useMemo(() => agentSteps(events ?? []).filter((step) => step.atMs <= t &&
+    (['edit', 'write'].includes(stepKind(step)) || (stepKind(step) === 'bash' && /\b(?:npm|pnpm|bun) test\b/.test(String(step.input.command ?? ''))))), [events, t]);
+  const result = useMemo(() => {
+    const calls = (events ?? []).filter((event) => event.kind === 'call' && event.atMs + (event.durationMs ?? 0) <= t);
+    const outputs = calls.filter((event) => typeof event.result?.stdout === 'string' && event.result.stdout.trim());
+    const patch = outputs.findLast((event) => event.result.stdout.startsWith('diff --git '))?.result.stdout as string | undefined;
+    const tests = outputs.findLast((event) => /^# tests \d/m.test(event.result.stdout))?.result.stdout as string | undefined;
+    const pass = tests?.match(/^# pass (\d+)/m)?.[1], fail = tests?.match(/^# fail (\d+)/m)?.[1];
+    const answers = (events ?? []).flatMap((event, key) => {
+      const agent = event.type === 'agent.finished' && event.atMs <= t ? event.data?.result : undefined;
+      const text = agent?.result?.response ?? (calls.includes(event) ? event.result?.response : undefined);
+      return typeof text === 'string' || agent ? [{ key, text: typeof text === 'string' ? text : '', agent: agent?.agentId, status: agent?.status, error: agent?.error ?? agent?.result?.error }] : [];
     });
-    if (answers.length > 1) answers.forEach((answer, index) => { if (answer.label === 'Answer') answer.label += ` ${index + 1}`; });
-    const judgments: Artifact[] = calls.filter((event) => event.label === 'judge.score').map((event, index) => ({ id: `judge-${index}`, label: `Assessment ${index + 1}`, text: JSON.stringify(event.result, null, 2), language: 'json' }));
-    const commands: Artifact[] = calls.filter((event) => event !== patch && event !== tests && (event.result?.stdout || event.result?.stderr)).map((event, index) => ({ id: `command-${index}`, label: `Command output ${index + 1}`, text: (event.result.stdout || '') + (event.result.stderr || '') }));
-    const consoleText = (events ?? []).filter((event) => event.kind === 'stdout' || event.kind === 'stderr').map((event) => event.text ?? '').join('');
-    const items: Artifact[] = [
-      ...(patch ? [{ id: 'patch', label: 'Patch', text: patch.result.stdout, language: 'diff' }] : []),
-      ...(tests ? [{ id: 'tests', label: 'Tests', text: tests.result.stdout + (tests.result.stderr || '') }] : []),
-      ...answers, ...judgments, ...commands,
-      ...(consoleText ? [{ id: 'console', label: 'Console', text: consoleText }] : []),
-    ];
-    return { items, patch: patch?.result.stdout as string | undefined, tests };
-  }, [events]);
-  const artifact = artifacts.items.find((item) => item.id === picked) ?? artifacts.items[0];
-  const files = useMemo(() => (artifacts.patch ?? '').split(/(?=^diff --git )/m).filter(Boolean).map((text, index) => ({ id: String(index), text, path: text.match(/^diff --git a\/(.*?) b\/(.*)$/m)?.[2] ?? `File ${index + 1}` })), [artifacts.patch]);
-  const selectedFile = files.find((item) => item.id === file) ?? files[0];
-  const hunk = selectedFile?.text.indexOf('\n@@ ');
-  const diff = selectedFile && hunk !== undefined && hunk >= 0 ? selectedFile.text.slice(hunk + 1) : selectedFile?.text;
-  return <section className="qs-result" aria-label="Recorded result" aria-busy={!events && !replay.failed}>
-    <details className="qs-record-meta"><summary>Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · Details</summary>
-      <p>{meta.costUsd !== null && meta.costUsd > 0 ? `Reported usage $${meta.costUsd.toFixed(4)}.` : 'Usage cost not reported.'} Full invoice unknown. Served model not recorded.</p>
-      <a href={meta.url}>Run JSON ↗</a>
-    </details>
-    {!events && <p className="qs-state" role="status">{replay.failed ? <>The recorded result could not load. <a href={meta.url}>Open the JSON</a>.</> : 'Loading recorded result…'}</p>}
+    const assessments = calls.filter((event) => event.label === 'judge.score');
+    const errors = calls.flatMap((event) => {
+      const error = event.error?.message ?? event.result?.error?.message ?? event.result?.error;
+      const exit = event.result?.exitCode;
+      return error || event.result?.stderr || (typeof exit === 'number' && exit !== 0) ? [`${typeof exit === 'number' && exit !== 0 ? `Command exited ${exit}\n` : ''}${String(error ?? event.result?.stderr ?? '')}`] : [];
+    });
+    const consoleText = (events ?? []).filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
+      .map((event) => event.text ?? '').join('');
+    const remainingConsole = answers.reduce((text, answer) => answer.text.trim() ? text.replace(answer.text.trim(), '') : text, consoleText);
+    const consoleOutput = assessments.length || answers.some((answer) => answer.agent) || /\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(remainingConsole) || !remainingConsole.trim() ? '' : remainingConsole;
+    return { patch, tests, pass, fail, answers, assessments, errors, consoleText: consoleOutput,
+      output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
+  }, [events, t]);
+
+  return <div className="qs-result" ref={panel} data-at={Math.round(t)} role="region" aria-label="Example output" aria-busy={!events && !replay.failed}>
+    <div className="qs-output-actions" ref={replay.root} onFocusCapture={(event) => { playbackFocused.current = event.target instanceof HTMLButtonElement; }} onBlurCapture={(event) => { if (event.target.isConnected) playbackFocused.current = false; }}>
+      {events && !ended && !replay.still && <ReplayBar replay={replay} />}
+      {result.patch && <a download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>}
+    </div>
+    {!events && <p role="status">{replay.failed ? 'The example could not load. Try Run again.' : 'Loading…'}</p>}
     {events && <>
-      {artifact && <div className="qs-output-tools"><Select value={artifact.id} onValueChange={setPicked}><SelectTrigger size="lg" aria-label="Recorded artifact"><SelectValue /></SelectTrigger><SelectContent>{artifacts.items.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent></Select>
-        {artifact.id === 'patch' && <Button size="lg" variant="ghost" asChild><a className="qs-download" aria-label="Download patch" title="Download patch" download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(artifacts.patch!)}`}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4" /></svg><span>Download patch</span></a></Button>}
-      </div>}
-      {artifact?.id === 'patch' && files.length > 1 && <FileTabs label="Changed files" activeId={selectedFile.id} onSelect={setFile} tabs={files.map((item) => ({ id: item.id, name: item.path.slice(item.path.lastIndexOf('/') + 1), path: item.path }))} />}
-      <div className="qs-output-body" tabIndex={0} aria-label={artifact ? `${artifact.label} from the record` : 'Recorded output'}>
-        {artifact ? <>
-          {artifact.markdown ? <Markdown className="qs-answer">{artifact.text}</Markdown> : artifact.language ? <CodeBlock code={artifact.id === 'patch' ? diff! : artifact.text} language={artifact.language} label="" showLineNumbers={artifact.id !== 'patch'} className={`rounded-none border-0${artifact.id === 'patch' ? ' qs-diff' : ''}`} /> : <pre>{artifact.text}</pre>}
-        </> : <p className="qs-state">This record contains activity without a retained answer or console output.</p>}
+      <div className="qs-output" tabIndex={0}>
+        {result.errors.map((error, index) => <pre key={index} className="qs-error">{error}</pre>)}
+        {result.consoleText &&
+          (/^#{1,6} /m.test(result.consoleText) ? <Markdown>{result.consoleText}</Markdown> : <pre>{result.consoleText}</pre>)}
+        {result.tests ? <>
+          <p className="qs-test-result" role="status">{result.fail === '0' ? `${result.pass} tests passed` : `${result.fail} tests failed`}</p>
+          {result.patch && <details><summary>View changes</summary><CodeBlock code={result.patch} language="diff" label="" /></details>}
+        </> : <>
+          {work.map((step) => {
+            const code = step.input.new_string ?? step.input.newString ?? step.input.content;
+            const path = stepPath(step);
+            return <div key={step.id} className="qs-work">
+              <p>{typeof path === 'string' ? path.replace(/^.*\/sandbox-demo\//, '') : String(step.input.command ?? step.input.description)}</p>
+              {typeof code === 'string' && <CodeBlock code={code} language="ts" label="" />}
+            </div>;
+          })}
+          {result.answers.map((answer) => <div key={answer.key}>
+            {answer.agent && <p>{answer.agent}{answer.status && answer.status !== 'completed' ? ` · ${answer.status}` : ''}</p>}
+            {answer.error && <p className="qs-error">{String(answer.error)}</p>}
+            <Markdown>{answer.text}</Markdown>
+          </div>)}
+          {result.assessments.map((event, index) => <div className="qs-assessment" key={index}>
+            <p className="qs-test-result">Score {String(event.result.composite)}</p>
+            <dl>{Object.entries(event.result.dimensions ?? {}).map(([name, score]) => <div key={name}><dt>{name}</dt><dd>{String(score)}</dd></div>)}</dl>
+            <p>{event.result.notes}</p>
+          </div>)}
+          {result.output && <pre>{result.output}</pre>}
+          {!work.length && !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && <p role="status">{ended ? 'This example has no text output.' : 'Starting…'}</p>}
+        </>}
       </div>
     </>}
-    <details className="qs-activity"><summary>Recorded activity</summary><div data-at={Math.round(t)}>
-      <div className="qs-replay-bar" ref={replay.root}><span>Saved playback</span><ReplayBar replay={replay} /></div>
-      <Feed rows={state.rows.filter((row) => row.kind !== 'stdout' && row.kind !== 'stderr')} />
-    </div></details>
-  </section>;
+  </div>;
 }
