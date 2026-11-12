@@ -1,6 +1,6 @@
 import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
-import { Button } from '@tangle-network/ui/primitives';
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@tangle-network/ui/primitives';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import ExampleResult from './ExampleResult';
 import type { RunMeta } from './RunReplay';
 import './quickstart-code.css';
@@ -29,7 +29,6 @@ function Workspace({ idea }: { idea: Idea }) {
 }
 
 export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
-  const uid = useId();
   const root = useRef<HTMLDivElement>(null);
   const tasks = useMemo(() => subjects.flatMap((subject) => subject.ideas.map((idea) => ({ key: `${subject.id}/${idea.id}`, subject, idea }))), [subjects]);
   const [picked, setPicked] = useState('sandboxes/fix-a-test');
@@ -53,26 +52,19 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
     const url = new URL(window.location.href); url.searchParams.set('example', value);
     window.history.replaceState(window.history.state, '', url);
   };
-  const chooseSubject = (index: number) => {
-    const subject = subjects[index];
-    if (subject.id !== task.subject.id && subject.ideas[0]) choose(`${subject.id}/${subject.ideas[0].id}`);
+  const chooseSubject = (id: string) => {
+    const subject = subjects.find((item) => item.id === id);
+    if (subject && subject.id !== task.subject.id && subject.ideas[0]) choose(`${subject.id}/${subject.ideas[0].id}`);
   };
-  const moveSubject = (event: KeyboardEvent) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const current = subjects.indexOf(task.subject);
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? subjects.length - 1 : (current + (event.key === 'ArrowLeft' ? -1 : 1) + subjects.length) % subjects.length;
-    chooseSubject(next); document.getElementById(`${uid}-subject-${subjects[next].id}`)?.focus();
-  };
-  return <div className="qs-editor" ref={root}>
-    <div className="qs-cols" role="tablist" aria-label="Subjects" onKeyDown={moveSubject}>
-      {subjects.map((subject, index) => <button key={subject.id} id={`${uid}-subject-${subject.id}`} type="button" role="tab" aria-selected={subject === task.subject} aria-controls={`${uid}-panel`} tabIndex={subject === task.subject ? 0 : -1} onClick={() => chooseSubject(index)}>{subject.label}</button>)}
-    </div>
-    <div className="qs-body" id={`${uid}-panel`} role="tabpanel" aria-labelledby={`${uid}-subject-${task.subject.id}`}>
-      <nav className="qs-rows" aria-label={`${task.subject.label} examples`}>
-        {task.subject.ideas.map((idea) => <button key={idea.id} type="button" aria-pressed={idea === task.idea} onClick={() => choose(`${task.subject.id}/${idea.id}`)}>{idea.title}</button>)}
+  return <Tabs className="qs-editor" ref={root} value={task.subject.id} onValueChange={chooseSubject}>
+    <TabsList className="qs-cols" variant="underline" aria-label="Subjects">
+      {subjects.map((subject) => <TabsTrigger key={subject.id} value={subject.id} variant="underline">{subject.label}</TabsTrigger>)}
+    </TabsList>
+    {subjects.map((subject) => <TabsContent key={subject.id} value={subject.id} className="qs-body">
+      <nav className="qs-rows" aria-label={`${subject.label} examples`}>
+        {subject.ideas.map((idea) => <Button key={idea.id} size="sm" variant="ghost" aria-pressed={idea === task.idea} onClick={() => choose(`${subject.id}/${idea.id}`)}>{idea.title}</Button>)}
       </nav>
-      <Workspace key={task.key} idea={task.idea} />
-    </div>
-  </div>;
+      {subject === task.subject && <Workspace key={task.key} idea={task.idea} />}
+    </TabsContent>)}
+  </Tabs>;
 }
