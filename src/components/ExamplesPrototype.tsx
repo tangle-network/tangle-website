@@ -16,16 +16,16 @@ const variants = [
 const marks = (events: Ev[]): Mark[] => events.flatMap((event) => [
   { atMs: event.atMs }, { atMs: event.atMs + (event.durationMs ?? 0) },
 ]);
-const finished = (event: Ev, at: number) => event.atMs + (event.durationMs ?? 0) <= at;
 const usageCost = (cost: number | null) => cost === null ? 'Usage cost not reported' : `Reported usage $${cost.toFixed(4)}`;
 
 function RecordedResult({ meta, modelTurn }: { meta: RunMeta; modelTurn: boolean }) {
-  const replay = useReplay(meta.url, marks, false);
-  const { events, line, t, setR } = replay;
+  const replay = useReplay(meta.url, marks);
+  const { events, line, t } = replay;
   const [output, setOutput] = useState('patch');
-  // Rest shows the completed record; only the reader's Play action starts its clock.
-  useEffect(() => { if (line) setR(line.total); }, [line]);
+  // The retained artifact stays available while its separate recorded activity plays.
   const state = useMemo(() => frame(events ?? [], t, line?.jumps ?? []), [events, t, line]);
+  const end = Math.max(0, ...(events ?? []).map((event) => event.atMs + (event.durationMs ?? 0)));
+  const completed = useMemo(() => frame(events ?? [], end, []), [events, end]);
   const candidates = (events ?? []).filter((event) => event.kind === 'call' && typeof event.result?.stdout === 'string');
   const patch = candidates.findLast((event) => event.result.stdout.trimStart().startsWith('diff --git '));
   const tests = candidates.findLast((event) => /(?:^|\n)# (?:tests|pass|fail) \d/.test(event.result.stdout));
@@ -36,39 +36,38 @@ function RecordedResult({ meta, modelTurn }: { meta: RunMeta; modelTurn: boolean
   ];
   const selected = options.some((option) => option.value === output) ? output : options[0].value;
   const event = selected === 'patch' ? patch : selected === 'tests' ? tests : undefined;
-  const visible = event && finished(event, t);
-  const consoleRows = state.rows.filter((row) => row.kind === 'stdout' || row.kind === 'stderr');
-  const responses = (events ?? []).filter((item) => finished(item, t) && item.kind === 'call' && typeof item.result?.response === 'string');
+  const passCount = tests?.result.stdout.match(/^# pass (\d+)$/m)?.[1];
+  const failCount = tests?.result.stdout.match(/^# fail (\d+)$/m)?.[1];
+  const consoleRows = completed.rows.filter((row) => row.kind === 'stdout' || row.kind === 'stderr');
+  const responses = (events ?? []).filter((item) => item.kind === 'call' && typeof item.result?.response === 'string');
 
-  return <section className="ep-result" aria-label="Recorded outcome" aria-busy={!events && !replay.failed}>
-    <div className="ep-result-heading">
-      <h3>{replay.playing ? 'Replaying the record' : 'Recorded outcome'}</h3>
+  return <div ref={replay.root} className="ep-result" role="region" aria-label="Recorded outcome" aria-busy={!events && !replay.failed}>
+    <details className="ep-record-meta"><summary>Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · Details</summary>
+      <p>{modelTurn && meta.costUsd !== null ? `Model-turn usage $${meta.costUsd.toFixed(4)}` : usageCost(meta.costUsd)}. Full invoice unknown. Served model not recorded.</p>
       <a href={meta.url}>Run JSON ↗</a>
-    </div>
-    <p className="ep-record-meta">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · {modelTurn && meta.costUsd !== null ? `Model-turn usage $${meta.costUsd.toFixed(4)}` : usageCost(meta.costUsd)}. Full invoice unknown.</p>
+    </details>
     {!events && !replay.failed && <p className="ep-state" role="status">Loading recorded output…</p>}
-    <ReplayBar replay={replay} className="ep-replay-bar" />
+    {replay.failed && <p className="ep-state" role="status">The recorded output could not load. <a href={meta.url}>Open the JSON</a>.</p>}
     {events && <>
       <div className="ep-output-tools">
         <SegmentedControl aria-label="Recorded artifacts" value={selected} onValueChange={setOutput} options={options} />
-        {selected === 'patch' && visible && <Button size="lg" variant="ghost" asChild><a className="ep-download" download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(event.result.stdout)}`}>Download patch</a></Button>}
+        {selected === 'patch' && event && <Button size="lg" variant="ghost" asChild><a className="ep-download" aria-label="Download patch" title="Download patch" download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(event.result.stdout)}`}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4" /></svg><span>Download patch</span></a></Button>}
       </div>
       <div className="ep-output-body" tabIndex={0} aria-label={`${selected === 'patch' ? 'Patch' : selected === 'tests' ? 'Test command output' : 'Console output'} from the record`}>
-        {event ? visible ? <>
-          <p className="ep-output-label">{selected === 'patch' ? 'fix.patch' : event.label} {selected === 'tests' && typeof event.result.exitCode === 'number' ? `· exitCode ${event.result.exitCode}` : ''}</p>
+        {event ? <>
+          <p className="ep-output-label"><span>{selected === 'patch' ? 'fix.patch' : 'Test output'}</span>{passCount && failCount === '0' && tests?.result.exitCode === 0 && <span>{passCount} tests passed</span>}</p>
           {selected === 'patch' ? <CodeBlock code={event.result.stdout} language="diff" label="" showLineNumbers className="ep-patch rounded-none border-0" /> : <pre>{event.result.stdout}</pre>}
           {event.result.stderr && <pre>{event.result.stderr}</pre>}
-        </> : <p className="ep-state">This output appears when its recorded command completes.</p>
-          : consoleRows.length ? <Feed rows={consoleRows} />
+        </> : consoleRows.length ? <Feed rows={consoleRows} />
             : responses.length ? responses.map((item, index) => <pre key={index}>{item.result.response}</pre>)
               : <p className="ep-state">No console output at this point in the record.</p>}
-        <details className="ep-activity"><summary>Recorded calls and results</summary>
+        <details className="ep-activity"><summary>Recorded activity</summary><div className="ep-replay-bar"><span>Saved playback</span><ReplayBar replay={replay} /></div>
           <Feed rows={state.rows.filter((row) => row.kind !== 'stdout' && row.kind !== 'stderr')} />
           {[...state.values].length > 0 && <dl>{[...state.values].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value.value}</dd></div>)}</dl>}
         </details>
       </div>
     </>}
-  </section>;
+  </div>;
 }
 
 function TaskWorkspace({ task, editable, draft, onEdit }: { task: Task; editable: boolean; draft: string; onEdit: (value: string) => void }) {
