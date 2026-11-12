@@ -140,4 +140,3 @@ export function frame(events: Ev[], t: number, jumps: { atMs: number; gap: numbe
   for (const { atMs, gap } of jumps) if (atMs < t) rows.set(`+${atMs}`, { key: `+${atMs}`, atMs, kind: 'jump', text: `+${elapsed(gap)}` });
   return { values, agents, spend, lines, rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }
-
