@@ -1,75 +1,55 @@
-import { CodeBlock, Markdown } from '@tangle-network/ui/markdown';
-import { useEffect, useMemo, useRef } from 'react';
-import { agentSteps, stepKind, stepPath } from '../utils/session.mjs';
-import { ReplayBar, useReplay, type Ev, type Mark, type RunMeta } from './RunReplay';
+import { Markdown } from '@tangle-network/ui/markdown';
+import { useMemo } from 'react';
+import type { Ev } from './RunReplay';
 
-const marks = (events: Ev[]): Mark[] => events.flatMap((event) => [{ atMs: event.atMs }, { atMs: event.atMs + (event.durationMs ?? 0) }]);
-
-export default function ExampleResult({ meta }: { meta: RunMeta }) {
-  const replay = useReplay(meta.url, marks, [1000, 200]);
-  const { events, t, line, r } = replay;
-  const panel = useRef<HTMLDivElement>(null);
-  const playbackFocused = useRef(false);
-  const ended = !!line && r >= line.total;
-  useEffect(() => {
-    if (ended && playbackFocused.current && (!document.activeElement?.isConnected || document.activeElement === document.body)) {
-      const next = panel.current?.querySelector<HTMLElement>('a[download]') ?? panel.current?.querySelector<HTMLElement>('.qs-output');
-      next?.focus({ preventScroll: true });
-    }
-  }, [ended]);
-  useEffect(() => { panel.current?.scrollIntoView({ block: 'nearest' }); }, []);
-  const work = useMemo(() => agentSteps(events ?? []).filter((step) => step.atMs <= t &&
-    (['edit', 'write'].includes(stepKind(step)) || (stepKind(step) === 'bash' && /\b(?:npm|pnpm|bun) test\b/.test(String(step.input.command ?? ''))))), [events, t]);
+/** What the run has produced by recorded time `t`: printed output, test results, the patch, scores and each fleet agent's answer. The timeline beside it shows the work. */
+export default function ExampleResult({ events, t }: { events: Ev[]; t: number }) {
   const result = useMemo(() => {
-    const calls = (events ?? []).filter((event) => event.kind === 'call' && event.atMs + (event.durationMs ?? 0) <= t);
+    const calls = events.filter((event) => event.kind === 'call' && event.atMs + (event.durationMs ?? 0) <= t);
     const outputs = calls.filter((event) => typeof event.result?.stdout === 'string' && event.result.stdout.trim());
     const patch = outputs.findLast((event) => event.result.stdout.startsWith('diff --git '))?.result.stdout as string | undefined;
     const tests = outputs.findLast((event) => /^# tests \d/m.test(event.result.stdout))?.result.stdout as string | undefined;
     const pass = tests?.match(/^# pass (\d+)/m)?.[1], fail = tests?.match(/^# fail (\d+)/m)?.[1];
-    const answers = (events ?? []).flatMap((event, key) => {
+    const answers = events.flatMap((event, key) => {
       const agent = event.type === 'agent.finished' && event.atMs <= t ? event.data?.result : undefined;
-      const text = agent?.result?.response ?? (calls.includes(event) ? event.result?.response : undefined);
-      return typeof text === 'string' || agent ? [{ key, text: typeof text === 'string' ? text : '', agent: agent?.agentId, status: agent?.status, error: agent?.error ?? agent?.result?.error }] : [];
+      const text = agent?.result?.response;
+      return agent ? [{ key, text: typeof text === 'string' ? text : '', agent: agent.agentId, status: agent.status, error: agent.error ?? agent.result?.error }] : [];
     });
     const assessments = calls.filter((event) => event.label === 'judge.score');
     const errors = calls.flatMap((event) => {
       const error = event.error?.message ?? event.result?.error?.message ?? event.result?.error;
       const exit = event.result?.exitCode;
-      return error || event.result?.stderr || (typeof exit === 'number' && exit !== 0) ? [`${typeof exit === 'number' && exit !== 0 ? `Command exited ${exit}\n` : ''}${String(error ?? event.result?.stderr ?? '')}`] : [];
+      const bad = typeof exit === 'number' && exit !== 0; // a command that exits 0 may still write notices to stderr
+      return error || bad ? [`${bad ? `Command exited ${exit}\n` : ''}${String(error ?? event.result?.stderr ?? '')}`] : [];
     });
-    const consoleText = (events ?? []).filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
+    const consoleText = events.filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
       .map((event) => event.text ?? '').join('');
-    const remainingConsole = answers.reduce((text, answer) => answer.text.trim() ? text.replace(answer.text.trim(), '') : text, consoleText);
+    const shown = [...answers.map((answer) => answer.text), ...calls.map((event) => event.result?.response)].filter((text): text is string => typeof text === 'string' && !!text.trim()); // the transcript already shows each answer
+    const remainingConsole = shown.reduce((text, answer) => text.replace(answer.trim(), ''), consoleText);
     const consoleOutput = assessments.length || answers.some((answer) => answer.agent) || /\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(remainingConsole) || !remainingConsole.trim() ? '' : remainingConsole;
     return { patch, tests, pass, fail, answers, assessments, errors, consoleText: consoleOutput,
       output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
   }, [events, t]);
 
-  return <div className="qs-result" ref={panel} data-at={Math.round(t)} role="region" aria-label="Example output" aria-busy={!events && !replay.failed}>
-    <div className="qs-output-actions" ref={replay.root} onFocusCapture={(event) => { playbackFocused.current = event.target instanceof HTMLButtonElement; }} onBlurCapture={(event) => { if (event.target.isConnected) playbackFocused.current = false; }}>
-      {events && !ended && !replay.still && <ReplayBar replay={replay} />}
-      {result.patch && <a download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>}
-    </div>
-    {!events && <p role="status">{replay.failed ? 'The example could not load. Try Run again.' : 'Loading…'}</p>}
-    {events && <>
-      <div className="qs-output" tabIndex={0}>
+  const empty = !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && !result.tests;
+  if (empty) return null;
+  return <div className="qs-result">
+    <div className="qs-output">
         {result.errors.map((error, index) => <pre key={index} className="qs-error">{error}</pre>)}
         {result.consoleText &&
           (/^#{1,6} /m.test(result.consoleText) ? <Markdown>{result.consoleText}</Markdown> : <pre>{result.consoleText}</pre>)}
         {result.tests ? <>
           <p className="qs-test-result" role="status">{result.fail === '0' ? `${result.pass} tests passed` : `${result.fail} tests failed`}</p>
-          {result.patch && <details><summary>View changes</summary><CodeBlock code={result.patch} language="diff" label="" /></details>}
+          {result.patch && <>
+            <pre className="qs-diff">{result.patch.split('\n').filter((line) => !/^(?:index |--- |\+\+\+ )/.test(line)).map((line, index) => {
+              const file = line.match(/^diff --git a\/(\S+)/)?.[1];
+              return <span key={index} data-line={file ? 'file' : line.startsWith('@@') ? 'hunk' : line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : undefined}>{file ?? line}{'\n'}</span>;
+            })}</pre>
+            <a className="qs-patch" download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>
+          </>}
         </> : <>
-          {work.map((step) => {
-            const code = step.input.new_string ?? step.input.newString ?? step.input.content;
-            const path = stepPath(step);
-            return <div key={step.id} className="qs-work">
-              <p>{typeof path === 'string' ? path.replace(/^.*\/sandbox-demo\//, '') : String(step.input.command ?? step.input.description)}</p>
-              {typeof code === 'string' && <CodeBlock code={code} language="ts" label="" />}
-            </div>;
-          })}
           {result.answers.map((answer) => <div key={answer.key}>
-            {answer.agent && <p>{answer.agent}{answer.status && answer.status !== 'completed' ? ` · ${answer.status}` : ''}</p>}
+            <p className="qs-agent">{answer.agent}{answer.status && answer.status !== 'completed' ? ` · ${answer.status}` : ''}</p>
             {answer.error && <p className="qs-error">{String(answer.error)}</p>}
             <Markdown>{answer.text}</Markdown>
           </div>)}
@@ -79,9 +59,7 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
             <p>{event.result.notes}</p>
           </div>)}
           {result.output && <pre>{result.output}</pre>}
-          {!work.length && !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && <p role="status">{ended ? 'This example has no text output.' : 'Starting…'}</p>}
         </>}
-      </div>
-    </>}
+    </div>
   </div>;
 }
