@@ -1,6 +1,6 @@
 import { CodeBlock, CopyButton } from '@tangle-network/ui/markdown';
-import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@tangle-network/ui/primitives';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@tangle-network/ui/primitives';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { clock } from '../utils/date';
 import { agentSteps } from '../utils/session.mjs';
 import ExampleResult from './ExampleResult';
@@ -60,15 +60,16 @@ function activity(events: Ev[], t: number) {
   return { rows: rows.sort((a, b) => a.atMs - b.atMs), lines, active };
 }
 
-/** Each source line's top and height inside the scrolling code pane, kept current as the pane reflows. */
+/** Each source line's top, height and the free width after its text, inside the scrolling code pane, kept current as it reflows. */
 function useLineBoxes(pane: React.RefObject<HTMLElement | null>, code: string) {
-  const [boxes, setBoxes] = useState<[number, number][]>([]);
+  const [boxes, setBoxes] = useState<[number, number, number][]>([]);
   useLayoutEffect(() => {
     const el = pane.current, pre = el?.querySelector('pre');
     if (!el || !pre) return;
     const measure = () => {
       const base = el.getBoundingClientRect().top - el.scrollTop;
-      setBoxes([...el.querySelectorAll('pre > code > span')].map((line) => { const box = line.getBoundingClientRect(); return [box.top - base, box.height]; }));
+      const right = el.getBoundingClientRect().left + el.clientWidth;
+      setBoxes([...el.querySelectorAll('pre > code > span')].map((line) => { const box = line.getBoundingClientRect(), ends = [...line.getClientRects()].at(-1); return [box.top - base, box.height, right - (ends?.right ?? right)]; }));
     };
     const observer = new ResizeObserver(measure);
     observer.observe(pre);
@@ -77,7 +78,7 @@ function useLineBoxes(pane: React.RefObject<HTMLElement | null>, code: string) {
   return boxes;
 }
 
-function Workspace({ idea, install }: { idea: Idea; install: string }) {
+function Workspace({ idea, folder, install }: { idea: Idea; folder: string; install: string }) {
   const source = useRef<HTMLElement>(null);
   const replay = useReplay(idea.run?.url ?? '', marks, [700, 420], PLAY_MS);
   const { events, t, line, r } = replay;
@@ -98,7 +99,7 @@ function Workspace({ idea, install }: { idea: Idea; install: string }) {
   return <div className="qs-main" data-state={!idea.run ? 'source' : ended ? 'ended' : replay.playing ? 'running' : 'idle'}>
     <div className="qs-pane qs-source">
       <div className="qs-actions">
-        <span className="qs-file">{idea.id}.mts</span>
+        <span className="qs-file"><i>{folder}/</i>{idea.id}.mts</span>
         <CopyButton text={idea.code} aria-label="Copy file" />
         {idea.run && <Button size="sm" className="qs-run" disabled={!line} onClick={replay.toggle} title="Plays the recorded run">{label}</Button>}
       </div>
@@ -107,7 +108,7 @@ function Workspace({ idea, install }: { idea: Idea; install: string }) {
         <div className="qs-exec" aria-hidden="true">
           {lastBand.current && <i className="qs-band" data-on={!!band || undefined} style={{ transform: `translateY(${lastBand.current[0]}px)`, height: lastBand.current[1] }} />}
           {[...run.lines].map(([n, { row, last }]) => boxes[n - 1] && row.state !== 'running' && last &&
-            <span key={n} className="qs-ret" data-state={row.state} style={{ top: boxes[n - 1][0] + boxes[n - 1][1] }}><b>{brief(last.result)}</b>{seconds(last.durationMs)}</span>)}
+            <span key={n} className="qs-ret" data-state={row.state} style={{ top: boxes[n - 1][0] + boxes[n - 1][1] }}>{boxes[n - 1][2] > 240 && <b>{brief(last.result)}</b>}{seconds(last.durationMs)}</span>)}
         </div>
       </section>
       <Install command={idea.install ?? install} label="Install" />
@@ -126,15 +127,18 @@ function Workspace({ idea, install }: { idea: Idea; install: string }) {
   </div>;
 }
 
-/** Slides one highlight to the chosen control: the container reads its box from --thumb-* variables. */
+/** Slides one marker to the chosen job: its list reads the job's box from --thumb-* variables. */
 function useThumb(root: React.RefObject<HTMLElement | null>, picked: string) {
   useLayoutEffect(() => {
-    const place = () => root.current?.querySelectorAll<HTMLElement>('.qs-rows').forEach((list) => {
-      const item = list.querySelector<HTMLElement>('[aria-pressed="true"]');
-      if (!item) return;
+    const place = () => {
+      const item = root.current?.querySelector<HTMLElement>('.qs-list [aria-pressed="true"]'), list = item?.parentElement;
+      if (!item || !list) return;
       for (const [name, value] of [['x', item.offsetLeft], ['y', item.offsetTop], ['w', item.offsetWidth], ['h', item.offsetHeight]] as const) list.style.setProperty(`--thumb-${name}`, `${value}px`);
-      if (list.scrollWidth > list.clientWidth) list.scrollTo({ left: item.offsetLeft - (list.clientWidth - item.offsetWidth) / 2 });
-    });
+      const rows = list.parentElement!;
+      if (rows.scrollWidth > rows.clientWidth) rows.scrollTo({ left: item.offsetLeft - (rows.clientWidth - item.offsetWidth) / 2 });
+      const nav = rows.parentElement!, group = rows.previousElementSibling as HTMLElement; // a narrow screen scrolls subjects sideways
+      if (nav.scrollWidth > nav.clientWidth) nav.scrollTo({ left: group.offsetLeft - 12 });
+    };
     place();
     const observer = new ResizeObserver(place);
     if (root.current) observer.observe(root.current);
@@ -159,19 +163,29 @@ export default function QuickstartCode({ subjects }: { subjects: Subject[] }) {
     const url = new URL(window.location.href); url.searchParams.set('example', value);
     window.history.replaceState(window.history.state, '', url);
   };
-  const chooseSubject = (id: string) => {
-    const subject = subjects.find((item) => item.id === id);
-    if (subject && subject.id !== task.subject.id && subject.ideas[0]) choose(`${subject.id}/${subject.ideas[0].id}`);
+  const step = (event: React.KeyboardEvent) => { // the arrow keys walk the jobs, as in a file list
+    const next = tasks[tasks.indexOf(task) + (event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0)];
+    if (!next || next === task) return;
+    event.preventDefault(); choose(next.key);
+    requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('.qs-list [aria-pressed="true"]')?.focus());
   };
-  return <Tabs className="qs-editor" ref={root} value={task.subject.id} onValueChange={chooseSubject}>
-    <TabsList className="qs-cols" variant="underline" aria-label="Subjects">
-      {subjects.map((subject) => <TabsTrigger key={subject.id} value={subject.id} variant="underline">{subject.label}</TabsTrigger>)}
-    </TabsList>
-    {subjects.map((subject) => <TabsContent key={subject.id} value={subject.id} className="qs-body">
-      <nav className="qs-rows" aria-label={`${subject.label} examples`}>
-        {subject.ideas.map((idea) => <Button key={idea.id} size="sm" variant="ghost" aria-pressed={idea === task.idea} onClick={() => choose(`${subject.id}/${idea.id}`)}>{idea.title}</Button>)}
-      </nav>
-      {subject === task.subject && <Workspace key={task.key} idea={task.idea} install={subject.install} />}
-    </TabsContent>)}
-  </Tabs>;
+  // One list, like a folder of files: a subject opens to its jobs, and each job shows how long its run took.
+  return <div className="qs-editor" ref={root}>
+    <nav className="qs-nav" aria-label="Examples" onKeyDown={step}>
+      {subjects.map((subject) => {
+        const open = subject === task.subject;
+        return <Fragment key={subject.id}>
+          <Button size="sm" variant="ghost" className="qs-group" aria-expanded={open} onClick={() => open || choose(`${subject.id}/${subject.ideas[0].id}`)}>{subject.label}</Button>
+          <div className="qs-rows" inert={!open}>
+            <div className="qs-list">
+              {subject.ideas.map((idea) => <Button key={idea.id} size="sm" variant="ghost" aria-pressed={idea === task.idea} onClick={() => choose(`${subject.id}/${idea.id}`)}>
+                {idea.title}{idea.run && <span aria-hidden="true">{clock(idea.run.ms)}</span>}
+              </Button>)}
+            </div>
+          </div>
+        </Fragment>;
+      })}
+    </nav>
+    <Workspace key={task.key} idea={task.idea} folder={task.subject.id} install={task.subject.install} />
+  </div>;
 }

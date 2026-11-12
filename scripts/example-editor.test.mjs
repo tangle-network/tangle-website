@@ -54,11 +54,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.locator('.qs-main[data-state="running"] .qs-band[data-on]').waitFor();
     await editor.locator('.qs-feed li').first().waitFor();
     if (name === 'desktop') {
-      await editor.getByRole('tab', { name: 'Sandboxes', exact: true }).focus();
-      await editor.getByRole('tab', { name: 'Sandboxes', exact: true }).press('End');
-      await editor.locator('.qs-file').filter({ hasText: 'any-cloud.mts' }).waitFor();
-      await editor.getByRole('tab', { name: 'Any cloud', exact: true }).press('Home');
+      await editor.getByRole('button', { name: 'Any cloud', exact: true }).click();
+      await editor.locator('.qs-file').filter({ hasText: 'runtime/any-cloud.mts' }).waitFor();
+      check(await editor.locator('.qs-rows:not([inert])').count() === 1, 'One subject is open at a time', item);
+      await editor.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'run-code.mts' }).waitFor();
+      await editor.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
+      await editor.locator('.qs-file').filter({ hasText: 'python-csv.mts' }).waitFor();
       await editor.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'fix-a-test.mts' }).waitFor();
     }

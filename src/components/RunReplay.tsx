@@ -6,7 +6,7 @@ import './run-replay.css';
 
 // Replays a record that scripts/record-examples.mts made against production, at its recorded timing. The player here
 // (loader, pacing, play loop, controls, feed) also drives PairReplay, a terminal session's editor, terminal and page.
-export interface RunMeta { url: string; recordedAt: string; runId: string; sha: string; sdk: string; costUsd: number | null }
+export interface RunMeta { url: string; recordedAt: string; runId: string; sha: string; sdk: string; costUsd: number | null; ms: number }
 export type Ev = { atMs: number; kind: string; durationMs?: number; line?: number; label?: string; assign?: string; result?: any; error?: any; type?: string; data?: any; text?: string };
 export type Row = { key: string; atMs: number; kind: string; text: string; detail?: string; state?: string };
 /** A moment the replay shows something new; `hold` keeps the recorded clock still for reading. */

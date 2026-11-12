@@ -36,7 +36,7 @@ export default function ExampleResult({ events, t, ended }: { events: Ev[]; t: n
 
   const empty = !work.length && !result.answers.length && !result.output && !result.consoleText && !result.errors.length && !result.assessments.length && !result.tests;
   useFollowTail(panel, { content: `${work.length}:${result.consoleText.length}:${result.output.length}:${ended}`, follow: !ended });
-  useEffect(() => { if (ended) panel.current?.scrollTo({ top: 0 }); }, [ended]); // the finished result reads from its headline
+  useEffect(() => { panel.current?.scrollTo({ top: 0 }); }, [ended, result.answers.length]); // an answer and the finished result read from their first line
   if (empty) return null;
   return <div className="qs-result" ref={panel} data-ended={ended || undefined} role="region" aria-label="Example output" tabIndex={0}>
     <div className="qs-output">
