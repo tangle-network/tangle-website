@@ -33,8 +33,9 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
     });
     const consoleText = (events ?? []).filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
       .map((event) => event.text ?? '').join('');
-    return { patch, tests, pass, fail, answers, assessments, errors, consoleText,
-      output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests).map((event) => event.result.stdout).join('\n') };
+    const consoleOutput = assessments.length || answers.some((answer) => answer.agent) || /\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(consoleText) ? '' : consoleText;
+    return { patch, tests, pass, fail, answers, assessments, errors, consoleText: consoleOutput,
+      output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
   }, [events, t]);
 
   return <div className="qs-result" ref={panel} data-at={Math.round(t)} aria-label="Example output" aria-busy={!events && !replay.failed}>
@@ -46,7 +47,7 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
     {events && <>
       <div className="qs-output" tabIndex={0}>
         {result.errors.map((error, index) => <pre key={index} className="qs-error">{error}</pre>)}
-        {result.consoleText && !result.assessments.length && !result.answers.some((answer) => answer.agent) && !/\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(result.consoleText) &&
+        {result.consoleText &&
           (/^#{1,6} /m.test(result.consoleText) ? <Markdown>{result.consoleText}</Markdown> : <pre>{result.consoleText}</pre>)}
         {result.tests ? <>
           <p className="qs-test-result" role="status">{result.fail === '0' ? `${result.pass} tests passed` : `${result.fail} tests failed`}</p>
