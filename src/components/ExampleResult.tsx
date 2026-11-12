@@ -24,11 +24,12 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
     });
     if (answers.length > 1) answers.forEach((answer, index) => { if (answer.label === 'Answer') answer.label += ` ${index + 1}`; });
     const judgments: Artifact[] = calls.filter((event) => event.label === 'judge.score').map((event, index) => ({ id: `judge-${index}`, label: `Assessment ${index + 1}`, text: JSON.stringify(event.result, null, 2), language: 'json' }));
+    const commands: Artifact[] = calls.filter((event) => event !== patch && event !== tests && (event.result?.stdout || event.result?.stderr)).map((event, index) => ({ id: `command-${index}`, label: `Command output ${index + 1}`, text: (event.result.stdout || '') + (event.result.stderr || '') }));
     const consoleText = (events ?? []).filter((event) => event.kind === 'stdout' || event.kind === 'stderr').map((event) => event.text ?? '').join('');
     const items: Artifact[] = [
       ...(patch ? [{ id: 'patch', label: 'Patch', text: patch.result.stdout, language: 'diff' }] : []),
       ...(tests ? [{ id: 'tests', label: 'Tests', text: tests.result.stdout + (tests.result.stderr || '') }] : []),
-      ...answers, ...judgments,
+      ...answers, ...judgments, ...commands,
       ...(consoleText ? [{ id: 'console', label: 'Console', text: consoleText }] : []),
     ];
     return { items, patch: patch?.result.stdout as string | undefined, tests };
