@@ -38,7 +38,7 @@ export default function ExampleResult({ meta }: { meta: RunMeta }) {
       output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };
   }, [events, t]);
 
-  return <div className="qs-result" ref={panel} data-at={Math.round(t)} aria-label="Example output" aria-busy={!events && !replay.failed}>
+  return <div className="qs-result" ref={panel} data-at={Math.round(t)} role="region" aria-label="Example output" aria-busy={!events && !replay.failed}>
     <div className="qs-output-actions" ref={replay.root}>
       {events && !ended && !replay.still && <Button variant="ghost" size="sm" onClick={replay.toggle}>{replay.playing ? 'Pause' : 'Continue'}</Button>}
       {result.patch && <a download="fix.patch" href={`data:text/plain;charset=utf-8,${encodeURIComponent(result.patch)}`}>Download patch</a>}
