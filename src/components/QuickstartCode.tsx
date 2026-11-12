@@ -28,7 +28,7 @@ function brief(result: any): string {
   if (typeof result === 'number') return String(+result.toFixed(4));
   if (typeof result === 'string') return short(result.trim().split('\n')[0]);
   if (Array.isArray(result)) return `${result.length} ${result.length === 1 ? 'result' : 'results'}`;
-  if (typeof result.spentUsd === 'number') return `${usd(result.spentUsd)} of ${usd(result.capUsd)}`;
+  if (typeof result.spentUsd === 'number') return typeof result.capUsd === 'number' ? `${usd(result.spentUsd)} of ${usd(result.capUsd)}` : usd(result.spentUsd);
   if (typeof result.exitCode === 'number') return `exit ${result.exitCode}`;
   if (typeof result.composite === 'number') return `score ${result.composite}`;
   const value = result.url ?? result.id ?? result.fleetId ?? result.snapshotId?.slice(0, 12) ?? result.jobId ?? result.path ?? result.outcome ?? result.status ?? result.state;
