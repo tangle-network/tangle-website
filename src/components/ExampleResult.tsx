@@ -24,7 +24,8 @@ export default function ExampleResult({ events, t }: { events: Ev[]; t: number }
     });
     const consoleText = events.filter((event) => event.atMs <= t && ['stdout', 'stderr'].includes(event.kind))
       .map((event) => event.text ?? '').join('');
-    const remainingConsole = answers.reduce((text, answer) => answer.text.trim() ? text.replace(answer.text.trim(), '') : text, consoleText);
+    const shown = [...answers.map((answer) => answer.text), ...calls.map((event) => event.result?.response)].filter((text): text is string => typeof text === 'string' && !!text.trim()); // the transcript already shows each answer
+    const remainingConsole = shown.reduce((text, answer) => text.replace(answer.trim(), ''), consoleText);
     const consoleOutput = assessments.length || answers.some((answer) => answer.agent) || /\b(?:inputTokens|outputTokens|cacheReadTokens)\b/.test(remainingConsole) || !remainingConsole.trim() ? '' : remainingConsole;
     return { patch, tests, pass, fail, answers, assessments, errors, consoleText: consoleOutput,
       output: outputs.filter((event) => event.result.stdout !== patch && event.result.stdout !== tests && !consoleOutput.includes(event.result.stdout.trim())).map((event) => event.result.stdout).join('\n') };

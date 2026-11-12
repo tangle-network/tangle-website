@@ -1,6 +1,7 @@
 // Runs each home page example file for real and records what it did, so the editor's Play replays a real run.
 //
-//   record:  dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
+//   record:  dotenvx get WEBSITE_EXAMPLE_RECORDER_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
+//            (an example that names no model runs on the first model its key allows)
 //   session: <a key whose allow-list has the session's model> | node scripts/record-examples.mts --session <name>
 //   check:   node scripts/record-examples.mts --check   (pnpm check:runs)
 //

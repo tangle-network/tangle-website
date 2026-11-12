@@ -25,7 +25,7 @@ if (process.env.TANGLE_BUILD_REVISION) {
 }
 const read = async key => JSON.parse(await fs.readFile(`${ROOT}src/data/runs/${key}.json`, 'utf8'));
 const source = await fs.readFile(join(ROOT, 'src/examples/sandboxes/fix-a-test.mts'), 'utf8');
-const record = await read('sandboxes/fix-a-test'), patch = record.events[33].result.stdout;
+const record = await read('sandboxes/fix-a-test'), patch = record.events.find(event => event.result?.stdout?.startsWith('diff --git ')).result.stdout;
 const report = { cases: [], failures: [], quality: 'UNREVIEWED: render inspection is separate from functional checks' };
 const check = (ok, message, item) => { if (!ok) report.failures.push({ case: item.name, message }); };
 const normalized = text => text.replace(/`+|\*\*/g, '').replace(/^\s*[-*]\s+/gm, '').replace(/\s+/g, ' ').trim();
@@ -106,7 +106,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await load('sandboxes/worker');
       const workerRecord = await read('sandboxes/worker');
       const workerAnswer = workerRecord.events.find(event => typeof event.result?.response === 'string').result.response;
-      await editor.locator('.qs-feed').getByText('Upgrade Complete', { exact: false }).waitFor();
+      await editor.locator('.qs-feed').getByText(normalized(workerAnswer.split('\n')[0]), { exact: false }).waitFor();
       check(normalized(await editor.locator('.qs-feed').innerText()).split(normalized(workerAnswer)).length - 1 === 1, 'Complete long-job answer must appear once', item);
       await load('evals/regression-gate'); await editor.getByText('{ shipped: 1, candidate: 1 }', { exact: false }).waitFor();
       await load('evals/score-a-trace'); await editor.getByText('Score 1', { exact: true }).waitFor();
