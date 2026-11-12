@@ -1,7 +1,7 @@
 import { useFollowTail } from '@tangle-network/ui/hooks/use-follow-tail';
-import { Button, SegmentedControl, Slider } from '@tangle-network/ui/primitives';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { clock, elapsed, formatDate } from '../utils/date';
+import { Button } from '@tangle-network/ui/primitives';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { elapsed } from '../utils/date';
 import './run-replay.css';
 
 // Replays a record that scripts/record-examples.mts made against production, at its recorded timing. The player here
@@ -9,7 +9,7 @@ import './run-replay.css';
 export interface RunMeta { url: string; recordedAt: string; runId: string; sha: string; sdk: string; costUsd: number | null }
 export type Ev = { atMs: number; kind: string; durationMs?: number; line?: number; label?: string; assign?: string; result?: any; error?: any; type?: string; data?: any; text?: string };
 export type Row = { key: string; atMs: number; kind: string; text: string; detail?: string; state?: string };
-/** A moment the replay shows something new; `hold` keeps the recorded clock still while it types out. */
+/** A moment the replay shows something new; `hold` keeps the recorded clock still for reading. */
 export type Mark = { atMs: number; hold?: number; r?: number };
 
 type Idle = [ms: number, playsIn: number]; // a stretch over `ms` in which nothing new happens plays in `playsIn`, the clock sweeping its real length
@@ -42,48 +42,51 @@ const recordAt = (anchors: [number, number][], r: number) => {
   return !next || next[0] === r0 ? t0 : t0 + ((r - r0) / (next[0] - r0)) * (next[1] - t0);
 };
 
-/** Loads a record and plays it: `r` is replay time, `t` the recorded time it shows. Reduced motion starts at the end. */
-export function useReplay(url: string, marks: (events: Ev[]) => Mark[], autoplay: boolean, idle: Idle = [10_000, 800]) {
-  const [events, setEvents] = useState<Ev[] | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [r, setR] = useState(0);
-  const [playing, setPlaying] = useState(autoplay);
-  const [speed, setSpeed] = useState(1);
-  const [still, setStill] = useState(false);
+/** One clock for both demos. Visibility pauses work; reduced motion opens the finished record. */
+export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Idle = [10_000, 800]) {
+  const root = useRef<HTMLDivElement>(null);
+  const [events, setEvents] = useState<Ev[] | null>(null), [failed, setFailed] = useState(false);
+  const [r, setR] = useState(0), [enabled, setEnabled] = useState(true);
+  const [visible, setVisible] = useState(false), [hidden, setHidden] = useState(false), [still, setStill] = useState(false);
   useEffect(() => {
-    fetch(url).then((res) => { if (!res.ok) throw new Error('Replay request failed'); return res.json(); })
-      .then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs))).catch(() => setFailed(true));
+    const controller = new AbortController();
+    fetch(url, { signal: controller.signal }).then((res) => { if (!res.ok) throw new Error('Record unavailable'); return res.json(); })
+      .then((record) => setEvents([...record.events].sort((a: Ev, b: Ev) => a.atMs - b.atMs)))
+      .catch((error) => { if (error.name !== 'AbortError') setFailed(true); });
+    return () => controller.abort();
   }, [url]);
   const line = useMemo(() => (events ? pace(marks(events), idle) : null), [events]);
-  useEffect(() => { if (line && matchMedia('(prefers-reduced-motion: reduce)').matches) { setStill(true); setR(line.total); setPlaying(false); } }, [line]);
+  useEffect(() => {
+    const media = matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => { setStill(media.matches); if (media.matches && line) { setR(line.total); setEnabled(false); } };
+    update(); media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [line]);
+  useEffect(() => {
+    const io = new IntersectionObserver(([entry]) => setVisible(entry.isIntersecting && entry.intersectionRatio >= 0.25), { threshold: 0.25 });
+    if (root.current) io.observe(root.current);
+    const update = () => setHidden(document.hidden);
+    update(); document.addEventListener('visibilitychange', update);
+    return () => { io.disconnect(); document.removeEventListener('visibilitychange', update); };
+  }, []);
+  const playing = enabled && visible && !hidden && !!line && r < line.total;
   useEffect(() => {
     if (!playing || !line) return;
     let last = performance.now(), raf = requestAnimationFrame(function tick(now: number) {
-      const dt = Math.max(0, now - last) * speed; // The first frame can predate registration; React may apply this update later.
+      const dt = Math.max(0, now - last);
       last = now;
       setR((value) => Math.min(line.total, value + dt));
       raf = requestAnimationFrame(tick);
     });
     return () => cancelAnimationFrame(raf);
-  }, [playing, line, speed]);
-  useEffect(() => { if (line && r >= line.total) setPlaying(false); }, [r, line]);
-  const t = line ? recordAt(line.anchors, r) : 0, end = line ? recordAt(line.anchors, line.total) : 0;
-  return { url, events, failed, line, r, t, end, playing, setPlaying, setR, speed, setSpeed, still };
+  }, [playing, line]);
+  const toggle = () => { if (line && r >= line.total) { setR(0); setEnabled(true); } else setEnabled(!enabled); };
+  return { root, url, events, failed, line, r, t: line ? recordAt(line.anchors, r) : 0, playing, toggle, still, visible: visible && !hidden };
 }
 
-/** Play, scrub, the recorded clock and speed, and a note when the record did not load. */
-export function ReplayBar({ replay, className, autoFocus, children }: { replay: ReturnType<typeof useReplay>; className: string; autoFocus?: boolean; children?: ReactNode }) {
-  const { line, r, t, end, playing, setPlaying, setR, speed, setSpeed } = replay;
-  return <>
-    <div className={className}>
-      <Button variant="ghost" size="icon-sm" autoFocus={autoFocus} disabled={!line} aria-label={playing ? 'Pause' : 'Play'} onClick={() => { if (line && r >= line.total) setR(0); setPlaying(!playing); }}>{playing ? '❚❚' : '▶'}</Button>
-      <Slider className="rr-scrub" min={0} max={line?.total ?? 1} step={50} value={[r]} thumbLabels={[`Replay position ${clock(t)}`]} onValueChange={([value]) => setR(value)} />
-      <span className="rr-time">{clock(t)} / {clock(end)}</span>
-      <SegmentedControl aria-label="Speed" value={String(speed)} onValueChange={(value) => setSpeed(Number(value))} options={[{ value: '1', label: '1×' }, { value: '4', label: '4×' }]} />
-      {children}
-    </div>
-    {replay.failed && <p className="rr-note">The record did not load. <a href={replay.url}>Open the JSON</a>.</p>}
-  </>;
+export function ReplayBar({ replay }: { replay: ReturnType<typeof useReplay> }) {
+  const label = replay.line && replay.r >= replay.line.total ? 'Replay' : replay.playing ? 'Pause' : 'Play';
+  return <Button variant="ghost" size="sm" className="rr-toggle" disabled={!replay.line} onClick={replay.toggle} aria-label={`${label} recorded demo`}>{label}</Button>;
 }
 
 /** The activity feed, following its newest row until the reader scrolls up. */
@@ -145,18 +148,13 @@ const ticks = (events: Ev[]): Mark[] => {
   return events.filter((e) => !poll(e)).flatMap((e) => [{ atMs: e.atMs }, { atMs: e.atMs + (e.durationMs ?? 0) }]);
 };
 
-export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClose: () => void; id: string }) {
-  const replay = useReplay(meta.url, ticks, true), { events, t, line } = replay;
+export default function RunReplay({ meta }: { meta: RunMeta }) {
+  const replay = useReplay(meta.url, ticks), { events, t, line } = replay;
   const state = useMemo(() => frame(events ?? [], t, line?.jumps ?? []), [events, t, line]);
-  // Each line lights while its call runs and stays marked once it returns.
-  const lit = [...state.lines].map(([line, s]) => `[id="${id}"] ~ .qs-code code > span:nth-child(${line}){opacity:1${s === 'running' ? ';background:var(--accent-surface-strong)' : ''}}`).join('');
-
   return (
-    <aside id={id} className="rr dark" data-theme="website" aria-label="Recorded run" onKeyDown={(event) => { if (event.key === 'Escape') onClose(); }}>
-      <style>{lit}</style>
-      <p className="rr-head">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · {meta.costUsd === null ? 'cost not reported' : usd(meta.costUsd)} ·{' '}
-        <a href={meta.url}>Run JSON</a></p>
-      <ReplayBar replay={replay} className="rr-bar"><Button variant="ghost" size="icon-sm" autoFocus aria-label="Close the replay" onClick={onClose}>✕</Button></ReplayBar>
+    <div className="rr dark" data-theme="website" role="region" aria-label="Recorded output" ref={replay.root} data-at={Math.round(t)}>
+      <div className="rr-head"><span>Recorded output</span><ReplayBar replay={replay} /></div>
+      {!events && <p className="rr-note" role="status">{replay.failed ? 'The recorded output could not load.' : 'Loading recorded output…'}</p>}
       {events && <>
         <dl className="rr-values">{[...state.values].map(([name, v]) => <div key={name}><dt>{name}</dt><dd>{v.value}{v.count > 1 && <small> ×{v.count}</small>}</dd></div>)}</dl>
         {state.agents.size > 0 && <div className="rr-fleet" aria-label="Fleet agents">
@@ -165,6 +163,6 @@ export default function RunReplay({ meta, onClose, id }: { meta: RunMeta; onClos
         </div>}
         <Feed rows={state.rows} />
       </>}
-    </aside>
+    </div>
   );
 }

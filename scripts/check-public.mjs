@@ -241,7 +241,7 @@ export const CLAIMS = [
   },
   {
     id: 'soc2-wording',
-    source: 'wiki/infrastructure-claims-register.md, SOC 2 examination row: examination covering June 14 to September 14, 2026; the report is in issuance',
+    source: 'wiki/infrastructure-claims-register.md, SOC 2 examination row; current report availability belongs to the linked Tangle Trust Center',
     async run(page) {
       const t = text(page.html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ''));
       if (!/SOC ?2/i.test(t)) return { checked: 0, mismatches: [] };
@@ -249,7 +249,7 @@ export const CLAIMS = [
       const over = /SOC ?2[^.]{0,40}\b(certified|certification|compliant|compliance)\b|\b(certified|compliant)\b[^.]{0,25}SOC ?2|\b(achieved|passed|earned|received)\b[^.]{0,25}SOC ?2|SOC ?2[^.]{0,60}\b(report|attestation) (is |was )?(available|issued|completed|published)/i.exec(t);
       if (over) mismatches.push({ claim: over[0], expected: 'examination completed, report in issuance; no certification or issued report', found: over[0] });
       for (const m of t.matchAll(/covering ([A-Z][a-z]+ \d+ to [A-Z][a-z]+ \d+, \d{4})/g)) if (m[1] !== 'June 14 to September 14, 2026') mismatches.push({ claim: m[0], expected: 'June 14 to September 14, 2026', found: m[1] });
-      if (page.route === '/security/' && !t.includes('the report is in issuance')) mismatches.push({ claim: '/security SOC 2 status', expected: 'the report is in issuance', found: 'wording missing' });
+      if (page.route === '/security/' && (!/completed a SOC 2 Type II examination with A-LIGN/.test(t) || !hrefs(page.html).some((href) => href.startsWith('https://app.vanta.com/tangle.tools/trust/')))) mismatches.push({ claim: '/security SOC 2 status', expected: 'completed examination with current availability linked to the Tangle Trust Center', found: 'examination fact or Trust Center link missing' });
       return { checked: 1, mismatches };
     },
   },
