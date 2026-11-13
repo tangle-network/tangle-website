@@ -1,6 +1,7 @@
 // Runs each home page example file for real and records what it did, so the editor's Play replays a real run.
 //
-//   record:  dotenvx get US_SANDBOX_PRODUCTION_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
+//   record:  dotenvx get WEBSITE_EXAMPLE_RECORDER_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
+//            (an example that names no model runs on the first model its key allows)
 //   session: <a key whose allow-list has the session's model> | node scripts/record-examples.mts --session <name>
 //   check:   node scripts/record-examples.mts --check   (pnpm check:runs)
 //
@@ -36,12 +37,14 @@ const SESSION_RUNS = join(ROOT, "src/data/sessions");
 const MAX_AGE_DAYS = 30;
 // Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
 const NO_RUN: Record<string, string> = {
+  "router/security-model": "requires a customer-selected, key-restricted model; no live run recorded",
+  "router/review-a-route": "requires a customer-selected Router model; no live run recorded",
   "runtime/any-cloud-e2b": "no credential in vault",
   "runtime/any-cloud-daytona": "no credential in vault",
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
-// A call that threw, or returned the SDK's { success: false } turn, failed the run even when the process exited 0.
-const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || (e.result as { success?: boolean } | undefined)?.success === false);
+// A call that threw, or returned the SDK's { success: false } turn or a { status: "failed" } run, failed the run even when the process exited 0.
+const failed = (e: Event) => e.kind === "call" && (e.error !== undefined || ((r) => r?.success === false || r?.status === "failed")(e.result as { success?: boolean; status?: string } | undefined));
 const examples = () => readdirSync(EXAMPLES).flatMap((subject) =>
   readdirSync(join(EXAMPLES, subject)).filter((f) => f.endsWith(".mts")).map((f) => `${subject}/${f.slice(0, -4)}`));
 
@@ -327,7 +330,9 @@ function save(path: string, record: RunRecord, key?: string) {
   const events = record.events.flatMap((e) => {
     if (e.kind !== "stream" || /^(agent|fleet)\.(started|finished)$/.test(String(e.type))) return [e];
     const part = e.type === "message.part.updated" ? (e.data as { part?: Record<string, any> } | undefined)?.part : undefined;
-    return part?.type === "tool" ? [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input } } } }] : [];
+    // The editor's timeline reads the agent's words, its reasoning, and each tool's input and (clipped) output.
+    if (part?.type === "tool") return [{ ...e, data: { part: { id: part.id, type: "tool", tool: part.tool, state: { status: part.state?.status, input: part.state?.input, output: clip(part.state?.output ?? part.state?.error, 1200) } } } }];
+    return (part?.type === "text" || part?.type === "reasoning") && String(part.text ?? "").trim() ? [{ ...e, data: { part: { id: part.id, type: part.type, text: part.text } } }] : [];
   });
   const json = JSON.stringify({ ...record, events }, (k, v) => UNREAD.test(k) || (ID.test(k) && !source.includes(k)) ? undefined : k === "account" ? "…" : typeof v === "string" ? scrub(v) : v, 1)
     .replace(/\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s"\\]+)/g, "$1=[redacted]")

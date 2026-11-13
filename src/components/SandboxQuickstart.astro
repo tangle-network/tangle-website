@@ -6,15 +6,16 @@ import QuickstartCode, { type Subject } from './QuickstartCode';
 // typechecks every file against the published packages.
 const files = import.meta.glob<string>('../examples/*/*.mts', { query: '?raw', import: 'default', eager: true });
 // Each file's recorded production run (scripts/record-examples.mts). A file whose record is missing or was
-// recorded from other bytes gets no Play button; `pnpm check:runs` fails the gate for both.
-const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; sdk: Record<string, string> } }>(
+// recorded from other bytes gets no recorded output; `pnpm check:runs` fails the gate for both.
+const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; sdk: Record<string, string> }; events: { atMs: number; durationMs?: number }[] }>(
   '../data/runs/*/*.json', { import: 'default', eager: true });
 const recordUrls = import.meta.glob<string>('../data/runs/*/*.json', { query: '?url&no-inline', import: 'default', eager: true });
 const recorded = (path: string, code: string) => {
   const record = records[path];
   if (record?.source.sha256 !== sourceDigest(code)) return undefined;
   const { id, recordedAt, costUsd, sdk } = record.run;
-  return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd };
+  const ms = Math.max(0, ...record.events.map((event) => event.atMs + (event.durationMs ?? 0))); // how long the job took
+  return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd, ms };
 };
 const SANDBOX = 'npm install @tangle-network/sandbox';
 // Each row is one task in plain words; the file beside it is the whole answer.
@@ -32,6 +33,10 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['browser-task', 'Use a browser'],
     ['host-a-page', 'Put a page online'],
     ['worker', 'Run a long job'],
+  ]],
+  ['router', 'Router', 'npm install --save-dev tsx', [
+    ['security-model', 'Use a security model'],
+    ['review-a-route', 'Review an API route'],
   ]],
   ['evals', 'Evals', `${SANDBOX} @tangle-network/agent-eval`, [
     ['score-a-trace', 'Score an answer'],
@@ -51,7 +56,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
   ]],
   ['fleets', 'Fleets', SANDBOX, [
     ['under-a-budget', 'Four agents, one budget'],
-    ['fan-out', 'One agent per package'],
+    ['fan-out', 'Review repository packages'],
     ['translate-readme', 'One language per agent'],
     ['mix-models', 'Cheap model, easy jobs'],
     ['shard-tests', 'Shard the tests'],
@@ -75,14 +80,15 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
 }));
 ---
 
-<section class="quickstart" data-theme="website" aria-labelledby="quickstart-title">
+<section class="quickstart dark" data-theme="website" aria-labelledby="quickstart-title">
   <div class="quickstart-inner">
     <header class="quickstart-heading">
-      <h2 id="quickstart-title">Pick a job. Copy the file. Run it.</h2>
+      <div>
+        <h2 id="quickstart-title">Tangle gives each agent run its own machine.</h2>
+        <p>Coding agents run commands and edit files. On Tangle they do it on a machine made for that run, and you get the changes back with a record of each step.</p>
+      </div>
       <div class="quickstart-links">
-        <a href="https://id.tangle.tools">Create a key <span aria-hidden="true">↗</span></a>
         <a href="https://docs.tangle.tools/sandbox/sdk-typescript">SDK reference <span aria-hidden="true">↗</span></a>
-        <a href="https://www.npmjs.com/package/@tangle-network/sandbox-cli">CLI <span aria-hidden="true">↗</span></a>
       </div>
     </header>
     <QuickstartCode client:visible subjects={subjects} />
@@ -90,12 +96,12 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
 </section>
 
 <style>
-  /* The editor is the section: one viewport tall, the code at reading size. */
-  .quickstart { display: flex; flex-direction: column; height: 100svh; min-height: 44rem; background: var(--depth-1); color: var(--text-primary); padding: 96px 0 88px; }
+  .quickstart { display: flex; flex-direction: column; background: radial-gradient(64rem 28rem at 50% 12rem, color-mix(in srgb, var(--brand-cool) 16%, transparent), transparent 72%), var(--depth-1); color: var(--text-primary); padding: 112px 0 120px; }
   .quickstart-inner { display: flex; flex-direction: column; flex: 1; min-height: 0; width: min(88rem, 94vw); margin: 0 auto; }
   .quickstart-inner > :global(astro-island) { display: contents; }
   .quickstart-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 32px; }
   .quickstart h2 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 3.2vw, 3rem); font-weight: 600; line-height: 1; letter-spacing: -0.032em; color: var(--text-primary); text-wrap: balance; }
+  .quickstart-heading p { max-width: 44rem; margin: 20px 0 0; color: var(--text-secondary); font-size: var(--font-size-lg); line-height: 1.6; text-wrap: pretty; }
   .quickstart-links { display: flex; flex-shrink: 0; gap: 24px; padding-bottom: 4px; }
   .quickstart-links a { color: var(--accent-text); font-size: var(--font-size-lg); line-height: 1.5rem; white-space: nowrap; text-underline-offset: 0.25em; }
   .quickstart-links span { margin-left: 4px; }
@@ -105,6 +111,6 @@ const subjects: Subject[] = grid.map(([id, label, install, ideas]) => ({
     .quickstart-inner { width: calc(100vw - 32px); }
     .quickstart-heading { align-items: flex-start; flex-direction: column; gap: 12px; margin-bottom: 24px; }
     .quickstart h2 { font-size: var(--font-size-4xl); line-height: 2.5rem; }
-    .quickstart-links { gap: 24px; padding-bottom: 0; }
+    .quickstart-links { flex-wrap: wrap; max-width: 100%; gap: 12px 24px; padding-bottom: 0; }
   }
 </style>

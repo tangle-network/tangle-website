@@ -32,6 +32,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check code and examples
+        run: |
+          pnpm typecheck
+          pnpm check:examples
+          pnpm check:runs
+
       - name: Resolve build revision
         id: build-revision
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -54,9 +60,46 @@ jobs:
       - name: Check links, claims and copy on the built pages
         run: pnpm check:public
 
+      - name: Check example editor before deployment
+        env:
+          TANGLE_BUILD_REVISION: ${{ steps.build-revision.outputs.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/example-editor/built"
+          version=$(node -p 'require("./scripts/examples-typecheck/package.json").dependencies.playwright')
+          docker run --rm \
+            -v "$PWD:/repo" -v "$RUNNER_TEMP/example-editor/built:/out" -w /repo \
+            -e EDITOR_EVIDENCE_DIR=/out -e TANGLE_BUILD_REVISION \
+            "mcr.microsoft.com/playwright:v${version}-noble" bash -c '
+              set -eu
+              ./node_modules/.bin/astro preview --host 127.0.0.1 --port 4321 >/out/preview.log 2>&1 &
+              preview_pid=$!
+              trap '\''kill "$preview_pid" 2>/dev/null || true'\'' EXIT
+              node scripts/example-editor.test.mjs
+            '
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist/client --project-name=tangle-website --branch=production
+
+      - name: Check the served example editor
+        env:
+          TANGLE_BUILD_REVISION: ${{ steps.build-revision.outputs.sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/example-editor/live"
+          version=$(node -p 'require("./scripts/examples-typecheck/package.json").dependencies.playwright')
+          docker run --rm \
+            -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/example-editor/live:/out" -w /repo \
+            -e EDITOR_EVIDENCE_DIR=/out -e TANGLE_BUILD_REVISION \
+            "mcr.microsoft.com/playwright:v${version}-noble" \
+            node scripts/example-editor.test.mjs https://tangle.tools
+
+      - name: Retain example editor evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-editor
+          path: ${{ runner.temp }}/example-editor
+          if-no-files-found: ignore

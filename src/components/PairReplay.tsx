@@ -2,9 +2,8 @@ import { highlightCode, type TokenStyle } from '@tangle-network/ui/code-presenta
 import { FileTabs, getSyntaxLanguage } from '@tangle-network/ui/files';
 import { useFollowTail } from '@tangle-network/ui/hooks/use-follow-tail';
 import { Markdown } from '@tangle-network/ui/markdown';
-import { Button, TerminalCursor, TerminalLine } from '@tangle-network/ui/primitives';
+import { Button, TerminalLine } from '@tangle-network/ui/primitives';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { formatDate } from '../utils/date';
 import { agentSteps, applyStep, plain, stepKind, stepPath } from '../utils/session.mjs';
 import { Install } from './QuickstartCode';
 import { Feed, ReplayBar, frame, useReplay, type Ev, type Mark } from './RunReplay';
@@ -12,23 +11,23 @@ import './pair-replay.css';
 
 // Replays a terminal session that scripts/record-examples.mts --session recorded against production: what the person
 // typed and what the terminal printed, every file the agent wrote, streamed into an editor, and the page the preview
-// URL served. RunReplay's player paces it; typing holds the recorded clock still.
+// URL served. RunReplay compresses idle time while preserving event order.
 export interface SessionMeta { url: string; recordedAt: string; previewUrl: string | null }
 type Step = ReturnType<typeof agentSteps>[number];
 type Beat = Mark & { kind: 'type' | 'out' | 'say' | 'step' | 'open'; text?: string; step?: Step };
 type Token = { content: string; style?: TokenStyle };
 
-const TAIL_MS = 7000; // the finished page stays on screen this long before the replay ends
+const TAIL_MS = 4500; // the finished page stays on screen this long before the replay ends
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
-/** Every event is a moment something new shows; a command, a file and the page opening hold the clock while they type out. */
+/** Commands, writes and the finished page hold briefly in the recorded sequence. */
 function marks(events: Ev[]): Mark[] {
-  const beats: Mark[] = events.flatMap((e): Mark[] => e.kind === 'command' ? [{ atMs: e.atMs, hold: clamp(e.text!.length * 8, 500, 2600), kind: 'type', text: e.text } as Beat]
-    : ['stdout', 'stderr', 'say'].includes(e.kind) ? [{ atMs: e.atMs, hold: e.kind === 'say' ? 1500 : 0, kind: e.kind === 'say' ? 'say' : 'out', text: e.text } as Beat,
+  const beats: Mark[] = events.flatMap((e): Mark[] => e.kind === 'command' ? [{ atMs: e.atMs, hold: 700, kind: 'type', text: e.text } as Beat]
+    : ['stdout', 'stderr', 'say'].includes(e.kind) ? [{ atMs: e.atMs, hold: e.kind === 'say' ? 1000 : 0, kind: e.kind === 'say' ? 'say' : 'out', text: e.text } as Beat,
       ...(/Preview ready: /.test(plain(e.text!)) ? [{ atMs: e.atMs, hold: 1200, kind: 'open' } as Beat] : [])] : [{ atMs: e.atMs }]);
   for (const step of agentSteps(events)) {
-    const kind = stepKind(step), size = String(step.input.content ?? step.input.new_string ?? step.input.newString ?? '').length;
-    if (kind !== 'other') beats.push({ atMs: step.atMs, hold: kind === 'write' ? clamp(size / 1.6, 700, 3600) : 1100, kind: 'step', step } as Beat);
+    const kind = stepKind(step);
+    if (kind !== 'other') beats.push({ atMs: step.atMs, hold: kind === 'write' ? 1400 : 700, kind: 'step', step } as Beat);
   }
   return [...beats, { atMs: events.at(-1)?.atMs ?? 0, hold: TAIL_MS }];
 }
@@ -58,28 +57,19 @@ function Ansi({ text }: { text: string }) {
   })}</>;
 }
 
-/** One line of code, cut at `cut` characters while it types; whole lines never re-render. */
-const Line = memo(function Line({ tokens, cut, n, mark }: { tokens: Token[]; cut: number; n: number; mark: boolean }) {
-  let left = cut;
-  return (
-    <span className="pr-line" data-mark={mark || undefined}>
-      <i aria-hidden="true">{n}</i>
-      <code>{tokens.map((token, i) => {
-        if (left <= 0) return null;
-        const text = token.content.slice(0, left);
-        left -= token.content.length;
-        return <span key={i} style={token.style}>{text}</span>;
-      })}{cut !== Infinity && <TerminalCursor className="pr-caret" />}</code>
-    </span>
-  );
+/** Highlighted source stays readable as each recorded file arrives. */
+const Line = memo(function Line({ tokens, n, mark }: { tokens: Token[]; n: number; mark: boolean }) {
+  return <span className="pr-line" data-mark={mark || undefined}>
+    <i aria-hidden="true">{n}</i><code>{tokens.map((token, i) => <span key={i} style={token.style}>{token.content}</span>)}</code>
+  </span>;
 });
 
-export default function PairReplay({ meta, install }: { meta: SessionMeta; install?: string }) {
-  const replay = useReplay(meta.url, marks, false, [3000, 700]), { events, line, r, t, still, setPlaying } = replay;
+export default function PairReplay({ meta, install, stillUrl }: { meta: SessionMeta; install?: string; stillUrl: string }) {
+  const replay = useReplay(meta.url, marks, [1000, 400]), { events, line, r, t, still } = replay;
   const [tokens, setTokens] = useState<Map<string, Token[][]>>(new Map());
   const [picked, setPicked] = useState<string>();
   const [run, setRun] = useState(false);
-  const root = useRef<HTMLDivElement>(null), term = useRef<HTMLDivElement>(null), code = useRef<HTMLDivElement>(null);
+  const term = useRef<HTMLDivElement>(null), code = useRef<HTMLDivElement>(null);
 
   // The text each write or edit leaves behind, highlighted once.
   const after = useMemo(() => {
@@ -98,23 +88,14 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
     return () => { live = false; };
   }, [after]);
 
-  // Play once the replay is on screen; off screen, pause, and play again on return unless the reader paused it or it ended.
-  useEffect(() => {
-    if (!line || still || !root.current) return;
-    let resume = true;
-    const io = new IntersectionObserver(([entry]) => entry.isIntersecting ? resume && setPlaying(true) : setPlaying((was) => { resume = was; return false; }), { threshold: 0.35 });
-    io.observe(root.current);
-    return () => io.disconnect();
-  }, [line, still]);
-
   const view = useMemo(() => {
-    const terminal: { key: number; text: string; typed: number; out: { say: boolean; text: string }[] }[] = [];
+    const terminal: { key: number; text: string; out: { say: boolean; text: string }[] }[] = [];
     const files = new Map<string, string>(), latest = new Map<string, string>();
-    let active: { path: string; id: string; typed: number; text: string; mark?: [number, number] } | undefined, open = 0;
+    let active: { path: string; id: string; text: string; mark?: [number, number] } | undefined, open = 0;
     for (const beat of (line?.marks ?? []) as Beat[]) {
       if (r < beat.r!) break;
       const p = progress(beat, r), last = terminal.at(-1)?.out.at(-1);
-      if (beat.kind === 'type') terminal.push({ key: beat.r!, text: beat.text!, typed: Math.round(p * beat.text!.length), out: [] });
+      if (beat.kind === 'type') terminal.push({ key: beat.r!, text: beat.text!, out: [] });
       else if ((beat.kind === 'out' || beat.kind === 'say') && terminal.length) {
         if (beat.kind === 'out' && last && !last.say) last.text += beat.text; else terminal.at(-1)!.out.push({ say: beat.kind === 'say', text: beat.text! });
       } else if (beat.kind === 'open') open = p;
@@ -124,15 +105,15 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
         const text = files.get(path);
         if (text === undefined) continue;
         latest.set(path, step.id);
-        // An edit marks the lines it changed while it holds; a write types out from the top.
+        // An edit marks its changed lines; writes appear as complete readable source.
         const edit = stepKind(step) === 'edit', marking = edit && p < 1;
         const changed = marking ? text.slice(0, Math.max(0, [...text].findIndex((c, j) => c !== before[j]))).split('\n').length - 1 : 0;
-        active = { path, id: step.id, text, typed: edit ? text.length : Math.round(p * text.length), mark: marking ? [changed, changed
+        active = { path, id: step.id, text, mark: marking ? [changed, changed
           + Math.max(0, text.split('\n').length - before.split('\n').length) + String(step.input.new_string ?? step.input.newString ?? '').split('\n').length - 1] : undefined };
       }
     }
     // A tab the reader picked shows that file as it stands; otherwise the file being written.
-    const shown = picked && files.has(picked) && picked !== active?.path ? { path: picked, id: latest.get(picked)!, text: files.get(picked)!, typed: Infinity } : active;
+    const shown = picked && files.has(picked) && picked !== active?.path ? { path: picked, id: latest.get(picked)!, text: files.get(picked)! } : active;
     return { terminal, files, shown, open };
   }, [line, r, picked]);
 
@@ -140,53 +121,44 @@ export default function PairReplay({ meta, install }: { meta: SessionMeta; insta
   const opened = view.open > 0;
   const app = useMemo(() => (opened ? page(after.reduce((m, f) => m.set(f.path, f.text), new Map<string, string>())) : null), [opened, after]);
   const tail = view.terminal.at(-1);
-  useFollowTail(term, { content: `${view.terminal.length} ${tail?.typed} ${tail?.out.length}` });
-  // Keep the line being typed, or the line an edit changed, in view.
-  const shown = view.shown, focus = shown ? (shown.mark?.[0] ?? shown.text.slice(0, shown.typed).split('\n').length - 1) : 0;
+  useFollowTail(term, { content: `${view.terminal.length} ${tail?.out.length}` });
+  // Keep a changed line in view without moving the surrounding page.
+  const shown = view.shown, focus = shown ? (shown.mark?.[0] ?? 0) : 0;
   useEffect(() => {
     const box = code.current, row = box?.querySelectorAll('.pr-line')[focus] as HTMLElement | undefined;
     if (box && row) box.scrollTop = Math.max(0, row.offsetTop - box.clientHeight * 0.55);
   }, [focus, shown?.path]);
 
   const lines = shown ? tokens.get(shown.id) ?? shown.text.split('\n').map((l) => [{ content: l }]) : [];
-  let offset = 0;
   return (
-    <div className="pr dark" data-theme="website" ref={root} data-open={opened || undefined} data-at={Math.round(t)}>
+    <div className="pr dark" data-theme="website" ref={replay.root} data-open={opened || undefined} data-at={Math.round(t)}>
       <div className="pr-window">
-        <div className="pr-bar" aria-hidden="true"><i /><i /><i /></div>
+        <div className="pr-bar"><ReplayBar replay={replay} /></div>
         <section className="pr-editor" aria-label="Files the agent wrote">
-          <FileTabs className="pr-tabs" label="Files the agent wrote" activeId={shown?.path} onSelect={setPicked}
-            tabs={[...view.files.keys()].map((path) => ({ id: path, name: path.slice(path.lastIndexOf('/') + 1), path }))} />
+          {view.files.size > 0 && <FileTabs className="pr-tabs" label="Files the agent wrote" activeId={shown?.path} onSelect={setPicked}
+            tabs={[...view.files.keys()].map((path) => ({ id: path, name: path.slice(path.lastIndexOf('/') + 1), path }))} />}
           <div className="pr-code" ref={code}>
-            {lines.map((tokenLine, i) => {
-              const start = offset, length = tokenLine.reduce((n, tk) => n + tk.content.length, 0), typed = shown!.typed;
-              offset += length + 1;
-              if (start > typed) return null;
-              const cut = typed >= shown!.text.length || typed > start + length ? Infinity : typed - start;
-              return <Line key={`${shown!.id}:${i}`} tokens={tokenLine} cut={cut} n={i + 1} mark={!!shown!.mark && i >= shown!.mark[0] && i <= shown!.mark[1]} />;
-            })}
-            {events && !shown && <p className="pr-empty">No files yet.</p>}
+            {lines.map((tokens, i) => <Line key={`${shown!.id}:${i}`} tokens={tokens} n={i + 1} mark={!!shown!.mark && i >= shown!.mark[0] && i <= shown!.mark[1]} />)}
+            {!shown && <p className="pr-empty" role="status">{replay.failed ? 'The recorded session could not load.' : 'The agent’s files appear here as it works.'}</p>}
           </div>
           <Feed rows={agent} className="pr-agent" />
         </section>
-        <section className="pr-term" aria-label="Terminal" ref={term}>
+        <section className="pr-term" aria-label="Terminal" ref={term} inert={opened}>
           {view.terminal.map((row) => <div key={row.key}>
-            <TerminalLine type="command" className="pr-cmd">{row.text.slice(0, row.typed)}{row.typed < row.text.length && <TerminalCursor className="pr-caret" />}</TerminalLine>
+            <TerminalLine type="command" className="pr-cmd">{row.text}</TerminalLine>
             {row.out.map((out, i) => out.say ? <Markdown key={i} className="pr-say">{out.text}</Markdown> : <pre key={i} className="pr-out"><Ansi text={out.text} /></pre>)}
           </div>)}
         </section>
         {opened && (
-          <section className="pr-browser" aria-label="The page the preview URL served" style={{ opacity: view.open, translate: `0 ${(1 - view.open) * 28}px` }}>
-            <div className="pr-url"><i /><i /><i /><span>{meta.previewUrl}</span></div>
-            {/* The page animates: with reduced motion it waits for the reader. */}
-            {still && !run ? <Button className="pr-run" variant="outline" onClick={() => setRun(true)}>Run the page</Button>
-              : <iframe title="The page the agent built" srcDoc={app ?? ''} sandbox="allow-scripts" loading="lazy" />}
+          <section className="pr-browser" aria-label="The page the preview URL served" style={{ opacity: view.open, transform: still ? undefined : `translateX(${(1 - view.open) * 100}%)` }}>
+            <div className="pr-url"><span>{meta.previewUrl}</span></div>
+            <img src={stillUrl} alt="Glowing particles forming Hello, world on the page the agent built" width="960" height="640" />
+            {replay.visible && (replay.playing || (still && run)) && <iframe title="The page the agent built" style={{ opacity: still || !line ? 1 : clamp((line.total - r) / (TAIL_MS / 3), 0, 1) }} srcDoc={app ?? ''} sandbox="allow-scripts" loading="lazy" />}
+            {still && <Button className="pr-run" variant="outline" onClick={() => setRun(!run)}>{run ? 'Pause animation' : 'Run animation'}</Button>}
           </section>
         )}
         {install && <Install command={install} label="Install the CLI" />}
       </div>
-      <ReplayBar replay={replay} className="rr-bar" />
-      <p className="pr-meta">Recorded {formatDate(meta.recordedAt.slice(0, 10), 'short')} · <a href={meta.url}>JSON</a></p>
     </div>
   );
 }
