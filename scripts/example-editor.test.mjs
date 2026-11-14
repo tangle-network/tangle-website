@@ -20,7 +20,13 @@ for (let attempt = 0; attempt < 100; attempt++) {
 }
 assert.ok(ready, `Preview unavailable at ${base}`);
 if (process.env.TANGLE_BUILD_REVISION) {
-  const version = await (await fetch(`${base}/version.json?revision=${process.env.TANGLE_BUILD_REVISION}`)).json();
+  // Cloudflare serves the previous deploy for up to a minute after the upload returns.
+  let version;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    version = await (await fetch(`${base}/version.json?revision=${process.env.TANGLE_BUILD_REVISION}&attempt=${attempt}`)).json();
+    if (version.revision === process.env.TANGLE_BUILD_REVISION) break;
+    await wait(5000);
+  }
   assert.equal(version.revision, process.env.TANGLE_BUILD_REVISION);
 }
 const read = async key => JSON.parse(await fs.readFile(`${ROOT}src/data/runs/${key}.json`, 'utf8'));
