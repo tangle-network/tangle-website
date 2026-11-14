@@ -2,7 +2,7 @@
 import { verifyBoardRecord, type BoardRecord } from './board-record';
 
 export interface AppliedRow { id: string; model: string; harness: string; score: number; lower: number; upper: number; samples: string; detail?: string; cost?: number }
-export interface AppliedBoard { id: string; title: string; measure: string; max: number; percent: boolean; interval: 'student-t' | 'task-cluster-bootstrap'; date: string; by: string; url: string; costTitle?: string; rows: AppliedRow[] }
+export interface AppliedBoard { id: string; title: string; measure: string; max: number; percent: boolean; interval: 'student-t' | 'task-cluster-bootstrap'; date: string; by: string; url?: string; costTitle?: string; rows: AppliedRow[] }
 
 const HARNESSES: Record<string, { label: string; src?: string }> = {
   'claude-code': { label: 'Claude Code', src: '/images/harness/claude-code.svg' },

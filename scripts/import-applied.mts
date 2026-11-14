@@ -36,7 +36,7 @@ const SOURCES: Record<string, { repo: string; path: string; ref: string; reduce:
     reduce: (bytes) => {
       const run = JSON.parse(bytes.toString("utf8")) as { profiles: Record<string, { model: string; min: number; n: number }>; byPersona: Record<string, Record<string, number>> };
       return {
-        id: "legal", title: "Legal work", measure: "Score out of 100", max: 100, percent: false, interval: "student-t", date: "2026-06-02", by: "the legal agent's eval", url: "https://github.com/tangle-network/legal-agent",
+        id: "legal", title: "Legal work", measure: "Score out of 100", max: 100, percent: false, interval: "student-t", date: "2026-06-02", by: "the legal agent's eval",
         rows: Object.entries(run.profiles).map(([id, p]) => {
           const scores = Object.values(run.byPersona).map((persona) => persona[id]!), m = mean(scores);
           const half = tCritical20 * Math.sqrt(scores.reduce((sum, x) => sum + (x - m) ** 2, 0) / (scores.length - 1) / scores.length);
