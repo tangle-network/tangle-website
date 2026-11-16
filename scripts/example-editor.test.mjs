@@ -50,6 +50,9 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
     const editor = page.locator('.qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
     const press = label => editor.getByRole('button', { name: label, exact: true });
+    // A click that finds its button unstable retries with scrollIntoView({ block: 'end' }), which this page animates (smooth
+    // scrolling), parking the editor at the bottom edge after the click; the replay holds while it is out of view.
+    const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await editor.waitFor();
     await editor.scrollIntoViewIfNeeded();
     check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
@@ -74,9 +77,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const paused = await editor.locator('.qs-clock').innerText();
     await page.waitForTimeout(600);
     check(await editor.locator('.qs-clock').innerText() === paused && await main.getAttribute('data-state') === 'idle', 'Pause must stop the clock', item);
+    await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
     await press('Run').press('Space');
-    await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: 45000 });
+    await editor.locator('.qs-main[data-state="running"]').waitFor({ timeout: 5000 });
+    // A replay never outlasts its record: long waits are squeezed and every replay plays within 20 s.
+    const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
+    await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: recordMs + 15000 });
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     check(await editor.locator('.qs-ret').count() === 5 && (await editor.locator('.qs-clock').innerText()).includes('$'), 'A finished run shows what each call returned and what the run cost', item);
     check(!/inputTokens|outputTokens|npm notice/.test(await output.innerText()), 'No accounting dumps or stderr notices in output', item);
@@ -97,6 +104,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.getByRole('slider', { name: 'Run position' }).press('End');
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await press('Run again').click();
+    await settle();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(/^0:0\d/.test(await editor.locator('.qs-clock').innerText()), 'Run again must restart', item);
     await page.emulateMedia({ reducedMotion: 'reduce' });
