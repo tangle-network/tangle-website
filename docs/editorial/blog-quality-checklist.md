@@ -8,6 +8,12 @@ The reader is assumed to know nothing about Tangle, its products, or the impleme
 
 Search visibility is useful only when the page teaches the reader something true and helps them choose a next action.
 
+## Who owns which rule
+
+The [writing standard](https://github.com/drewstone/dotfiles/blob/main/docs/anti-patterns/blog-and-research.md#blog-green-patterns-measured) owns how a post opens, introduces the product, uses numbers, shows the system, states limits and ends; it is measured on 61 posts from 17 developer blogs.
+The [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) scores a draft against it blind, with [exemplars and known-weak controls](https://github.com/tangle-network/gtm/tree/master/research/technical-blogs).
+This checklist keeps only what is specific to this site: Tangle terms, product proof, page metadata, the rendered-page review and the measurement contract.
+
 ## The publish rule
 
 A post is publishable when all of these are true:
@@ -50,22 +56,6 @@ Review in this order so polish does not hide a broken article:
 - [ ] The conclusion gives a decision rule and one concrete next action.
 - [ ] The article does not read like a list of claims, a changelog, or a sequence of social posts.
 - [ ] A reader can explain the main point after reading only the headings and opening paragraph.
-
-### Recommended article shape
-
-Use this shape for most technical posts:
-
-1. Direct answer.
-2. The reader’s starting problem.
-3. Terms in plain language.
-4. The mechanism or system boundary.
-5. A worked example or walkthrough.
-6. What the example proves.
-7. Failure modes, limits, and the cases where another tool is better.
-8. The practical decision.
-9. Questions that real readers asked or that query research found.
-
-Research notes and source inventories belong after the explanation or in a linked artifact.
 
 ## 2. Zero-context writing
 
@@ -218,19 +208,6 @@ Links must explain why the destination helps.
 
 Do not add a link farm at the end of the post.
 
-## 7. Human style and anti-slop review
-
-- [ ] The prose uses concrete nouns and active verbs.
-- [ ] Paragraphs vary in length because the reasoning requires it, not because of a template.
-- [ ] Repeated “This is not X; it is Y” constructions have been removed unless the distinction is essential.
-- [ ] Generic openings, motivational filler, and inflated adjectives are gone.
-- [ ] The article does not use a string of one-sentence paragraphs to imitate a social thread.
-- [ ] Technical repetition remains when it helps a new reader keep the model in mind.
-- [ ] The author admits uncertainty and tradeoffs without hiding behind vague language.
-- [ ] Product claims are specific enough that a skeptical reader could test them.
-- [ ] The article sounds like a careful engineer explaining a decision to another person.
-- [ ] A human editor read the complete article aloud or line by line after the automated checks.
-
 ## 8. Visual review
 
 - [ ] The cover shows the article’s actual subject or decision.
@@ -248,33 +225,6 @@ Do not add a link farm at the end of the post.
 - [ ] The final post resolves the series question instead of merely linking to the next post.
 - [ ] Orphaned order numbers and missing planned posts are repaired or removed from the plan.
 - [ ] Historical posts receive the same review as new posts when they make current product claims.
-
-## Rubric
-
-Score each dimension from 0 to 2.
-
-| Dimension | 0 | 1 | 2 |
-| --- | --- | --- | --- |
-| Reader outcome | No clear problem | Problem named but decision unclear | Reader can choose or act |
-| Zero-context clarity | Assumes internal knowledge | Some terms explained | A new reader can follow the whole article |
-| Story | Claim list or thread | Sections exist but do not build | Sections move from problem to decision |
-| Depth | Abstract or padded | One useful mechanism | Mechanism, example, and limits |
-| Example | None | Vague scenario | Observable input, action, output, and failure |
-| Runnable proof | Missing or invented | Partial snippet | Checked minimal path with expected result |
-| Product accuracy | Unsupported or stale | Source named but not checked | Public source and version checked |
-| Evidence | Opinions presented as facts | Some sources or numbers | Claims classified, sourced, and bounded |
-| Tradeoffs | No limits | Generic caveat | Concrete failure and “choose something else” case |
-| Navigation | Orphaned page | Links exist but are generic | Links form a useful reader path |
-| Search answer | Keyword-first or unclear | Metadata passes | Intent, answer, sources, and metadata align |
-| Human style | Sloppy or formulaic | Readable but repetitive | Specific, varied, and natural |
-
-### Decision thresholds
-
-- **Publish:** at least 20/24, no zero in reader outcome, zero-context clarity, evidence, or product accuracy, and all required artifacts present.
-- **Revise:** 15–19/24, or any missing example, code path, failure explanation, or public source required by the article type.
-- **Rewrite:** below 15/24, or a broken central claim, source-only exposition, private-only evidence, or a title that promises a different article.
-
-The numeric rubric is a review aid, not an SEO result.
 
 ## 10. Per-post audit record
 

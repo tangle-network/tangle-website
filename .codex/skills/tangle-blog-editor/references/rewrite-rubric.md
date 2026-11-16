@@ -1,28 +1,7 @@
 # Tangle Blog Rewrite Rubric
 
-Score each dimension 1-5.
-
-| Dimension | 1 | 5 |
-|---|---|---|
-| Reader pressure | Generic explainer | Specific builder/operator/agent problem |
-| Tangle proof | Name-drops Tangle | Shows concrete Tangle mechanism or endpoint |
-| Technical precision | Broad AI wording | Exact surfaces, gates, commands, risks |
-| SEO/AEO fit | Query unclear | Query answered early and FAQ supports it |
-| Style | Research-note template | Builder voice with varied structure |
-| Conversion | No next action | Specific install, curl, manifest, CTA, or decision |
-| Evidence | Unsupported claims | Primary sources, internal links, proof blocks |
-| Presentation | Markdown scaffolding only | Artifact, diagram, table, screenshot, trace, or designed cover supports the argument |
-
-## Rewrite Pass Order
-
-1. Frontmatter: title, slug, summary, tags, series order.
-2. Opening: first 150 words must answer why this post exists.
-3. Structure: reduce repeated scaffold headings; merge thin sections.
-4. Proof: add commands, manifests, links, images, or code where the claim needs evidence.
-5. Retrieval: add answer capsule, comparison table, and FAQ where useful.
-6. Tangle: move specific product mechanism earlier.
-7. Ending: replace summary with decision or readiness test.
-8. Presentation: add or preserve a real artifact when the post is long, code-heavy, or abstract.
+Score with the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) (nine dimensions, 1/3/5 anchors quoted from real posts) and its blind protocol; fix the lowest-scoring dimension first, then rescore.
+A rewrite is done when it ties or beats an [exemplar](https://github.com/tangle-network/gtm/tree/master/research/technical-blogs) of the same kind in a blind pairwise comparison.
 
 ## Existing Series Diagnosis
 

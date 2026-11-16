@@ -20,48 +20,13 @@ concrete builder pressure
 - vague infrastructure marketing
 ```
 
-## What To Avoid
+## Rules and scoring
 
-- Do not open with a polished aphorism unless it is grounded quickly in a specific product or workflow.
-- Do not make every post follow the same ladder: thesis, object, formal shape, taxonomy, failure modes, source trail.
-- Do not use "The Object Being Optimized", "Evaluation Protocol", "Working Rule", or "Source Trail" as repeated default headings across a series.
-- Do not overuse one-sentence paragraphs.
-- Do not turn every idea into a table or fenced text block.
-- Do not use raw inventory counts as proof of seriousness. A blog index should show reader paths, not "80 posts published".
-- Do not use markdown scaffolding as the whole presentation layer. Long posts need at least one artifact: diagram, table, screenshot, trace, code sample, terminal proof, or designed cover.
-- Do not write generic "field overview" prose before saying why Tangle, a builder, or an operator cares.
-- Do not close with a restated thesis.
-- Avoid AI cadence: "It is not X. It is Y.", "The useful question is...", "The serious version is...", "That is why...", "Here's the thing", "Turns out".
-- Avoid slop words: delve, comprehensive, facilitate, utilizing, moreover, furthermore, landscape, crucial, paradigm, cutting-edge, game-changing, groundbreaking, synergy, best practices, let's dive in.
+Follow the [writing standard](https://github.com/drewstone/dotfiles/blob/main/docs/anti-patterns/blog-and-research.md#blog-green-patterns-measured).
+Score drafts with the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) and compare them blind against its [exemplars](https://github.com/tangle-network/gtm/tree/master/research/technical-blogs).
+Do not restate those rules here; change them in their owner.
 
-## What To Do
-
-- Open from a concrete problem, session, product decision, operator risk, payment path, or agent failure.
-- Name the live misconception: prompt optimization solves agents, more agents means more intelligence, memory means learning, green eval means production improved, x402 removes all trust, TEE proves task quality.
-- Use math or formalism only when it resolves a specific ambiguity.
-- Make Tangle's role concrete: Sandbox, Router, Browser Agent, Blueprint SDK, x402, TEE, manifests, operators, proofs, health endpoints.
-- Use exact commands, URLs, package names, manifests, config names, and source links.
-- Include limitations. "What this does not prove" is stronger than overclaiming.
-- End with what the reader can decide, test, or deploy next.
-
-## Measured technical article profile
-
-This long-form profile comes from 10 public Tangle technical posts: `how-blueprints-work`, `how-tangle-verifies-work`, `blueprint-sdk-deployment-guide`, `blueprint-deployment-architecture-remote-providers`, `operator-health-monitoring-tangle-heartbeats-quote-lifetimes`, `rfq-job-quotes-tangle-operator-accountability`, `x402-blueprint-production-deployment-checklist`, `building-ai-services-on-tangle`, `ai-agent-sandbox`, and `agent-runtime-environments`.
-The sample contains 22,203 words, 1,357 sentences, 166 headings, and 54 fenced code blocks.
-The average sentence is about 16 words, with short definitions next to longer explanatory paragraphs.
-
-Preserve these observed constraints when writing technical articles:
-
-- Open with a concrete request, failure, or product decision before naming the architecture.
-- Define Blueprint, operator, service instance, job, payment, and evidence where a newcomer first needs them.
-- Show one input, action, and observable output before expanding into protocol structure.
-- Keep a public source beside claims about SDK behavior, deployment, payment, or verification.
-- State the unhappy path and the boundary of words such as `private`, `anonymous`, `verified`, and `trustless`.
-- Vary paragraph length because the reasoning requires it, but do not imitate a social thread with dramatic one-line fragments.
-- End with a decision rule that says when a simpler hosted service is the better choice.
-
-The profile's reusable test is short: a new reader should be able to explain the article's decision from the opening and headings, run or adapt the smallest public example, identify one failure path, and tell observed behavior from proposal.
-Keep this section in the canonical voice file rather than creating another overlapping voice document.
+What stays here is Tangle-specific: the products to make concrete (Sandbox, Router, Browser Agent, Blueprint SDK, x402, TEE, manifests, operators, proofs, health endpoints), and the series rule below.
 
 ## Self-Improving Stack Rewrite Rule
 

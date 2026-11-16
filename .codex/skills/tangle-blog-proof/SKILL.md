@@ -33,19 +33,7 @@ pnpm build
 
 ## Manual Review
 
-The script catches structure, not judgment. Also check:
-
-- The primary query is obvious from the title, summary, introduction, and descriptive headings.
-- Direct reader questions are answered where they naturally arise; a generic FAQ wrapper is not required.
-- The opening has a concrete reader problem, not a generic explainer setup.
-- Technical claims have proof or source links.
-- Tangle's distinction appears before the halfway point.
-- Competitor comparisons are fair and based on current primary sources.
-- The CTA is specific enough for a builder or agent to act on.
-- The post does not end with a summary that merely restates the thesis.
-- Blog and research pages do not market raw post counts or other inventory totals.
-- Blog index navigation works by series, topic, date, or argument.
-- Long posts are not only markdown scaffolding; they carry at least one artifact such as a cover, diagram, table, screenshot, trace, code block, or terminal proof.
+The script catches structure, not judgment. Score judgment with the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) and its blind protocol; report the per-dimension scores.
 
 ## Output
 

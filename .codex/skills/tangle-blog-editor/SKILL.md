@@ -13,6 +13,8 @@ This skill turns technically correct drafts into website-grade posts. It does no
 
 Read these before acting:
 
+- The [writing standard](https://github.com/drewstone/dotfiles/blob/main/docs/anti-patterns/blog-and-research.md#blog-green-patterns-measured) and the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json); they own the writing rules and scoring.
+
 - `references/voice-and-style.md` for the Tangle blog voice, banned patterns, and rewrite target.
 - `references/rewrite-rubric.md` for the scoring rubric and per-post improvement workflow.
 
