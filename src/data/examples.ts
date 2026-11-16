@@ -31,6 +31,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['watch-an-agent', 'Watch an agent work'],
     ['browser-task', 'Use a browser'],
     ['host-a-page', 'Put a page online'],
+    ['ask-for-an-app', 'Ask an agent for an app'],
     ['worker', 'Run a long job'],
   ]],
   ['router', 'Router', 'npm install --save-dev tsx', [
