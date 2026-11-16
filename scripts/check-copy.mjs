@@ -40,7 +40,9 @@ const probe = (route) => fetch(`${route.base}/chat/completions`, {
   signal: AbortSignal.timeout(90_000),
   headers: { 'content-type': 'application/json', authorization: `Bearer ${route.key ?? ''}` },
   body: JSON.stringify({ model: route.model, messages: [{ role: 'user', content: 'Reply with exactly OK' }] }),
-}).then(async (res) => (res.ok ? null : `${res.status} ${(await res.text()).slice(0, 120)}`), (err) => String(err.cause?.code ?? err));
+}).then(async (res) => (res.ok ? null : `${res.status} ${(await res.text()).slice(0, 120)}`))
+  // A failed connect and a body that breaks after a non-2xx header both move on to the next route.
+  .catch((err) => String(err.cause?.code ?? err));
 
 const tried = [];
 for (const route of ROUTES) {
@@ -50,6 +52,9 @@ for (const route of ROUTES) {
 const ROUTE = ROUTES[tried.findIndex((t) => t.endsWith(': ok'))];
 if (!ROUTE) {
   console.log(`unmeasured: no copy-audit route answered (${tried.join('; ')})`);
+  // Replace any earlier artifact so an old pass is never read as this run's evidence.
+  mkdirSync(dirname(ARTIFACT_PATH), { recursive: true });
+  writeFileSync(ARTIFACT_PATH, `${JSON.stringify({ schemaVersion: 1, status: 'unmeasured', commit: process.env.GITHUB_SHA ?? null, routes: tried }, null, 2)}\n`);
   process.exit(0);
 }
 const { base: API_BASE, key: API_KEY, model: MODEL } = ROUTE;
