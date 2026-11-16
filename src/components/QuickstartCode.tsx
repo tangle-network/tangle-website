@@ -11,7 +11,7 @@ import './quickstart-code.css';
 export interface Idea { id: string; title: string; code: string; run?: RunMeta; install?: string }
 export interface Subject { id: string; label: string; install: string; ideas: Idea[] }
 
-export const Install = ({ command, label }: { command: string; label: string }) => (
+const Install = ({ command, label }: { command: string; label: string }) => (
   <div className="qs-install" role="group" aria-label={label}><code><span aria-hidden="true">$ </span>{command}</code><CopyButton key={command} text={command} aria-label="Copy command" /></div>
 );
 
