@@ -44,7 +44,7 @@ const steps = (records, fields) => present(fields.map(([label, field]) => row(la
 const AGENTS = {
   codex: ['Codex', '/images/harness/codex.png'], prime: ['Prime Agent', '/images/harness/prime-agent.png'], 'claude-code': ['Claude Code', '/images/harness/claude-code.svg'],
   pi: ['Pi', '/images/harness/pi.svg'], 'factory-droids': ['Factory Droid'], opencode: ['OpenCode', '/images/harness/opencode.svg'], 'kimi-code': ['Kimi Code', '/images/harness/kimi-code.png'],
-  hermes: ['Hermes', '/images/harness/hermes.png'], acp: ['ACP'], openclaw: ['OpenClaw', '/images/harness/openclaw.png'],
+  hermes: ['Hermes', '/images/harness/hermes.png'], acp: ['Hermes over ACP'], openclaw: ['OpenClaw', '/images/harness/openclaw.png'],
 };
 const byAgent = (records, field) => present(Object.entries(AGENTS).map(([id, [label, logo]]) => row(label, records.filter((r) => r.backend_type === id), field, logo ? { logo } : {}))).sort((a, b) => a.p50 - b.p50);
 
