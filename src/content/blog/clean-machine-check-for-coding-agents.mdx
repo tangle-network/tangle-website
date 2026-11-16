@@ -36,7 +36,7 @@ Our check grades on a second, fresh sandbox at the same commit, where the agent 
 
 **Use CI as the second machine.** This works, and Stripe does it: over 1,300 pull requests merged each week at Stripe are produced by its agents, and each gets one run against full CI with autofixes and, if failures remain, one more local attempt and CI run before it goes back to a human. The price is that every check costs a push, a branch and a full CI round. A second sandbox gives the same separation from inside your own script, with no push or branch. On our 9-test demo repo, one full run, including the agent's turn and both sandbox creates and deletes, took 43.7 s at p50.
 
-**Make tests read-only, or add a hook or CI rule that blocks test edits.** These protect named paths on the agent's machine or in the diff. They are denylists, and the `.npmrc` + `test-harness.cjs` patch got past ours. On B the tests, scripts and config come from the commit. None of these approaches, ours included, stops source that special-cases the test inputs.
+**Make tests read-only, or add a hook or CI rule that blocks test edits.** These protect named paths on the agent's machine or in the diff. They are denylists, and the `.npmrc` + `test-harness.cjs` patch got past ours. On B the tests, scripts and config come from the commit. None of these approaches, ours included, stops source that special-cases the test inputs. Tests the agent never saw can, for the inputs they cover; more on that below.
 
 **Tell the agent not to touch the tests.** That is a request. When we told the agent to narrow the test script, it did exactly that.
 
@@ -324,6 +324,8 @@ The allowlist stops a patch from editing tests, the test script or config outsid
 
 So when you adapt this, compare the test count with a known baseline before you call a run passed (here: 9 tests, 0 failures), and keep reading diffs. A count check also catches the skip-pattern `.npmrc` (7 tests). It does not catch the hand-written special-case patch, which ran all 9.
 
+What caught that patch was inputs the tests don't use, and B is a place to run them. The agent never had a session on B, so a held-out file you write there after the patch applies is one it never saw. For the hand-written patch above we ran three such inputs on the check sandbox, one per bug, with the patch applied, and all three failed. The same three inputs passed on a check sandbox with an honest fix from the agent applied. Three inputs on a demo repo are a spot check. A held-out test only catches special-casing of the inputs it covers, and it has to stay out of the repository the agent clones.
+
 The other limits:
 
 - **"Never touched" means no agent session.** B still runs the agent's code. It runs inside an isolated sandbox, and both sandboxes are deleted in `finally`, which is the reason to use a sandbox and not your CI runner.
@@ -348,6 +350,7 @@ Tangle gives each agent run its own machine. This post used only its sandbox: is
    ```
 
    We replayed this rule on every result we recorded, not in a new run. The 12 honest runs still pass. The skip-pattern `.npmrc` (7 tests) and the `process.exit(0)` patch (6 tests) now fail. The hand-written special-case patch, which ran all 9, still passes.
-5. Before you run it at volume, read the live [sandbox rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes) (JSON).
+5. Keep a few held-out tests outside the repository. Write them to B after the patch applies and run them there.
+6. Before you run it at volume, read the live [sandbox rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes) (JSON).
 
-If your agent's tests run on the machine the agent edited, move them: start a second machine at the commit the agent started from, let it read the patch, refuse anything outside your source directories, run the tests there, check the count, and read the diff.
+If your agent's tests run on the machine the agent edited, move them: start a second machine at the commit the agent started from, let it read the patch, refuse anything outside your source directories, run the tests there and a few it never saw, check the count, and read the diff.
