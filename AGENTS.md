@@ -15,7 +15,7 @@ customer claims, a GTM-only pivot or an Intelligence-led company story.
 
 ## Delivery
 
-Choose checks for the changed page or behavior; instruction-only changes need diff and link checks.
+Before merging a change to the site, gate its exact head with `pnpm verify`, the deploy's own pre-deploy checks; a subset has failed three deploys (2026-11-16). Instruction-only changes need diff and link checks.
 Reuse valid results and finish authorized delivery once the relevant checks pass.
 Honor explicit CI waivers while preserving hooks and enforced protections.
 Track unrelated failures separately from the product change.
