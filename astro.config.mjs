@@ -17,6 +17,7 @@ if (buildRevision && !/^[0-9a-f]{40}$/i.test(buildRevision)) {
 const postDates = new Map();
 for (const file of readdirSync('./src/content/blog').filter((name) => /\.mdx?$/.test(name))) {
   const front = readFileSync(`./src/content/blog/${file}`, 'utf8').split(/^---\s*$/m)[1] ?? '';
+  /** @param {string} key */
   const field = (key) => front.match(new RegExp(`^${key}:\\s*['"]?(\\d{4}-\\d{2}-\\d{2})`, 'm'))?.[1];
   const slug = front.match(/^slug:\s*['"]?([^'"\s]+)/m)?.[1];
   const date = field('updated') ?? field('date');
