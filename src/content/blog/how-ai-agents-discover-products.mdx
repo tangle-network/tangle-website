@@ -39,8 +39,8 @@ A coding agent has to answer harder questions before that sentence becomes usefu
 - What happens when the service is paid, unavailable, or only partially supported?
 
 Suppose the requested integration is Tangle Router, a service that accepts a stable model-request format and chooses a provider or model route.
-The agent needs to know that the [Tangle Router manifest](https://router.tangle.tools/.well-known/tangle-agent.json) names `@tangle-network/tcloud`, points to an OpenAI-compatible API, and lists `/api/health`, `/api/status`, and `/v1/models` as safe discovery calls.
-Tangle exposes both ends of that chain as calls an agent can run. The public model list is `GET https://router.tangle.tools/v1/models`. The Sandbox SDK's `client.create()` returns a machine, and `box.exec()` on that machine reports an `exitCode` and `stdout`. The first call is a read an agent can make before it holds a key. The second needs `TANGLE_API_KEY` and creates a machine that must be deleted, so it comes after the discovery checks below.
+The agent needs to know that the [Tangle Router manifest](https://router.tangle.tools/.well-known/tangle-agent.json) names `@tangle-network/tcloud`, points to an OpenAI-compatible API, and lists `/api/health` and `/api/status` as safe discovery calls; its smoke test lists models at `/v1/models` with a bearer key.
+Tangle exposes both ends of that chain as calls an agent can run. The model list is `GET https://router.tangle.tools/v1/models`, and it needs `TANGLE_API_KEY`; without the key it returns 401. The Sandbox SDK's `client.create()` returns a machine, and `box.exec()` on that machine reports an `exitCode` and `stdout`. Before it holds a key, an agent can read the manifests and the health check. The second needs `TANGLE_API_KEY` and creates a machine that must be deleted, so it comes after the discovery checks below.
 
 The product name is an entry point.
 The install command, request shape, permission boundary, and observable result are the product contract an agent can use.
@@ -95,7 +95,7 @@ The important fields are explicit: package, credential name, and calls that do n
 ### OpenAPI constrains endpoint invention
 
 [OpenAPI](https://spec.openapis.org/oas/latest.html) describes HTTP paths, parameters, request bodies, responses, and authentication schemes in a format tools can parse.
-Tangle Router publishes an [OpenAPI document](https://router.tangle.tools/openapi.json) with public health and model-listing paths plus the authenticated chat-completions path.
+Tangle Router publishes an [OpenAPI document](https://router.tangle.tools/openapi.json) with a public health path plus the authenticated model-listing and chat-completions paths.
 
 The agent should still treat the document as a description rather than proof of behavior.
 It can validate the JSON shape against the specification, then make a safe request and record the response status.
@@ -134,7 +134,7 @@ A careful agent can follow this order:
 2. Open the Router manifest and record its package, base URL, auth variable, and safe calls.
 3. Open the OpenAPI document and confirm that `GET /v1/models` exists.
 4. Install `@tangle-network/tcloud` rather than an unscoped package named `tcloud`.
-5. Call the public health and model-listing endpoints.
+5. Call the public health endpoint, and list models only once a key is available.
 6. Ask for a credential or human approval only when the requested feature needs an authenticated completion.
 
 These reads and the install need no product checkout or account:
@@ -146,8 +146,9 @@ curl -fsS https://router.tangle.tools/.well-known/tangle-agent.json
 curl -fsS https://router.tangle.tools/openapi.json
 npm install @tangle-network/tcloud
 curl -fsS https://router.tangle.tools/api/health
-curl -fsS https://router.tangle.tools/v1/models
 ```
+
+Listing models needs the key: `curl -fsS -H "Authorization: Bearer $TANGLE_API_KEY" https://router.tangle.tools/v1/models`.
 
 The Router health response is a liveness signal.
 The model list is a capability catalog that can change as operators and provider routes change.
@@ -221,7 +222,7 @@ The profile holds facts and their sources.
   "package": "@tangle-network/tcloud",
   "baseUrl": "https://router.tangle.tools",
   "auth": "Authorization: Bearer ${TANGLE_API_KEY}",
-  "safeCalls": ["GET /api/health", "GET /api/status", "GET /v1/models"],
+  "safeCalls": ["GET /api/health", "GET /api/status"],
   "writeBoundary": "POST /v1/chat/completions requires authentication"
 }
 ```
@@ -229,7 +230,7 @@ The profile holds facts and their sources.
 This profile is illustrative, not a Tangle API object, so regenerate it when the manifest changes.
 
 An agent profile also makes a useful boundary for teams.
-One profile can permit public model discovery with no credential.
+One profile can permit the public manifest and health reads with no credential.
 Another can add an authenticated model route, a per-request budget, and a tool policy.
 The profile must not silently grant permissions that the discovery documents never described.
 
@@ -262,7 +263,7 @@ A coding agent hands the integration to an application or engineer. The handoff 
 | --- | --- |
 | Product and surface | Tangle Router manifest retrieved at a recorded time |
 | Package | `@tangle-network/tcloud` from the scoped package metadata |
-| Safe checks completed | Router health and public model listing returned responses |
+| Safe checks completed | Router health and status returned responses |
 | Authentication boundary | Chat completion requires the documented bearer key |
 | First write or paid action | Authenticated completion, deferred until approval |
 | Uncertainty | Model availability, price, and output quality remain workload questions |
