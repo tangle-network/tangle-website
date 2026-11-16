@@ -2,7 +2,7 @@
 import BaseLayout from "./BaseLayout.astro";
 import PostList from "../components/PostList.astro";
 import { formatDate } from "../utils/date";
-import { introSeriesSlug, type BlogSeries } from "../data/blogSeries";
+import { blogSeriesSlug, getBlogSeriesDetails } from "../data/blogSeries";
 
 interface Props {
   title: string;
@@ -12,15 +12,15 @@ interface Props {
   author: string;
   tags: string[];
   slug: string;
-  series?: BlogSeries;
-  /** A post about the Tangle Network protocol: banner, noindex, and crumbs that lead to /blog/network/. */
-  network?: boolean;
+  series?: string;
+  seriesPosts: { data: { slug: string; title: string; date: string } }[];
   crumb?: { href: string; label: string };
 }
 
-const { title, summary, date, updated, author, tags, slug, series, network = false, crumb = { href: "/blog", label: "Blog" } } = Astro.props;
-const seriesPosts = series?.posts ?? [];
-const seriesHref = series ? (series.network ? `/blog/network/#${series.slug}` : `/blog/series/${series.slug}`) : "";
+const { title, summary, date, updated, author, tags, slug, series, seriesPosts, crumb = { href: "/blog", label: "Blog" } } = Astro.props;
+const seriesName = series?.replace(/^['"]|['"]$/g, "") || "";
+const seriesTitle = seriesName ? getBlogSeriesDetails(seriesName)?.title ?? seriesName : "";
+const network = seriesName && getBlogSeriesDetails(seriesName)?.network;
 const part = seriesPosts.findIndex((post) => post.data.slug === slug) + 1;
 const next = part > 0 ? seriesPosts[part] : undefined;
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site).toString();
@@ -40,18 +40,28 @@ const articleJsonLd = {
 };
 ---
 
-<BaseLayout paper title={title} description={summary} ogType="article" contentType="blog" bodyClass="page-editorial" robots={network ? "noindex, follow" : undefined}>
+<BaseLayout
+  paper
+  title={title}
+  description={summary}
+  ogType="article"
+  contentType="blog"
+  bodyClass="page-editorial"
+  robots={network ? "noindex, follow" : undefined}
+>
   <script type="application/ld+json" set:html={JSON.stringify(articleJsonLd)} />
   <div class="post">
     <header class="post-head">
       <p class="post-crumb">
         <a href={crumb.href}>{crumb.label}</a>
-        {network && <><span aria-hidden="true"> / </span><a href="/blog/network/">Tangle Network</a></>}
-        {series && <><span aria-hidden="true"> / </span><a href={seriesHref}>{series.title}</a></>}
+        {seriesName && <><span aria-hidden="true"> / </span><a href={`/blog/series/${blogSeriesSlug(seriesName)}`}>{seriesTitle}</a></>}
         {part > 0 && seriesPosts.length > 1 && <span class="post-part">part {part} of {seriesPosts.length}</span>}
       </p>
       {network && (
-        <p class="post-network">This post is about the Tangle Network protocol, a separate project from Tangle's infrastructure for AI agents. <a href={`/blog/series/${introSeriesSlug}`}>Introduction to Tangle</a> covers the agent infrastructure.</p>
+        <p class="post-network">
+          This post is about the Tangle Network protocol, a separate project from Tangle's infrastructure for AI agents.
+          <a href="/blog/series/introduction-to-tangle">Introduction to Tangle</a> covers the agent infrastructure.
+        </p>
       )}
       <h1>{title}</h1>
       <p class="post-summary">{summary}</p>
@@ -67,11 +77,11 @@ const articleJsonLd = {
         <div class="blog-content">
           <slot />
         </div>
-        {next && <p class="post-next">Next in {series?.title}: <a href={`/blog/${next.data.slug}`}>{next.data.title}</a></p>}
+        {next && <p class="post-next">Next in {seriesTitle}: <a href={`/blog/${next.data.slug}`}>{next.data.title}</a></p>}
       </article>
-      {series && seriesPosts.length > 1 && (
-        <aside class="post-rail" aria-label={`Posts in ${series.title}`}>
-          <p><a href={seriesHref}>{series.title}</a></p>
+      {seriesPosts.length > 1 && (
+        <aside class="post-rail" aria-label={`Posts in ${seriesTitle}`}>
+          <p><a href={`/blog/series/${blogSeriesSlug(seriesName)}`}>{seriesTitle}</a></p>
           <PostList posts={seriesPosts} current={slug} compact />
         </aside>
       )}
@@ -86,7 +96,8 @@ const articleJsonLd = {
   .post-crumb a { color: var(--accent-text); font-weight: 600; text-decoration: none; }
   .post-crumb a:hover { text-decoration: underline; }
   .post-part { margin-left: 0.6rem; font-family: var(--font-mono); font-size: 0.8rem; }
-  .post-network { margin: 0 0 1.4rem; padding: 0.8rem 1rem; border: 1px solid var(--border-default); border-left: 3px solid var(--accent-text); border-radius: 0.5rem; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.55; }
+  .post-network { margin: 0 0 1.4rem; padding: 0.8rem 1rem; border: 1px solid var(--border-default); border-left: 3px solid var(--accent-text);
+    border-radius: 0.5rem; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.55; }
   .post-network a { color: var(--accent-text); font-weight: 600; }
   .post-head h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 4vw, 3.1rem); font-weight: 600; line-height: 1.08; letter-spacing: -0.03em; overflow-wrap: break-word; }
   .post-summary { margin: 1rem 0 0; font-size: clamp(1.05rem, 1.4vw, 1.2rem); line-height: 1.6; color: var(--text-secondary); }
