@@ -49,7 +49,6 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
   try {
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
     const editor = page.locator('.qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
-    const press = label => editor.getByRole('button', { name: label, exact: true });
     // Keep the replay visible after a click retries with scrollIntoView and smooth page scrolling.
     const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await editor.waitFor();
