@@ -3,7 +3,7 @@ import { initialExample, subjects } from '../data/examples';
 
 // The example editor's subjects, with absolute run-record URLs, for sandbox.tangle.tools: it renders the same
 // @tangle-network/ui/marketing ExampleEditor and fetches this file (Pages serves every path with Access-Control-Allow-Origin: *).
-// A bridge for now: the examples and their run records move into @tangle-network/sandbox/examples, and this manifest is deleted then.
+// The permanent contract between the sites: this repository owns the examples, their recorded runs and the recorder.
 export const GET: APIRoute = ({ site }) => Response.json({
   initial: initialExample,
   subjects: subjects.map((subject) => ({
