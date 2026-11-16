@@ -29,7 +29,7 @@ export default defineConfig({
     // Runs after the pages are written, so a page whose robots meta says noindex (a Tangle Network protocol post) is left out.
     filter: (page) => {
       const pathname = new URL(page).pathname.replace(/\/$/, '') || '/';
-      return !pathname.includes('/preview/') && pathname !== '/research' && pathname !== '/version.json'
+      return !pathname.includes('/preview/') && pathname !== '/research' && !pathname.endsWith('.json')
         && !readFileSync(`./dist/client${pathname}/index.html`, 'utf8').includes('content="noindex');
     },
   })],
