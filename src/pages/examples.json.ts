@@ -1,0 +1,13 @@
+import type { APIRoute } from 'astro';
+import { initialExample, subjects } from '../data/examples';
+
+// The example editor's subjects, with absolute run-record URLs, for sandbox.tangle.tools: it renders the same
+// @tangle-network/ui/marketing ExampleEditor and fetches this file (CORS in public/_headers).
+// A bridge for now: the examples and their run records move into @tangle-network/sandbox/examples, and this manifest is deleted then.
+export const GET: APIRoute = ({ site }) => Response.json({
+  initial: initialExample,
+  subjects: subjects.map((subject) => ({
+    ...subject,
+    ideas: subject.ideas.map((idea) => (idea.run ? { ...idea, run: { ...idea.run, url: new URL(idea.run.url, site).href } } : idea)),
+  })),
+});
