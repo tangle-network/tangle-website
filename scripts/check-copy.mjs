@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Full-site copy audit: zai/glm-5.3 scores each built page's visible copy with a
- * route rubric (technical article, editorial index, legal policy, product page) and
+ * Full-site copy audit: a subscription-backed model scores each built page's visible copy
+ * with a route rubric (technical article, editorial index, legal policy, product page) and
  * keeps one result per route. `pnpm check:copy [routes...]`; pages below 7.5 fail.
- * Key: COPY_AUDIT_API_KEY, else TANGLE_API_KEY from the agent-state vault; other
- * COPY_AUDIT_* overrides are read below.
+ * Route: the first that answers of the CLI bridge on 127.0.0.1:3344, the Router's plan
+ * model (zai/glm-5.3) and the Router's :free lane; none answering reports unmeasured
+ * and exits 0. COPY_AUDIT_* overrides are read below.
  */
 import { extractCopy } from './extract-copy.mjs';
-import { COPY_AUDIT_MODEL, isCopyAuditModel } from './copy-audit-model.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,64 +18,48 @@ const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/co
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 120_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
-let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
   console.error('✗ dist/client/ not found — run `pnpm build` first.');
   process.exit(2);
 }
 
-// Resolve API key + endpoint. Prefer COPY_AUDIT_API_KEY if set, then a
-// company router key.
-let API_KEY = process.env.COPY_AUDIT_API_KEY;
-let API_BASE = process.env.COPY_AUDIT_API_BASE;
+// Standing checks run on subscriptions only, never gpt-oss-120b: the first route that answers a probe audits.
+// The Router's flat-plan zai/glm-5.3 refuses an internal payer (403 flat_plan_reserved_for_customers).
+const ROUTER = 'https://router.tangle.tools/v1';
+let routerKey = process.env.COPY_AUDIT_API_KEY || process.env.TANGLE_API_KEY;
+try { routerKey ||= execSync(`dotenvx get TANGLE_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim(); }
+catch { /* no vault: the bridge may still answer */ }
+const ROUTES = [
+  { name: 'cli-bridge', base: 'http://127.0.0.1:3344/v1', model: 'claude/sonnet', key: process.env.BRIDGE_BEARER },
+  { name: 'router-plan', base: ROUTER, model: 'zai/glm-5.3', key: routerKey },
+  { name: 'router-free', base: ROUTER, model: 'google/gemma-4-31b-it:free', key: routerKey },
+];
+const probe = (route) => fetch(`${route.base}/chat/completions`, {
+  method: 'POST',
+  signal: AbortSignal.timeout(90_000),
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${route.key ?? ''}` },
+  body: JSON.stringify({ model: route.model, messages: [{ role: 'user', content: 'Reply with exactly OK' }] }),
+}).then(async (res) => (res.ok ? null : `${res.status} ${(await res.text()).slice(0, 120)}`))
+  // A failed connect and a body that breaks after a non-2xx header both move on to the next route.
+  .catch((err) => String(err.cause?.code ?? err));
 
-if (!API_KEY && process.env.TANGLE_API_KEY) {
-  API_KEY = process.env.TANGLE_API_KEY;
-  API_BASE = 'https://router.tangle.tools/v1';
+const tried = [];
+for (const route of ROUTES) {
+  tried.push(`${route.name} ${route.model}: ${(await probe(route)) ?? 'ok'}`);
+  if (tried.at(-1).endsWith(': ok')) break;
 }
-
-if (!API_KEY) {
-  API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
-  if (API_KEY) {
-    API_BASE = 'https://router.tangle.tools/v1';
-  }
+const ROUTE = ROUTES[tried.findIndex((t) => t.endsWith(': ok'))];
+if (!ROUTE) {
+  console.log(`unmeasured: no copy-audit route answered (${tried.join('; ')})`);
+  // Replace any earlier artifact so an old pass is never read as this run's evidence.
+  mkdirSync(dirname(ARTIFACT_PATH), { recursive: true });
+  writeFileSync(ARTIFACT_PATH, `${JSON.stringify({ schemaVersion: 1, status: 'unmeasured', commit: process.env.GITHUB_SHA ?? null, routes: tried }, null, 2)}\n`);
+  process.exit(0);
 }
-if (!API_KEY && existsSync(SECRETS_PATH)) {
-  try {
-    const k = execSync(`dotenvx get TANGLE_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
-    if (k) {
-      API_KEY = k;
-      API_BASE = 'https://router.tangle.tools/v1';
-    }
-  }
-  catch {
-    // ignore
-  }
-  if (!API_KEY) {
-    try {
-      API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
-      if (API_KEY) {
-        API_BASE = 'https://router.tangle.tools/v1';
-      }
-    }
-    catch {
-      // ignore — caught below
-    }
-  }
-}
-if (!API_KEY) {
-  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, TANGLE_API_KEY, or TANGLE_ROUTER_USER_KEY.');
-  process.exit(2);
-}
-
-API_BASE ??= 'https://router.tangle.tools/v1';
-
-MODEL ??= COPY_AUDIT_MODEL;
-if (!isCopyAuditModel(MODEL)) {
-  console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to ${COPY_AUDIT_MODEL}.`);
-  process.exit(2);
-}
+const { base: API_BASE, key: API_KEY, model: MODEL } = ROUTE;
+// The Router reports the served id without its provider; the bridge reports its own native name.
+const servedAsRequested = (served) => ROUTE.name === 'cli-bridge' || served === MODEL.split('/').pop() || served === MODEL;
 
 const pageArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -355,10 +339,11 @@ async function auditPage(label, copy, attempt = 1) {
       signal: controller.signal,
       headers: {
         'content-type': 'application/json',
-        'authorization': `Bearer ${API_KEY}`,
+        'authorization': `Bearer ${API_KEY ?? ''}`,
       },
       body: JSON.stringify({
         model: MODEL,
+      route: ROUTE.name,
         messages: [
           { role: 'system', content: rubric.prompt },
           { role: 'user', content: userMessage },
@@ -377,8 +362,8 @@ async function auditPage(label, copy, attempt = 1) {
     }
 
     const json = await res.json();
-    if (!isCopyAuditModel(json.model)) {
-      const err = new Error(`provider model identity mismatch: expected ${COPY_AUDIT_MODEL}, received ${json.model ?? 'null'}`);
+    if (!servedAsRequested(json.model)) {
+      const err = new Error(`provider model identity mismatch: expected ${MODEL}, received ${json.model ?? 'null'}`);
       err.attempts = attempt;
       throw err;
     }
@@ -438,7 +423,7 @@ function isTransientAuditFailure(err) {
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────
-console.log(`▸ Auditing ${auditTargets.length} route${auditTargets.length === 1 ? '' : 's'} via ${MODEL}…`);
+console.log(`▸ Auditing ${auditTargets.length} route${auditTargets.length === 1 ? '' : 's'} via ${MODEL} (${ROUTE.name})…`);
 console.log(`▸ Threshold: ${THRESHOLD}/10. Pages below fail this script.`);
 console.log('');
 

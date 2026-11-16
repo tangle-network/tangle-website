@@ -44,7 +44,7 @@ const steps = (records, fields) => present(fields.map(([label, field]) => row(la
 const AGENTS = {
   codex: ['Codex', '/images/harness/codex.png'], prime: ['Prime Agent', '/images/harness/prime-agent.png'], 'claude-code': ['Claude Code', '/images/harness/claude-code.svg'],
   pi: ['Pi', '/images/harness/pi.svg'], 'factory-droids': ['Factory Droid'], opencode: ['OpenCode', '/images/harness/opencode.svg'], 'kimi-code': ['Kimi Code', '/images/harness/kimi-code.png'],
-  hermes: ['Hermes', '/images/harness/hermes.png'], acp: ['ACP'], openclaw: ['OpenClaw', '/images/harness/openclaw.png'],
+  hermes: ['Hermes', '/images/harness/hermes.png'], acp: ['Hermes over ACP'], openclaw: ['OpenClaw', '/images/harness/openclaw.png'],
 };
 const byAgent = (records, field) => present(Object.entries(AGENTS).map(([id, [label, logo]]) => row(label, records.filter((r) => r.backend_type === id), field, logo ? { logo } : {}))).sort((a, b) => a.p50 - b.p50);
 
@@ -104,6 +104,8 @@ const out = {
   headline: [['New sandbox', row('New sandbox', journey('sandbox_create'), 'provision_ms')], ['First command', find('First command', 'Both')], ['First agent reply', firstReplies[0]], ['Resume', find('Lifecycle, base image', 'Resume')], ['Fork a snapshot', find('Snapshots and checkpoints', 'Fork a snapshot')], ['16 branches', find('Branching', '16 children')]].map(([label, r]) => ({ label, p50: r.p50, p95: r.p95 })),
   panels,
   memory: byAgent(firstText, 'peak_memory_mb'),
+  // The same peak for a sandbox created with no agent (agent: false), the floor every agent bar sits on.
+  memory_empty: (({ n, p50 }) => ({ n, p50 }))(stats(recent.filter((r) => r.scenario_id === 'compute.parity.create.host-agent-dk').map((r) => r.peak_memory_mb))),
   passed,
   trends: [trend('New sandbox, daily', 'lifecycle_waterfall', 'create_ms'), trend('First reply, daily', 'sandbox_run_stream', 'create_to_first_text_ms'), trend('Fork a snapshot, daily', 'snapshot_fork', 'provision_ms')],
 };
