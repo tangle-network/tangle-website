@@ -43,7 +43,10 @@ for (const line of `${tsc.stdout}\n${tsc.stderr}`.split('\n')) {
   if (!problems.has(key)) problems.set(key, []);
   problems.get(key).push(m[4]);
 }
-if (tsc.status !== 0 && !problems.size) { console.error(`${tsc.stdout}\n${tsc.stderr}`.trim()); console.error('check:blog-code failed: tsc did not run cleanly'); process.exit(1); }
+if (tsc.status !== 0 && !problems.size) { // tsc missing or crashed: nothing was checked, so this must not read as ok
+  console.error(`${tsc.stdout}\n${tsc.stderr}`.trim(), '\ncheck:blog-code failed: tsc did not run cleanly');
+  process.exit(1);
+}
 if (problems.size) {
   for (const [where, messages] of problems) console.error(`${where}\n  ${messages.join('\n  ')}`);
   console.error(`check:blog-code failed: ${problems.size} place(s) in ${new Set([...problems.keys()].map((k) => k.split(':')[0])).size} post(s), ${fences.size} fences checked`);
