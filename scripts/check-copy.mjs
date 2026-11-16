@@ -5,8 +5,7 @@
  * keeps one result per route. `pnpm check:copy [routes...]`; pages below 7.5 fail.
  * Route: the first that answers of the CLI bridge on 127.0.0.1:3344, the Router's plan
  * model (zai/glm-5.3) and the Router's :free lane; none answering reports unmeasured
- * and exits 0. COPY_AUDIT_API_BASE + COPY_AUDIT_MODEL pin one route; other
- * COPY_AUDIT_* overrides are read below.
+ * and exits 0. COPY_AUDIT_* overrides are read below.
  */
 import { extractCopy } from './extract-copy.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
@@ -25,65 +24,37 @@ if (!existsSync(ROOT)) {
   process.exit(2);
 }
 
-// Standing checks run on subscriptions only. Router key: COPY_AUDIT_API_KEY, else
-// TANGLE_API_KEY, else TANGLE_ROUTER_USER_KEY, from the environment or the agent-state vault.
-const ROUTER_BASE = 'https://router.tangle.tools/v1';
-const vault = (name) => {
-  if (!existsSync(SECRETS_PATH)) return '';
-  try { return execSync(`dotenvx get ${name} -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim(); }
-  catch { return ''; }
-};
-const routerKey = () => process.env.COPY_AUDIT_API_KEY || process.env.TANGLE_API_KEY || process.env.TANGLE_ROUTER_USER_KEY
-  || vault('TANGLE_API_KEY') || vault('TANGLE_ROUTER_USER_KEY');
-const ROUTES = process.env.COPY_AUDIT_API_BASE && process.env.COPY_AUDIT_MODEL
-  ? [{ name: 'pinned', base: process.env.COPY_AUDIT_API_BASE, model: process.env.COPY_AUDIT_MODEL, key: routerKey }]
-  : [
-    { name: 'cli-bridge', base: process.env.COPY_AUDIT_BRIDGE_URL ?? 'http://127.0.0.1:3344/v1', model: process.env.COPY_AUDIT_BRIDGE_MODEL ?? 'claude/sonnet', key: () => process.env.BRIDGE_BEARER ?? '' },
-    // The Router serves zai/glm-5.3 on a flat plan; it refuses internal payers (flat_plan_reserved_for_customers).
-    { name: 'router-plan', base: ROUTER_BASE, model: 'zai/glm-5.3', key: routerKey },
-    { name: 'router-free', base: ROUTER_BASE, model: process.env.COPY_AUDIT_FREE_MODEL ?? 'google/gemma-4-31b-it:free', key: routerKey },
-  ];
-
-/** One short completion; the route answers when it returns 200 with text. */
-async function probe(route) {
-  if (/gpt-oss-120b/i.test(route.model)) return 'refused: gpt-oss-120b is never an audit model';
-  const key = route.key();
-  if (route.name !== 'cli-bridge' && !key) return 'no key';
-  try {
-    const res = await fetch(`${route.base}/chat/completions`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(90_000),
-      headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify({ model: route.model, messages: [{ role: 'user', content: 'Reply with exactly OK' }] }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) return `${res.status} ${body.error?.code ?? body.error?.type ?? ''}`.trim();
-    return typeof body.choices?.[0]?.message?.content === 'string' ? null : 'no text in the reply';
-  }
-  catch (cause) {
-    return String(cause?.cause?.code ?? cause?.message ?? cause);
-  }
-}
+// Standing checks run on subscriptions only, never gpt-oss-120b: the first route that answers a probe audits.
+// The Router's flat-plan zai/glm-5.3 refuses an internal payer (403 flat_plan_reserved_for_customers).
+const ROUTER = 'https://router.tangle.tools/v1';
+let routerKey = process.env.COPY_AUDIT_API_KEY || process.env.TANGLE_API_KEY;
+try { routerKey ||= execSync(`dotenvx get TANGLE_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim(); }
+catch { /* no vault: the bridge may still answer */ }
+const ROUTES = [
+  { name: 'cli-bridge', base: 'http://127.0.0.1:3344/v1', model: 'claude/sonnet', key: process.env.BRIDGE_BEARER },
+  { name: 'router-plan', base: ROUTER, model: 'zai/glm-5.3', key: routerKey },
+  { name: 'router-free', base: ROUTER, model: 'google/gemma-4-31b-it:free', key: routerKey },
+];
+const probe = (route) => fetch(`${route.base}/chat/completions`, {
+  method: 'POST',
+  signal: AbortSignal.timeout(90_000),
+  headers: { 'content-type': 'application/json', authorization: `Bearer ${route.key ?? ''}` },
+  body: JSON.stringify({ model: route.model, messages: [{ role: 'user', content: 'Reply with exactly OK' }] }),
+}).then(async (res) => (res.ok ? null : `${res.status} ${(await res.text()).slice(0, 120)}`), (err) => String(err.cause?.code ?? err));
 
 const tried = [];
-let ROUTE = null;
 for (const route of ROUTES) {
-  const refusal = await probe(route);
-  tried.push({ route: route.name, model: route.model, answer: refusal ?? 'ok' });
-  if (!refusal) { ROUTE = route; break; }
+  tried.push(`${route.name} ${route.model}: ${(await probe(route)) ?? 'ok'}`);
+  if (tried.at(-1).endsWith(': ok')) break;
 }
+const ROUTE = ROUTES[tried.findIndex((t) => t.endsWith(': ok'))];
 if (!ROUTE) {
-  console.log(`unmeasured: no copy-audit route answered (${tried.map((t) => `${t.route} ${t.model}: ${t.answer}`).join('; ')})`);
-  mkdirSync(dirname(ARTIFACT_PATH), { recursive: true });
-  writeFileSync(ARTIFACT_PATH, `${JSON.stringify({ schemaVersion: 1, status: 'unmeasured', updatedAt: new Date().toISOString(), commit: process.env.GITHUB_SHA ?? null, routes: tried }, null, 2)}\n`);
+  console.log(`unmeasured: no copy-audit route answered (${tried.join('; ')})`);
   process.exit(0);
 }
-const API_BASE = ROUTE.base;
-const API_KEY = ROUTE.key();
-const MODEL = ROUTE.model;
-// The Router reports the served id without its provider prefix; the bridge reports its own native name.
-const bare = (id) => String(id ?? '').toLowerCase().split('/').pop();
-const servedAsRequested = (served) => ROUTE.name === 'cli-bridge' ? typeof served === 'string' : bare(served) === bare(MODEL);
+const { base: API_BASE, key: API_KEY, model: MODEL } = ROUTE;
+// The Router reports the served id without its provider; the bridge reports its own native name.
+const servedAsRequested = (served) => ROUTE.name === 'cli-bridge' || served === MODEL.split('/').pop() || served === MODEL;
 
 const pageArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -363,7 +334,7 @@ async function auditPage(label, copy, attempt = 1) {
       signal: controller.signal,
       headers: {
         'content-type': 'application/json',
-        ...(API_KEY ? { authorization: `Bearer ${API_KEY}` } : {}),
+        'authorization': `Bearer ${API_KEY ?? ''}`,
       },
       body: JSON.stringify({
         model: MODEL,
