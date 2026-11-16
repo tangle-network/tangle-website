@@ -2,7 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro'
 import PostList from '../../components/PostList.astro'
 import { getCollection } from 'astro:content'
-import { blogSeriesSlug, getBlogSeriesDetails } from '../../data/blogSeries'
+import { blogSeriesDetails, blogSeriesSlug, getBlogSeriesDetails } from '../../data/blogSeries'
 
 // The index is a table of contents: every series in reading order, the introduction first, then newest series first,
 // then the posts outside any series. Tangle Network protocol series are linked once at the foot.
@@ -17,7 +17,7 @@ for (const post of posts) {
   grouped.get(key)!.push(post)
 }
 const series = [...grouped.entries()]
-  .filter(([name]) => name)
+  .filter(([name]) => name && !getBlogSeriesDetails(name)?.network)
   .map(([name, entries]) => ({
     name,
     slug: blogSeriesSlug(name),
@@ -26,8 +26,6 @@ const series = [...grouped.entries()]
     latest: entries.reduce((m, p) => (p.data.date > m ? p.data.date : m), ''),
   }))
   .sort((a, b) => Number(b.slug === 'introduction-to-tangle') - Number(a.slug === 'introduction-to-tangle') || b.latest.localeCompare(a.latest))
-const network = series.filter((s) => s.details?.network)
-const agent = series.filter((s) => !s.details?.network)
 const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeCompare(a.data.date))
 ---
 
@@ -49,14 +47,14 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
     <div class="blog-body">
       <nav class="blog-nav" aria-label="Series">
         <ol>
-          {agent.map((s) => (
+          {series.map((s) => (
             <li><a href={`#${s.slug}`}><span>{s.details?.title ?? s.name}</span>{' '}<span class="count">{s.posts.length}</span></a></li>
           ))}
           {standalone.length > 0 && <li><a href="#standalone"><span>Standalone</span>{' '}<span class="count">{standalone.length}</span></a></li>}
         </ol>
       </nav>
       <div class="blog-lists">
-        {agent.map((s) => (
+        {series.map((s) => (
           <section id={s.slug} class="series" aria-labelledby={`h-${s.slug}`}>
             <h2 id={`h-${s.slug}`}><a href={`/blog/series/${s.slug}`}>{s.details?.title ?? s.name}</a></h2>
             {s.details && <p>{s.details.description}</p>}
@@ -69,10 +67,14 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
             <PostList posts={standalone} show="date" />
           </section>
         )}
-        <p class="blog-foot">
-          The Tangle Network protocol is a separate project:
-          {network.map((s, i) => <>{i > 0 && ', '}<a href={`/blog/series/${s.slug}`}>{s.details?.title}</a></>)}.
-        </p>
+        <section class="series">
+          <p>
+            The Tangle Network protocol is a separate project:
+            {Object.entries(blogSeriesDetails).filter(([, d]) => d.network).map(([slug, d], i) => (
+              <>{i > 0 && ', '}<a href={`/blog/series/${slug}`}>{d.title}</a></>
+            ))}.
+          </p>
+        </section>
       </div>
     </div>
   </div>
@@ -97,8 +99,6 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
   .series h2 a { color: inherit; text-decoration: none; }
   .series h2 a:hover { color: var(--accent-text); }
   .series > p { margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.55; }
-  .blog-foot { margin: 3rem 0 0; padding-top: 1.2rem; border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--font-size-sm); }
-  .blog-foot a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   @media (max-width: 900px) {
     .blog-body { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
     .blog-nav { position: static; max-height: none; }

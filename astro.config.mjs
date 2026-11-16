@@ -5,7 +5,7 @@ import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 const buildRevision = process.env.TANGLE_BUILD_REVISION?.trim();
 
@@ -26,13 +26,11 @@ export default defineConfig({
   // /brand-kit. Re-enable with ASTRO_DEV_TOOLBAR=1.
   devToolbar: { enabled: process.env.ASTRO_DEV_TOOLBAR === '1' },
   integrations: [react(), mdx(), sitemap({
-    // The sitemap runs after every page is written, so a page whose robots meta says noindex
-    // (a Tangle Network protocol post or listing) is read from disk and left out.
+    // Runs after the pages are written, so a page whose robots meta says noindex (a Tangle Network protocol post) is left out.
     filter: (page) => {
       const pathname = new URL(page).pathname.replace(/\/$/, '') || '/';
-      if (pathname.includes('/preview/') || pathname === '/research' || pathname === '/version.json') return false;
-      const file = `./dist/client${pathname === '/' ? '' : pathname}/index.html`;
-      return !(existsSync(file) && /<meta name="robots" content="noindex/.test(readFileSync(file, 'utf8')));
+      return !pathname.includes('/preview/') && pathname !== '/research' && pathname !== '/version.json'
+        && !readFileSync(`./dist/client${pathname}/index.html`, 'utf8').includes('content="noindex');
     },
   })],
 
