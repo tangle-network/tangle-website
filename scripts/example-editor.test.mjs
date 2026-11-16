@@ -50,18 +50,19 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
     const editor = page.locator('.qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
     const press = label => editor.getByRole('button', { name: label, exact: true });
-    // A click that finds its button unstable retries with scrollIntoView({ block: 'end' }), which this page animates (smooth
-    // scrolling), parking the editor at the bottom edge after the click; the replay holds while it is out of view.
+    // Keep the replay visible after a click retries with scrollIntoView and smooth page scrolling.
     const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await editor.waitFor();
     await editor.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => !document.querySelector('.qs-editor')?.closest('astro-island')?.hasAttribute('ssr'));
     check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
     if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
-    // The run starts when the editor is on screen: the running line is marked and the machine pane fills.
-    await editor.locator('.qs-main[data-state="running"] .qs-band[data-on]').waitFor();
-    await editor.locator('.qs-feed [data-timeline-step]').first().waitFor();
+    // Finished output is the default; replay is an explicit reader action.
+    await editor.locator('.qs-main[data-state="ended"]').waitFor();
+    check(await editor.getByRole('tab').count() === 6, 'Six featured runs remain available', item);
+    await editor.getByRole('button', { name: 'All examples', exact: false }).click();
     if (name === 'desktop') {
       await editor.getByRole('button', { name: 'Any cloud', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'runtime/any-cloud.mts' }).waitFor();
@@ -73,45 +74,76 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'fix-a-test.mts' }).waitFor();
     }
-    if (width <= 680) await press('Pause').tap(); else await press('Pause').click();
+    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
+    await editor.scrollIntoViewIfNeeded();
+    await editor.locator('.qs-main[data-state="ended"]').waitFor();
+    await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
+    await editor.locator('.qs-main[data-state="running"]').waitFor();
+    await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).click();
     const paused = await editor.locator('.qs-clock').innerText();
     await page.waitForTimeout(600);
     check(await editor.locator('.qs-clock').innerText() === paused && await main.getAttribute('data-state') === 'idle', 'Pause must stop the clock', item);
     await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
-    await press('Run').press('Space');
+    await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).press('Space');
     await editor.locator('.qs-main[data-state="running"]').waitFor({ timeout: 5000 });
-    // A replay never outlasts its record: long waits are squeezed and every replay plays within 20 s.
     const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
-    await output.getByText('9 tests passed', { exact: true }).waitFor({ timeout: recordMs + 15000 });
+    await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor({ timeout: recordMs + 15000 });
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    check(await editor.locator('.qs-ret').count() === 5 && (await editor.locator('.qs-clock').innerText()).includes('$'), 'A finished run shows what each call returned and what the run cost', item);
+    check(await editor.locator('.qs-ret').count() === 6 && (await editor.locator('.qs-receipt').innerText()).includes('in model calls'), 'A finished run shows what each call returned and what the run cost', item);
     check(!/inputTokens|outputTokens|npm notice/.test(await output.innerText()), 'No accounting dumps or stderr notices in output', item);
     await page.screenshot({ path: `${out}/${name}-result.png` });
-    const download = await Promise.all([page.waitForEvent('download'), output.getByRole('link', { name: 'Download patch', exact: true }).click()]).then(([value]) => value);
+    const download = await Promise.all([page.waitForEvent('download'), editor.getByRole('link', { name: 'Download patch', exact: false }).click()]).then(([value]) => value);
     const downloaded = await fs.readFile(await download.path(), 'utf8');
     check(downloaded === patch, 'Full exact three-file patch preserved', item);
     item.patchSha256 = createHash('sha256').update(downloaded).digest('hex');
-    check((await output.locator('.qs-diff [data-line="file"]').count()) === 3, 'The result shows every changed file', item);
-    if (engine === chromium) {
-      await editor.locator('.qs-actions').getByRole('button', { name: 'Copy to clipboard', exact: true }).click();
+    check((await output.locator('.qs-files > div').count()) === 3, 'The result shows every changed file', item);
+    if (engine === chromium && width > 680) {
+      await editor.locator('.qs-actions').getByRole('button', { name: 'Copy file', exact: true }).click();
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copied', exact: true }).waitFor();
       check(await page.evaluate(() => navigator.clipboard.readText()) === source, 'Copy must preserve full runnable source', item);
     }
-    check((await editor.locator('.qs-feed').innerText()).includes('Find the cause and fix it.') && await editor.locator('.qs-feed [data-timeline-step="tool"]').count() >= 10, 'The transcript shows the prompt and each step the agent took', item);
+    check((await editor.locator('.qs-feed').innerText()).includes('Find the cause and fix it.') && await editor.locator('.qs-feed .qs-tool').count() >= 5, 'The transcript shows the prompt and each step the agent took', item);
     await editor.getByRole('slider', { name: 'Run position' }).press('Home');
-    check(await main.getAttribute('data-state') !== 'ended' && !(await editor.locator('.qs-clock').innerText()).includes('$'), 'Moving the run position moves the run', item);
+    check(await main.getAttribute('data-state') !== 'ended', 'Moving the run position moves the run', item);
     await editor.getByRole('slider', { name: 'Run position' }).press('End');
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    await press('Run again').click();
+    await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
     await settle();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(/^0:0\d/.test(await editor.locator('.qs-clock').innerText()), 'Run again must restart', item);
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await editor.getByText('9 tests passed', { exact: true }).waitFor();
-    check(await press('Pause').count() === 0, 'Reduced motion must finish without autoplay', item);
+    await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor();
+    check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     const load = async key => { await page.goto(`${base}/?example=${key}#quickstart-title`); await editor.locator('.qs-file').filter({ hasText: `${key.split('/').at(-1)}.mts` }).waitFor(); await editor.scrollIntoViewIfNeeded(); };
     if (name === 'desktop') {
+      await load('sandboxes/browser-task');
+      await editor.locator('.qs-main[data-state="ended"]').waitFor();
+      const browserRecord = await read('sandboxes/browser-task');
+      const headlines = JSON.parse(browserRecord.events.find(event => event.name === 'read').result);
+      const noHeadlines = text => headlines.every(title => !text.includes(title));
+      let awaitText = await editor.locator('.qs-feed').innerText();
+      check(noHeadlines(awaitText), 'Browser output must omit the recorded third-party headlines', item);
+      const setup = editor.locator('.qs-feed button[aria-expanded]').first();
+      await setup.click();
+      awaitText = await editor.locator('.qs-feed').innerText();
+      check(noHeadlines(awaitText), 'Expanded browser setup must omit the recorded headlines', item);
+      const fallback = browserRecord.events.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('executable_path')).data.part.text.replace(/`/g, '');
+      check(normalized(awaitText).includes(normalized(fallback)), 'The recorded browser fallback remains visible', item);
+      check(awaitText.includes('EGRESS_DOMAIN_NOT_ALLOWED'), 'The recorded browser download refusal remains visible', item);
+      await load('evals/compare-harnesses');
+      await editor.locator('.qs-score-cell').last().waitFor();
+      const comparison = await read('evals/compare-harnesses');
+      const duration = ms => ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+      const shownTimes = await editor.locator('.qs-score-cell i').allTextContents();
+      check(comparison.events.filter(event => event.name === 'prompt').every(event => shownTimes.includes(duration(event.durationMs))), 'Every coding-agent timing comes from its recorded prompt', item);
+      await load('sandboxes/stop-and-resume');
+      await editor.locator('.qs-main[data-state="ended"]').waitFor();
+      const states = await editor.locator('.qs-ret b').allTextContents();
+      check(states.includes('stopped') && states.includes('running'), 'Void lifecycle calls retain their recorded outcomes', item);
+      await load('sandboxes/host-a-page');
+      await editor.locator('.qs-main[data-state="ended"]').waitFor();
+      check((await editor.locator('.qs-ret b').allTextContents()).includes('killed'), 'A void process kill retains its recorded outcome', item);
       await load('sandboxes/run-code');
       const commandRecord = await read('sandboxes/run-code');
       const commandOutput = commandRecord.events.find(event => event.result?.stdout?.includes('Linux')).result.stdout.trim();
