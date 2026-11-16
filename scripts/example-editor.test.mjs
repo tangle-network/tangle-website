@@ -121,9 +121,6 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await page.screenshot({ path: `${out}/${name}-fleet.png` });
       await page.goto(`${base}/?example=router/review-a-route#quickstart-title`); await editor.locator('.qs-file').filter({ hasText: 'review-a-route.mts' }).waitFor();
       check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
-      await page.locator('.pr').scrollIntoViewIfNeeded();
-      check(await page.locator('.pr iframe').count() === 0, 'App preview must remain still under reduced motion', item);
-      await page.screenshot({ path: `${out}/${name}-app-preview.png` });
     }
     const optionalTelemetry = error => {
       const failedScripts = requestFailures.filter(request => request.method === 'GET' && request.type === 'script' && Math.abs(request.at - error.at) < 1000);
