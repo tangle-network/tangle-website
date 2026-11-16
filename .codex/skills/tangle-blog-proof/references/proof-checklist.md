@@ -15,15 +15,9 @@
 - Blog and research pages do not show vanity inventory counts such as "80 posts published".
 - Blog index gives reader paths through series, topics, dates, or arguments.
 
-## Judgment Gates
+## Judgment
 
-- Opening starts from a concrete reader problem.
-- Tangle's mechanism is specific and appears before the halfway point.
-- Limitations are explicit.
-- Competitor comparisons are fair and current.
-- The ending gives a decision, not a summary.
-- Research pages include only work with a claim, model, method, trace/evidence path, or falsifiable argument.
-- Blog posts are allowed to be essays, launch notes, field reports, comparisons, or implementation notes; they should not all be forced into one technical deep-dive template.
+Judgment is scored with the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) against the [writing standard](https://github.com/drewstone/dotfiles/blob/main/docs/anti-patterns/blog-and-research.md#blog-green-patterns-measured); this checklist holds only the mechanical gates above.
 
 ## Common Fixes
 
