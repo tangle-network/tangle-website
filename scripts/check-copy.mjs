@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * Full-site copy audit: zai/glm-5.3 scores each built page's visible copy with a
- * route rubric (technical article, editorial index, legal policy, product page) and
+ * Full-site copy audit: a subscription-backed model scores each built page's visible copy
+ * with a route rubric (technical article, editorial index, legal policy, product page) and
  * keeps one result per route. `pnpm check:copy [routes...]`; pages below 7.5 fail.
- * Key: COPY_AUDIT_API_KEY, else TANGLE_API_KEY from the agent-state vault; other
+ * Route: the first that answers of the CLI bridge on 127.0.0.1:3344, the Router's plan
+ * model (zai/glm-5.3) and the Router's :free lane; none answering reports unmeasured
+ * and exits 0. COPY_AUDIT_API_BASE + COPY_AUDIT_MODEL pin one route; other
  * COPY_AUDIT_* overrides are read below.
  */
 import { extractCopy } from './extract-copy.mjs';
-import { COPY_AUDIT_MODEL, isCopyAuditModel } from './copy-audit-model.mjs';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,64 +19,71 @@ const ARTIFACT_PATH = resolve(process.env.COPY_AUDIT_OUTPUT ?? 'audit-results/co
 const THRESHOLD = Number(process.env.COPY_AUDIT_THRESHOLD ?? 7.5);
 const AUDITOR_TIMEOUT_MS = Number(process.env.COPY_AUDIT_TIMEOUT_MS ?? 120_000);
 const TRANSIENT_FAILURE_SHORT_CIRCUIT = Number(process.env.COPY_AUDIT_TRANSIENT_FAILURE_SHORT_CIRCUIT ?? 3);
-let MODEL = process.env.COPY_AUDIT_MODEL;
 
 if (!existsSync(ROOT)) {
   console.error('✗ dist/client/ not found — run `pnpm build` first.');
   process.exit(2);
 }
 
-// Resolve API key + endpoint. Prefer COPY_AUDIT_API_KEY if set, then a
-// company router key.
-let API_KEY = process.env.COPY_AUDIT_API_KEY;
-let API_BASE = process.env.COPY_AUDIT_API_BASE;
+// Standing checks run on subscriptions only. Router key: COPY_AUDIT_API_KEY, else
+// TANGLE_API_KEY, else TANGLE_ROUTER_USER_KEY, from the environment or the agent-state vault.
+const ROUTER_BASE = 'https://router.tangle.tools/v1';
+const vault = (name) => {
+  if (!existsSync(SECRETS_PATH)) return '';
+  try { return execSync(`dotenvx get ${name} -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim(); }
+  catch { return ''; }
+};
+const routerKey = () => process.env.COPY_AUDIT_API_KEY || process.env.TANGLE_API_KEY || process.env.TANGLE_ROUTER_USER_KEY
+  || vault('TANGLE_API_KEY') || vault('TANGLE_ROUTER_USER_KEY');
+const ROUTES = process.env.COPY_AUDIT_API_BASE && process.env.COPY_AUDIT_MODEL
+  ? [{ name: 'pinned', base: process.env.COPY_AUDIT_API_BASE, model: process.env.COPY_AUDIT_MODEL, key: routerKey }]
+  : [
+    { name: 'cli-bridge', base: process.env.COPY_AUDIT_BRIDGE_URL ?? 'http://127.0.0.1:3344/v1', model: process.env.COPY_AUDIT_BRIDGE_MODEL ?? 'claude/sonnet', key: () => process.env.BRIDGE_BEARER ?? '' },
+    // The Router serves zai/glm-5.3 on a flat plan; it refuses internal payers (flat_plan_reserved_for_customers).
+    { name: 'router-plan', base: ROUTER_BASE, model: 'zai/glm-5.3', key: routerKey },
+    { name: 'router-free', base: ROUTER_BASE, model: process.env.COPY_AUDIT_FREE_MODEL ?? 'google/gemma-4-31b-it:free', key: routerKey },
+  ];
 
-if (!API_KEY && process.env.TANGLE_API_KEY) {
-  API_KEY = process.env.TANGLE_API_KEY;
-  API_BASE = 'https://router.tangle.tools/v1';
-}
-
-if (!API_KEY) {
-  API_KEY = process.env.TANGLE_ROUTER_USER_KEY;
-  if (API_KEY) {
-    API_BASE = 'https://router.tangle.tools/v1';
-  }
-}
-if (!API_KEY && existsSync(SECRETS_PATH)) {
+/** One short completion; the route answers when it returns 200 with text. */
+async function probe(route) {
+  if (/gpt-oss-120b/i.test(route.model)) return 'refused: gpt-oss-120b is never an audit model';
+  const key = route.key();
+  if (route.name !== 'cli-bridge' && !key) return 'no key';
   try {
-    const k = execSync(`dotenvx get TANGLE_API_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
-    if (k) {
-      API_KEY = k;
-      API_BASE = 'https://router.tangle.tools/v1';
-    }
+    const res = await fetch(`${route.base}/chat/completions`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(90_000),
+      headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify({ model: route.model, messages: [{ role: 'user', content: 'Reply with exactly OK' }] }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return `${res.status} ${body.error?.code ?? body.error?.type ?? ''}`.trim();
+    return typeof body.choices?.[0]?.message?.content === 'string' ? null : 'no text in the reply';
   }
-  catch {
-    // ignore
+  catch (cause) {
+    return String(cause?.cause?.code ?? cause?.message ?? cause);
   }
-  if (!API_KEY) {
-    try {
-      API_KEY = execSync(`dotenvx get TANGLE_ROUTER_USER_KEY -f "${SECRETS_PATH}"`, { encoding: 'utf8' }).trim();
-      if (API_KEY) {
-        API_BASE = 'https://router.tangle.tools/v1';
-      }
-    }
-    catch {
-      // ignore — caught below
-    }
-  }
-}
-if (!API_KEY) {
-  console.error('✗ No API key. Set COPY_AUDIT_API_KEY, TANGLE_API_KEY, or TANGLE_ROUTER_USER_KEY.');
-  process.exit(2);
 }
 
-API_BASE ??= 'https://router.tangle.tools/v1';
-
-MODEL ??= COPY_AUDIT_MODEL;
-if (!isCopyAuditModel(MODEL)) {
-  console.error(`✗ Unsupported copy-audit model ${MODEL}. This audit is pinned to ${COPY_AUDIT_MODEL}.`);
-  process.exit(2);
+const tried = [];
+let ROUTE = null;
+for (const route of ROUTES) {
+  const refusal = await probe(route);
+  tried.push({ route: route.name, model: route.model, answer: refusal ?? 'ok' });
+  if (!refusal) { ROUTE = route; break; }
 }
+if (!ROUTE) {
+  console.log(`unmeasured: no copy-audit route answered (${tried.map((t) => `${t.route} ${t.model}: ${t.answer}`).join('; ')})`);
+  mkdirSync(dirname(ARTIFACT_PATH), { recursive: true });
+  writeFileSync(ARTIFACT_PATH, `${JSON.stringify({ schemaVersion: 1, status: 'unmeasured', updatedAt: new Date().toISOString(), commit: process.env.GITHUB_SHA ?? null, routes: tried }, null, 2)}\n`);
+  process.exit(0);
+}
+const API_BASE = ROUTE.base;
+const API_KEY = ROUTE.key();
+const MODEL = ROUTE.model;
+// The Router reports the served id without its provider prefix; the bridge reports its own native name.
+const bare = (id) => String(id ?? '').toLowerCase().split('/').pop();
+const servedAsRequested = (served) => ROUTE.name === 'cli-bridge' ? typeof served === 'string' : bare(served) === bare(MODEL);
 
 const pageArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -355,10 +363,11 @@ async function auditPage(label, copy, attempt = 1) {
       signal: controller.signal,
       headers: {
         'content-type': 'application/json',
-        'authorization': `Bearer ${API_KEY}`,
+        ...(API_KEY ? { authorization: `Bearer ${API_KEY}` } : {}),
       },
       body: JSON.stringify({
         model: MODEL,
+      route: ROUTE.name,
         messages: [
           { role: 'system', content: rubric.prompt },
           { role: 'user', content: userMessage },
@@ -377,8 +386,8 @@ async function auditPage(label, copy, attempt = 1) {
     }
 
     const json = await res.json();
-    if (!isCopyAuditModel(json.model)) {
-      const err = new Error(`provider model identity mismatch: expected ${COPY_AUDIT_MODEL}, received ${json.model ?? 'null'}`);
+    if (!servedAsRequested(json.model)) {
+      const err = new Error(`provider model identity mismatch: expected ${MODEL}, received ${json.model ?? 'null'}`);
       err.attempts = attempt;
       throw err;
     }
@@ -438,7 +447,7 @@ function isTransientAuditFailure(err) {
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────
-console.log(`▸ Auditing ${auditTargets.length} route${auditTargets.length === 1 ? '' : 's'} via ${MODEL}…`);
+console.log(`▸ Auditing ${auditTargets.length} route${auditTargets.length === 1 ? '' : 's'} via ${MODEL} (${ROUTE.name})…`);
 console.log(`▸ Threshold: ${THRESHOLD}/10. Pages below fail this script.`);
 console.log('');
 
