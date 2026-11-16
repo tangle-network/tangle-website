@@ -7,7 +7,7 @@ const client = new Sandbox({
 
 const box = await client.create({ backend: { type: "claude-code" } });
 try {
-  const run = await box.prompt("Build a small to-do list web app in plain Node, no dependencies. Start it on port 3000 and keep it running after you finish.");
+  const run = await box.prompt("Build a small to-do list web app in plain Node, no dependencies. Start it on port 3000 in the background. I'll make the link.");
   if (!run.success) throw new Error(run.error);
 
   const link = await box.previewLinks.create(3000);
