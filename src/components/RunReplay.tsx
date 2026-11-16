@@ -1,19 +1,13 @@
-import { useFollowTail } from '@tangle-network/ui/hooks/use-follow-tail';
-import { Button } from '@tangle-network/ui/primitives';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { elapsed } from '../utils/date';
 import './run-replay.css';
 
-// Replays a record that scripts/record-examples.mts made against production, at its recorded timing. The player here
-// (loader, pacing, play loop, controls, feed) also drives PairReplay, a terminal session's editor, terminal and page.
+// Replays a record that scripts/record-examples.mts made against production, at its recorded timing.
 export interface RunMeta { url: string; recordedAt: string; runId: string; sha: string; sdk: string; costUsd: number | null; ms: number }
 export type Ev = { atMs: number; kind: string; durationMs?: number; line?: number; label?: string; assign?: string; result?: any; error?: any; type?: string; data?: any; text?: string };
-export type Row = { key: string; atMs: number; kind: string; text: string; detail?: string; state?: string };
 /** A moment the replay shows something new; `hold` keeps the recorded clock still for reading. */
 export type Mark = { atMs: number; hold?: number; r?: number };
 
 type Idle = [ms: number, playsIn: number]; // a stretch over `ms` in which nothing new happens plays in `playsIn`, the clock sweeping its real length
-const summary = (input: Record<string, unknown> = {}) => String(input.description ?? input.command ?? input.file_path ?? input.query ?? input.url ?? '');
 
 /** Replay time `r` for each mark, the anchors that map it back to recorded time, and the squeezed stretches. */
 function pace(input: Mark[], [IDLE_MS, JUMP_MS]: Idle) {
@@ -35,7 +29,7 @@ const recordAt = (anchors: [number, number][], r: number) => {
   return !next || next[0] === r0 ? t0 : t0 + ((r - r0) / (next[0] - r0)) * (next[1] - t0);
 };
 
-/** One clock for both demos. Visibility pauses work; reduced motion opens the finished record. */
+/** The replay's clock. Visibility pauses work; reduced motion opens the finished record. */
 export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Idle = [10_000, 800], [minMs, maxMs]: [number, number] = [0, Infinity]) {
   const root = useRef<HTMLDivElement>(null);
   const [events, setEvents] = useState<Ev[] | null>(null), [failed, setFailed] = useState(false);
@@ -77,36 +71,4 @@ export function useReplay(url: string, marks: (events: Ev[]) => Mark[], idle: Id
   const toggle = () => { if (line && r >= line.total) { setR(0); setEnabled(true); } else setEnabled(!enabled); };
   const seek = (part: number) => line && setR(part * line.total); // the reader drags the run to any moment
   return { root, url, events, failed, line, r, t: line ? recordAt(line.anchors, r) : 0, playing, toggle, seek, still, visible: visible && !hidden };
-}
-
-export function ReplayBar({ replay }: { replay: ReturnType<typeof useReplay> }) {
-  const label = replay.line && replay.r >= replay.line.total ? 'Replay' : replay.playing ? 'Pause' : 'Play';
-  return <Button variant="ghost" size="sm" className="rr-toggle" disabled={!replay.line} onClick={replay.toggle} aria-label={`${label} recorded demo`}>{label}</Button>;
-}
-
-/** The activity feed, following its newest row until the reader scrolls up. */
-export function Feed({ rows, className = '' }: { rows: Row[]; className?: string }) {
-  const feed = useRef<HTMLOListElement>(null);
-  useFollowTail(feed, { content: rows.length });
-  return (
-    <ol className={`rr-feed ${className}`} ref={feed}>
-      {rows.map((row) => row.kind === 'stdout' || row.kind === 'stderr'
-        ? <li key={row.key} data-kind={row.kind}><pre>{row.text}</pre></li>
-        : <li key={row.key} data-kind={row.kind} data-state={row.state}><b>{row.text}</b><span>{row.detail}</span></li>)}
-    </ol>
-  );
-}
-
-/** Tool activity at the current point in the app-building demo. */
-export function frame(events: Ev[], t: number, jumps: { atMs: number; gap: number }[]) {
-  const rows = new Map<string, Row>();
-  events.forEach((e) => {
-    if (e.atMs > t) return;
-    if (e.type === 'message.part.updated' && e.data?.part?.type === 'tool') {
-      const p = e.data.part;
-      rows.set(p.id, { ...(rows.get(p.id) ?? { key: p.id, atMs: e.atMs }), kind: 'tool', text: p.tool, detail: summary(p.state?.input), state: p.state?.status });
-    }
-  });
-  for (const { atMs, gap } of jumps) if (atMs < t) rows.set(`+${atMs}`, { key: `+${atMs}`, atMs, kind: 'jump', text: `+${elapsed(gap)}` });
-  return { rows: [...rows.values()].sort((a, b) => a.atMs - b.atMs) };
 }
