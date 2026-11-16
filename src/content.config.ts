@@ -14,6 +14,9 @@ const blog = defineCollection({
     series: z.string().optional(),
     seriesOrder: z.number().optional(),
     draft: z.boolean().optional().default(false),
+    // `network` marks a post about the Tangle Network protocol, a separate project from the agent infrastructure.
+    // Such a post carries a banner and noindex, leaves /blog, the sitemap and the series rails, and is listed on /blog/network/.
+    section: z.literal('network').optional(),
   }),
 });
 

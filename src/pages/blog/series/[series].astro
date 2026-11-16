@@ -1,38 +1,26 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro'
 import PostList from '../../../components/PostList.astro'
-import { getCollection } from 'astro:content'
-import { blogSeriesSlug, getBlogSeriesDetails } from '../../../data/blogSeries'
+import { getBlog, introSeriesSlug } from '../../../data/blogSeries'
 
 export async function getStaticPaths() {
-  const normalize = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || ''
-  const posts = await getCollection('blog', ({ data }) => !data.draft)
-  const grouped = new Map<string, typeof posts>()
-  for (const post of posts) {
-    const name = normalize(post.data.series)
-    if (!name) continue
-    if (!grouped.has(name)) grouped.set(name, [])
-    grouped.get(name)!.push(post)
-  }
-  return [...grouped.entries()].map(([seriesName, entries]) => ({
-    params: { series: blogSeriesSlug(seriesName) },
-    props: { seriesName, posts: entries.sort((a, b) => (a.data.seriesOrder ?? 999) - (b.data.seriesOrder ?? 999) || b.data.date.localeCompare(a.data.date)) },
-  }))
+  const { series } = await getBlog()
+  return series.map((s) => ({ params: { series: s.slug }, props: { series: s } }))
 }
 
-const { seriesName, posts } = Astro.props
-const details = getBlogSeriesDetails(seriesName)
-const title = details?.title ?? seriesName
+const { series } = Astro.props
+const { title, details, network } = series
 ---
 
-<BaseLayout paper title={`${title} | Blog`} description={details?.description ?? `Tangle blog posts in the ${title} series.`} bodyClass="page-editorial">
+<BaseLayout paper title={`${title} | Blog`} description={details?.description ?? `Tangle blog posts in the ${title} series.`} bodyClass="page-editorial" robots={network ? 'noindex, follow' : undefined}>
   <div class="series">
-    <a href="/blog" class="back">Blog</a>
+    <a href={network ? '/blog/network/' : '/blog'} class="back">{network ? 'Tangle Network' : 'Blog'}</a>
     <header>
+      {network && <p class="network">These posts are about the Tangle Network protocol, a separate project from Tangle's infrastructure for AI agents. <a href={`/blog/series/${introSeriesSlug}`}>Introduction to Tangle</a> covers the agent infrastructure.</p>}
       <h1>{title}</h1>
       {details && [details.premise, details.decision, details.path].filter(Boolean).map((text) => <p>{text}</p>)}
     </header>
-    <PostList posts={posts} show="summary" />
+    <PostList posts={series.posts} show="summary" />
   </div>
 </BaseLayout>
 
@@ -43,5 +31,7 @@ const title = details?.title ?? seriesName
   .series h1 { margin: 0; font-family: var(--font-display); font-size: clamp(2rem, 3.6vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.08; }
   .series header p { margin: 1rem 0 0; color: var(--text-secondary); font-size: 1.05rem; line-height: 1.6; }
   .series header { padding-bottom: 1.6rem; margin-bottom: 0.4rem; }
+  .series header .network { margin: 0 0 1.4rem; padding: 0.8rem 1rem; border: 1px solid var(--border-default); border-left: 3px solid var(--accent-text); border-radius: 0.5rem; font-size: var(--font-size-sm); line-height: 1.55; }
+  .network a { color: var(--accent-text); font-weight: 600; }
   @media (max-width: 720px) { .series { padding-top: 5rem; } }
 </style>

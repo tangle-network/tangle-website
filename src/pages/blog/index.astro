@@ -1,49 +1,32 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro'
 import PostList from '../../components/PostList.astro'
-import { getCollection } from 'astro:content'
-import { blogSeriesSlug, getBlogSeriesDetails } from '../../data/blogSeries'
+import { getBlog, introSeriesSlug, isNetworkPost } from '../../data/blogSeries'
 
-// The index is a table of contents: every series in reading order, the introduction first, then newest series first, then the posts outside any series.
-const posts = await getCollection('blog', ({ data }) => !data.draft)
-const normalize = (series?: string) => series?.replace(/^['"]|['"]$/g, '') || ''
-const inOrder = (a: (typeof posts)[number], b: (typeof posts)[number]) =>
-  (a.data.seriesOrder ?? 999) - (b.data.seriesOrder ?? 999) || b.data.date.localeCompare(a.data.date)
-const grouped = new Map<string, typeof posts>()
-for (const post of posts) {
-  const key = normalize(post.data.series)
-  if (!grouped.has(key)) grouped.set(key, [])
-  grouped.get(key)!.push(post)
-}
-const series = [...grouped.entries()]
-  .filter(([name]) => name)
-  .map(([name, entries]) => ({
-    name,
-    slug: blogSeriesSlug(name),
-    details: getBlogSeriesDetails(name),
-    posts: entries.sort(inOrder),
-    latest: entries.reduce((m, p) => (p.data.date > m ? p.data.date : m), ''),
-  }))
-  .sort((a, b) => Number(b.slug === 'tangle-re-introduction') - Number(a.slug === 'tangle-re-introduction') || b.latest.localeCompare(a.latest))
-const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeCompare(a.data.date))
+// The index is a table of contents: every agent series in reading order, the introduction first, then newest series first, then the posts outside any series. Network posts are on /blog/network/.
+const blog = await getBlog()
+const series = blog.series
+  .filter((s) => !s.network)
+  .sort((a, b) => Number(b.slug === introSeriesSlug) - Number(a.slug === introSeriesSlug) || b.latest.localeCompare(a.latest))
+const standalone = blog.standalone.filter((post) => !isNetworkPost(post))
 ---
 
 <BaseLayout
   paper
   title="Blog"
-  description="Guides to agent sandboxes, runtimes, browser testing, paid jobs, and Tangle's operator network, in series that read in order."
+  description="Guides to agent sandboxes, the agent runtime, model routing, browser agents, evaluation, and traces, in series that read in order."
   bodyClass="page-editorial"
 >
   <div class="blog">
     <header class="blog-head">
       <h1>Blog</h1>
-      <p>Guides for developers building, testing, and paying for AI agent work. Tangle runs agents in isolated sandboxes, and independent operators run services on its network. Each series reads in order. New to Tangle? Start with <a href="/blog/series/tangle-re-introduction">Introduction to Tangle</a>.</p>
+      <p>Tangle builds infrastructure for AI agents. These guides cover sandboxes, the agent runtime, model routing, browser agents, evaluation, and traces. Each series reads in order. New to Tangle? Start with <a href={`/blog/series/${introSeriesSlug}`}>Introduction to Tangle</a>.</p>
     </header>
     <div class="blog-body">
       <nav class="blog-nav" aria-label="Series">
         <ol>
           {series.map((s) => (
-            <li><a href={`#${s.slug}`}><span>{s.details?.title ?? s.name}</span>{' '}<span class="count">{s.posts.length}</span></a></li>
+            <li><a href={`#${s.slug}`}><span>{s.title}</span>{' '}<span class="count">{s.posts.length}</span></a></li>
           ))}
           {standalone.length > 0 && <li><a href="#standalone"><span>Standalone</span>{' '}<span class="count">{standalone.length}</span></a></li>}
         </ol>
@@ -51,7 +34,7 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
       <div class="blog-lists">
         {series.map((s) => (
           <section id={s.slug} class="series" aria-labelledby={`h-${s.slug}`}>
-            <h2 id={`h-${s.slug}`}><a href={`/blog/series/${s.slug}`}>{s.details?.title ?? s.name}</a></h2>
+            <h2 id={`h-${s.slug}`}><a href={`/blog/series/${s.slug}`}>{s.title}</a></h2>
             {s.details && <p>{s.details.description}</p>}
             <PostList posts={s.posts} />
           </section>
@@ -62,6 +45,7 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
             <PostList posts={standalone} show="date" />
           </section>
         )}
+        <p class="blog-foot"><a href="/blog/network/">Tangle Network protocol posts</a></p>
       </div>
     </div>
   </div>
@@ -86,6 +70,9 @@ const standalone = (grouped.get('') ?? []).sort((a, b) => b.data.date.localeComp
   .series h2 a { color: inherit; text-decoration: none; }
   .series h2 a:hover { color: var(--accent-text); }
   .series > p { margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.55; }
+  .blog-foot { margin: 3rem 0 0; padding-top: 1.2rem; border-top: 1px solid var(--border-subtle); font-size: var(--font-size-sm); }
+  .blog-foot a { color: var(--text-secondary); }
+  .blog-foot a:hover { color: var(--accent-text); }
   @media (max-width: 900px) {
     .blog-body { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
     .blog-nav { position: static; max-height: none; }
