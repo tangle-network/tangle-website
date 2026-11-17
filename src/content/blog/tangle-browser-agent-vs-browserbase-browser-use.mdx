@@ -1,323 +1,443 @@
 ---
-title: 'Tangle Browser Agent vs Browserbase and Browser Use'
+title: 'agent-browser vs Browser Use vs Browserbase, measured on E2E tests'
 slug: tangle-browser-agent-vs-browserbase-browser-use
 summary: >-
-  Compare Tangle Browser Agent, Browserbase, and Browser Use by task evidence,
-  browser sessions, workspace control, and API surface.
+  Vercel Labs' agent-browser, Browser Use, Stagehand and Tangle Browser Agent
+  ran the same login, checkout and to-do tests five times each on one model,
+  checked by code outside the agent. Pass rates, time, tokens, false passes,
+  and where Browserbase, Steel and Anchor fit.
 date: '2026-06-17'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - agents
   - browser
   - comparison
+  - testing
 series: Agent Intent Infrastructure
 seriesOrder: 2
 ---
 
-import Example from '../../components/Example.astro'
+We ran four browser agents on the same three end-to-end tests, five times each, on the same model, and checked each end state with code running outside the agent.
+agent-browser and Stagehand passed 15 of 15. Browser Use 0.13 passed 14.
+Browser Use 1.0, on a model it does not default to, passed 2.
+Our own Tangle Browser Agent passed 8, and on 6 of its 7 failures it reported success.
+That last number is the one to plan around: in CI, an agent saying "done" is not a test result.
 
-A checkout test can end with a green sentence and still leave the team guessing.
-Did the browser click the right button?
-Did the total change after the coupon was applied?
-Did the page show the expected confirmation, or did the agent stop on an error screen that looked plausible in text?
+"agent-browser vs Browser Use" compares two different kinds of tool.
+agent-browser, from Vercel Labs, is a browser CLI that your coding agent drives one command at a time. It has no model of its own.
+Browser Use is an agent: you give it a task, and its model picks every step.
+Stagehand adds AI steps to your own script, and its 3.x line also has an autonomous `agent()`.
+Browserbase, Steel and Anchor run the browsers. Any of the tools above can run on them.
 
-That is why Tangle Browser Agent, Browserbase, and Browser Use are easy to compare badly.
-All three can participate in AI browser automation, but they sit at different layers.
-Browserbase provides managed browser sessions and an inspectable cloud environment.
-Browser Use provides a natural-language browser agent with a software development kit (SDK) and API.
-Tangle Browser Agent provides a command-line interface (CLI) and software development kit (SDK) that return structured run results.
-Its turn records include page state and actions; screenshots depend on the observation and capture settings.
+We build Tangle Browser Agent. The runs are from 2026-11-16. The check, the loop we wrote around agent-browser, and each tool's call are printed below.
 
-The primary question is not which product has the best slogan.
-It is which layer your workflow is missing.
-Choose Browserbase when you need browser infrastructure for your own controller.
-Choose Browser Use when a ready-made natural-language browser agent is the main product surface.
-Choose Tangle Browser Agent when a browser task must return evidence that another person or system can review.
+## Pick by the job
 
-This is a product-fit comparison, not a success-rate, latency, or price benchmark.
-Those numbers require the same sites, login state, model, browser region, retries, and task set.
+| You want | Start with | What we measured |
+|---|---|---|
+| Your coding agent (Claude Code, Codex, Cursor) to drive a browser while it builds and debugs | agent-browser | 15 of 15, the fastest runs, the most tokens on the long flow |
+| An agent inside a TypeScript test that takes a task in plain English | Stagehand 3.x `agent()` | 15 of 15 |
+| The same in Python | Browser Use | 0.13: 14 of 15, the slowest on checkout. 1.0 on our model: 2 of 15. Run 1.0 on its own model, or test yours first. |
+| Steps written in code, with a model only where the page needs judgment | Stagehand 4 | Not measured. Version 4 removed `agent()`. |
+| Cloud browsers: stealth, proxies, CAPTCHA solving, saved logins, session replay | Browserbase, Steel or Anchor | Not measured. Their documented features are below. |
+| A hosted run per pull request with a recording, a trace, a verdict and cheap reruns | Tangle Browser Agent | 8 of 15, the fewest tokens, six false passes. Do not trust its verdict yet. |
 
-## Start with the browser task
+## What each one is
 
-Imagine a release check for an online store:
+| Tool | Layer | Model loop of its own | Open source | Runs on your machine | Browser by default |
+|---|---|---|---|---|---|
+| [agent-browser](https://github.com/vercel-labs/agent-browser) (Vercel Labs) | Browser CLI your agent drives | No. The calling agent decides. | Yes, Apache-2.0 | Yes | Chrome for Testing, local |
+| [Browser Use](https://github.com/browser-use/browser-use) | Agent library, CLI and cloud API | Yes | Yes, MIT | Yes | 1.0: a Browser Use Cloud browser unless you pass a local one |
+| [Stagehand](https://docs.stagehand.dev) (Browserbase) | AI steps for your script | 3.x: `agent()`. 4.x: none. | Yes, MIT | Yes | Local Chrome or a Browserbase session |
+| [Tangle Browser Agent](https://browser.tangle.tools) (`bad`) | Agent and test runner, plus a hosted CI API | Yes | Yes, MIT or Apache-2.0 | Yes | Local Chromium |
+| [Browserbase](https://www.browserbase.com) | Cloud browsers | No | No | No | Hosted |
+| [Steel](https://steel.dev) | Cloud browsers | No | The browser API is ([steel-browser](https://github.com/steel-dev/steel-browser)) | Yes, self-hosted | Hosted or self-hosted |
+| [Anchor](https://anchorbrowser.io) | Cloud browsers, plus natural-language tasks | Tasks only | No | No | Hosted |
 
-1. Open the preview URL.
-2. Add a specific item to the cart.
-3. Apply a coupon.
-4. Confirm the total and shipping line.
-5. Complete the flow up to the payment boundary.
-6. Save what the browser saw.
+The layers mix.
+agent-browser attaches to any Chrome over CDP and has providers for Browserbase, Browser Use, Kernel, Browserless and AgentCore (`agent-browser -p browserbase`).
+Browser Use and Stagehand take a CDP URL, so they also run on Steel or Anchor sessions.
+Tangle Browser Agent takes a CDP URL too, and its `SteelDriver` runs it on a Steel session with Steel's proxies and CAPTCHA solving.
 
-A useful result is more than `passed`.
-It includes the URL at each important step, the visible page state, the DOM evidence used for assertions (checks that expected conditions are true), the actions taken, the failure reason, and a recording or screenshot that a reviewer can open.
+## The test
 
-A browser session is one isolated browser instance running for a task.
-Browserbase describes a session as its fundamental unit and lets callers configure its region, viewport, recording, logging, identity, proxy, and browser context.
-A browser agent is the software that decides what to do next from the page and the task.
+Three public demo apps, each with an end state that code can check without a model:
 
-Pick by layer:
+| Flow | Site | Pass when |
+|---|---|---|
+| Login | [the-internet.herokuapp.com/login](https://the-internet.herokuapp.com/login) | The page is `/secure` and shows "You logged into a secure area!" |
+| Checkout | [saucedemo.com](https://www.saucedemo.com/) | The page is `/checkout-complete.html` with "Thank you for your order!", and the cart held exactly the Backpack and the Bike Light |
+| To-do list | [demo.playwright.dev/todomvc](https://demo.playwright.dev/todomvc/) | Three todos stored, only "write report" done, the Active view showing the other two |
 
-- **Browserbase:** Start with a managed browser session. Supply your own controller and assertions; inspect the session through its recordings, logs, and Live View.
-- **Browser Use:** Start with a natural-language task. Its cloud API creates a run and returns a result; add the checks and approval rules your application needs.
-- **Tangle Browser Agent:** Start with a CLI or SDK browser task. Inspect the recorded URLs, page snapshots, actions, and optional screenshots before accepting the result.
+Every tool got the same instruction. The to-do one:
 
-The [Browserbase session guide](https://docs.browserbase.com/platform/browser/getting-started/create-browser-session), [Browser Use v4 quickstart](https://docs.browser-use.com/cloud/agent/quickstart), and [Tangle Browser Agent driver documentation](https://github.com/tangle-network/browser-agent-driver#cli-reference) describe those surfaces.
+```text
+Add three todos, in this order: 'buy milk', 'write report', 'call Ana'. Mark 'write report'
+as completed. Then switch the view so it shows only the Active todos, and stop there.
+```
 
-## Browserbase is the browser layer
+The checkout instruction also asks for the item total on the overview page. For the right two items it is $39.98.
 
-Browserbase gives an application a cloud browser session and a connection point for an automation framework.
-
-That is a strong fit when your team already owns the control logic.
-You can use Playwright for explicit selectors and assertions, Stagehand, an AI-assisted browser automation framework, or another library while Browserbase supplies the remote Chrome environment.
-The Session Inspector can expose recordings, logs, network activity, and live control for debugging or human handoff.
-
-A minimal session creation shape from the current SDK documentation looks like this:
+The check runs outside the agent.
+A watcher attaches to the same Chrome over CDP, follows every tab the tool opens, and evaluates the end state every 500 ms and once more after the tool exits.
+That final state is the result. The to-do check as it ran:
 
 ```js
-import { Browserbase } from '@browserbasehq/sdk'
-
-const browserbase = new Browserbase({
-  apiKey: process.env.BROWSERBASE_API_KEY,
-})
-
-const session = await browserbase.sessions.create({})
-console.log(session.id)
+const shown = [...document.querySelectorAll('.todo-list li')].map(li => li.innerText.trim());
+const stored = JSON.parse(localStorage.getItem('react-todos') || '[]');
+const done = stored.filter(t => t.completed).map(t => t.title);
+const ok = location.hash === '#/active' && shown.length === 2
+  && shown.includes('buy milk') && shown.includes('call Ana')
+  && stored.length === 3 && done.length === 1 && done[0] === 'write report';
 ```
 
-The code creates a browser session.
-It does not decide whether the checkout is correct.
-Your controller still needs to navigate, assert, capture the result, and decide how to handle an authentication prompt or a payment boundary.
+Before trusting it, we ran scripted controls through the same runner, two runs each: a correct Playwright script per flow, and scripts that make one plausible mistake (a wrong password, stopping on the checkout overview without pressing Finish, completing the wrong todo).
+Every correct script passed and every mistaken one failed.
 
-Browserbase is also a reasonable choice when browser hosting is the scarce capability.
-If your product already has a deterministic Playwright suite, replacing its execution environment may solve the problem without changing the test language or evaluation logic.
-If you need a remote browser with regional placement, session controls, recording, and live takeover, start there.
+The checkout page check cannot see which items were bought, and three of our own tool's runs reached the order page with the wrong item.
+So the items count too. Our tool's report records the cart page of every run. The other tools reported the total from the overview page, and on that site $39.98 is the total of the two requested items and of no other cart.
 
-The tradeoff is ownership.
-Your application must assemble the test contract, the agent policy, and the evidence format.
-Browserbase gives you the parts needed to do that, but the final report is your responsibility.
+Conditions:
 
-## Browser Use is the agent layer
+- **Model:** `gemini-2.5-flash` for every tool, through one OpenAI-compatible endpoint. Every other setting at its default.
+- **Browser:** a fresh headless Chromium 156 with an empty profile for each run. Every tool attached to it over CDP, so none used its own browser, stealth or cloud.
+- **Versions:** agent-browser 0.43.0, Browser Use 1.0.6 and 0.13.14, Stagehand 3.7.3, `bad` 0.37.0.
+- **Limits:** 30 steps and 300 s per run.
+- **Machines:** Linux sandboxes with 4 vCPUs, one run at a time per machine.
+- **n:** 5 runs per tool per flow, after one uncounted warm-up run each.
+- **Time:** from process start to exit, as a CI job sees it, including the tool's start-up.
+- **Tokens:** input plus output, as each tool reports them.
+- **No caching:** each run's instruction ended with a random tag, because our model gateway caches repeated requests sent at temperature 0. Our first batch got cache hits that made our own tool look three to ten times faster. We threw that batch away.
 
-Browser Use starts from a different question.
-Instead of asking which browser session your code should control, you give the service a natural-language task and receive a session result.
+## Results
 
-The [Browser Use v4 quickstart](https://docs.browser-use.com/cloud/agent/quickstart), checked September 24, 2026, describes `client.runs.create` for starting a run and `client.runs.wait_for_completion` for waiting for its result.
-Each run creates a session and a workspace for the conversation and its files.
-It lists extraction, form filling, multi-step workflows, research, monitoring, and testing as use cases.
-That makes Browser Use attractive when the agent loop itself is the product surface.
+Passes out of five runs per flow, decided by the check:
 
-The task submission is intentionally short:
+| Tool | Login | Checkout | To-do | All | Reported success, end state wrong |
+|---|---|---|---|---|---|
+| agent-browser 0.43.0, in our loop | 5 | 5 | 5 | 15 of 15 | 0 |
+| Stagehand 3.7.3 `agent()` | 5 | 5 | 5 | 15 of 15 | 0 |
+| Browser Use 0.13.14 | 5 | 4 | 5 | 14 of 15 | 0 |
+| Browser Use 1.0.6 | 2 | 0 | 0 | 2 of 15 | 2 |
+| Tangle Browser Agent (`bad` 0.37.0) | 5 | 0 | 3 | 8 of 15 | 6 |
+
+Time per run and tokens per run, with a hand-written Playwright script as the baseline:
+
+| Tool | Login | Checkout | To-do |
+|---|---|---|---|
+| Playwright script, no model (2 runs) | 3 s, 0 | 3 s, 0 | 3 s, 0 |
+| agent-browser | 8 s (7 to 9), 27k | 24 s (20 to 26), 116k | 14 s (13 to 18), 56k |
+| Stagehand | 14 s (12 to 14), 17k | 38 s (37 to 48), 71k | 25 s (23 to 28), 41k |
+| Browser Use 0.13 | 16 s (14 to 26), 16k | 92 s (55 to 152), 142k | 42 s (41 to 50), 62k |
+| Browser Use 1.0 | 46 s (36 to 103), 67k | 79 s (74 to 125), 131k | 59 s (10 to 138), 88k |
+| Tangle Browser Agent | 23 s (13 to 24), 10k | 49 s (37 to 56), 52k | 38 s (32 to 63), 27k |
+
+Time is the median with the range across the five runs. Tokens are the median per run, input plus output.
+For dollars, multiply the tokens by your model's price; we link rather than copy it, because it changes ([Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)).
+Every agent took 3 to 30 times as long as the script. You pay that for not writing selectors, and for a run that adapts when the page changes.
+
+We found no neutral benchmark that runs these tools on the same tasks. Two other measurements exist, both small and both run by a vendor:
+
+- Skyvern's [Browser Use vs Stagehand test](https://www.skyvern.com/blog/browser-use-vs-stagehand-which-is-better/): two read-only tasks, three runs each.
+- Our own bench from 2026-10-11: `bad` passed 15 of 15 and Browser Use 12 of 15 on five other tasks, with `bad` at 1.8 times Browser Use's cost per run. The method and per-run artifacts are public ([bench write-up](https://github.com/tangle-network/browser-agent-driver/blob/main/docs/bench-2026-10-11-hillclimb-program.md)).
+
+Treat each, this page included, as a lead to rerun on your own flows.
+
+What went wrong, run by run:
+
+- **Tangle Browser Agent, checkout, 5 of 5 runs:** it put the Bolt T-Shirt in the cart instead of the Bike Light. It planned both clicks from one page snapshot, and its references to identical "Add to cart" buttons are positional: once the first button turned into "Remove", the second click landed on the next product. It then reported the wrong cart's total, $45.98. Two runs placed that order and reported success. Two stopped on the overview page and reported the order placed. One placed it and reported failure, because it had not read the total first.
+- **Tangle Browser Agent, to-do, 2 of 5:** it marked "call Ana" done as well, once after adding duplicate todos, and described the result as correct.
+- **Browser Use 1.0, 13 of 15:** `gemini-2.5-flash` mostly could not write working Python against the 1.0 browser API. In 11 failures the agent said it could not drive the browser. In 2 to-do runs it reported the task done without changing the page, and its judge agreed both times.
+- **Browser Use 0.13, checkout, 1 of 5:** it placed the order without reading the total first, then ran out of its 30 steps trying to recover. It reported the failure.
+- **agent-browser and Stagehand:** no failures. Both reported the right total, $39.98, in all five checkouts.
+
+## How each one ran
+
+### agent-browser
+
+agent-browser is a CLI, so something has to drive it.
+In practice that is Claude Code or Codex calling it through a shell tool.
+To hold the model constant, we wrote the smallest loop that does the same: the model reads agent-browser's own guide (`agent-browser skills get core`), then calls one tool that runs an agent-browser command, until it calls `done`.
+
+```js
+const ab = (args) => execFileSync('agent-browser', ['--cdp', port, ...args], { encoding: 'utf8' });
+const tools = [
+  { type: 'function', function: { name: 'agent_browser', description: 'Run one agent-browser command',
+    parameters: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' } } } } } },
+  { type: 'function', function: { name: 'done', description: 'Finish the task.',
+    parameters: { type: 'object', properties: { success: { type: 'boolean' }, summary: { type: 'string' } } } } },
+];
+while (steps < 30 && !done) {
+  const r = await client.chat.completions.create({ model, messages, tools });
+  // run each agent_browser call with ab(args) and append its output; stop on done
+}
+```
+
+A typical login: `snapshot -i`, `fill @e2 "tomsmith"`, `fill @e3 "SuperSecretPassword!"`, `click @e4`, `get url`.
+It was the fastest tool on every flow, because the model makes one short call per command and agent-browser's snapshots are compact.
+It used the most tokens on checkout: the loop resends the whole conversation, snapshots included, on every call. A coding agent that compacts its context pays less.
+
+### Browser Use
 
 ```python
-from browser_use_sdk.v4 import BrowserUse
+from browser_use import Agent, Browser, ChatOpenAI
 
-with BrowserUse() as client:
-    run = client.runs.create(
-        "Open the preview store, apply the spring coupon, and report the final total"
-    )
-    result = client.runs.wait_for_completion(run.id)
-    print(result.result)
+llm = ChatOpenAI(model='google/gemini-2.5-flash', base_url=BASE_URL, api_key=KEY)
+agent = Agent(task=goal, llm=llm, browser=Browser(cdp_url='http://127.0.0.1:9222', keep_alive=True))
+result = await agent.run(max_steps=30)
 ```
 
-This example prints the service's result, not a release verdict.
-Before using that result as a check, record the final URL, visible total, assertion outcome, and any approval boundary in your own application.
+Browser Use 1.0 replaced its engine.
+The agent now writes Python in a persistent session against the browser's DevTools Protocol, and by default it runs on a Browser Use Cloud browser with Browser Use's own model ([migration guide](https://github.com/browser-use/browser-use/blob/main/MIGRATING.md)).
+Most comparison pages describe the 0.x engine, which picks one action per step from the page, so we ran both: 1.0.6, and 0.13.14 (`pip install 'browser-use<1'`).
+Browser Use 0.13 was the slowest on checkout and the most token-hungry, and it reported its one failure honestly.
+Browser Use 1.0 is built for its own model; our results say nothing about that pairing, only that a general model may not drive its Python API well.
 
-This is the right abstraction for an early workflow where the output is a page observation or extracted answer.
-It is less complete as a release decision until you specify what evidence to keep, how to validate the total, and what happens when the agent reaches a login, wallet, CAPTCHA, or payment step.
+### Stagehand
 
-Browser Use can also be paired with browser infrastructure and application-specific checks.
-The relevant question is which evidence and control rules are part of your product contract, and which ones you must add.
+Stagehand 4 has no `agent()`. Its [migration guide](https://docs.stagehand.dev/v4/migrations/v3.md) says to write the steps in code, or run your own tool-calling loop.
+To compare like with like, we ran 3.7.3, the last version with the autonomous agent:
 
-## Inspect a Tangle browser run
+```js
+const stagehand = new Stagehand({ env: 'LOCAL', localBrowserLaunchOptions: { cdpUrl }, model });
+await stagehand.init();
+const result = await stagehand.agent({ model }).execute({ instruction: goal, maxSteps: 30 });
+```
 
-Tangle Browser Agent is exposed through the `bad` CLI and the `@tangle-network/browser-agent-driver` package.
-The public driver repository documents a CLI install, a browser snapshot command, a natural-language run command, and a JavaScript/TypeScript SDK.
-The documented CLI and SDK are driver entry points for one-off work and continuous-integration (CI) tests.
+Stagehand matched agent-browser on reliability with a little over half its tokens on checkout, and took about 50% longer per run.
 
-A snapshot captures the current page and browser state. It is a useful first check because it separates browser access from model behavior:
+### Tangle Browser Agent
 
 ```bash
-npm install -g @tangle-network/browser-agent-driver
-bad snapshot --url https://example.com --json
+bad run --goal "$GOAL" --url https://www.saucedemo.com/ --cdp-url "$CDP_URL" \
+  --provider openai --model google/gemini-2.5-flash --base-url "$BASE_URL" --sink ./out
 ```
 
-Then run the actual goal:
+`bad` plans steps with one model call, runs them, and falls back to one decision per step when the page surprises it.
+It then checks the goal against the page and writes `report.json` with the verdict, the turns, the tokens and the screenshots.
+It used the fewest tokens on every flow, because it plans several steps per model call.
+That same batching caused its checkout failures, and its verifier, running on the same model, accepted every wrong result.
+
+## What a run leaves for CI
+
+What each tool wrote or returned after a checkout run, at default settings:
+
+| Tool | Verdict | Record of the steps | Screenshots | Video or trace |
+|---|---|---|---|---|
+| agent-browser | The calling agent's own word | The calling agent's transcript | When the agent runs `screenshot` | When the agent runs `record start` or `trace start` |
+| Browser Use 1.0 | `result.success`, plus an LLM judge's verdict in `result.judgement` | Each Python cell's output in the workspace folder; full messages in memory | Sent to the model, none saved | No |
+| Browser Use 0.13 | `history.is_successful()` | The history object; `save_to_file` wrote 168 KB for one checkout | With `generate_gif=True` | No |
+| Stagehand 3.7.3 | `result.success` and a message | `result.actions` | No | No locally; Browserbase sessions are recorded |
+| Tangle Browser Agent | `report.json`: the agent's claim, the verifier's result, the verdict | `events.jsonl`: page state, action and reasoning for every turn | JPEGs at key turns | `bad view` replays the run; hosted runs add a recording |
+| Browserbase, Steel, Anchor | None. They run the browser, not the test. | Session logs | Session replay | Session recording |
+
+A cloud browser's replay shows what the browser did. It does not say whether the test passed.
+
+Two of these verdicts were wrong in our runs.
+Tangle Browser Agent's verifier accepted six wrong end states, and Browser Use 1.0's judge accepted two.
+A recording or a trace tells a person why after the fact. Only a check you wrote stops a wrong pass in CI.
+
+## What reruns cost
+
+A live agent run pays for model calls every time.
+On a suite that runs on every pull request, that is the cost to plan for.
+
+Tangle Browser Agent can replay a passing run, which is the cheap rerun a CI suite needs.
+A replayed run makes no decide calls: it repeats the recorded steps, then makes one model call to check the goal.
+When a recorded step no longer fits the page, it falls back to the live agent.
+`bad`'s docs put a replayed run at about 10 to 20% of a live run's model cost ([replay recipe](https://github.com/tangle-network/browser-agent-driver/blob/main/examples/replay-cache-ci.md)).
+Turn it on with `--replay`, which is off by default, and keep the memory folder (`BAD_MEMORY_DIR`) between CI runs.
+
+We ran each flow once live to record it, then five more times with replay on:
+
+| Flow | Recording run | Replayed runs |
+|---|---|---|
+| Login | 3 model calls, 10k tokens, 11 s of agent time | 5 of 5 replayed both steps with one model call, the goal check, in 9 s, and passed |
+| Checkout | 17 model calls, 98k tokens. It bought the wrong items and reported success. | 3 of 3 stopped replaying after 4 of 15 steps and handed back to the live agent: 57k to 87k tokens, wrong items again |
+| To-do | 8 model calls, 34k tokens. It reported success and failed our check. | 5 of 5 stopped replaying after 3 of 6 steps and handed back to the live agent |
+
+Our model budget ran out after three checkout replays, so that row has three runs.
+Where the recorded run was right, replay cut the model calls from three to one.
+Where it was wrong, replay saved nothing, because it had only a wrong run to repeat.
+Record only from runs your own check passed.
+
+Stagehand can cache `act()`, `observe()` and `extract()` results, but only on Browserbase's servers, only after Browserbase turns it on for your project, and only for pages that show every run the same content with no personal data ([caching docs](https://docs.stagehand.dev/v4/best-practices/caching.md)).
+Browser Use Cloud can save a working script and run it again on later tasks ([docs](https://docs.browser-use.com/cloud/agent/scripts)).
+agent-browser has no cache; the calling agent decides what to repeat.
+
+## What it costs
+
+The open-source tools are free: agent-browser, the Browser Use library, Stagehand and the `bad` CLI.
+You pay for model tokens, measured per run above, and for cloud browsers if you use them.
+
+On every vendor's price page, browser time is the small line: [Browserbase](https://www.browserbase.com/pricing), [Browser Use](https://browser-use.com/pricing), [Steel](https://docs.steel.dev/overview/pricinglimits), [Anchor](https://docs.anchorbrowser.io/pricing).
+Proxy traffic is billed per GB, and CAPTCHA solving is plan-gated.
+Browserbase's free plan has no CAPTCHA solving. Steel's entry plan turns on CAPTCHA solving and its proxies only after a paid deposit. Anchor's free plan has no CAPTCHA solving or saved logins.
+For a test suite against your own staging app, you need neither, and tokens are the bill.
+
+Hosted runs on [browser.tangle.tools](https://browser.tangle.tools/llms.txt) are billed to prepaid credit. The `bad` CLI on your own machine costs only the tokens of the model you point it at.
+
+## Bot detection, CAPTCHAs and logins
+
+None of our demo sites block bots, so this test says nothing about stealth.
+From the vendors' own documentation, not measured here:
+
+- **Anchor** is built around logins that survive across runs: applications and identities with MFA, profiles, and Cloudflare Web Bot Auth ([managed authentication](https://docs.anchorbrowser.io/essentials/managed-authentication.md)). CAPTCHA solving and authenticated browsers start on its first paid plan; full stealth and Cloudflare-verified agents on the plan above it ([pricing](https://docs.anchorbrowser.io/pricing)).
+- **Browserbase** has saved contexts for logins, basic stealth on paid plans, advanced stealth on its top plan, and CAPTCHA solving above the free plan ([pricing](https://www.browserbase.com/pricing)).
+- **Steel** has residential proxies, CAPTCHA solving and persistent profiles. Its stealth browser is an Enterprise feature ([pricing and limits](https://docs.steel.dev/overview/pricinglimits)).
+- **Browser Use Cloud** browsers include stealth and CAPTCHA solving, and Browser Use says no setup solves every CAPTCHA.
+- **Tangle Browser Agent** runs system Chrome with a hardened fingerprint and solves reCAPTCHA v2 and Cloudflare Turnstile by default. `BAD_PROXY_URL` sets a proxy, and `SteelDriver` gives it Steel's proxies.
+- **agent-browser** drives the browser you give it. Its `-p` providers bring the provider's stealth.
+
+No vendor guarantees a CAPTCHA. For your own app, allowlisting the test runner beats any bypass.
+
+## Open source, local, and hosted
+
+- **Open source, runs on your machine or CI runner:** agent-browser, the Browser Use library, Stagehand, the `bad` CLI, and Steel's browser API.
+- **Watch the default:** Browser Use 1.0's `Browser()` is a Browser Use Cloud browser unless you pass a local one or a CDP URL, as we did.
+- **Hosted only:** Browserbase, Anchor, Browser Use Cloud, and hosted runs on browser.tangle.tools.
+
+## Models and keys
+
+- **agent-browser:** no model. The coding agent that calls it brings its own, so the model cost is whatever that agent already costs you.
+- **Browser Use 1.0:** its own models on the Browser Use gateway by default, where one key pays for model and browser. It also takes `ChatOpenAI`, `ChatAnthropic`, `ChatGoogle`, any Pydantic AI model, or a local model, with your own key.
+- **Stagehand:** a provider and model name, such as `openai/...` or `google/...`, with your own key.
+- **Tangle Browser Agent:** your own key, and a different model per role if you want: the planner, executor and verifier route separately. Its published bench uses `gemini-2.5-flash`, the model we used here. It reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`; with no provider set it uses OpenAI when that key is present, and otherwise the `claude-code` provider, which runs on a Claude Code login with no API key.
+
+## Where Tangle Browser Agent fits
+
+Tangle Browser Agent is not agent-browser.
+It is the open `bad` CLI and SDK ([browser-agent-driver](https://github.com/tangle-network/browser-agent-driver)): a goal-driven loop that plans, acts, recovers, checks the goal and returns a structured result.
+On top of it, [browser.tangle.tools](https://browser.tangle.tools/llms.txt) is a hosted CI API: send a walkthrough or a test suite, get back a recording, a trace, screenshots, logs and a verdict, and wire it into pull requests.
+Today the hosted service runs only the `bad` engine. Running Browser Use and other engines there is on the roadmap.
+
+On these three flows, our loop used the fewest tokens and was the least reliable of the TypeScript tools.
+Six of its seven failures were false passes: it bought the wrong second item in every checkout, and it completed an extra todo twice.
+Its own verifier ran on the same model and accepted each one.
+We filed the positional-reference bug as [issue 177](https://github.com/tangle-network/browser-agent-driver/issues/177).
+Until it is fixed, do not take its verdict as your test result.
+
+## Wire it into CI
+
+With `bad`, a suite is a JSON file of cases:
 
 ```bash
-bad run \
-  --goal "Open the docs, find the install command, and capture the page evidence" \
-  --url https://tangle.tools \
-  --model gpt-5.4 \
-  --mode full-evidence \
-  --observation-mode hybrid
+bad run --cases ./e2e-cases.json --concurrency 4 --sink ./bad-results
 ```
 
+Defaults such as the model, headless mode, the turn limit and the output folder go in `bad.config.ts`.
+The GitHub Action in the repo runs design audits on a preview URL and comments on the PR. It does not run E2E cases; run the CLI in your own job for those.
+For hosted runs, send the suite to the browser.tangle.tools [API](https://browser.tangle.tools/api/docs) instead: each run comes back with a recording, a trace and a verdict to attach to the pull request.
 
-The verified Tangle example runs the browser inside a sandbox instead of on your machine.
-It is not the `bad` driver. A Claude Code agent in the sandbox is asked to install Playwright and Chromium, open one allowed site, and write its results to files.
-`client.create` starts the machine with an egress policy that allows only the Playwright download hosts and the one site the task reads.
-`box.prompt` gives the agent the goal, `box.read` returns the JSON it wrote, and `box.fs.download` saves the screenshot for review.
+agent-browser, Browser Use and Stagehand need a runner of your own to act as a test suite: a list of cases, a loop, and a check you trust.
+Whatever you pick, keep the deterministic check. The agent gets the browser to the state; your code decides whether it is right.
 
-<Example path="sandboxes/browser-task" />
+## Run it yourself
 
-`box.prompt` returns when the agent reports completion, and `run.success` is that agent's own flag, so the code reads back the artifacts it asked for before it prints anything.
-In the recorded run the egress policy refused the Chromium download (HTTP 403), so the agent switched to the machine's own Chromium with `--no-sandbox` and a custom `LD_LIBRARY_PATH`, and still reported `success: true`.
-The output proves that the agent produced a five-item JSON array and a screenshot from the allowed site on that run; the flag alone did not show that the setup had changed.
-It does not prove that the titles are the correct ones or that the screenshot shows the page a reviewer expects; the test still needs its own assertions against the saved artifacts.
+Two pieces decide the numbers on this page: the watcher that checks the end state, and the loop that drives agent-browser. Both are below in full, as they ran. Each run starts a fresh headless Chrome with `--remote-debugging-port`, starts the watcher, runs the tool against the same port, then stops the watcher with SIGTERM and reads its result.
 
-The CLI writes a versioned `report.json` to the configured output directory.
-Its [suite result type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/test-runner.ts) defines `schemaVersion`, `results[]`, and a summary.
-Each result has `agentResult.success`, an optional `reason`, and `agentResult.turns[]`.
-The [turn type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/turn.ts) records an action, duration, and optional error.
-Its [page state](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/page.ts) records `url`, `title`, and `snapshot`; `screenshot` is optional.
-The `bad run` command above selects `full-evidence` and `hybrid` observation.
-Check the chosen capture settings and the actual report before promising an image for every turn.
+<details>
+<summary>The end-state watcher (37 lines)</summary>
 
-Here, evidence means the material a reviewer can inspect.
-A screenshot shows the rendered page.
-A DOM snapshot shows the page structure and text available to the browser.
-An action trace records the steps and their outcomes.
-A failure reason says where the run stopped and why.
-Together, those artifacts let a reviewer distinguish “the goal was reached” from “the model produced a plausible report.”
+```js
+// End-state watcher, run by our runner, not the tool. It attaches to every page target in the browser over raw CDP
+// (all browser contexts, including ones a tool creates and later closes), evaluates the task's end-state predicate every
+// 500 ms, and keeps each page's last observed state. On SIGTERM (sent after the tool exits) it polls once more and
+// writes the result. The agent's own success claim plays no part.
+import { writeFileSync } from 'node:fs';
+const [port, task, outFile] = process.argv.slice(2);
+const preds = {
+  login: `({ok: location.pathname === '/secure' && document.body.innerText.includes('You logged into a secure area!'), url: location.href})`,
+  checkout: `({ok: location.pathname === '/checkout-complete.html' && document.body.innerText.includes('Thank you for your order!'), url: location.href})`,
+  todo: `(() => { const shown = [...document.querySelectorAll('.todo-list li')].map(li => li.innerText.trim());
+    let stored = []; try { stored = JSON.parse(localStorage.getItem('react-todos') || '[]'); } catch {}
+    const done = stored.filter(t => t.completed).map(t => t.title);
+    const ok = location.hash === '#/active' && shown.length === 2 && shown.includes('buy milk') && shown.includes('call Ana')
+      && stored.length === 3 && done.length === 1 && done[0] === 'write report';
+    return { ok, url: location.href, shown, stored: stored.map(t => t.title + (t.completed ? ' [done]' : '')) }; })()`,
+};
+const expression = preds[task];
+const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+const ws = new WebSocket(v.webSocketDebuggerUrl);
+let id = 0; const pending = new Map(); const sessions = new Map(); const attached = new Set(); const last = new Map();
+const send = (method, params = {}, sessionId) => new Promise((res, rej) => { const i = ++id; pending.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) })); setTimeout(() => { if (pending.has(i)) { pending.delete(i); rej(new Error('timeout')); } }, 3000); });
+ws.onmessage = async (ev) => {
+  const m = JSON.parse(ev.data);
+  if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(m.error) : p.res(m.result); return; }
+  if (m.method === 'Target.targetCreated' || m.method === 'Target.targetInfoChanged') {
+    const ti = m.params.targetInfo;
+    if (ti.type === 'page' && !attached.has(ti.targetId)) { attached.add(ti.targetId); try { const r = await send('Target.attachToTarget', { targetId: ti.targetId, flatten: true }); sessions.set(r.sessionId, ti.targetId); } catch {} }
+  }
+  if (m.method === 'Target.detachedFromTarget') sessions.delete(m.params.sessionId);
+};
+await new Promise(r => { ws.onopen = r; });
+await send('Target.setDiscoverTargets', { discover: true });
+const poll = async () => { await Promise.all([...sessions].map(async ([sid, tid]) => { try { const r = await send('Runtime.evaluate', { expression, returnByValue: true }, sid); if (r?.result?.value) last.set(tid, { t: Date.now(), ...r.result.value }); } catch {} })); };
+let stop = false;
+process.on('SIGTERM', async () => { stop = true; await poll(); const pages = [...last].map(([tid, s]) => ({ target: tid.slice(0, 8), ...s }));
+  writeFileSync(outFile, JSON.stringify({ pass: pages.some(p => p.ok), pages }) + '\n'); process.exit(0); });
+while (!stop) { await poll(); await new Promise(r => setTimeout(r, 500)); }
+```
 
-That documented output is the reason to evaluate Tangle for a reviewable browser task.
-It does not mean Browserbase cannot record sessions or Browser Use cannot return useful run data.
+</details>
 
-## Compare the same flow, not the same marketing page
+<details>
+<summary>The agent-browser loop (33 lines)</summary>
 
-The following is a proposed comparison protocol, not an observed head-to-head run.
-Use one task that contains a visible assertion and an unsafe boundary.
-For the checkout example, stop before payment and require:
-
-```json
-{
-  "goal": "Coupon changes total before payment",
-  "assertions": [
-    "cart contains the named item",
-    "coupon status is applied",
-    "total is the expected amount",
-    "payment button is visible but not clicked"
-  ],
-  "evidence": [
-    "final URL",
-    "final screenshot",
-    "DOM excerpt for coupon and total",
-    "action list",
-    "failure reason if any"
-  ],
-  "humanApproval": "required before payment"
+```js
+// agent-browser is a CLI, not an agent. This is the smallest loop that drives it the way a coding agent does:
+// the model reads agent-browser's own core skill, then calls the CLI through one tool until it calls done.
+import OpenAI from 'openai';
+import { execFileSync } from 'node:child_process';
+const [port, goal, startUrl] = process.argv.slice(2);
+const ab = (args) => { try { return execFileSync('agent-browser', ['--cdp', port, ...args], { encoding: 'utf8', timeout: 60000, maxBuffer: 1 << 24 }); } catch (e) { return `exit ${e.status}: ${(e.stdout || '') + (e.stderr || '')}`; } };
+const skill = execFileSync('agent-browser', ['skills', 'get', 'core'], { encoding: 'utf8' });
+const client = new OpenAI({ baseURL: process.env.OPENAI_BASE_URL, apiKey: process.env.OPENAI_API_KEY });
+const tools = [
+  { type: 'function', function: { name: 'agent_browser', description: 'Run one agent-browser command against the open browser and return its output. Pass the arguments after `agent-browser`, e.g. ["snapshot","-i"] or ["click","@e3"].', parameters: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' } } }, required: ['args'] } } },
+  { type: 'function', function: { name: 'done', description: 'Finish the task.', parameters: { type: 'object', properties: { success: { type: 'boolean' }, summary: { type: 'string' } }, required: ['success', 'summary'] } } },
+];
+const messages = [
+  { role: 'system', content: `You complete browser tasks with the agent-browser CLI. Its guide:\n\n${skill}\n\nThe browser is already open (do not run open with a new browser, close, or connect). Use the agent_browser tool for every browser action and call done when the task is finished or impossible.` },
+  { role: 'user', content: `The page ${startUrl} is open. Task: ${goal}` },
+];
+let prompt = 0, completion = 0, steps = 0, claimed = false, final = '', done = false;
+const t = Date.now();
+while (steps < 30 && !done) {
+  const r = await client.chat.completions.create({ model: process.env.MODEL, messages, tools });
+  prompt += r.usage?.prompt_tokens ?? 0; completion += r.usage?.completion_tokens ?? 0;
+  const msg = r.choices[0].message; messages.push(msg);
+  if (!msg.tool_calls?.length) { messages.push({ role: 'user', content: 'Continue with a tool call, or call done.' }); steps++; continue; }
+  for (const c of msg.tool_calls) {
+    let a = {}; try { a = JSON.parse(c.function.arguments || '{}'); } catch {}
+    if (c.function.name === 'done') { done = true; claimed = !!a.success; final = String(a.summary || ''); messages.push({ role: 'tool', tool_call_id: c.id, content: 'ok' }); continue; }
+    steps++;
+    const out = ab(Array.isArray(a.args) ? a.args.map(String) : []);
+    messages.push({ role: 'tool', tool_call_id: c.id, content: out.slice(0, 12000) });
+  }
 }
+console.log(JSON.stringify({ claimed, done, final: final.slice(0, 600), steps, prompt_tokens: prompt, completion_tokens: completion, tool_wall_s: +((Date.now() - t) / 1000).toFixed(1) }));
+process.exit(0);
 ```
 
-The JSON is an application test contract, not a vendor-specific schema.
+</details>
 
-<table className="product-comparison">
-  <thead>
-    <tr><th>Check</th><th>Browserbase</th><th>Browser Use</th><th>Tangle Browser Agent</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th scope="row">Starting unit</th>
-      <td data-label="Browserbase">Managed browser session</td>
-      <td data-label="Browser Use">Natural-language run with a session</td>
-      <td data-label="Tangle Browser Agent">CLI or SDK browser task using a selected driver</td>
-    </tr>
-    <tr>
-      <th scope="row">Agent control</th>
-      <td data-label="Browserbase">Your application supplies the controller and assertions</td>
-      <td data-label="Browser Use">The service runs the agent; your application checks its result</td>
-      <td data-label="Tangle Browser Agent">The driver runs the agent; your application sets acceptance rules</td>
-    </tr>
-    <tr>
-      <th scope="row">Inspectable output</th>
-      <td data-label="Browserbase">Session Inspector recordings and logs</td>
-      <td data-label="Browser Use">Run result; retain the fields your application needs</td>
-      <td data-label="Tangle Browser Agent">Versioned report.json with per-turn page state and actions; screenshots are optional</td>
-    </tr>
-    <tr>
-      <th scope="row">Human handoff</th>
-      <td data-label="Browserbase">Live View supports a person taking control</td>
-      <td data-label="Browser Use">Set the approval boundary in your application</td>
-      <td data-label="Tangle Browser Agent">Set the approval boundary in your application</td>
-    </tr>
-    <tr>
-      <th scope="row">Fair test</th>
-      <td data-label="Browserbase">Hold browser region, identity, and controller fixed</td>
-      <td data-label="Browser Use">Hold task, model, account, and retry policy fixed</td>
-      <td data-label="Tangle Browser Agent">Hold driver, observation mode, model, and retry policy fixed</td>
-    </tr>
-  </tbody>
-</table>
+## Limits of this test
 
-Run each product with the same model family where possible.
-Use the same browser viewport, target site, authentication state, timeout, and retry limit.
-Record the environment and keep the test account isolated.
-A green run from one product and a red run from another is not a benchmark until those conditions are comparable.
+- Three flows on demo apps with stable markup and no bot protection. Real apps are harder, and flakier.
+- Five runs per tool per flow. A difference of one run in five is noise.
+- One model, `gemini-2.5-flash`. A stronger model would change every number, and Browser Use 1.0 is built for its own.
+- agent-browser ran inside our 33-line loop. Claude Code or Codex drive it with more context and a stronger model.
+- Stagehand 3.7.3 is not the current major version.
+- No cloud browsers. Browserbase, Steel and Anchor were not run, so nothing here measures stealth, proxies or session start time.
+- Checkout items for agent-browser, Stagehand and Browser Use come from the total each reported, not from the cart itself.
+- We build one of the tools.
 
-An evaluation is a repeatable assessment of task outcomes, cost, and policy compliance.
-For browser automation, the evaluation should score both the user-visible result and the evidence needed to trust it.
-A run that reaches the correct total but clicks “Pay” without approval should fail the policy check.
+## The decision
 
-## Adjudicate a green run
-
-The final sentence from a browser agent is an observation, not the release decision.
-The evaluator should read the evidence contract and assign a state that explains what remains uncertain.
-
-```json
-{
-  "status": "needs-review",
-  "assertions": {
-    "couponApplied": true,
-    "totalMatches": true,
-    "paymentUntouched": true
-  },
-  "evidence": {
-    "finalUrl": "https://preview.example.com/checkout",
-    "screenshot": "artifacts/final.png",
-    "domExcerpt": "artifacts/checkout.json"
-  },
-  "reason": "account identity requires human confirmation"
-}
-```
-
-This application record distinguishes a failed assertion from an incomplete review.
-For example, a mismatched total should fail the run and preserve the action immediately before the mismatch.
-An unknown account should stop the release without describing the browser actions as incorrect.
-A missing screenshot should leave the task incomplete even when the DOM assertion passed.
-
-## Failure modes the comparison must expose
-
-Browser automation has failure modes that a final text answer hides.
-
-A locator can point to a hidden element.
-A page can load the wrong account.
-A visual total can differ from the DOM total.
-A CAPTCHA can appear after several successful steps.
-A wallet prompt can ask for a signature with irreversible consequences.
-A browser can lose network access while the agent still has a stale page.
-A model can keep retrying a failed action until the test times out.
-
-The evidence should make those failures visible.
-Keep the screenshot around the action, the relevant DOM excerpt, the URL, the action outcome, and the stop reason.
-For authentication and payment, stop and hand control to a person rather than teaching an agent to bypass the boundary.
-
-Browserbase’s Live View documentation explicitly describes human control for cases such as credential delegation and uploads.
-Browser Use’s task API describes long-running sessions and polling.
-The public [driver report schema](https://github.com/tangle-network/browser-agent-driver#report-schema) documents `report.json` with a schema version and per-test results.
-The [result type](https://github.com/tangle-network/browser-agent-driver/blob/main/src/types/result.ts) includes `success`, `reason`, and `turns`; a captured screenshot depends on the selected observation mode.
-
-None of these products makes a browser task inherently trustworthy.
-A screenshot can be authentic and still show the wrong account.
-A DOM snapshot can be complete and still reflect malicious page content.
-A successful navigation can be correct while the business assertion is wrong.
-Evidence supports review; it does not replace the assertion.
-
-## Use it in a larger test
-
-The browser driver can run on its own or inside an isolated [Tangle Sandbox](https://docs.tangle.tools/sandbox) when the task also needs code, fixtures, and workspace files.
-The [AI end-to-end testing guide](/blog/ai-e2e-testing-browser-agents) covers that workflow.
-
-Combine products only when each supplies a distinct missing layer in the same tested workflow.
-For example, a team can use Browserbase for the browser session, Browser Use for a natural-language controller, and its own evaluation layer for release policy.
-A team can also use Tangle Browser Agent inside a Tangle Sandbox to edit code, exercise a preview, and return the browser evidence with the code result.
+- **Your coding agent writes and fixes the tests:** give it agent-browser. It passed every run here, it was the fastest, and the model behind it is the one you already pay for.
+- **Plain-English steps inside a TypeScript test:** Stagehand. Its 3.7 agent passed every run here. Version 4 drops that agent: you write the steps and call `act()` where the page needs judgment, which we did not test.
+- **Python:** Browser Use. 0.13 was reliable and slow here. On 1.0, use its own model or measure yours first.
+- **Stealth, proxies or saved logins at scale:** put Browserbase, Steel or Anchor under whichever tool you picked.
+- **Every option:** assert the end state in code. Six of the eight false passes here came from our own tool.
