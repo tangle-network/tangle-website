@@ -43,7 +43,7 @@ const openai = new OpenAI({ baseURL: 'https://router.tangle.tools/v1', apiKey: p
 const anthropic = new Anthropic({ baseURL: 'https://router.tangle.tools', authToken: process.env.TANGLE_API_KEY })
 ```
 
-The Anthropic SDK's `apiKey` option sends the key in an `x-api-key` header, and on 17 November Tangle Router answered that with 401 `invalid_credentials`; the same request with `Authorization: Bearer` answered 200.
+The Anthropic SDK's `apiKey` option sends the key in an `x-api-key` header, and on 17 November Tangle Router answered that with 401 `invalid_credentials`; the same `/v1/messages` request for `openai/gpt-4o-mini` with `Authorization: Bearer` answered 200.
 An agent can request a key itself with the [setup skill](https://router.tangle.tools/agent-setup.md) and hand the owner one approval link.
 
 What the shape does not promise is that the same model answers, that every field you send reaches it, or that a failure is reported the way the provider would report it.
@@ -77,7 +77,7 @@ There are three ways a different model can answer.
 - **Your own fallback list.** OpenRouter, Portkey, LiteLLM and Tangle Router all accept an ordered list of fallback models (`models` on OpenRouter and on ours). That is a substitution you asked for, and the answer still comes back at HTTP 200.
 - **A router-picked substitute.** Until August, Tangle Router could add a model nobody named when the requested one failed. That is the `gpt-5.5` incident above.
 - **The same model on another provider.** OpenRouter routes one model across several providers and, by default, falls back to another provider when the first is unavailable ([provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)). OpenRouter's own measurements found that tool-call accuracy for the same model "vary between providers significantly more than the standard benchmarking would suggest" ([Exacto](https://openrouter.ai/blog/announcements/provider-variance-introducing-exacto/)), so the same name is not always the same behavior.
-  Tangle Router does this too, by default, for Anthropic models and some others named by their maker, such as xAI's: when the direct provider is out of quota, refuses the router's credential, is rate limited or is down, the same request goes once to OpenRouter, pinned to the maker's own endpoint there. `allow_fallbacks` and `require_model` do not turn this off; `provider.ignore: ["openrouter"]` does, and so do a `max_price` ceiling, a data-residency requirement or your own provider key.
+  Tangle Router does this too, by default, for some models named by their maker (`anthropic/` and `xai/` ids among them): when the direct provider is out of quota, refuses the router's credential, is rate limited or is down, the same request goes once to OpenRouter, pinned to the maker's own endpoint there. `allow_fallbacks` and `require_model` do not turn this off; `provider.ignore: ["openrouter"]` does, and so do a `max_price` ceiling, a data-residency requirement or your own provider key.
 
 On Tangle Router, the second kind is off unless you send `provider.allow_fallbacks: true` ([routing guide](https://router.tangle.tools/docs/guides)).
 `require_model: true` (or the `x-tangle-require-model` header) goes further and refuses any model the router picks, including a renamed version of the one you asked for.
@@ -105,8 +105,8 @@ The same request with `require_model: true` was also answered by `gpt-4o-mini`, 
 A router that serves many providers translates requests, and a translation keeps only what it knows how to map.
 A field you send can be honored, refused, or dropped without a word, and only the last one is dangerous.
 
-On Tangle Router, `/v1/responses` goes to OpenAI natively for OpenAI models, and `/v1/messages` goes to Anthropic natively for Anthropic models, with their other fields passed through.
-Every other combination is translated through chat completions, and the [API reference](https://router.tangle.tools/openapi.json) lists what survives: messages or input, function tools, `tool_choice`, structured output format, max tokens, `temperature`, `top_p`, `stream` and the router's own fields.
+On Tangle Router, `/v1/responses` goes to OpenAI natively for OpenAI models, with its other fields passed through.
+Other combinations are translated through chat completions (a `/v1/messages` request for `gpt-4o-mini` came back in Anthropic's shape, answered by `gpt-4o-mini`), and the [API reference](https://router.tangle.tools/openapi.json) lists what survives: messages or input, function tools, `tool_choice`, structured output format, max tokens, `temperature`, `top_p`, `stream` and the router's own fields.
 `reasoning`, `metadata`, `store` and `truncation` are dropped on a translated Responses request.
 On chat completions the reference lists the fields it forwards (`logprobs`, `seed` and `response_format` among them); any other field is accepted and not forwarded.
 A dropped field does not fail: our Responses request to `gemini-2.5-flash` with `reasoning: { effort: "high" }` answered 200.
@@ -187,10 +187,10 @@ A router terminates your TLS connection and opens its own to the provider, so it
 Tangle Router is no exception.
 What you can ask is where the traffic goes next and what the router does when your constraint cannot be met.
 
-Tangle Router is hosted only, with no on-premises option today: standard requests go to managed providers such as OpenAI, Anthropic, Google, Groq and Fireworks, and a route through an independent operator's servers is used only when you select one ([router home](https://router.tangle.tools/)).
+Tangle Router is hosted only, with no on-premises option today: standard requests go to managed providers (on 17 November the catalog for our key listed models from OpenAI, Google, Mistral, DeepSeek, Cohere and xAI), and a route through an independent operator's servers is used only when you select one ([router home](https://router.tangle.tools/)).
 The OpenRouter route from question 2 is the exception you did not select: when it is taken, a second router reads that request.
 It is never taken for a client error, a Responses request that continues stored state, a stream that has already produced output, or a route your team's compliance settings exclude, and it passes a zero-data-retention requirement on to OpenRouter.
-We could not see which response header, if any, names that route: on 17 November every Anthropic route was out of quota.
+We have not observed a response that took this route, so we cannot say which header, if any, names it: on 17 November the `anthropic/` requests we sent were refused with 503 before any upstream was called.
 A request can require zero-data-retention providers with `provider.zdr: true`; when no provider for that model qualifies, it fails rather than going to one that keeps data, as a ZDR request for `gpt-4o-mini` did on 17 November with 400 `no_zdr_providers`.
 If you want no third party between your agent and the provider, run a LiteLLM proxy yourself; prompts still go to the provider, so keeping them inside your network also means hosting the models, and the proxy holds every provider key in one process, which has had its own security advisories ([Crosley's list](https://blakecrosley.com/blog/your-agent-has-a-middleman)).
 
@@ -215,8 +215,7 @@ A self-hosted LiteLLM proxy adds no per-token fee; you pay for the machine and t
 Keep the ones with `routeable: true` and `availability.status` of `available`, and read prices from the same response instead of hard-coding them.
 `GET /api/health` reports the router's own service checks and the state of its circuit breaker.
 
-On 17 November every route to Anthropic's models was out of quota, and the list left out every `anthropic/` model.
-A request for `claude-haiku-4-5` came back in 252 ms as 503 `provider_quota_exhausted`, with `Retry-After: 30`, `x-should-retry: false` and "No upstream was called."
+On 17 November the list for our key held no `anthropic/` model, and a request for `anthropic/claude-haiku-4-5` came back in 252 ms as 503 `provider_quota_exhausted`, with `Retry-After: 30`, `x-should-retry: false` and "No upstream was called."
 That is the failure you want from a router: early, named and unbilled, rather than a different model at HTTP 200.
 
 ## Run the checks against your router
