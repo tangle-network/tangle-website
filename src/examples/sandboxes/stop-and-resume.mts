@@ -5,7 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// Stopped: the disk stays and is all you pay for. Resumed: every file is there.
+// Stopped: the disk stays and nothing is billed. Resumed: every file is there.
 const box = await client.create();
 try {
   await box.exec("echo 'first draft' > notes.md");
