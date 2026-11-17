@@ -43,18 +43,21 @@ x-tangle-refused-substitutes: google/gemini-2.5-flash-lite
 Its ranked substitute for an OpenAI model came from another vendor. Nothing fails when the two differ, so reject answers you did not plan for:
 
 ```js
+// A sketch, not a file we ran.
 const { data, response } = await openai.chat.completions.create({ model, messages }).withResponse()
 const served = response.headers.get('x-tangle-served-model') ?? data.model
+// Allow the dated snapshot ids you expect, such as OpenAI's gpt-4o-mini-2024-07-18.
 if (served !== model) throw new Error(`asked for ${model}, ${served} answered`)
 ```
 
-A stream sends headers before the router knows which model will finish it; ours carried no served-model header. Read the model from the last chunk, the one with usage, never the first.
+A stream sends headers before the router knows which model will finish it; the streams we recorded carried no served-model header. Read the model from the last chunk, the one with usage, never the first.
 
 ## Make substitution an error you can see
 
-OpenRouter, Portkey, LiteLLM and Tangle Router all accept your own fallback list and return its answer as a success. Router-picked substitutes, which caused our August incident, are off on Tangle Router unless you turn them on. Require-model refuses every model the router picks, even a renamed version of yours.
+OpenRouter, Portkey, LiteLLM and Tangle Router all accept your own fallback list and return its answer as a success. On Tangle Router that list is the `models` field, tried in order. Router-picked substitutes, which caused our August incident, are off on Tangle Router unless you turn them on. Require-model refuses every model the router picks on its own.
 
 ```js
+// Request fields, not a file we ran.
 {
   model: 'openai/gpt-4o-mini',
   require_model: true,           // or the x-tangle-require-model header
@@ -86,9 +89,9 @@ Gemini had not produced a token by the deadline, so `gpt-4o-mini` answered, yet 
 
 ## Fields you send can vanish in translation
 
-Each field you send is honored, refused or silently dropped, and only the last hurts. Tangle Router passes a Responses request for an OpenAI model to OpenAI natively and translates the rest through chat completions; the [API reference](https://router.tangle.tools/openapi.json) lists what survives. A translated Responses request drops reasoning effort, metadata, storage and truncation. Chat completions accepts unlisted fields without forwarding them.
+Each field you send is honored, refused or silently dropped, and only the last hurts. Tangle Router sends only a maker's own models natively: OpenAI models on Responses, unless the request requires zero data retention, and Anthropic models on Messages. Everything else is translated through chat completions, and the [API reference](https://router.tangle.tools/openapi.json) lists what survives. A translated Responses request drops reasoning effort, metadata, storage and truncation. Chat completions accepts unlisted fields without forwarding them.
 
-If a dropped field would change your result, require-parameters refuses it before any provider call. A parameter missing from the catalog entry is unknown, not unsupported.
+If a dropped field would change your result, turn on require-parameters: it refuses a field the model does not support before any provider call. A parameter missing from the catalog entry is unknown, not unsupported.
 
 ## Fail over only on errors that are safe to repeat
 
@@ -109,13 +112,13 @@ The OpenAI Node SDK retries connection errors, timeouts, conflicts, rate limits 
 
 <Figure n={1} figure={retries} kicker="Worked arithmetic · OpenAI Node SDK defaults" headline="One failing step reaches the router nine times when the agent and the SDK both retry twice" />
 
-Let one layer own retries, with a deadline and a budget, and turn the others off. Honor the router's retry-after time or back off with jitter. Accept one result per step. When no route can answer, Tangle Router sends a retry-after time and tells the OpenAI SDK not to retry ([client source](https://github.com/openai/openai-node/blob/master/src/client.ts)).
+Let one layer own retries, with a deadline and a budget, and turn the others off. Honor the router's retry-after time or back off with jitter. Accept one result per step. When Tangle Router knows before dispatch that no route can answer, it sends a retry-after time and tells the OpenAI SDK not to retry ([client source](https://github.com/openai/openai-node/blob/master/src/client.ts)).
 
 A provider switch carries no session state, and the router cannot know which tools ran. Reconcile executed tools before retrying a step with side effects.
 
 ## Cap a key before a leak or a loop spends it
 
-Tangle Router spends prepaid credit only, with no subscription or free credit. A key from the [setup skill](https://router.tangle.tools/agent-setup.md) has a lifetime cap of $1 to $1,000 across every product it may use; the [account manifest](https://id.tangle.tools/.well-known/tangle-agent.json) sets the default. One revocation under [Keys](https://id.tangle.tools/app/keys) stops it everywhere. Keys made there can add a monthly budget, a per-minute request limit, an expiry and a model allow-list, which also drops fallbacks outside it.
+Tangle Router spends prepaid credit only, with no subscription required and no free credit. A key from the [setup skill](https://router.tangle.tools/agent-setup.md) has a lifetime cap of $1 to $1,000 across every product it may use; the [account manifest](https://id.tangle.tools/.well-known/tangle-agent.json) sets the default. One revocation under [Keys](https://id.tangle.tools/app/keys) stops it everywhere. Keys made there can add a monthly budget, a per-minute request limit, an expiry and a model allow-list, which also drops fallbacks outside it.
 
 A per-request price ceiling, in dollars per million tokens, refuses routes above it, as on OpenRouter (check 5 below). The ceiling is compared with the provider's list price, while the response reports a billable rate that includes our markup.[^ceiling]
 
@@ -129,7 +132,7 @@ Tangle Router bills per token: the [model catalog](https://router.tangle.tools/m
 
 ## Decide who else reads the prompt
 
-On Tangle Router, standard requests go to managed providers, and an independent operator's route only when you select one ([router home](https://router.tangle.tools/)). The OpenRouter hop is the exception: when taken, a second router reads the request. We have not yet seen a response take that route, so we cannot name its header.[^anthropic]
+Tangle Router is hosted only; there is no on-premises version. Standard requests go to managed providers, and an independent operator's route only when you select one ([router home](https://router.tangle.tools/)). The OpenRouter hop is the exception: when taken, a second router reads the request. We have not yet seen a response take that route, so we cannot name its header.[^anthropic]
 
 If you require zero-data-retention providers and none qualifies, the request fails rather than going to one that keeps data. The OpenRouter hop passes the requirement on.
 
@@ -204,9 +207,10 @@ We think Tangle Router fits an agent that should fail loudly: on chat responses 
 
 ## Switching an agent to Tangle Router
 
-An agent can request a key through the setup skill and hand the account owner a link to approve it once.
+An agent can request a key through the setup skill and hand the account owner a link to approve it once. That one key works on chat completions, Responses and Messages, for every product the owner approved.
 
 ```js
+// Not run as written: our probes sent the raw requests shown below it.
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -221,10 +225,11 @@ POST /v1/messages  x-api-key: sk-tan-...            -> 401 invalid_credentials
 POST /v1/messages  Authorization: Bearer sk-tan-... -> 200
 ```
 
-Our home page still shows the Anthropic example with the wrong option; the fix is filed. The key-scoped catalog lists the models your key can use now; keep those marked routeable.
+Our home page still shows the Anthropic example with the wrong option; the fix is filed. The key-scoped catalog lists the models your key can use now; keep those marked routeable with an available status. The health endpoint shows the router's circuit breakers.
 
 ```text
 GET https://router.tangle.tools/v1/models/user?availability=available
+GET https://router.tangle.tools/api/health
 ```
 
 Start with one self-contained, read-only step, then widen what the agent does.
@@ -233,22 +238,22 @@ Start with one self-contained, read-only step, then widen what the agent does.
 
 [^exacto]: OpenRouter's measurements found tool-call accuracy varied "between providers significantly more than the standard benchmarking would suggest" ([Exacto](https://openrouter.ai/blog/announcements/provider-variance-introducing-exacto/)).
 
-[^anthropic]: We tested one Anthropic model, `claude-haiku-4-5`, with three requests, and each was refused with 503.
+[^anthropic]: We tested one Anthropic model, `claude-haiku-4-5`. Three requests for it were refused with 503, and two more were refused with 400 for their fields.
 
 ## How we tested
 
 Every live request in this post ran on 17 November 2026 between 20:04 and 20:20 UTC, against the Tangle Router release in production that day, with one key and no top-up. We made 29 HTTP requests: 24 probes and the five in the script above. Every request capped output at 64 tokens or fewer. Three models were in scope: `openai/gpt-4o-mini`, `google/gemini-2.5-flash` and `anthropic/claude-haiku-4-5`.
 
-- **Served model.** Non-streaming chat responses carried `x-tangle-requested-model`, `x-tangle-served-model` and `x-tangle-refused-substitutes`. The four streams we recorded carried no served-model or price header. A `/v1/responses` request for `gpt-4o-mini` went to OpenAI natively and returned OpenAI's dated id `gpt-4o-mini-2024-07-18` with none of the router's `x-tangle-` headers.
-- **The fallback hop.** The timed stream above (20:13 UTC) took 2,019 ms end to end under one generation id. Two earlier runs of the same request, with and without `require_model: true`, produced the same chunk sequence but took 44,230 ms and 34,107 ms; we cannot see the cause from outside, so the post does not use them. The trigger (the first-token deadline rather than another failover class) is inferred from timing, not reported by the router. The `require_model` run was answered by `gpt-4o-mini` because it was on our own `models` list.
+- **Served model.** Successful non-streaming chat responses carried `x-tangle-requested-model` and `x-tangle-served-model`, and `x-tangle-refused-substitutes` unless a price ceiling had turned substitutes off. The four streams we recorded carried no served-model or price header. A `/v1/responses` request for `gpt-4o-mini` went to OpenAI natively and returned OpenAI's dated id `gpt-4o-mini-2024-07-18` with none of the router's `x-tangle-` headers.
+- **The fallback hop.** The timed stream above (20:10 UTC) took 2,019 ms end to end under one `x-generation-id` header; the chunk ids change when `gpt-4o-mini` takes over. Two earlier runs of the same request, with and without `require_model: true`, produced the same chunk sequence but took 44,230 ms and 34,107 ms; we cannot see the cause from outside, so the post does not use them. The trigger (the first-token deadline rather than another failover class) is inferred from timing, not reported by the router. The `require_model` run was answered by `gpt-4o-mini` because it was on our own `models` list.
 - **Fields.** `provider.require_parameters: true` refuses an unsupported parameter with 400 `unsupported_parameters` before any provider call. A translated Responses request with `previous_response_id` returns 400 `previous_response_not_supported`, as the API reference says. A chat request to `gemini-2.5-flash` with `logprobs: true` returned Google's own 400, passed through. Responses to `gemini-2.5-flash` with `reasoning: { effort: "high" }` answered 200; that the field was dropped comes from the API reference, and the receipt cannot show whether effort was applied. A forced `get_weather` tool call to `gpt-4o-mini` returned `get_weather({"city":"Paris"})`. Tool-call errors such as `model_requires_responses_for_tools` come from the API reference.
-- **Failover classes.** From the router's source at the tested release: failover on connection failure, 5xx, 429, upstream 402 or quota exhaustion, upstream 401/403/412 (the router's own credential) and a suspended upstream account; for streams also `first_token_timeout` and `empty_completion`, decided before any text is forwarded. No failover on other 4xx (an error the request caused), 404 (a model it cannot find), a refusal, or bring-your-own-key requests. Your own key's 401, your key's rate limit and your account's 402 are answered before any model is tried. Script check 4 sent `temperature: 5` with `gemini-2.5-flash` as the listed fallback; the router returned 400 "temperature must be 0-2" with no generation id and never called Gemini.
+- **Failover classes.** From the router's source at the tested release: failover on connection failure, 5xx, 429, upstream 402 or quota exhaustion, upstream 401/403/412 (the router's own credential) and a suspended upstream account; for streams also `first_token_timeout` and `empty_completion`, decided before any text is forwarded. No failover on other 4xx (an error the request caused), 404 (a model it cannot find), a refusal, or bring-your-own-key requests. Your own key's 401, your key's rate limit and your account's 402 are answered before any model is tried. Script check 4 sent `temperature: 5` with `gemini-2.5-flash` as the listed fallback; the router returned 400 "temperature must be 0-2" and no answer from Gemini. A separate probe with the same error and `claude-haiku-4-5` as the fallback returned 400 with no generation id.
 - **Retry header.** When every route for a model is refused before dispatch, the router answers 503 with `Retry-After` and `x-should-retry: false`; the OpenAI Node SDK reads `x-should-retry` and does not retry.
 - **Same-model hop to OpenRouter.** From source: the native Messages and Responses routes send a request once to OpenRouter for the same model, pinned to the maker's endpoint, when the direct provider fails on its side: it is out of quota, refuses the router's credential, is rate limited, is down or drops the connection. It is skipped for client errors, a caller's own key, a Responses request with `previous_response_id` or `conversation`, a stream that already produced output, a lane the team's compliance settings or guardrail policies exclude, `provider.ignore` or `only` excluding OpenRouter, `max_price` and data residency. A zero-data-retention requirement is passed to OpenRouter as `zdr: true`.
 - **Zero data retention.** `provider.zdr: true` on `gpt-4o-mini` returned 400 `no_zdr_providers`: no provider for that model qualified, so the request failed.
-- **Spend.** `max_price {prompt: 0.01, completion: 0.01}` returned 400 `max_price_exceeded`, quoting the list price $0.15/M. A key outside its allow-list returns 400 `model_not_allowed`. The lifetime cap is `budget_usd`, 1 to 1,000; two public manifests disagree on its default, so we link the account manifest and state none.
-- **Cost.** `pricing_policy.markup` was 1.055 in `GET /v1/models/user`. Script check 1 reported `x-tangle-cost-usd` 0.00000269 for 13 input and 1 output token, which equals 13 × 1.5825e-7 + 1 × 6.33e-7. Headers we saw summed to $0.000114680 across the run; six streaming or Responses passthrough calls carried no cost header.
-- **Anthropic.** We tested one Anthropic model, `claude-haiku-4-5`, with three requests (chat, logprobs and tools), and each was refused with 503.
+- **Spend.** `max_price {prompt: 0.01, completion: 0.01}` returned 400 `max_price_exceeded`, quoting the list price $0.15/M. A request for a model outside the key's allow-list is refused with 400 `model_not_allowed`. The lifetime cap is `budget_usd`, 1 to 1,000; two public manifests disagree on its default, so we link the account manifest and state none.
+- **Cost.** `pricing_policy.markup` was 1.055 in `GET /v1/models/user`. Script check 1 reported `x-tangle-cost-usd` 0.00000269 for 13 input and 1 output token, which is 13 × 1.5825e-7 + 1 × 6.33e-7 = 2.69025e-6, rounded. Headers we saw summed to $0.000114680 across the run; six streaming or Responses passthrough calls carried no cost header.
+- **Anthropic.** We tested one Anthropic model, `claude-haiku-4-5`. Three requests (chat, logprobs and tools) were each refused with 503; the two 400s for unsupported parameters and `previous_response_id` under Fields were also requests for it.
 - **Anthropic SDK.** `/v1/messages` with `x-api-key` answered 401 `invalid_credentials` twice; with `Authorization: Bearer` it answered 200, served by `gpt-4o-mini` in Anthropic's response shape.
 - **The August incident.** Recorded in the router's source beside the substitution check: a `gpt-5.5` request returned 200 with `body.model` `gemini-2.5-flash` because an OpenAI project had hit its enforced spend limit; a catalog check and a status check both read clean. The fix made router-picked substitution require `provider.allow_fallbacks: true`. How long the swap lasted is not recorded.
 - **Other routers.** OpenRouter, LiteLLM, Portkey and OpenAI SDK behavior is quoted from their public documentation and pricing pages as fetched on 17 November 2026; we did not send them requests.

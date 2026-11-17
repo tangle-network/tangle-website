@@ -38,7 +38,7 @@ export const ceiling = provenance(metricBars([
   period: '17 Nov 2026',
   unit: 'US dollars per million input tokens',
   source: { label: 'Tangle Router model catalog', href: 'https://router.tangle.tools/models' },
-  method: 'One key, the router release in production that day, 17 Nov 2026 20:04-20:13 UTC. List price: pricing.prompt for openai/gpt-4o-mini in ' +
+  method: 'One key, the router release in production that day, 17 Nov 2026 20:04-20:10 UTC. List price: pricing.prompt for openai/gpt-4o-mini in ' +
     'GET /v1/models/user (0.00000015 per token), with pricing_policy.markup 1.055 in the same response. Ceiling: a chat completion with ' +
     'provider.max_price {prompt: 0.155, completion: 0.62} answered 200. ' +
     'Billable rate: that response\'s x-tangle-price-input header, 1.5825e-7 per token ' +
