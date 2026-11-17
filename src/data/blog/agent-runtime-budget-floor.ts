@@ -27,7 +27,7 @@ const provenance = (figure: Figure | Refusal, status: 'measured' | 'captured', n
 
 export const settlements = provenance(
   metricBars(
-    SETTLEMENTS.map((value, i) => ({ id: `settlement-${i + 1}`, label: `Run ${i + 1}`, value, observations: { count: 1, label: 'settlement' } })),
+    SETTLEMENTS.map((value, i) => ({ id: `settlement-${i + 1}`, label: `#${i + 1}`, value, observations: { count: 1, label: 'settlement' } })),
     { measure: 'input tokens at settlement, smallest first', unit: '', domain: [0, 70_000], formatValue: tokens, width: 720, id: 'budget-floor-settlements' },
   ),
   'measured', 1, { label: 'agent-runtime #685', href: COMMIT },
@@ -39,7 +39,7 @@ export const authored = provenance(
       ...AUTHORED.map((value, i) => ({ id: `authored-${i + 1}`, label: `Budget ${i + 1}`, value, observations: { count: 1, label: 'parent run' }, detail: `${tokens(FLOOR - value)} short` })),
       { id: 'floor', label: 'Floor', value: FLOOR, observations: { count: 6, label: 'settlements (minimum)' }, detail: 'lowest settlement' },
     ],
-    { measure: 'child budget', unit: '', domain: [0, 35_000], formatValue: tokens, width: 720, id: 'budget-floor-authored' },
+    { measure: 'input tokens: authored budgets and the floor', unit: '', domain: [0, 35_000], formatValue: tokens, width: 720, id: 'budget-floor-authored' },
   ),
   'captured', 2, { label: 'budget-floor.test.ts', href: TEST },
 );
