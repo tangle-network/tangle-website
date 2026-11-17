@@ -1,10 +1,9 @@
 ---
-title: 'AI E2E Testing: The Agent Said Passed. The Page Said Otherwise.'
+title: "AI E2E Tests That Pass When They Shouldn't: Catching False Passes"
 slug: ai-e2e-testing-browser-agents
 summary: >-
-  A browser agent passed a checkout test with the wrong product in the cart.
-  How to catch false passes in AI end-to-end tests, measured: 6 false passes in
-  15 runs, then 0.
+  A false pass is an AI test that reports success the page does not show. We
+  measured 6 in 15 browser-agent runs, fixed the cause, and reran: 0 in 15.
 date: '2026-06-17'
 updated: '2026-11-17'
 author: Drew Stone
@@ -15,6 +14,8 @@ tags:
 series: Browser Agent
 seriesOrder: 1
 ---
+
+import Example from '../../components/Example.astro'
 
 We asked an AI browser agent to buy a backpack and a bike light on a demo store. In 5 of 5 runs the cart ended up holding the backpack and a T-shirt. The agent reported that it had added the backpack and the bike light, and in 4 of the 5 runs its own verifier marked the test passed.
 
@@ -83,7 +84,7 @@ With `bad`, a suite runs from a cases file:
 bad run --cases ./cases.json --concurrency 4
 ~~~
 
-The command exits with code 1 when any case fails, so a CI step fails with it. But a case from a JSON file passes on the agent's verified result: with no explicit success criteria, the test runner [defaults to the agent's outcome](https://github.com/tangle-network/browser-agent-driver/blob/458ff93a9d086a07e0bc7fd70b4480a079f3b23a/src/test-runner.ts#L430-L441). Since the #177 fixes that verifier reads page evidence, but it is still a model.
+The command exits with code 1 when any case fails, so a CI step fails with it. Shared defaults such as the provider, model, headless mode and turn limit go in a `bad.config.ts` file at the project root. But a case from a JSON file passes on the agent's verified result: with no explicit success criteria, the test runner [defaults to the agent's outcome](https://github.com/tangle-network/browser-agent-driver/blob/458ff93a9d086a07e0bc7fd70b4480a079f3b23a/src/test-runner.ts#L430-L441). Since the #177 fixes that verifier reads page evidence, but it is still a model.
 
 To make deterministic checks part of the pass, use the SDK's `TestRunner` with `successCriteria`. A case then passes only when the agent reports success **and** every criterion holds on the live page. The criterion types are `url-contains`, `url-matches`, `element-visible`, `element-text`, `element-count` and `custom`:
 
@@ -126,13 +127,17 @@ One run is not a sample. We ran each flow 5 times, and the bug showed in 4 of 5 
 
 Save the screenshots, the actions, the final page state and the verifier's verdict with every run. When the agent says passed and your check says failed, the trace shows which one was looking at the real page.
 
+The same goes for the setup. In the recorded run below, a coding agent was asked to install Playwright and screenshot a page inside an isolated sandbox. The egress allowlist named the Playwright download host, but the download redirected to `storage.googleapis.com`, which was not listed, and was refused with HTTP 403. The agent switched to the machine's own Chromium with `--no-sandbox` and a custom library path, wrote both files, and returned `success: true`. Its summary mentioned the workaround; the flag did not. Read the tool trace, not only the success flag, and allowlist every host an install reaches, redirects included.
+
+<Example path="sandboxes/browser-task" title="A coding agent drives a browser inside a sandbox" />
+
 ## Where agent tests fit next to Playwright
 
 Keep deterministic Playwright tests for stable paths with known selectors. They are faster, cheaper and repeatable. Slack's engineering team ran more than 200 agent-driven E2E runs and put it well: ["Tests enforce journeys. Agents verify goals."](https://slack.engineering/agentic-testing-where-agents-fit-in-the-e2e-testing-stack/) They also report agent runs at $15–30 each in their setup, which places agent tests in exploratory and goal-level checks rather than every commit.
 
 An agent earns its place when the path changes often (copy, layout, conditional steps) and the outcome does not. It should still hand the verdict to a check like the ones above.
 
-What a run costs depends on two meters: browser time, if the browser is hosted, and model tokens per step. Our 15 runs on 0.38.3 used 10,127 to 149,462 input tokens each (median 39,155), and the rerun cost follows from your model's [price per token](https://ai.google.dev/gemini-api/docs/pricing). Hosted browsers bill by the hour: see [Browserbase pricing](https://www.browserbase.com/pricing) and [Browser Use pricing](https://browser-use.com/pricing) for the current rates.
+What a run costs depends on two meters: browser time, if the browser is hosted, and model tokens per step. Our 15 runs on 0.38.3 used 10,127 to 149,462 input tokens each (median 39,155); multiply by your model's [price per token](https://ai.google.dev/gemini-api/docs/pricing). On the maintainers' benchmark the model spend came to about $0.022 per run. With `--replay` and a persisted memory folder, `bad` replays a route that already passed, and its [CI recipe](https://github.com/tangle-network/browser-agent-driver/blob/main/examples/replay-cache-ci.md) puts those reruns at about 10–20% of a live run's model cost; a replayed step that no longer fits the page falls back to the live agent. Hosted browsers bill by the hour: see [Browserbase pricing](https://www.browserbase.com/pricing) and [Browser Use pricing](https://browser-use.com/pricing) for the current rates. If you run the browser and agent on a [Tangle Sandbox](https://docs.tangle.tools/sandbox) machine instead, compute is billed per core-hour and per GB-hour of memory with a minimum hourly charge; the [rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes) has the current numbers.
 
 ## Choosing the browser and the agent
 
@@ -143,9 +148,9 @@ Two layers are easy to confuse:
 
 The false-pass problem lives in the agent layer, so it follows you to whichever browser host you pick.
 
-Our side-by-side comparison is in [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use). Vendor benchmark scores, ours included, come from small or public corpora. The `bad` README reports 15 of 15 against Browser Use's 12 of 15 on the maintainers' own [5-task, 3-repetition corpus](https://github.com/tangle-network/browser-agent-driver#benchmarks) (2026-10-11), at about 1.8 times the model cost per run. Published WebVoyager scores cover 15 public sites. Neither predicts your app: run your own flows with an independent check, as above.
+Our side-by-side comparison is in [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use). Vendor benchmark scores, ours included, come from small or public corpora. The `bad` README reports 15 of 15 against Browser Use's 12 of 15 on the maintainers' own [5-task, 3-repetition corpus](https://github.com/tangle-network/browser-agent-driver#benchmarks) (2026-10-11), at $0.0223 against $0.0126 in model spend per run, about 1.8 times. It is a small corpus run by the maintainers, so rerun it before you rely on it. Published WebVoyager scores cover 15 public sites. Neither predicts your app: run your own flows with an independent check, as above.
 
-Public sites can also block automated browsers, especially from cloud IP ranges. For your own app, allow the test runner through your bot protection rather than relying on stealth features.
+Public sites can also block automated browsers, especially from cloud IP ranges, so a benchmark run from a laptop can look better than the same agent in CI. For public sites, `bad` can launch system Chrome with fingerprint hardening, solves common CAPTCHAs by default, takes a proxy through `BAD_PROXY_URL`, or runs on a Steel cloud browser with residential proxies. For your own app, allow the test runner through your bot protection rather than relying on any of that.
 
 ## Try it
 
@@ -158,6 +163,6 @@ bad run --goal "Log in with username tomsmith and password SuperSecretPassword! 
   --url https://the-internet.herokuapp.com/login
 ~~~
 
-Do not install the unscoped `bad` package from npm; it is unrelated. The agent reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. With no provider set it uses OpenAI when that key is present and otherwise the local `claude-code` provider; our measurements used `gemini-2.5-flash`. It reads the page's accessibility tree by default, and `--observation-mode hybrid` adds screenshots.
+Do not install the unscoped `bad` package from npm; it is unrelated. The agent reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. With no provider set it uses OpenAI when that key is present and otherwise the local `claude-code` provider; our measurements used `gemini-2.5-flash`, the model the maintainers benchmark on. The planner, executor and verifier roles can each use a different model. It reads the page's accessibility tree by default, which is the fastest mode; `--observation-mode vision` works from labelled screenshots, and `hybrid` uses both, which the maintainers list as the most reliable. With the planner on, it plans the steps once and falls back to a step-by-step observe-and-act loop only when the page deviates.
 
 Whatever agent you choose, run your three most important journeys five times each against a check the agent cannot read, and count the false passes before you let the result block a release.
