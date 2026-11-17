@@ -1,11 +1,11 @@
 ---
-title: 'AI E2E Testing: Check the Final State of a Whole Journey'
+title: "AI E2E Tests That Pass When They Shouldn't: Catching False Passes"
 slug: ai-e2e-testing-browser-agents
 summary: >-
-  Follow a full browser journey across routes and backend state, using controlled
-  test data and a final condition that proves the user's task finished.
+  A false pass is an AI test that reports success the page does not show. We
+  measured 6 in 15 browser-agent runs, fixed the cause, and reran: 0 in 15.
 date: '2026-06-17'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - browser-agent
@@ -17,276 +17,152 @@ seriesOrder: 1
 
 import Example from '../../components/Example.astro'
 
-A customer does not experience a unit test, an application programming interface (API) response, and a browser page as separate systems.
-They see a signup form, an invitation, a dashboard, and an email or status message that tells them whether the job finished.
+We asked an AI browser agent to buy a backpack and a bike light on a demo store. In 5 of 5 runs the cart ended up holding the backpack and a T-shirt. The agent reported that it had added the backpack and the bike light, and in 4 of the 5 runs its own verifier marked the test passed.
 
-AI E2E testing targets that complete journey.
-E2E means end-to-end: the test starts at a user-facing entry point, crosses the boundaries the user crosses, and checks the final state the user can see.
-An AI E2E test adds a natural-language goal and page interpretation to browser controls, while keeping enough evidence to fix a failure.
+That is the failure that matters in AI end-to-end (E2E) testing. A test that fails costs a rerun. A test that passes when the page says otherwise ships the bug, and it teaches your team to trust the green. We call it a **false pass**: the agent reports success and the final page state does not show it.
 
-Tangle Browser Agent is Tangle's browser driver for these goal-based sessions, with screenshots and DOM (the page's element tree) evidence.
-Its `bad` command starts a run from a terminal.
-In the sandboxed example in this article, `client.create` starts a [Tangle Sandbox](https://docs.tangle.tools/sandbox) machine, `box.prompt` returns a run whose `success` and `error` the test checks, and `box.read` and `box.fs.download` retrieve what the agent wrote.
+The short answer: **let the page decide the pass, not the agent.** Check the final state (the URL, the cart contents, the list on screen) with something that does not read the agent's summary, and count false passes separately from failures. That is how we measured the bug above in our open-source agent, Tangle Browser Agent (`bad`), and how we know the fix worked: 6 false passes in 15 runs on version 0.37.0, and 0 in 15 on 0.38.3 ([issue #177](https://github.com/tangle-network/browser-agent-driver/issues/177)).
 
+## How an agent passes a test it failed
 
-## A full journey has more than one assertion
+The checkout goal was plain:
 
-Consider a workspace invitation.
-The product promise is that an owner can create a workspace, invite a teammate, and see the invitation in the workspace settings.
+> Log in with username standard_user and password secret_sauce. Add 'Sauce Labs Backpack' and 'Sauce Labs Bike Light' to the cart. Check out with first name Ada, last name Lovelace, postal code 10001. On the overview page read the Item total. Then press Finish to place the order.
 
-An incomplete browser case clicks “Invite” and stops when a toast appears.
-A useful E2E case follows the user-visible journey:
+Two separate faults turned a wrong cart into a green result.
 
-1. Open the application’s sign-in page with a disposable account.
-2. Create a workspace named “Smoke”.
-3. Open the members screen.
-4. Invite a test address.
-5. Confirm the members screen shows the pending invitation.
-6. Stop before sending mail to a real person.
+**The agent acted on a page that had already changed.** It planned two clicks from one snapshot of the page: the first and second "Add to cart" buttons. After the first click, the backpack's button turned into "Remove", every remaining "Add to cart" button moved up one position, and the second click landed on the T-shirt. The agent did not read the page again between the two clicks.
 
-The browser has to see the route changes, form validation, loading states, and final list.
-The backend has to accept the request.
-The final page has to represent the result accurately.
+**The verifier graded the agent's story instead of the page.** The agent's final answer named the items it meant to add and gave an item total of $45.98. The cart it asked for totals $39.98. The goal verifier, running on the same model, accepted the summary in 4 of 5 runs. In 2 of those 4 it also accepted "The order has been placed" from a run that never pressed Finish.
 
-The goal can stay in ordinary language:
+A to-do test showed the same pattern: in 2 of 5 runs the agent also completed an item it was told to leave open, described the result as correct, and the verifier agreed.
+
+Neither fault is exotic. Any agent that acts on a cached view of the page can click a shifted element, and any check that reads the agent's own account inherits the agent's mistakes.
+
+## How we measured it
+
+The 15 runs cover three public demo sites, 5 repetitions each, on `gemini-2.5-flash`:
+
+- **login**: log in on [the-internet.herokuapp.com/login](https://the-internet.herokuapp.com/login) and stop on the secure area.
+- **checkout**: the [Sauce Demo](https://www.saucedemo.com/) goal above.
+- **todo**: on [TodoMVC](https://demo.playwright.dev/todomvc/), add three items, complete the second, and show only the Active list.
+
+Each run starts a fresh Chrome. A separate watcher attaches to the same Chrome through its DevTools port and records the final state the harness cares about: the URL, the cart's item names, the to-do items on screen and in storage. The watcher never reads the agent's output. The agent's verdict comes from its own report. A run is a **pass** when the watcher's check passes, and a **false pass** when the agent reported success and the watcher's check failed.
+
+| Flow | 0.37.0: passes / false passes | 0.38.3: passes / false passes |
+| --- | --- | --- |
+| login | 5 of 5 / 0 | 5 of 5 / 0 |
+| checkout | 0 of 5 / 4 | 5 of 5 / 0 |
+| todo | 3 of 5 / 2 | 4 of 5 / 0 |
+| **total** | **8 of 15 / 6** | **14 of 15 / 0** |
+
+Same harness, same goals, same model, 15 runs per version. Source: the [0.38.2 and 0.38.3 results on issue #177](https://github.com/tangle-network/browser-agent-driver/issues/177). The runs used different sandbox machines, so the wall times in the records are not compared. Fifteen runs is a small sample: 0 false passes in 15 is still consistent with a true rate of up to about 18% (one-sided 95% bound), so treat it as "the bug we found is gone", not as a guarantee.
+
+The one 0.38.3 failure is worth reading. On a to-do run the verifier found every requirement met at turn 6, but two of its quotes did not match the page text verbatim, so the result was rejected. The runner rolled back to an earlier URL, TodoMVC's local storage kept the items, the agent added them again, and the run hit its 30-turn limit. The agent reported `success: false`. That is a failure you see, not a false pass, and it points at the next fix.
+
+## What fixed it
+
+The fixes are in the [release history](https://github.com/tangle-network/browser-agent-driver/commits/main), each tied to #177:
+
+- **Clicks bind to the element the agent observed** ([#178](https://github.com/tangle-network/browser-agent-driver/pull/178)). A batched click that would land on a different element stops the batch instead.
+- **The verifier judges from page evidence**, not the agent's claim ([#178](https://github.com/tangle-network/browser-agent-driver/pull/178)), and every quote it relies on must appear in the page evidence it cites ([#182](https://github.com/tangle-network/browser-agent-driver/pull/182)). A live login run had confirmed "Logged in as tomsmith" by quoting the agent's own extraction, not the page.
+- **The verifier's raw verdict is kept in the report** ([#184](https://github.com/tangle-network/browser-agent-driver/pull/184)), so a rejected pass can be explained after the run.
+
+The general lesson does not depend on our agent: a pass check that can read the agent's summary will sometimes believe it.
+
+## Make the page decide in your own suite
+
+### Write the final condition as page state
+
+"The invite worked" cannot be checked. "The members page shows qa@example.test with status Pending" can: it gives a location, a string and a state. For checkout, check the item names in the cart, not the total the agent read out.
+
+### Know what your tool counts as a pass
+
+With `bad`, a suite runs from a cases file:
 
 ~~~bash
-bad run \
-  --url https://app.example.com \
-  --goal "Sign in with the disposable account, create a project named Smoke, invite the test address, and verify the invitation appears in the members list"
+bad run --cases ./cases.json --concurrency 4
 ~~~
 
-This command follows the public bad run shape documented in the [Browser Agent driver repository](https://github.com/tangle-network/browser-agent-driver).
-The web address, account, and test address are illustrative.
-Replace them with a disposable environment that your team controls.
+The command exits with code 1 when any case fails, so a CI step fails with it. Shared defaults such as the provider, model, headless mode and turn limit go in a `bad.config.ts` file at the project root. But a case from a JSON file passes on the agent's verified result: with no explicit success criteria, the test runner [defaults to the agent's outcome](https://github.com/tangle-network/browser-agent-driver/blob/458ff93a9d086a07e0bc7fd70b4480a079f3b23a/src/test-runner.ts#L430-L441). Since the #177 fixes that verifier reads page evidence, but it is still a model.
 
-## The E2E bar
+To make deterministic checks part of the pass, use the SDK's `TestRunner` with `successCriteria`. A case then passes only when the agent reports success **and** every criterion holds on the live page. The criterion types are `url-contains`, `url-matches`, `element-visible`, `element-text`, `element-count` and `custom`:
 
-The test case has to make five things visible.
+~~~ts
+import { chromium } from 'playwright'
+import { PlaywrightDriver, TestRunner } from '@tangle-network/browser-agent-driver'
 
-| Requirement | Weak case | Reviewable case |
-| --- | --- | --- |
-| input | “Test the app” | One named journey and start URL (web address) |
-| starting state | Hidden account and mutable data | Disposable account, known data, and documented permissions |
-| browser | Mocked page or a single isolated component | Real browser session crossing the user path |
-| final condition | Model says the flow looks complete | Visible list, URL, state, or response that satisfies the goal |
-| evidence | One summary sentence | Screenshots, page observations, actions, and stop reason |
+const browser = await chromium.launch()
+const page = await browser.newPage()
+const runner = new TestRunner({
+  driver: new PlaywrightDriver(page),
+  config: { provider: 'google', model: 'gemini-2.5-flash' },
+})
 
-The final condition must be observable.
-“The invite worked” is weaker than “the members screen shows qa@example.test with a Pending status,” which gives the test a string, a location, and a state to check.
-
-An evaluation compares this expected condition with the observed result.
-It can use a selector, an API response, a screenshot, or several pieces of evidence.
-The agent’s explanation can help a reviewer, but it should not replace the condition being checked.
-
-## Put AI E2E testing in the right layer
-
-| Layer | What it establishes | Typical owner |
-| --- | --- | --- |
-| unit test | A function or component obeys a local invariant | Developer |
-| API or contract test | A request, permission, and response shape agree | Service team |
-| deterministic browser test | A stable UI path behaves under known selectors | QA or developer |
-| AI E2E test | A changing user journey reaches a visible outcome | Product and QA |
-| manual review | A new or high-risk experience deserves human judgment | Release owner |
-
-Playwright is a good fit for deterministic browser cases.
-Its [current documentation](https://playwright.dev/docs/intro) describes isolation, assertions, parallelization, and reports for modern web apps.
-The [WebDriver standard](https://www.w3.org/TR/webdriver2/) defines the broader remote-control interface used by browser automation tools.
-
-An AI case earns its place when page structure, copy, extensions, or conditional state make a fixed selector path expensive to maintain.
-It should still hand its result to deterministic checks where a known invariant matters.
-For example, an agent can navigate a billing page while a typed assertion checks that the displayed plan identifier matches the expected test plan.
-
-## Write a case a reviewer can rerun
-
-A case needs enough context to explain whether a failure came from the application, the fixture, the browser, the network, or the agent.
-
-~~~json
-{
-  "name": "workspace-invite-smoke",
-  "startUrl": "https://app.example.com",
-  "startingState": {
-    "account": "disposable owner account",
-    "workspace": "new workspace",
-    "invitedAddress": "qa@example.test"
-  },
-  "goal": "Create Smoke, invite the test address, and verify the pending invitation appears",
-  "allowedActions": [
-    "navigate",
-    "fill forms",
-    "submit the workspace and invitation forms"
+const result = await runner.runTest({
+  id: 'checkout',
+  name: 'Backpack and bike light reach the overview page',
+  startUrl: 'https://www.saucedemo.com/',
+  goal: 'Log in as standard_user / secret_sauce, add Sauce Labs Backpack and Sauce Labs Bike Light, check out as Ada Lovelace 10001, and stop on the overview page.',
+  successCriteria: [
+    { type: 'url-contains', value: '/checkout-step-two.html' },
+    { type: 'element-count', selector: '.cart_item', value: '2' },
+    { type: 'element-text', selector: '.cart_list', value: 'Sauce Labs Bike Light' },
   ],
-  "stopBefore": [
-    "sending mail to a real address",
-    "changing a paid plan",
-    "deleting a workspace"
-  ],
-  "evidence": [
-    "workspace form",
-    "members list",
-    "invitation status",
-    "first failure or stop reason"
-  ]
-}
+})
+
+console.log(result.verified, result.verdict)
+await browser.close()
 ~~~
 
-This object is an illustrative case definition.
-The public driver accepts a cases file through bad run --cases, but the exact case schema belongs to the installed version and should be checked with its documentation.
+This sketch is typed against the 0.38.3 source ([`TestCase`](https://github.com/tangle-network/browser-agent-driver/blob/458ff93a9d086a07e0bc7fd70b4480a079f3b23a/src/types/test-runner.ts)); we did not run this file for this post. The 15-run measurement above used a separate watcher instead, which works with any agent: attach to the browser after the run and assert on its state.
 
-The case should also record the browser version, viewport, observation mode, model or agent profile, and fixture reset method.
-An agent profile is a named bundle of model choice, page-observation mode, permissions, time limits, and recovery rules.
-Two runs with different profiles may take different paths even when the goal is identical.
+### Count false passes, and repeat each case
 
-## Keep fixtures from becoming the bug
+Report three numbers per case: passes, failures and false passes. A false pass needs your independent check to exist, which is one more reason to write it.
 
-End-to-end tests cross enough services that setup failures can dominate the result.
+One run is not a sample. We ran each flow 5 times, and the bug showed in 4 of 5 checkout runs, not in all of them. If a model grades your runs, expect it to disagree with people: Browser Use reports [87% alignment with human labels](https://browser-use.com/posts/our-browser-agent-evaluation-system) for its `gemini-2.5-flash` judge, which is good and still wrong about one verdict in eight. A deterministic end-state check on an app you control does not have that error rate.
 
-| Fixture | Control to establish before the browser opens |
-| --- | --- |
-| account | disposable identity with the required role and no sensitive data |
-| data | stable names, known empty states, and an explicit reset |
-| browser | fixed browser family, viewport, locale, and extension list |
-| network | reachable application and dependency health |
-| time | deterministic clock or a tolerance for asynchronous states |
-| credentials | least privilege, short-lived secrets, and no production access |
+### Keep the evidence a reviewer needs
 
-A health check can show that the application is reachable.
-It cannot prove the journey will succeed.
-A seeded database can make the run repeatable.
-It cannot prove the product handles a real empty state.
-Keep both the fixture description and the observed setup in the trace.
+Save the screenshots, the actions, the final page state and the verifier's verdict with every run. When the agent says passed and your check says failed, the trace shows which one was looking at the real page.
 
-The runtime is where the browser, files, and model calls execute: a developer machine, a continuous-integration (CI) worker, or a sandbox.
-The example below uses a sandbox. The agent is asked to install Playwright and Chromium itself, egress allows only the browser download hosts and one site, and the machine has 2 CPU cores and 4 GB of memory.
-The test checks the files the run wrote, not only the run's `success` flag or the agent's description of them.
+The same goes for the setup. In the recorded run below, a coding agent was asked to install Playwright and screenshot a page inside an isolated sandbox. The egress allowlist named the Playwright download host, but the download redirected to `storage.googleapis.com`, which was not listed, and was refused with HTTP 403. The agent switched to the machine's own Chromium with `--no-sandbox` and a custom library path, wrote both files, and returned `success: true`. Its summary mentioned the workaround; the flag did not. Read the tool trace, not only the success flag, and allowlist every host an install reaches, redirects included.
 
-<Example path="sandboxes/browser-task" title="An agent drives a browser inside a sandbox" />
+<Example path="sandboxes/browser-task" title="A coding agent drives a browser inside a sandbox" />
 
-In the recorded run the egress policy refused the Chromium download (HTTP 403), so the agent switched to the machine's own Chromium with `--no-sandbox` and a custom `LD_LIBRARY_PATH`, loaded the live page, wrote both files, and still reported `success: true`.
-The run proves that a sandboxed agent loaded a live page and wrote the requested files; the flag alone did not show that the setup had changed, so read the tool trace as well.
-It does not prove that the same steps succeed behind a login, on another day, or with a different network policy.
+## Where agent tests fit next to Playwright
 
-The runtime sets network access, browser version, secret exposure, and reproducibility, so record it with the fixture.
+Keep deterministic Playwright tests for stable paths with known selectors. They are faster, cheaper and repeatable. Slack's engineering team ran more than 200 agent-driven E2E runs and put it well: ["Tests enforce journeys. Agents verify goals."](https://slack.engineering/agentic-testing-where-agents-fit-in-the-e2e-testing-stack/) They also report agent runs at $15–30 each in their setup, which places agent tests in exploratory and goal-level checks rather than every commit.
 
-## Turn a run into a release decision
+An agent earns its place when the path changes often (copy, layout, conditional steps) and the outcome does not. It should still hand the verdict to a check like the ones above.
 
-A release rule blocks or permits a change based on a test result.
-An AI E2E rule should be small enough to inspect and important enough to matter.
+What a run costs depends on two meters: browser time, if the browser is hosted, and model tokens per step. Our 15 runs on 0.38.3 used 10,127 to 149,462 input tokens each (median 39,155); multiply by your model's [price per token](https://ai.google.dev/gemini-api/docs/pricing). On the maintainers' benchmark the model spend came to about $0.022 per run. With `--replay` and a persisted memory folder, `bad` replays a route that already passed, and its [CI recipe](https://github.com/tangle-network/browser-agent-driver/blob/main/examples/replay-cache-ci.md) puts those reruns at about 10–20% of a live run's model cost; a replayed step that no longer fits the page falls back to the live agent. Hosted browsers bill by the hour: see [Browserbase pricing](https://www.browserbase.com/pricing) and [Browser Use pricing](https://browser-use.com/pricing) for the current rates. If you run the browser and agent on a [Tangle Sandbox](https://docs.tangle.tools/sandbox) machine instead, compute is billed per core-hour and per GB-hour of memory with a minimum hourly charge; the [rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes) has the current numbers.
 
-| Rule | Final condition | Safe failure response |
-| --- | --- | --- |
-| signup | new account reaches the dashboard | keep the account disposable and attach the final screenshot |
-| activation | first project or integration is visible | record the first missing state and the preceding click |
-| billing | test plan and billing state agree | stop before real payment and record the review page |
-| wallet | selected account and chain appear in the application | stop at signing unless test-wallet permission is explicit |
-| support path | the reported customer journey reaches the expected page | preserve the input class and redact sensitive values |
+## Choosing the browser and the agent
 
-Narrow cases are easier to own than many goals whose final conditions all mean “looks okay.”
-Choose the smallest set that covers the release risk, and review every case’s evidence.
+Two layers are easy to confuse:
 
-A passing rule means the specified condition was observed under the specified fixture and runtime.
-It does not mean every path through the product is healthy, or that the model will follow the same route after a copy change.
+- **Browser infrastructure** runs the browser. [Browserbase](https://www.browserbase.com/) hosts browsers billed by browser time; you bring the agent or use its Stagehand library. Amazon's [Bedrock AgentCore Browser](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/browser-invoke.html) hosts browser sessions and adds the `InvokeBrowser` API for operating-system-level actions, such as native dialogs, that the page's DevTools connection cannot reach.
+- **The agent** decides what to click and when the goal is met. [Browser Use](https://browser-use.com/) is an open-source agent library that also sells cloud browsers. Tangle Browser Agent is an agent that drives any browser through a driver interface: Playwright locally, or a [Steel](https://steel.dev/) cloud browser.
 
-## Trace the first wrong step
+The false-pass problem lives in the agent layer, so it follows you to whichever browser host you pick.
 
-A trace is the ordered record of goal, observation, action, result, recovery, final check, and stop reason.
-The first wrong step matters more than the final error because later actions may be consequences of the earlier mistake.
+Our side-by-side comparison is in [Tangle Browser Agent vs Browserbase and Browser Use](/blog/tangle-browser-agent-vs-browserbase-browser-use). Vendor benchmark scores, ours included, come from small or public corpora. The `bad` README reports 15 of 15 against Browser Use's 12 of 15 on the maintainers' own [5-task, 3-repetition corpus](https://github.com/tangle-network/browser-agent-driver#benchmarks) (2026-10-11), at $0.0223 against $0.0126 in model spend per run, about 1.8 times. It is a small corpus run by the maintainers, so rerun it before you rely on it. Published WebVoyager scores cover 15 public sites. Neither predicts your app: run your own flows with an independent check, as above.
 
-| Turn | Observation | Action | Result | Classification |
-| --- | --- | --- | --- | --- |
-| 1 | Sign-in form is visible | Fill disposable credentials | Dashboard loads | expected |
-| 2 | Empty workspace list is visible | Click “Create project” | Creation form loads | expected |
-| 3 | Name field accepts “Smoke” | Submit form | Spinner remains for 30 seconds in this sample | environment or product |
-| 4 | Error banner says service unavailable | Retry once within policy | Same error remains | failed |
-| 5 | Final condition absent | Stop and save screenshot | fail with service error | actionable |
+Public sites can also block automated browsers, especially from cloud IP ranges, so a benchmark run from a laptop can look better than the same agent in CI. For public sites, `bad` can launch system Chrome with fingerprint hardening, solves common CAPTCHAs by default, takes a proxy through `BAD_PROXY_URL`, or runs on a Steel cloud browser with residential proxies. For your own app, allow the test runner through your bot protection rather than relying on any of that.
 
-The last row is the evaluation result.
-The earlier rows show whether engineering should inspect the page, the backend, the fixture, or the environment.
-“Project creation failed” alone forces a rerun to recover that context.
+## Try it
 
-A model judge can grade the same trace, but it grades against the condition the case states, not against the agent’s own summary.
-The example below scores a code-review run's answer and every tool call on two dimensions.
-
-<Example path="evals/score-a-trace" title="A model judge scores the run's trace" />
-
-The judge returns dimension scores and the trace identifier for storage beside the screenshots.
-A score is still a model’s grade, so it cannot replace the final condition.
-
-Useful terminal states are:
-
-| Status | Meaning |
-| --- | --- |
-| pass | The stated final condition was observed. |
-| fail | The application or integration produced an observed result that violates the condition. |
-| blocked | A required permission, login, human-verification challenge, dependency, or human approval prevented the case. |
-| inconclusive | The evidence is insufficient to decide safely. |
-
-Do not turn blocked or inconclusive into pass because the agent used all available steps.
-Do not turn a fixture outage into an application defect.
-
-## Parallel cases need separate worlds
-
-Concurrency does not make shared state safe.
-Each case needs its own account, browser context, wallet fixture, and data namespace unless the application explicitly supports isolation.
-
-The public driver README documents a cases-file entry point and a concurrency option:
+`bad` is open source under MIT or Apache-2.0 and needs Node.js 22.12 or later:
 
 ~~~bash
-bad run --cases ./browser-cases.json --concurrency 4
+npm install -g @tangle-network/browser-agent-driver
+npx playwright install chromium
+bad run --goal "Log in with username tomsmith and password SuperSecretPassword! and stop on the secure area" \
+  --url https://the-internet.herokuapp.com/login
 ~~~
 
-The command is safe when the four cases cannot affect one another, and dangerous when two cases share a wallet nonce, mutate the same workspace, or rely on one email inbox.
-Record the case and fixture identifiers with every artifact, so a screenshot from one account is not mistaken for another's result.
-Use serial execution for stateful wallet flows, shared accounts, and cases that verify ordering. The state boundary decides, not the number of browser slots.
+Do not install the unscoped `bad` package from npm; it is unrelated. The agent reads `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. With no provider set it uses OpenAI when that key is present and otherwise the local `claude-code` provider; our measurements used `gemini-2.5-flash`, the model the maintainers benchmark on. The planner, executor and verifier roles can each use a different model. It reads the page's accessibility tree by default, which is the fastest mode; `--observation-mode vision` works from labelled screenshots, and `hybrid` uses both, which the maintainers list as the most reliable. With the planner on, it plans the steps once and falls back to a step-by-step observe-and-act loop only when the page deviates.
 
-## Keep the execution owner visible
-
-If a team turns these cases into a service, a [Blueprint](/blog/blueprint-protocol-operator-services) defines the job's inputs and returned artifacts, and an operator runs it.
-That packaging cannot validate a browser result on its own, so keep the final condition and its evidence in the test record.
-
-## Failure modes worth designing first
-
-An invitation can be created twice because the page retried after the request succeeded.
-A wallet can show one account while the application keeps another account in memory.
-A dashboard can render cached data that looks complete while the API request failed.
-A login screen can send the agent into a loop that consumes steps without testing the product.
-
-A test policy can still classify a challenge as blocked when the required human or account boundary was not safely verified.
-Do not treat a recovery attempt or a model summary as proof of identity.
-
-The case should name the recovery policy.
-One bounded retry can be useful for a transient page load.
-Repeated clicks, changing user intent, bypassing a human-verification challenge, and submitting an unapproved payment are outside a safe recovery policy.
-When the boundary is reached, save the current evidence and stop.
-
-## What AI E2E testing cannot establish
-
-One end-to-end run establishes one goal under one fixture, browser, model profile, and runtime.
-It does not prove every edge case, device, locale, account role, or network condition.
-It does not replace unit tests, API contracts, transaction simulations, or deterministic browser assertions.
-It does not make a production credential appropriate for an agent.
-
-## What is AI E2E testing?
-
-AI E2E testing is end-to-end browser testing in which an agent follows a stated user goal, handles visible intermediate states, and checks the final user-visible condition.
-
-## Is AI E2E testing the same as Playwright?
-
-No.
-Playwright is a browser automation framework.
-AI E2E testing adds goal interpretation and bounded recovery while still depending on browser controls and explicit assertions.
-
-## Is AI E2E testing reliable enough for CI?
-
-It can be used in CI when fixtures are disposable, the final condition is explicit, the runtime is recorded, and every terminal result includes inspectable artifacts.
-
-## What should a first AI E2E case cover?
-
-Choose one signup, activation, billing, wallet, or support journey whose failure would change a release decision.
-Keep the first case read-only or disposable until its stop policy is proven.
-
-## Make the release rule concrete
-
-Use AI E2E testing when the user’s path crosses changing pages, conditional state, extensions, or visual decisions.
-Keep deterministic tests for stable invariants.
-Require a final condition, a saved trace, and a terminal status before the result can block or approve a release.
+Whatever agent you choose, run your three most important journeys five times each against a check the agent cannot read, and count the false passes before you let the result block a release.
