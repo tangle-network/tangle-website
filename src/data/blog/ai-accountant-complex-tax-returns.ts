@@ -60,7 +60,7 @@ const COST_METHOD = 'The measure is model spend per return as metered on the run
 /** Our run: line accuracy per harness and model, with 95% intervals. */
 export const lineAccuracy = provenance(metricBars(
   TAX.rows.map((row) => ({
-    id: row.id, label: label(row), value: row.score, interval: { lower: row.lower, upper: row.upper },
+    id: row.id, label: label(row), value: row.score, interval: { lower: row.lower, upper: row.upper, level: 0.95, method: TAX.interval },
     observations: RETURNS, detail: `${usd(row.cost ?? 0)} per return`,
   })),
   { measure: 'line accuracy on TaxCalcBench TY24', unit: '', domain: [0, 1], formatValue: percent, width: 720, id: 'tcb-line-accuracy' },
