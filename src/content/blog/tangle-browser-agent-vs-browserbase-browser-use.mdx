@@ -28,27 +28,29 @@ We ran agent-browser, Browser Use, Stagehand and our own Tangle Browser Agent on
 Code outside the agent checked each end state.
 agent-browser and Stagehand passed 15 of 15. Browser Use 0.13 passed 14. Browser Use 1.0, on a model it does not default to, passed 2.
 Our own agent passed 8, and on 6 of its 7 failures it reported success.
+That is how we found a bug in it: it clicked the wrong "Add to cart" button, and its own verifier accepted the wrong cart.
+We fixed both. The fixed release, 0.38.3, passed 14 of 15 in the same harness five hours later, with no false passes.
 A green run must prove the end state, checked outside the agent. An agent saying "done" is not a test result.
 
-We build Tangle Browser Agent. The runs are from 2026-11-16. The check, the loop we wrote around agent-browser, and each tool's call are printed below.
+We build Tangle Browser Agent. The runs of the other tools and of our 0.37.0 are from 2026-11-16; our 0.38.3 rerun is from 2026-11-17, on a second machine of the same size. The check, the loop we wrote around agent-browser, and each tool's call are printed below.
 
 ## Pick by the job
 
 | You want | Start with, and what we measured |
 |---|---|
-| Your coding agent (Claude Code, Codex, Cursor) to drive a browser while it builds and debugs | **agent-browser.** 15 of 15, the fastest runs, the most tokens on the long flow. |
+| Your coding agent (Claude Code, Codex, Cursor) to drive a browser while it builds and debugs | **agent-browser.** 15 of 15, the fastest on every flow, 1.4 to 1.6 times Stagehand's tokens. |
 | An agent inside a TypeScript test that takes a task in plain English | **Stagehand 3.x `agent()`.** 15 of 15. |
 | The same in Python | **Browser Use.** 0.13: 14 of 15, the slowest on checkout. 1.0 on our model: 2 of 15. Run 1.0 on its own model, or test yours first. |
 | Steps written in code, with a model only where the page needs judgment | **Stagehand 4.** Not measured. Version 4 removed `agent()`. |
 | Cloud browsers: stealth, proxies, CAPTCHA solving, saved logins, session replay | **Browserbase, Steel or Anchor.** Not measured. Their documented features are below. |
-| A hosted run per pull request with a recording, a trace, a verdict and cheap reruns | **Tangle Browser Agent.** 8 of 15, the fewest tokens, six false passes. Do not trust its verdict yet. |
+| A test runner that writes a verdict, a per-step trace and screenshots for every run, and can replay a passing run | **Tangle Browser Agent.** 0.38.3: 14 of 15, 0 false passes, the fewest tokens on login and checkout, slower than agent-browser and Stagehand. 0.37.0 had six false passes. |
 
 ## What each one is
 
 - **[agent-browser](https://github.com/vercel-labs/agent-browser)**, from Vercel Labs: a browser CLI your agent drives. No model loop of its own; the calling agent decides. Open source (Apache-2.0). Runs on your machine with Chrome for Testing.
 - **[Browser Use](https://github.com/browser-use/browser-use)**: an agent library, CLI and cloud API, with its own model loop. Open source (MIT). Runs on your machine; 1.0 uses a Browser Use Cloud browser unless you pass a local one.
 - **[Stagehand](https://docs.stagehand.dev)**, from Browserbase: AI steps for your script. 3.x has an autonomous `agent()`; 4.x has none. Open source (MIT). Runs on your machine with local Chrome or a Browserbase session.
-- **[Tangle Browser Agent](https://browser.tangle.tools)** (`bad`): an agent and test runner with its own model loop, plus a hosted CI API. Open source (MIT or Apache-2.0). Runs on your machine with local Chromium.
+- **[Tangle Browser Agent](https://github.com/tangle-network/browser-agent-driver)** (`bad`): an agent and test runner with its own model loop. Open source (MIT or Apache-2.0). Runs on your machine with local Chromium.
 - **[Browserbase](https://www.browserbase.com)**: cloud browsers. No model loop, not open source, hosted only.
 - **[Steel](https://steel.dev)**: cloud browsers. No model loop. The browser API is open source ([steel-browser](https://github.com/steel-dev/steel-browser)), hosted or self-hosted.
 - **[Anchor](https://anchorbrowser.io)**: cloud browsers, plus natural-language tasks, which are its only model loop. Not open source, hosted only.
@@ -77,7 +79,7 @@ The checkout instruction also asks for the item total on the overview page. For 
 
 The check runs outside the agent.
 A watcher attaches to the same Chrome over CDP, follows every tab the tool opens, and evaluates the end state every 500 ms and once more after the tool exits.
-That final state is the result. The to-do check as it ran:
+A run passes when a tab meets the check at that final poll. The watcher also keeps the last state of any tab the tool closed; in all 71 passing runs, a tab still open at the end met the check, so no pass rests on a closed tab. The to-do check as it ran:
 
 ```js
 const shown = [...document.querySelectorAll('.todo-list li')].map(li => li.innerText.trim());
@@ -91,16 +93,17 @@ const ok = location.hash === '#/active' && shown.length === 2
 Before trusting it, we ran scripted controls through the same runner, two runs each: a correct Playwright script per flow, and scripts that make one plausible mistake (a wrong password, stopping on the checkout overview without pressing Finish, completing the wrong todo).
 Every correct script passed and every mistaken one failed.
 
-The checkout page check cannot see which items were bought, and three of our own tool's runs reached the order page with the wrong item.
-So the items count too. Our tool's report records the cart page of every run. The other tools reported the total from the overview page, and on that site $39.98 is the total of the two requested items and of no other cart.
+The order page cannot show which items were bought, and three of our 0.37.0 runs reached it with the wrong item.
+So the items count too. For the 2026-11-16 runs we read them from each tool's record: our tool's report keeps the cart page of every run, and the other tools reported the total from the overview page, where $39.98 is the total of the two requested items and of no other cart.
+For the 0.38.3 rerun the watcher also read the cart itself before the order cleared it, a stricter check: all five carts held exactly the Backpack and the Bike Light.
 
 Conditions:
 
 - **Model:** `gemini-2.5-flash` for every tool, through one OpenAI-compatible endpoint. Every other setting at its default.
 - **Browser:** a fresh headless Chromium 156 with an empty profile for each run. Every tool attached to it over CDP, so none used its own browser, stealth or cloud.
-- **Versions:** agent-browser 0.43.0, Browser Use 1.0.6 and 0.13.14, Stagehand 3.7.3, `bad` 0.37.0.
+- **Versions:** agent-browser 0.43.0, Browser Use 1.0.6 and 0.13.14, Stagehand 3.7.3, `bad` 0.37.0 (2026-11-16, 23:18 to 23:52 UTC); `bad` 0.38.3 (2026-11-17, 04:50 to 05:04 UTC).
 - **Limits:** 30 steps and 300 s per run.
-- **Machines:** Linux sandboxes with 4 vCPUs, one run at a time per machine.
+- **Machines:** Linux sandboxes with 4 vCPUs and 8 GB, one run at a time per machine. The 0.38.3 rerun ran on a fresh sandbox of the same size: its passes and tokens compare directly, its times only roughly.
 - **n:** 5 runs per tool per flow, after one uncounted warm-up run each.
 - **Time:** from process start to exit, as a CI job sees it, including the tool's start-up.
 - **Tokens:** input plus output, as each tool reports them.
@@ -116,7 +119,8 @@ Passes decided by the check, five runs per flow. A false pass is a run where the
 | Stagehand 3.7.3 `agent()` | **15 of 15** (5, 5, 5). 0 false passes. |
 | Browser Use 0.13.14 | **14 of 15** (5, 4, 5). 0 false passes. |
 | Browser Use 1.0.6 | **2 of 15** (2, 0, 0). 2 false passes. |
-| Tangle Browser Agent (`bad` 0.37.0) | **8 of 15** (5, 0, 3). 6 false passes. |
+| Tangle Browser Agent (`bad` 0.38.3), rerun 2026-11-17 | **14 of 15** (5, 5, 4). 0 false passes. The cart was checked directly. |
+| Tangle Browser Agent (`bad` 0.37.0), 2026-11-16 | 8 of 15 (5, 0, 3). 6 false passes. Fixed in 0.38.3, below. |
 
 Time per run and tokens per run, with a hand-written Playwright script as the baseline:
 
@@ -127,14 +131,18 @@ Time per run and tokens per run, with a hand-written Playwright script as the ba
 | Stagehand | 14 s (12 to 14), 17k | 38 s (37 to 48), 71k | 25 s (23 to 28), 41k |
 | Browser Use 0.13 | 16 s (14 to 26), 16k | 92 s (55 to 152), 142k | 42 s (41 to 50), 62k |
 | Browser Use 1.0 | 46 s (36 to 103), 67k | 79 s (74 to 125), 131k | 59 s (10 to 138), 88k |
-| Tangle Browser Agent | 23 s (13 to 24), 10k | 49 s (37 to 56), 52k | 38 s (32 to 63), 27k |
+| Tangle Browser Agent 0.38.3 (2026-11-17) | 25 s (17 to 46), 12k | 62 s (37 to 102), 58k | 58 s (27 to 141), 47k |
+| Tangle Browser Agent 0.37.0 | 23 s (13 to 24), 10k | 49 s (37 to 56), 52k | 38 s (32 to 63), 27k |
 
 Time is the median with the range across the five runs. Tokens are the median per run, input plus output.
+Every row is from 2026-11-16 except our 0.38.3 rerun.
+On these medians, agent-browser was the fastest on every flow. The fewest tokens were 0.38.3's on login and checkout, and Stagehand's on to-do.
+The fixed release is slower than 0.37.0 and uses more tokens on checkout and to-do (on to-do, a median of 9 model turns against 7).
 For dollars, multiply the tokens by your model's price; we link rather than copy it, because it changes ([Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)).
 Every agent took 3 to 30 times as long as the script. You pay that for not writing selectors, and for a run that adapts when the page changes.
 
 We found no neutral benchmark that runs these tools on the same tasks.
-The closest is our own earlier bench: `bad` 15 of 15 vs Browser Use 12 of 15 on five tasks, at 1.8 times the cost per run, with public per-run artifacts.
+The closest is our own earlier bench: `bad` passed 15 of 15 and Browser Use 12 of 15 on five tasks, and `bad` cost 1.8 times as much per run. Its per-run artifacts are public.
 It and the one other measurement we found are small and run by a vendor:
 
 - Skyvern's [Browser Use vs Stagehand test](https://www.skyvern.com/blog/browser-use-vs-stagehand-which-is-better/): two read-only tasks, three runs each.
@@ -144,8 +152,9 @@ Treat each, this page included, as a lead to rerun on your own flows.
 
 What went wrong, run by run:
 
-- **Tangle Browser Agent, checkout, 5 of 5 runs:** it put the Bolt T-Shirt in the cart instead of the Bike Light. It planned both clicks from one page snapshot, and its references to identical "Add to cart" buttons are positional: once the first button turned into "Remove", the second click landed on the next product. It then reported the wrong cart's total, $45.98. Two runs placed that order and reported success. Two stopped on the overview page and reported the order placed. One placed it and reported failure, because it had not read the total first.
-- **Tangle Browser Agent, to-do, 2 of 5:** it marked "call Ana" done as well, once after adding duplicate todos, and described the result as correct.
+- **Tangle Browser Agent 0.37.0, checkout, 5 of 5 runs:** it put the Bolt T-Shirt in the cart instead of the Bike Light. It planned both clicks from one page snapshot, and its references to identical "Add to cart" buttons were positional: once the first button turned into "Remove", the second click landed on the next product. It then reported the wrong cart's total, $45.98. Two runs placed that order and reported success. Two stopped on the overview page and reported the order placed. One placed it and reported failure, because it had not read the total first.
+- **Tangle Browser Agent 0.37.0, to-do, 2 of 5:** it marked "call Ana" done as well, once after adding duplicate todos, and described the result as correct.
+- **Tangle Browser Agent 0.38.3, to-do, 1 of 5:** it used all 30 turns without reaching the end state and reported failure.
 - **Browser Use 1.0, 13 of 15:** `gemini-2.5-flash` mostly could not write working Python against the 1.0 browser API. In 11 failures the agent said it could not drive the browser. In 2 to-do runs it reported the task done without changing the page, and its judge agreed both times.
 - **Browser Use 0.13, checkout, 1 of 5:** it placed the order without reading the total first, then ran out of its 30 steps trying to recover. It reported the failure.
 - **agent-browser and Stagehand:** no failures. Both reported the right total, $39.98, in all five checkouts.
@@ -173,8 +182,8 @@ while (steps < 30 && !done) {
 ```
 
 A typical login: `snapshot -i`, `fill @e2 "tomsmith"`, `fill @e3 "SuperSecretPassword!"`, `click @e4`, `get url`.
-It was the fastest tool on every flow, because the model makes one short call per command and agent-browser's snapshots are compact.
-It used the most tokens on checkout: the loop resends the whole conversation, snapshots included, on every call. A coding agent that compacts its context pays less.
+It was the fastest tool on every flow. The model makes one short call per command, and agent-browser's snapshots are compact.
+It used 1.4 to 1.6 times Stagehand's tokens, because the loop resends the whole conversation, snapshots included, on every call. A coding agent that compacts its context pays less.
 
 ### Browser Use
 
@@ -189,7 +198,7 @@ result = await agent.run(max_steps=30)
 Browser Use 1.0 replaced its engine.
 The agent now writes Python in a persistent session against the browser's DevTools Protocol, and by default it runs on a Browser Use Cloud browser with Browser Use's own model ([migration guide](https://github.com/browser-use/browser-use/blob/main/MIGRATING.md)).
 Most comparison pages describe the 0.x engine, which picks one action per step from the page, so we ran both: 1.0.6, and 0.13.14 (`pip install 'browser-use<1'`).
-Browser Use 0.13 was the slowest on checkout and the most token-hungry, and it reported its one failure honestly.
+Browser Use 0.13 was the slowest tool on checkout and used the most tokens there, and it reported its one failure honestly.
 Browser Use 1.0 is built for its own model; our results say nothing about that pairing, only that a general model may not drive its Python API well.
 
 ### Stagehand
@@ -203,7 +212,7 @@ await stagehand.init();
 const result = await stagehand.agent({ model }).execute({ instruction: goal, maxSteps: 30 });
 ```
 
-Stagehand matched agent-browser on reliability with a little over half its tokens on checkout, and took about 50% longer per run.
+Stagehand matched agent-browser on reliability with 0.6 to 0.7 times its tokens, and took 1.6 to 1.8 times as long per run.
 
 ### Tangle Browser Agent
 
@@ -214,8 +223,7 @@ bad run --goal "$GOAL" --url https://www.saucedemo.com/ --cdp-url "$CDP_URL" \
 
 `bad` plans steps with one model call, runs them, and falls back to one decision per step when the page surprises it.
 It then checks the goal against the page and writes `report.json` with the verdict, the turns, the tokens and the screenshots.
-It used the fewest tokens on every flow, because it plans several steps per model call.
-That same batching caused its checkout failures, and its verifier, running on the same model, accepted every wrong result.
+Planning several steps per model call is why it uses few tokens. On 0.37.0 that batching also caused its checkout failures, and its verifier, running on the same model, accepted every wrong result. What changed in 0.38.3 is in [the section on our agent](#where-tangle-browser-agent-fits).
 
 ## What a run leaves for CI
 
@@ -227,13 +235,14 @@ What each tool wrote or returned after a checkout run, at default settings:
 | **Browser Use 1.0:** `result.success`, plus an LLM judge's verdict in `result.judgement` | Each Python cell's output in the workspace folder; full messages in memory. Screenshots go to the model; none are saved. No video. |
 | **Browser Use 0.13:** `history.is_successful()` | The history object; `save_to_file` wrote 168 KB for one checkout. Screenshots with `generate_gif=True`. No video. |
 | **Stagehand 3.7.3:** `result.success` and a message | `result.actions`. No screenshots. No video locally; Browserbase sessions are recorded. |
-| **Tangle Browser Agent:** `report.json` with the agent's claim, the verifier's result and the verdict | `events.jsonl`: page state, action and reasoning for every turn. JPEGs at key turns. `bad view` replays the run; hosted runs add a recording. |
+| **Tangle Browser Agent:** `report.json` with the agent's claim, the verifier's result and the verdict | `events.jsonl`: page state, action and reasoning for every turn. JPEGs at key turns. `bad view` replays the run. |
 | **Browserbase, Steel, Anchor:** none. They run the browser, not the test. | Session logs, session replay and session recording. |
 
+So two tools check their own result: Tangle Browser Agent's verifier and Browser Use 1.0's judge. Stagehand and Browser Use 0.13 return the agent's own claim. agent-browser returns no verdict; the agent that calls it decides.
 A cloud browser's replay shows what the browser did. It does not say whether the test passed.
 
 Two of these verdicts were wrong in our runs.
-Tangle Browser Agent's verifier accepted six wrong end states, and Browser Use 1.0's judge accepted two.
+Tangle Browser Agent 0.37.0's verifier accepted six wrong end states, and Browser Use 1.0's judge accepted two. The 0.38.3 verifier accepted no wrong end state in its 15 runs.
 A recording or a trace tells a person why after the fact. Only a check you wrote stops a wrong pass in CI.
 
 ## What reruns cost
@@ -246,7 +255,7 @@ A replay makes no decide calls, costs about 10 to 20% of a live run's model cost
 It repeats the recorded steps, then makes one model call to check the goal.
 Turn it on with `--replay`, which is off by default, and keep the memory folder (`BAD_MEMORY_DIR`) between CI runs.
 
-We ran each flow once live to record it, then five more times with replay on:
+We ran each flow once live on 0.37.0 to record it, then five more times with replay on. We have not rerun replay on 0.38.3.
 
 | Recording run | Replayed runs |
 |---|---|
@@ -256,7 +265,7 @@ We ran each flow once live to record it, then five more times with replay on:
 
 Our model budget ran out after three checkout replays, so that row has three runs.
 Where the recorded run was right, replay cut the model calls from three to one.
-Where it was wrong, replay saved nothing, because it had only a wrong run to repeat.
+Where it was wrong, which was the bug fixed in 0.38.3, replay saved nothing, because it had only a wrong run to repeat.
 Record only from runs your own check passed.
 
 Stagehand can cache `act()`, `observe()` and `extract()` results, but only on Browserbase's servers, only after Browserbase turns it on for your project, and only for pages that show every run the same content with no personal data ([caching docs](https://docs.stagehand.dev/v4/best-practices/caching.md)).
@@ -273,7 +282,7 @@ Proxy traffic is billed per GB, and CAPTCHA solving is plan-gated.
 Browserbase's free plan has no CAPTCHA solving. Steel's entry plan turns on CAPTCHA solving and its proxies only after a paid deposit. Anchor's free plan has no CAPTCHA solving or saved logins.
 For a test suite against your own staging app, you need neither, and tokens are the bill.
 
-Hosted runs on [browser.tangle.tools](https://browser.tangle.tools/llms.txt) are billed to prepaid credit. The `bad` CLI on your own machine costs only the tokens of the model you point it at.
+The `bad` CLI on your own machine costs only the tokens of the model you point it at.
 
 ## Bot detection, CAPTCHAs and logins
 
@@ -293,7 +302,7 @@ No vendor guarantees a CAPTCHA. For your own app, allowlisting the test runner b
 
 - **Open source, runs on your machine or CI runner:** agent-browser, the Browser Use library, Stagehand, the `bad` CLI, and Steel's browser API.
 - **Watch the default:** Browser Use 1.0's `Browser()` is a Browser Use Cloud browser unless you pass a local one or a CDP URL, as we did.
-- **Hosted only:** Browserbase, Anchor, Browser Use Cloud, and hosted runs on browser.tangle.tools.
+- **Hosted only:** Browserbase, Anchor and Browser Use Cloud.
 
 ## Models and keys
 
@@ -306,14 +315,19 @@ No vendor guarantees a CAPTCHA. For your own app, allowlisting the test runner b
 
 Tangle Browser Agent is not agent-browser.
 It is the open `bad` CLI and SDK ([browser-agent-driver](https://github.com/tangle-network/browser-agent-driver)): a goal-driven loop that plans, acts, recovers, checks the goal and returns a structured result.
-On top of it, [browser.tangle.tools](https://browser.tangle.tools/llms.txt) is a hosted CI API: send a walkthrough or a test suite, get back a recording, a trace, screenshots, logs and a verdict, and wire it into pull requests.
-Today the hosted service runs only the `bad` engine. Running Browser Use and other engines there is on the roadmap.
 
-On these three flows, our loop used the fewest tokens and was the least reliable of the TypeScript tools.
+This comparison found a bug in it.
+On 2026-11-16, version 0.37.0 was the least reliable of the TypeScript tools here.
 Six of its seven failures were false passes: it bought the wrong second item in every checkout, and it completed an extra todo twice.
 Its own verifier ran on the same model and accepted each one.
-We filed the positional-reference bug as [issue 177](https://github.com/tangle-network/browser-agent-driver/issues/177).
-Until it is fixed, do not take its verdict as your test result.
+We filed it as [issue 177](https://github.com/tangle-network/browser-agent-driver/issues/177) and fixed two things:
+
+- **Clicks land on the element the model saw.** A reference is bound to the element in the snapshot, not to its position among identical buttons, so the second "Add to cart" can no longer shift onto the next product ([#178](https://github.com/tangle-network/browser-agent-driver/pull/178)).
+- **The verifier must quote the page.** A success claim passes only when the verifier quotes text that is actually in the page evidence it cites, not the agent's own summary of what it did ([#178](https://github.com/tangle-network/browser-agent-driver/pull/178), [#182](https://github.com/tangle-network/browser-agent-driver/pull/182), [#184](https://github.com/tangle-network/browser-agent-driver/pull/184)).
+
+On 2026-11-17, 0.38.3 ran the same 15 tests in the same harness, with the cart now checked directly: 14 of 15 passed and none was a false pass.
+The one failure used all 30 turns on the to-do list and reported failure.
+That is 15 runs on three demo apps. Keep your own end-state check next to its verdict, as with every tool here.
 
 ## Wire it into CI
 
@@ -325,14 +339,13 @@ bad run --cases ./e2e-cases.json --concurrency 4 --sink ./bad-results
 
 Defaults such as the model, headless mode, the turn limit and the output folder go in `bad.config.ts`.
 The GitHub Action in the repo runs design audits on a preview URL and comments on the PR. It does not run E2E cases; run the CLI in your own job for those.
-For hosted runs, send the suite to the browser.tangle.tools [API](https://browser.tangle.tools/api/docs) instead: each run comes back with a recording, a trace and a verdict to attach to the pull request.
 
 agent-browser, Browser Use and Stagehand need a runner of your own to act as a test suite: a list of cases, a loop, and a check you trust.
 Whatever you pick, keep the deterministic check. The agent gets the browser to the state; your code decides whether it is right.
 
 ## Run it yourself
 
-Two pieces decide the numbers on this page: the watcher that checks the end state, and the loop that drives agent-browser. Both are below in full, as they ran. Each run starts a fresh headless Chrome with `--remote-debugging-port`, starts the watcher, runs the tool against the same port, then stops the watcher with SIGTERM and reads its result.
+Two pieces decide the numbers on this page: the watcher that checks the end state, and the loop that drives agent-browser. Both are below in full, as they ran on 2026-11-16; for the 0.38.3 rerun the checkout check also read the cart. Each run starts a fresh headless Chrome with `--remote-debugging-port`, starts the watcher, runs the tool against the same port, then stops the watcher with SIGTERM and reads its result.
 
 <details>
 <summary>The end-state watcher (37 lines)</summary>
@@ -429,6 +442,7 @@ process.exit(0);
 - Stagehand 3.7.3 is not the current major version.
 - No cloud browsers. Browserbase, Steel and Anchor were not run, so nothing here measures stealth, proxies or session start time.
 - Checkout items for agent-browser, Stagehand and Browser Use come from the total each reported, not from the cart itself.
+- Our 0.38.3 rerun came five hours after the other runs, on a second machine of the same size, with a stricter checkout check. Its passes and tokens compare directly with the rows above it; its times only roughly. Replay was not rerun on 0.38.3.
 - We build one of the tools.
 
 ## The decision
@@ -437,4 +451,5 @@ process.exit(0);
 - **Plain-English steps inside a TypeScript test:** Stagehand. Its 3.7 agent passed every run here. Version 4 drops that agent: you write the steps and call `act()` where the page needs judgment, which we did not test.
 - **Python:** Browser Use. 0.13 was reliable and slow here. On 1.0, use its own model or measure yours first.
 - **Stealth, proxies or saved logins at scale:** put Browserbase, Steel or Anchor under whichever tool you picked.
-- **Every option:** assert the end state in code. Six of the eight false passes here came from our own tool.
+- **A runner that keeps a verdict, a trace and screenshots per run, with replay:** Tangle Browser Agent 0.38.3. 14 of 15 here and no false passes, after the fix this test forced.
+- **Every option:** assert the end state in code. Our own verifier accepted six wrong end states before the fix, and only the outside check caught them.
