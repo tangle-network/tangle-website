@@ -1,7 +1,8 @@
 ---
 import '../styles/global.css';
-import Header from '../components/Header.astro';
-import Footer from '../components/Footer.astro';
+import { SiteNav, SiteFooter } from '@tangle-network/ui/marketing';
+import { COMPLIANCE_BADGES } from '../data/compliance';
+import statusHistory from '../../public/status/history.json';
 import { socialMetadata, type SocialVideo } from '@tangle-network/brand/social';
 
 interface Props {
@@ -33,6 +34,44 @@ const {
 } = Astro.props;
 
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
+const navLinks = [
+  { label: 'Sandbox', href: 'https://sandbox.tangle.tools' },
+  { label: 'Router', href: 'https://router.tangle.tools' },
+  { label: 'Pricing', href: '/#pricing' },
+  { label: 'Benchmarks', href: '/benchmarks/' },
+  { label: 'Docs', href: 'https://docs.tangle.tools' },
+  { label: 'Blog', href: '/blog/' },
+];
+const footerColumns = [
+  { heading: 'Products', links: [
+    { label: 'Sandbox', href: 'https://sandbox.tangle.tools' },
+    { label: 'Router', href: 'https://router.tangle.tools' },
+    { label: 'Intelligence', href: 'https://intelligence.tangle.tools' },
+  ] },
+  { heading: 'Developers', links: [
+    { label: 'Docs', href: 'https://docs.tangle.tools' },
+    { label: 'SDK reference', href: 'https://docs.tangle.tools/sandbox/sdk-typescript' },
+    { label: 'Benchmarks', href: '/benchmarks/' },
+    { label: 'GitHub', href: 'https://github.com/tangle-network' },
+    { label: 'llms.txt', href: '/llms.txt' },
+  ] },
+  { heading: 'Company', links: [
+    { label: 'Blog', href: '/blog/' }, { label: 'Compare', href: '/compare/' },
+    { label: 'Security', href: '/security/' }, { label: 'Status', href: '/status/' },
+    { label: 'Release notes', href: '/releases/' }, { label: 'Brand kit', href: '/brand-kit' },
+  ] },
+];
+const legal = [
+  { label: 'Privacy', href: '/privacy-policy' },
+  { label: 'Terms', href: '/terms-of-service' },
+  { label: 'Sub-processors', href: '/sub-processors' },
+  // Gate 5 preserves the current public claim. The compliance owner must
+  // reconcile the record before this is rendered through the shared badge.
+  ...COMPLIANCE_BADGES.filter(badge => badge.product === 'soc2').map(badge => ({
+    label: 'SOC 2 Type II · Trust Center', href: badge.href,
+  })),
+];
+const badges = COMPLIANCE_BADGES.filter(badge => badge.product !== 'soc2');
 const imageUrl = new URL(image, Astro.site);
 const imageType = image.toLowerCase().endsWith('.webp') ? 'image/webp' : image.toLowerCase().endsWith('.jpg') || image.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
 const social = socialMetadata({
@@ -68,7 +107,7 @@ const social = socialMetadata({
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" />
 
     {social.tags.map((tag) => <meta {...tag} />)}
 
@@ -91,13 +130,36 @@ const social = socialMetadata({
     </script>
   </head>
   <body class:list={['bg-bg-dark text-text-primary min-h-screen flex flex-col', bodyClass]} data-content-type={contentType}>
-    <Header />
+    <div class="site-nav-shell">
+      <SiteNav client:load links={navLinks} signIn={{ label: 'Sign in', href: 'https://sandbox.tangle.tools/login' }} primary={{ label: 'Create a sandbox', href: 'https://sandbox.tangle.tools/dashboard/new' }} github="https://github.com/tangle-network" />
+    </div>
     <main class="flex-1" data-theme={paper ? 'website' : undefined} style={paper ? 'background: var(--bg-root); color: var(--text-primary)' : undefined}>
       <slot />
     </main>
-    <Footer />
+    <SiteFooter status={{ up: statusHistory.services.every(service => service.current.status === 'operational'), href: '/status/' }} email="hello@tangle.tools" columns={footerColumns} legal={legal} badges={badges} github="https://github.com/tangle-network" />
     <script>
       import '../scripts/cta-observability.mjs'
+      import { bindCopyButton, highlightCode } from '@tangle-network/ui/code-presentation';
+      document.querySelectorAll<HTMLButtonElement>('[data-marketing-copy]').forEach(button => {
+        const status = button.nextElementSibling as HTMLElement;
+        bindCopyButton(button, status, () => button.dataset.marketingCopy ?? '');
+      });
+      // Static React sections do not hydrate; share the same tokenizer here.
+      document.querySelectorAll<HTMLElement>('.mk-command-block code').forEach(async code => {
+        const lines = await highlightCode(code.textContent ?? '', 'bash').catch(() => null);
+        if (!lines) return;
+        const fragment = document.createDocumentFragment();
+        lines.forEach((line, index) => {
+          if (index) fragment.append('\n');
+          line.forEach(token => {
+            const span = document.createElement('span');
+            span.textContent = token.content;
+            Object.assign(span.style, token.style);
+            fragment.append(span);
+          });
+        });
+        code.replaceChildren(fragment);
+      });
     </script>
   </body>
 </html>
