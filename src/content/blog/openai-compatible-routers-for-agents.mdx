@@ -67,8 +67,8 @@ The substitute it ranked for an OpenAI model was another vendor's model, which i
 The [setup skill](https://router.tangle.tools/agent-setup.md) tells agents to compare the requested and served headers, and your code should too, because nothing else fails when they differ.
 
 Two cases need more care.
-A stream sends its headers before the router knows which model will finish it, so streams carry no served-model header; read `model` from the last chunk, the one with usage, not the first (question 2 shows why).
-A `/v1/responses` request for an OpenAI model goes to OpenAI untouched and comes back with OpenAI's own headers and dated model id (`gpt-4o-mini-2024-07-18`), without the router's headers.
+A stream sends its headers before the router knows which model will finish it, so the four streams we recorded carried no served-model header; read `model` from the last chunk, the one with usage, not the first (question 2 shows why).
+A `/v1/responses` request for an OpenAI model goes to OpenAI natively; the one we sent came back with OpenAI's dated model id (`gpt-4o-mini-2024-07-18`), an `x-generation-id` and none of the router's `x-tangle-` headers.
 
 ## 2. Will it answer with a model you did not ask for?
 
@@ -178,7 +178,8 @@ gpt-4o-mini, provider.max_price {prompt: 0.01, completion: 0.01}
 -> 400 max_price_exceeded: Provider "openai" model "openai/gpt-4o-mini" prompt price $0.15/M exceeds provider.max_price.prompt $0.01/M.
 ```
 
-The ceiling is compared with the provider's list price, not with what you are charged (next section), so a ceiling a few percent above list still lets the request through at the higher charged price.
+The ceiling is compared with the provider's list price, not with the billable rate the response reports (next section): a ceiling a few percent above list let our request through, and its price headers then showed a rate above that ceiling.
+Which of the two prices `max_price` is meant to bound is an open question we have put to the router's maintainers; we compared response headers, not a ledger debit, so this is not an observed charge above the ceiling.
 
 ## 6. Who reads the prompt?
 
@@ -190,7 +191,7 @@ What you can ask is where the traffic goes next and what the router does when yo
 Tangle Router is hosted only, with no on-premises option today: standard requests go to managed providers (on 17 November the catalog for our key listed models from OpenAI, Google, Mistral, DeepSeek, Cohere and xAI), and a route through an independent operator's servers is used only when you select one ([router home](https://router.tangle.tools/)).
 The OpenRouter route from question 2 is the exception you did not select: when it is taken, a second router reads that request.
 It is never taken for a client error, a Responses request that continues stored state, a stream that has already produced output, or a route your team's compliance settings exclude, and it passes a zero-data-retention requirement on to OpenRouter.
-We have not observed a response that took this route, so we cannot say which header, if any, names it: on 17 November the `anthropic/` requests we sent were refused with 503 before any upstream was called.
+We have not observed a response that took this route, so we cannot say which header, if any, names it: on 17 November the one Anthropic model we tested, `claude-haiku-4-5`, was refused with 503 on all three requests, and its error body said no upstream was called.
 A request can require zero-data-retention providers with `provider.zdr: true`; when no provider for that model qualifies, it fails rather than going to one that keeps data, as a ZDR request for `gpt-4o-mini` did on 17 November with 400 `no_zdr_providers`.
 If you want no third party between your agent and the provider, run a LiteLLM proxy yourself; prompts still go to the provider, so keeping them inside your network also means hosting the models, and the proxy holds every provider key in one process, which has had its own security advisories ([Crosley's list](https://blakecrosley.com/blog/your-agent-has-a-middleman)).
 
@@ -202,9 +203,9 @@ The header catches an honest router's mistake, like ours in August; it does not 
 ## What does each call cost?
 
 Tangle Router charges per input and output token from prepaid credit, with no subscription and no free credit.
-The [model catalog](https://router.tangle.tools/models) shows each provider's list price; what you are charged is that price times the platform markup, which the key-scoped catalog (`GET /v1/models/user`) returns as `pricing_policy.markup`.
-On 17 November that markup was 1.055, so `gpt-4o-mini` at $0.15 per million input tokens was charged at $0.15825.
-A non-streaming chat or Messages response carries the charged prices and the call's cost in `x-tangle-price-input`, `x-tangle-price-output` and `x-tangle-cost-usd`; a stream carries usage in its final chunk but no price headers, so its cost is usage times the catalog price times the markup.
+The [model catalog](https://router.tangle.tools/models) shows each provider's list price; the billable rate a response reports is that price times the platform markup, which the key-scoped catalog (`GET /v1/models/user`) returns as `pricing_policy.markup`.
+On 17 November that markup was 1.055, so `gpt-4o-mini` at $0.15 per million input tokens came back with an input price header of $0.15825.
+A non-streaming chat or Messages response carries those billable rates and the call's cost in `x-tangle-price-input`, `x-tangle-price-output` and `x-tangle-cost-usd`; the streams we recorded carried usage in their final chunk but no price headers, so you compute a stream's cost as usage times the catalog price times the markup.
 
 OpenRouter bills inference at the provider's list price, charges a percentage fee when you buy credits and a fee on bring-your-own-key traffic above a monthly allowance, and prices a fallback at the model that finally answered ([pricing](https://openrouter.ai/pricing)).
 A self-hosted LiteLLM proxy adds no per-token fee; you pay for the machine and the operations.
@@ -215,8 +216,8 @@ A self-hosted LiteLLM proxy adds no per-token fee; you pay for the machine and t
 Keep the ones with `routeable: true` and `availability.status` of `available`, and read prices from the same response instead of hard-coding them.
 `GET /api/health` reports the router's own service checks and the state of its circuit breaker.
 
-On 17 November the list for our key held no `anthropic/` model, and a request for `anthropic/claude-haiku-4-5` came back in 252 ms as 503 `provider_quota_exhausted`, with `Retry-After: 30`, `x-should-retry: false` and "No upstream was called."
-That is the failure you want from a router: early, named and unbilled, rather than a different model at HTTP 200.
+On 17 November the list for our key held no `anthropic/` model, and all three requests for `anthropic/claude-haiku-4-5`, the one Anthropic model we tested, came back as 503 `provider_quota_exhausted` (the first in 252 ms), with `Retry-After: 30`, `x-should-retry: false` and an error body ending "No upstream was called."
+That is the failure you want from a router: early and named, rather than a different model at HTTP 200.
 
 ## Run the checks against your router
 
@@ -284,6 +285,6 @@ Run it against the router you use now and against the one you are considering; t
 - **No router run by someone else between your agent and the provider:** host LiteLLM. Tangle Router has no on-premises option today.
 - **The widest catalog and provider choice per model:** OpenRouter, with its Exacto endpoints when tool-call accuracy matters more than price.
 - **Governance and request logs across many teams:** Portkey, which [describes itself](https://portkey.ai/alternatives/openrouter-alternatives) by reliability, visibility and governance for production.
-- **The requested and served model and the charged price on chat responses, substitution off unless you turn it on, early named refusals, and one capped key that also runs Tangle sandboxes:** Tangle Router, with OpenRouter as its same-model backup for some models.
+- **The requested and served model and the billable rate on chat responses, substitution off unless you turn it on, early named refusals, and one capped key that also runs Tangle sandboxes:** Tangle Router, with OpenRouter as its same-model backup for some models.
 
 Whichever you pick, start with one self-contained, read-only step, compare the served model with the requested one on every call (on a stream, from the last chunk), and let exactly one layer retry.
