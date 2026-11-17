@@ -8,7 +8,7 @@ const COMMIT = 'https://github.com/tangle-network/agent-runtime/commit/012762f00
 const TEST = 'https://github.com/tangle-network/agent-runtime/blob/012762f00b012507d924edd6f060e5f7edec9b3a/tests/kernel/budget-floor.test.ts';
 const RECORDED = '1 Aug 2026';
 
-/** Input tokens at settlement, in the order the source lists them. */
+/** Input tokens at settlement, smallest first, as the source lists them; the source records no run order. */
 const SETTLEMENTS = [31_211, 32_296, 47_365, 47_965, 48_253, 62_616] as const;
 /** The child budgets four parent runs authored. */
 const AUTHORED = [2_000, 8_000, 12_000, 20_000] as const;
@@ -28,7 +28,7 @@ const provenance = (figure: Figure | Refusal, status: 'measured' | 'captured', n
 export const settlements = provenance(
   metricBars(
     SETTLEMENTS.map((value, i) => ({ id: `settlement-${i + 1}`, label: `Run ${i + 1}`, value, observations: { count: 1, label: 'settlement' } })),
-    { measure: 'input tokens at settlement', unit: '', domain: [0, 70_000], formatValue: tokens, width: 720, id: 'budget-floor-settlements' },
+    { measure: 'input tokens at settlement, smallest first', unit: '', domain: [0, 70_000], formatValue: tokens, width: 720, id: 'budget-floor-settlements' },
   ),
   'measured', 1, { label: 'agent-runtime #685', href: COMMIT },
 );
