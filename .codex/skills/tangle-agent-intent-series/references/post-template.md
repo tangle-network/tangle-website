@@ -57,6 +57,3 @@ Use relevant current links from:
 - `/blog/blueprint-sdk-x402-payments-runnable-jobs`
 - `/blog/decentralizing-x402-facilitator`
 - `/blog/blueprint-tee-x402-production-gating`
-- `/blog/self-improving-stack-agent-runtime-topology`
-- `/blog/self-improving-stack-trace-systems`
-- `/blog/self-improving-stack-evaluation-gates`

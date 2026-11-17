@@ -4,8 +4,10 @@ export interface BlogSeriesDetails {
   title: string
   description: string
   premise: string
-  decision: string
+  decision?: string
   path?: string
+  /** A Tangle Network protocol series: banner and noindex on its pages, and left off /blog and the sitemap. */
+  network?: boolean
 }
 
 export const blogSeriesDetails: Record<string, BlogSeriesDetails> = details
