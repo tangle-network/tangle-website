@@ -1,10 +1,10 @@
 ---
-title: 'When Does Best-of-Five Sampling Pay for AI Code Generation?'
+title: 'Best-of-N for Coding Agents: The Prompt and a Hidden Test Mattered More Than Extra Samples'
 slug: when-best-of-five-sampling-pays
 summary: >-
-  Best-of-five sampling improves AI code generation when every candidate faces the same deterministic check; learn the measured lift, cost, limits, and rule.
+  Before you pay three to five times the tokens for best-of-n, a vote or subagents, see what decided correctness in our runs on small repos, where the prompt and a held-out test mattered and extra samples did not, and what controlled studies say each structure buys and costs.
 date: '2026-08-09'
-updated: '2026-11-01'
+updated: '2026-11-18'
 author: Drew Stone
 tags:
   - agents
@@ -18,399 +18,260 @@ seriesOrder: 1
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { bestOfFiveFigures, cancelOnCap, cheapVsStrong, fanOut, passK, promptScope } from '../../data/blog/when-best-of-five-sampling-pays'
 
-If a coding agent can produce five plausible answers, run the same deterministic checker on all five, and keep the highest-scoring valid answer, the extra attempts can pay.
-The public Tangle measurements show gains from 8.5 to 21.3 percentage points across four model-and-benchmark pairs, with one pair moving from 51.8% to 73.1%.
-That result supports a narrow engineering rule: use five attempts when checks are cheap, comparable, and visible before generation; use one attempt when checking is expensive or no check can distinguish candidates.
-It does not say five samples make every agent better.
+On our coding tasks, the prompt's scope and a held-out check decided whether the agent's fix was right. Extra samples and a bigger model did not. We ran one agent, opencode, on small Node repos in three rounds. One cheap attempt passed every task, so best-of-n added nothing. Asking for the whole suite to pass, instead of one tagged test, got every attempt to fix all three bugs. And on a cross-file regression, the one Gemini 2.5 Pro attempt passed every visible test and failed a hidden one.
 
-## The decision is five tries or one
+So before you ask the team for a 5x budget, fix the prompt, build a check the agent cannot see, and find tasks that one attempt fails. Controlled studies show that is where best-of-n pays: a low single-attempt pass rate, plus a verifier that picks the winner.
 
-Imagine an agent asked to implement a small parser in a production repository.
-One answer may be correct, but the model can also return a plausible answer with an off-by-one error, a missing edge case, or an API call that does not exist.
-The team already has a test command that runs without a human reviewer.
+## One cheap attempt passed every single-bug task
 
-The first design sends one request and ships the answer if the tests pass.
-The second design sends five independent requests, runs the same tests on each answer, and keeps the strongest answer that passes.
-The question is whether the extra compute buys a higher chance of returning a correct answer.
+Round 1 was the easy case. The repo, sandbox-demo, has nine tests and three bugs planted on purpose: a CLI flag coercion, a missing null guard and a timezone error. Per bug, we gave one attempt to Gemini 2.5 Pro and three to DeepSeek V4.1 Flash, each in a fresh sandbox. The prompt named one failing test and asked for its cause to be fixed.
 
-This article calls the second design **best-of-five sampling**.
-Sampling means asking the model for several different completions rather than accepting its first completion.
-Best-of-five means that exactly five candidates enter the comparison, even when some fail before scoring.
-The word “best” has a strict meaning here: the candidate must first satisfy the validity rule, then win a deterministic comparison against the other valid candidates.
+All twelve attempts passed. The first cheap attempt passed on every task, so the second and third bought nothing, and neither did the stronger model. Three cheap attempts cost about a third of one strong attempt.
 
-The distinction matters because generating five answers alone is not a quality method.
-Without a common check, a system can only ask another model to choose a favorite, which adds another uncertain judgment.
-With a common check, the runtime has an observable signal that can be applied consistently.
+<Figure n={1} figure={cheapVsStrong} kicker="Our run · round 1, three single-bug tasks" headline="Three cheap attempts cost about a third of one strong attempt, and all twelve passed" />
 
-The [Tangle agent runtime](https://github.com/tangle-network/agent-runtime) is a public TypeScript runtime for running agents, recording their work, and comparing changes against checks.
-Its public quickstart shows the same basic shape: a worker is a model-driven process that produces one answer, and a driver is the process that owns the top-level loop and makes the decision.
-The check returns pass or fail, and the driver decides whether to keep refining or pick a winner.
-The measurements discussed here use that shape as an inference-time structure around a model call.
-On Tangle, the candidates come from Sandbox SDK agents: `client.fleets.create` starts several agents at once, and `fleet.run()` emits an `agent.finished` event with each agent's result as it ends.
-agent-eval's `defineAgentEval` contract runs the matched comparison.
-The four jobs below map onto those calls.
+## Prompt scope moved results more than sampling did
 
-## Four jobs that should stay separate
+Asked about one test, ten of the twelve round 1 attempts fixed the tagged bug and left the other two alone.
 
-The most useful implementation discipline is to keep four jobs visible in the code and in the report.
+Round 2 used the same repo, agent and models, with a wider prompt: "Three of the nine tests fail. Make all 9 tests pass." All eight attempts, six cheap and two strong, ended with every test passing. The six cheap attempts cost $0.0595 together; the two strong ones cost $0.2124.
 
-### 1. Generation creates candidates
+<Figure n={2} figure={promptScope} kicker="Our run · sandbox-demo, rounds 1 and 2" headline="Asked to make all nine tests pass, every attempt fixed all three bugs; asked about one test, two of twelve did" />
 
-The generator calls the model five times with the same task and the same model configuration.
-It may vary the random seed or sampling state, but it should not silently change the task, the available evidence, or the budget for one slot.
-Each response receives an identifier such as `candidate-0` through `candidate-4`.
+On the one-test prompt, a three-bug fix came only by chance, in 2 of 12 attempts; the whole-suite prompt got it in 8 of 8.
 
-The generator does not decide whether an answer is correct.
-It only creates alternatives.
+## A visible suite passed a symptom fix, and a held-out test caught it
 
-The fleet below is the generation step on Tangle: five agents under one `budgetUsd` of 3, each result printed as its agent ends. Its tasks differ by package, so it shows parallel generation, not five samples of one task.
+Round 3 was harder and pre-registered: task, prompt and grader were hashed before any attempt ran. The repo, parcel-quote, ends in a commit that changed a weight helper from kilograms to grams and updated only shipping. Packaging, insurance, customs and the weight label still expect kilograms. One visible test fails, a checkout total, and it does not name the cause. The prompt ended: "`npm test` started failing after the last commit. Fix the regression."
 
-<Example path="fleets/fan-out" title="Five agents at once, one budget" />
+The grader also runs a held-out file the agent never sees. We checked the grader without a model: a fix of only the two callers the visible test exercises passes the visible suite and fails two hidden tests.
 
-The output shows which agents finished and what each returned, not whether any finding is correct.
+Every cheap attempt fixed all four missed callers and passed both suites, for $0.0710 together. The one Gemini 2.5 Pro attempt, at $0.0862, fixed packaging, insurance and customs but missed the label. It passed every visible test and failed a hidden one. We cut the strong arm to that single attempt for budget before it ran, so this round says nothing about which model is safer. It does say the visible suite could not tell a symptom fix from a cause fix, and the held-out check could.
 
-### 2. Validation runs one deterministic checker
+That is one agent, two small repos and 27 graded attempts, and none of it is a matched-budget comparison. It cannot show where extra samples pay, because no task was hard enough for one attempt to fail often. For that, we rely on outside studies.
 
-A **deterministic checker** returns the same result when it receives the same candidate and the same inputs.
-For code, the checker may format the file, compile it, run visible tests, or execute a fixed test suite.
-For a structured answer, it may parse a schema and check required fields.
+## Best-of-n pays only as far as a check can pick the winner
 
-The checker must be independent of candidate order.
-If candidate three gets a more forgiving timeout than candidate one, the comparison is measuring scheduling luck.
+Brown and colleagues' [Large Language Monkeys](https://arxiv.org/abs/2407.21787) shows both sides of the selector problem:
 
-The checker also needs a clear boundary around what the model could know.
-The public structural-rollout report describes checks built from task-visible information, while final grading uses hidden tests that candidates never receive.
-That separation lets the runtime select with an exposed signal and measure generalization on tests the candidates did not see.
+- **With tests picking:** on SWE-bench Lite, the tests turn DeepSeek-Coder-V2's coverage into solved issues.
+- **Without a verifier:** majority voting and reward models "plateau beyond several hundred samples and fail to fully scale with the sample budget."
+- **With a judge model:** we treat a judge as a reward model with a prompt; we have not measured it.
 
-### 3. Scoring turns checks into a comparable value
+Best-of-n pays only as far as your selector finds the right attempt: with tests picking, coverage climbed from 15.9% to 56% at 250 samples, but without tests your pickers are a vote, which plateaus, or a judge, which we expect to plateau the same way.
 
-Validation can produce a Boolean answer, but a score is useful when candidates pass different numbers of checks.
-A simple score is the number of passed checks out of the total.
-An implementation can add deterministic secondary terms such as a complexity penalty, provided the rule is fixed before the candidates run.
+If your task has no automatic check, we think the first spend should go on building one. A failing test written before generation, a type check, a schema validator or a diff against known output all count. Our round 3 suggests keeping part of it out of the agent's sight.
 
-Validity and score are different fields.
-A candidate that fails a required check is invalid even if it has a high partial score.
-The winner-picker, the routine that returns one candidate, must filter invalid candidates before comparing scores.
+## On self-contained problems, n samples beat one deeper agent
 
-A model judge can read the whole run instead of a test. This example sends the answer and every tool call to a judge on the Router.
+Dong and Shigida's [2026 study](https://arxiv.org/abs/2605.08478) is the cleanest matched-budget test we know of. On 216 Codeforces problems, it compared k independent samples with agent frameworks, by dollars and by model calls. Independent sampling won on both axes, "across models and difficulty levels," even with prompt caching in the agent frameworks.
 
-<Example path="evals/score-a-trace" title="A judge reads the answer and every tool call" />
+Every problem was self-contained and automatically judged. They note that agents show clear advantages on software engineering benchmarks, where navigation, file edits and iterative testing cannot be skipped. For multi-file repository work, nobody we found has published a matched-budget answer.
 
-The model judge is not deterministic, so use it to compare arms, not to pick the winner of a best-of-five pool. It scores one trace; it does not show that the judge agrees with a human.
+## Orchestration buys a few points on average, and depends on the model
 
-### 4. Winner-picking handles ties and absence
+The [second 2026 study](https://arxiv.org/abs/2608.00685) tuned best-of-n, self-refine, debate and other methods under one optimization budget, the fairest comparison we have of structure against one call.
 
-If two valid candidates have the same score, use a stable tie rule.
-Candidate identifier order is enough for a toy system, while a production system may prefer lower latency, smaller output, or a fixed earlier slot.
-The rule must be recorded so a rerun does not silently choose a different answer.
+The largest benchmark-average gain was 4.6 points over optimized chain-of-thought and 4.5 over task-only prompting, and the effect depended on the model: per model and benchmark it ran from 9.5 points worse to 18 points better than optimized chain-of-thought, so test a method on your own model. It needed about two to four times the mean total tokens of task-only inference. Counted per correct answer, orchestration took 1.4 to 5.9 times the weighted tokens of one call.[^weighted]
 
-If no candidate is valid, return an explicit failure.
-Returning candidate zero as a fallback would turn “none passed” into an unreported quality regression.
-The caller can then ask for another round, return a review-needed state, or use the one-attempt path according to policy.
+The backbones were five open-weight models, so we quote these points as the size of effect to expect, not as a GPT or Claude result.
 
-## A worked example: five parsers for the same input
+## Difficulty is a poor trigger for extra compute
 
-Suppose a support agent must parse a ticket identifier from text.
-The desired function returns the first run of digits after `TICKET-`, rejects missing identifiers, and preserves leading zeroes.
-The prompt contains examples for `TICKET-0042` and `TICKET-17`.
+The orchestration study found no sign, within any benchmark, that orchestration effects grow with difficulty. Difficulty predicted lower absolute accuracy, nothing more.
 
-Five candidates might differ in small ways.
-One uses a regular expression and preserves the capture as text.
-One converts the capture to a number and loses `0042`.
-One accepts any digits, including digits before the `TICKET-` prefix.
-One handles the examples but throws on a missing identifier.
-One is correct but adds unrelated formatting changes.
+We set effort in explicit tiers instead, and check each tier on our own eval. Anthropic's research system [writes its tiers into the lead agent's prompt](https://www.anthropic.com/engineering/multi-agent-research-system): one agent and three to ten tool calls for simple fact-finding, two to four subagents for direct comparisons, more than ten for complex research.
 
-The checker can run four fixed cases.
-It can require `0042` for the first case, `17` for the second, a rejection for a string without the prefix, and a rejection for a malformed suffix.
-All five candidates see the same four cases.
+For best-of-n, with a verifier, we raise n until selected accuracy stops moving on our eval. Without one, we start at one and make every extra attempt earn its place.
 
-The first candidate passes four checks and is valid.
-The second passes three and is invalid.
-The third passes two and is invalid.
-The fourth passes three and is invalid.
-The fifth passes four and is valid, but the stable tie rule prefers the shorter implementation.
-The returned answer is therefore candidate one or five according to an explicit secondary score, rather than whichever response happened to appear first in a log.
-
-This small example shows why the check must be written before the choice.
-If the team chooses the regular expression because it “looks right,” the method has not gained a repeatable selection rule.
-If the team runs the same cases on every candidate, it can explain why one candidate won and rerun the decision later.
-
-## What the public measurements show
+## A cheap model sampled several times, or one strong run?
 
-The public [structural rollout report](https://github.com/tangle-network/agent-runtime/blob/main/docs/design/structural-rollout-integration.md) describes best-of-five selection plus self-repair using checks built from task-visible information and final grading on hidden tests.
-Self-repair means asking the model for a revised candidate after a checker reports a failure.
-The report's full loop includes candidate generation, checking, winner-picking, and that optional repair step.
-Its measured table reports four positive cells.
+At matched cost on hard tasks, this is still open. The evidence we have:
 
-| Model and benchmark | One attempt | Full loop | Lift | Sign-test p-value | n | Public paired-count detail |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Llama-3-8B on MBPP | 51.8% | 73.1% | +21.3pp | 2.3e-51 | 427 | +226 / −13 |
-| Llama-3-8B on HumanEval | 43.9% | 62.2% | +18.3pp | 9.2e-11 | 164 | Not reported in the public row |
-| Qwen2.5-7B on HumanEval | 82.4% | 91.5% | +9.0pp | 1.0e-8 | 164 | Not reported in the public row |
-| Qwen2.5-7B on MBPP | 76.7% | 85.2% | +8.5pp | 4.6e-16 | 427 | Not reported in the public row |
+- **Our rounds:** every one of the 21 DeepSeek V4.1 Flash attempts passed, and five of the six Gemini 2.5 Pro attempts did. With so few strong attempts, that ranks nothing.
+- **Large Language Monkeys, 2024 models:** with tests picking, five DeepSeek samples solved more SWE-bench Lite issues than single samples from GPT-4o or Claude 3.5 Sonnet, at over three times less cost. That is coverage, and it assumes the tests pick the winning sample.
+- **Anthropic:** upgrading to Claude Sonnet 4 gained more than doubling the token budget on Sonnet 3.7.
+- **Our tax-return benchmark:** one Haiku run scored 72.8% line accuracy at $0.057 per return, and one Sonnet run 90.1% at $0.17. Tax returns have no automatic checker, and we have not measured best-of-three Haiku.
 
-The public row provides a paired win-loss count for the Llama MBPP cell.
-The public rows for the other three cells provide the lift, p-value, and denominator, but not a win-loss pair, so this article does not invent one.
+## Supervisors pay on wide reading, mostly by spending more tokens
 
-The table is a comparison of measured cells, not a promise about a package version or a universal model property.
-Here a p-value is the exact sign-test probability assigned to a discordant split at least as extreme under a no-direction null.
+Anthropic's research system, an Opus 4 lead with Sonnet 4 subagents, beat a single Opus 4 agent by 90.2% on its internal research eval, largely by spending more tokens: about fifteen times the tokens of chat (one agent uses about four), and on BrowseComp token usage alone explained 80% of the variance in performance.
 
-A `pass@k` estimate is the chance that at least one of `k` sampled candidates passes.
-The same public report says every positive cell captures at least 93% of its pass@k bound and that selection accounts for 85–92% of the effect.
-Those decomposition claims separate the value of several chances from the smaller value of repairing a selected answer.
-They are also bounded by the report's task set, model settings, checker design, and grading procedure.
+Anthropic says coding is a poor fit: most coding tasks have fewer truly parallel pieces than research. Its [later guidance](https://www.claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them) puts the overhead at three to ten times the tokens of a single agent for equivalent tasks. It also reports teams that spent months on multi-agent architectures, then found better prompting on one agent matched them.
 
-## Why the effect appears
-
-Language-model generation has two relevant properties.
-The model can produce different answers for the same task, and those answers are not equally likely to be correct.
+## Parallel agents writing one change make conflicting decisions
 
-If every candidate is wrong in the same way, five tries do not help.
-If at least one candidate contains the needed fix and the checker can recognize it, the pool gives the system a chance to recover.
-Selection converts that chance into a decision.
-
-For a rough mental model, let `p` be the probability that one independently sampled candidate passes the checker.
-The probability that at least one of five passes is `1 - (1 - p)^5`.
-At `p = 0.4`, the expression is about 92.2%.
-That calculation is illustrative, not a claim that model samples are independent or that the public cells have `p = 0.4`.
-
-Real candidates are correlated.
-They share the same prompt, model weights, task wording, and visible examples.
-Correlation reduces the value of additional attempts because the fifth answer may repeat the first error.
-The public result is therefore stronger than a generic “more samples are better” slogan: it shows that this particular combination of candidate diversity and checking produced a positive result in four cells.
-
-The effect also has a natural diminishing-return curve.
-The first additional candidate can rescue a common mistake.
-The fourth and fifth candidates are more likely to repeat a pattern already present in the pool.
-Each added candidate costs generation and checking time, so measure the marginal gain.
-
-## Comparison fairness is part of the method
-
-The baseline must use one candidate from the same model and task distribution.
-The five-candidate arm must use the same visible information and the same output budget per candidate.
-The checker must receive equivalent inputs and limits for every candidate.
-The final grading set must remain separate from the checks used to choose a candidate.
-
-This Tangle example keeps cases, harness and judge fixed and changes only the model.
-
-<Example path="evals/compare-models" title="One harness, one judge, two models" />
-
-It prints one mean per model and computes no sign test, so the paired statistics in the table above come from the public report.
-
-The report should preserve the candidate-level records.
-At minimum, retain each candidate identifier, generation settings, checker results, score, validity, selection outcome, and total time.
-Those records answer questions that the final percentage cannot answer.
-They show whether the winner changed often, whether all five candidates failed together, and whether repair replaced a valid candidate with an invalid one.
-
-The score also needs a declared denominator.
-If a task is skipped because its checker crashed, it should not remain in the denominator as a failure without an explanation.
-If a candidate times out, the result should say whether timeout means invalid, unknown, or a separate outcome.
-The same policy must apply to the one-attempt and five-attempt arms.
-
-The public measurements use HumanEval, a Python function benchmark, and MBPP, which means Mostly Basic Python Problems, another Python code-generation benchmark.
-The [HumanEval repository](https://github.com/openai/human-eval) publishes the benchmark tasks and evaluation code.
-The [MBPP implementation](https://github.com/google-research/google-research/tree/master/mbpp) publishes the benchmark source and evaluation material.
-The original [pass@k paper](https://arxiv.org/abs/2107.03374) explains how code-generation evaluation estimates the chance that at least one of several samples is correct.
-
-## When one attempt is the better choice
-
-Five attempts are not automatically the right default.
-Use one attempt when the checker is slow, expensive, stateful, or unavailable.
-Five candidates can multiply a five-minute integration test into a twenty-five-minute wait before the user sees any answer.
-Parallel execution can reduce wall time, but it does not remove model or compute cost.
-
-Use one attempt when the baseline is already near the task's practical maximum.
-The public report includes saturated model rows with no positive result, which is a reminder that a method cannot recover errors that the model rarely makes or that the checker cannot expose.
-At high baseline accuracy, the expected absolute lift may be too small to justify five calls.
-
-Use one attempt when candidates are strongly correlated.
-Changing a seed without changing the prompt, model, or failure mode may produce five cosmetic rewrites of the same wrong solution.
-Measure candidate disagreement before committing to a larger pool.
-
-Use one attempt when the task has no safe validity signal.
-A weak rubric can reward confident but incorrect output.
-When a human must review every candidate, the extra cost moves from model calls to review time.
-
-Use five attempts when the task has a cheap deterministic check, the model has meaningful uncertainty, and a wrong answer costs more than the extra calls.
-Code compilation, schema validation, and fixed unit tests are good candidates for a pilot.
-Open-ended writing and taste judgments need a more careful rubric before a best-of-five rule is credible.
-
-## A runnable toy best-of-five picker
-
-The following TypeScript program keeps generation, checking, scoring, tie handling, and failure explicit.
-The generator is a fixed stand-in for five model calls, so the example runs without an API key.
-
-Save it as `best-of-five.ts` and run it with Node 22.12 or newer:
-
-~~~typescript
-import assert from 'node:assert/strict'
-
-type Candidate = {
-  id: string
-  solve: (value: number) => number
-  complexity: number
-}
-
-type Check = {
-  valid: boolean
-  passed: number
-  total: number
-  score: number
-  failures: string[]
-}
-
-type Selection = {
-  winner: Candidate & { check: Check }
-  checked: Array<Candidate & { check: Check }>
-}
-
-const cases = [
-  { input: 2, expected: 4 },
-  { input: 7, expected: 14 },
-  { input: 0, expected: 0 },
-  { input: -3, expected: -6 },
-]
-
-function generateCandidates(mode: 'normal' | 'broken'): Candidate[] {
-  if (mode === 'broken') {
-    return Array.from({ length: 5 }, (_, index) => ({
-      id: `broken-${index}`,
-      solve: (value: number) => value + index + 1,
-      complexity: index + 1,
-    }))
-  }
-
-  return [
-    { id: 'a-add-self', solve: (value) => value + value, complexity: 1 },
-    { id: 'b-times-two', solve: (value) => value * 2, complexity: 1 },
-    { id: 'c-plus-two', solve: (value) => value + 2, complexity: 1 },
-    { id: 'd-minus-two', solve: (value) => value - 2, complexity: 1 },
-    { id: 'e-times-three', solve: (value) => value * 3, complexity: 2 },
-  ]
-}
-
-function validate(candidate: Candidate): Check {
-  const failures = cases.flatMap(({ input, expected }) => {
-    const actual = candidate.solve(input)
-    return actual === expected ? [] : [`${input}: expected ${expected}, got ${actual}`]
-  })
-  const passed = cases.length - failures.length
-
-  return {
-    valid: failures.length === 0,
-    passed,
-    total: cases.length,
-    score: passed * 100 - candidate.complexity,
-    failures,
-  }
-}
-
-function chooseBest(mode: 'normal' | 'broken'): Selection {
-  const checked = generateCandidates(mode).map((candidate) => ({
-    ...candidate,
-    check: validate(candidate),
-  }))
-  const valid = checked.filter(({ check }) => check.valid)
-
-  if (valid.length === 0) {
-    throw new Error('No valid candidate passed the deterministic checker')
-  }
-
-  valid.sort((left, right) =>
-    right.check.score - left.check.score || left.id.localeCompare(right.id),
-  )
-  return { winner: valid[0], checked }
-}
-
-const normal = chooseBest('normal')
-assert.equal(normal.winner.id, 'a-add-self')
-assert.equal(normal.checked.filter(({ check }) => check.valid).length, 2)
-console.log({ winner: normal.winner.id, score: normal.winner.check.score })
-
-assert.throws(() => chooseBest('broken'), /No valid candidate/)
-console.log('failure path: no candidate was promoted')
-~~~
-
-The two valid normal candidates tie on the test score and complexity.
-The identifier rule chooses `a-add-self`, so the result is repeatable.
-The broken mode demonstrates the important unhappy path: a system that cannot find a valid answer must report that state instead of silently returning the first sample.
-
-## What the result does and does not establish
-
-The four public cells establish that this best-of-k shape improved measured code-generation outcomes under the reported conditions.
-They also show that the lift varies by model and benchmark.
-The smallest reported lift is +8.5 percentage points, while the largest is +21.3 percentage points.
-
-The cells do not establish that every checker is reliable.
-They do not establish that a model can author its own checks without error.
-They do not establish that five is the optimal number for a new task.
-They do not establish that repair is harmless at high baseline accuracy.
-The public report explicitly notes wrong visible examples and exact-equality assertions as failure classes that need protection.
-
-The cells also do not isolate every component of the full loop.
-The public decomposition says selection accounts for 85–92% of the effect and repair supplies a smaller increment, but the full loop still contains both.
-An implementation that removes repair must measure its own result rather than importing the full-loop lift.
-
-Sampling created alternatives.
-The deterministic checker supplied a shared signal.
-Selection retained a valid high-scoring alternative.
-Those operations explain why a gain is plausible, but the public evidence belongs to the measured task cells, not to a law about all agent systems.
-
-## Decision rule
-
-Choose best-of-five when all of the following are true:
-
-- The candidate generator can make meaningfully different attempts.
-- A deterministic checker can run on every candidate under the same limits.
-- Validity and score are defined before the run.
-- The final grade is separated from the visible checks used to choose.
-- The extra compute is cheaper than a wrong result.
-
-Choose one attempt when any of those conditions fails.
-If the tradeoff is uncertain, run a small paired pilot with frozen tasks, complete candidate records, and a predeclared stopping rule.
-Measure quality, invalid outputs, total calls, and wall time together.
-
-## FAQ
-
-### Is best-of-five the same as majority voting?
-
-No.
-Majority voting asks several answers to agree, while best-of-five scores each answer against a common check and keeps a valid winner.
-
-### How is pass@5 different from the selected result?
-
-Pass@5 asks whether at least one of five samples passes.
-The selected result asks whether the system's checker and winner rule return a good candidate as the final answer.
-Selection can approach the available pass@5 opportunity, but the two measurements are not identical.
-
-### What should happen when all five candidates fail?
-
-Return an explicit no-valid-candidate result.
-The caller can retry under a new policy or request human review, but it should not pretend that an arbitrary failed candidate passed.
-
-### Can the checker use hidden tests?
-
-The checker used for selection should use information available at candidate time.
-Hidden tests belong to final grading, because exposing them would let the winner-picker optimize against the answer key rather than the task.
-
-### Is five always the right number of samples?
-
-No.
-Five is the measured configuration discussed here, not a universal optimum.
-Choose the smallest candidate pool whose measured gain pays for its generation and checking cost.
-
-### Does Tangle guarantee that sampling will improve my agent?
-
-No.
-Tangle's public runtime and report provide an implementation shape and evidence for the four reported cells.
-Your model, checker, tasks, and limits still determine the result.
-
-## Sources and related reading
-
-- [Structural rollout integration report](https://github.com/tangle-network/agent-runtime/blob/main/docs/design/structural-rollout-integration.md), the public source for the four measured cells and the selection-versus-repair decomposition.
-- [Tangle agent runtime](https://github.com/tangle-network/agent-runtime), including its public quickstart for a worker, checker, and driver decision.
-- [HumanEval benchmark repository](https://github.com/openai/human-eval), the public tasks and evaluation code.
-- [MBPP benchmark implementation](https://github.com/google-research/google-research/tree/master/mbpp), the public benchmark source.
-- [Evaluating Large Language Models Trained on Code](https://arxiv.org/abs/2107.03374), the primary paper that introduced the pass@k evaluation estimator used widely for code generation.
+Cognition's [Don't Build Multi-Agents](https://cognition.ai/blog/dont-build-multi-agents) is the argument on the other side, and on writes we agree with it. Its second principle: actions carry implicit decisions, and conflicting decisions carry bad results.
+
+Their example is a Flappy Bird clone split between two subagents. One builds the background and the other builds the bird, each on assumptions nobody prescribed. The pieces do not fit. Sharing full agent traces is necessary but not enough, because the subagents still cannot see each other's choices. Their fix is a single-threaded agent whose context stays continuous.
+
+What to split:
+
+- **Safe:** read-heavy work, like reviewing packages or researching sources in parallel.
+- **Safe:** whole independent attempts at the same task, with one selected by a check. This is best-of-n.
+- **Unsafe:** separate pieces of one write, each made by an agent that cannot see the others' choices.
+
+## Fan-out wall time follows the slowest agent
+
+Parallel attempts multiply tokens, but the fleet finishes when its slowest member does. Here is a recorded fan-out: one Codex reviewer per package, all started together, under a $3 cap.
+
+<Example path="fleets/fan-out" />
+
+<Figure n={3} figure={fanOut} kicker="Recorded run · fleets/fan-out" headline="Four reviewers finished within 13 s; the fleet took 39.3 s because it waited for the fifth" />
+
+The whole fleet cost $0.037 of metered spend. We waited 26 seconds for the api reviewer after the others were done. For best-of-n, a long tail on one attempt sets your latency, unless you stop waiting once a check passes.
+
+## Cap spend in the platform, and stop the rest from your code
+
+Our recorded run used two caps:
+
+- **Hard cap:** the fleet's $2 budget. The platform refuses each charge past it, and that agent ends budget-exhausted. Turns already running are not aborted; each is refused at its own next charge.[^cap]
+- **Soft cap:** the script polls spend every five seconds and cancels the fleet at $0.20.
+- **Result:** six Claude Code attempts on DeepSeek V4.1 Flash stopped at $0.21, so polling overshot by about a cent. All six ended cancelled.
+
+<Example path="fleets/cancel-on-cap" />
+
+<Figure n={4} figure={cancelOnCap} kicker="Recorded run · fleets/cancel-on-cap" headline="The six cancelled attempts had already spent $0.21 between them" />
+
+Cancelled attempts are paid for up to the stop, so we budget for all n attempts.
+
+
+To stop once enough attempts pass, fire the same cancel call from the finished events the fan-out example streams. We have not recorded that run.
+
+## Each attempt also rents a sandbox
+
+The [sandbox rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes) charges per core-hour and per GB-hour, with a minimum hourly charge. Multiply n by each sandbox's cores, memory and lifetime at those rates, then apply the minimum.
+
+In our round 1, model tokens drove the cost. The twelve sandboxes' compute, plus one refused model call, billed $0.0069. The model tokens on those boxes billed about $0.37. That is one run of short attempts; for longer ones, redo the sum from the rate card.
+
+## Measure the selected answer, not the best one in the pile
+
+Anthropic's [evals guide](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) gives the two numbers to keep apart. pass@k is the chance that at least one of k attempts is correct. pass^k is the chance that all k are.
+
+<Figure n={5} figure={passK} kicker="Worked arithmetic · Anthropic's pass@k and pass^k" headline="At 75% per trial, three trials read as 98% or 42% depending on the metric" />
+
+pass@k is the ceiling best-of-n can reach, and you only reach it if your selector is perfect. pass^k is what a user sees when every run ships. We report accuracy of the attempt our selector picked, and tokens, dollars and wall time per correct answer.
+
+Anthropic's guide also says each trial should start from a clean environment. Leftover files, cached data or exhausted resources can cause correlated failures, and shared state can inflate scores. A fresh sandbox per attempt is the cheap way to get that.
+
+## Spend the 5x only where one attempt fails and a check picks the winner
+
+- **Before any n:** scope the prompt to the whole job, and grade with a check the agent cannot see.
+- **You have tests or a checker:** run one cheap attempt first. Add whole, independent attempts in fresh sandboxes only on tasks where one attempt often fails. Put the hard cap on the fleet, stop once one passes, and raise n until selected accuracy flattens on your eval.
+- **You have no checker:** run one attempt, on the strongest model you can afford. A vote or judge is a bet of a few points that has to win on your eval. Spend the rest of the budget building the check.
+- **The work is wide reading:** a supervisor with parallel readers can pay. Budget three to ten times the tokens.
+- **The work is one change:** keep one writer.
+
+Your next step is one eval on tasks your single attempt fails: n of one against n of three or five, at the same dollars, scored by a held-out check on the answer your selector picks.
+
+## How we tested
+
+Outside quality numbers come from the cited studies, read on 17 and 18 Nov 2026, at the scope below.
+
+| Study | Tasks | Verifier | What it compared |
+|---|---|---|---|
+| Dong and Shigida, arXiv 2605.08478 (8 May 2026) | 216 Codeforces problems, Divisions 1-3 | Automatic judge | k independent samples vs agent frameworks, by cost and by model calls |
+| arXiv 2608.00685 (1 Aug 2026) | Codeforces, Lichess, AMC | Benchmark scoring | Orchestration methods vs task-only and optimized CoT, five open-weight backbones (DeepSeek-V4-Flash, Gemma-4-26B, GLM-4.7-Flash, Qwen3.6-35B, GPT-OSS), all tuned with GEPA under one optimization budget |
+| Brown et al., arXiv 2407.21787 (v3) | SWE-bench Lite | SWE-bench tests on SWE-bench Lite; majority vote and reward models where no verifier is available | Coverage vs samples; DeepSeek-Coder-V2-Instruct; Moatless Tools scaffold for the GPT-4o and Claude 3.5 Sonnet comparison |
+| Anthropic, multi-agent research system | Internal research eval; BrowseComp | Anthropic's own eval | Opus 4 lead with Sonnet 4 subagents vs single Opus 4 |
+
+**Our run, all three rounds.** 18 Nov 2026 (UTC), sandbox SDK 1.0.446, agent opencode. Strong model google/gemini-2.5-pro, cheap model deepseek/deepseek-v4.1-flash. Every attempt ran in its own fresh sandbox; each sandbox was deleted by id and read back as deleted. The served model was confirmed per attempt from the run's reported backend model, and in round 1 also by a non-streaming served-model header probe. A third arm, zai/glm-5.3, was refused for our internal account (403 flat_plan_reserved_for_customers) and did not run. Each sandbox's agent turns bill to its own child key on the platform ledger, and the spend below is those metered rows as the desk read them. We compute no spend from a price list. Tokens are as each run reported them; input includes cached tokens. The two models tokenize differently, so token counts compare effort only roughly. No attempt in any round touched a test file, package.json or .npmrc.
+
+**Round 1.** 00:09:59 to 00:21:41 UTC. Repository [sandbox-demo](https://github.com/tangle-network/sandbox-demo), where 3 of 9 tests fail on purpose (a CLI flag coercion bug, a missing null guard, a timezone bug). Prompt: "The test tagged `<task>` fails. Fix the cause." At most 40 tool calls per attempt. Per task, one strong attempt and three independent cheap ones, n = 12. An attempt passed when the full npm test run reported 9 tests with the targeted test passing, and git status showed no change to a test file, package.json or .npmrc. Baseline was 6 of 9 passing. Result: 12 of 12 passed.
+
+```text
+task        arm            pass  tests  input    cached   output  tool calls
+cli-flag    strong         yes   9/9    177,295  115,051  1,702   16
+cli-flag    cheap #1       yes   9/9    122,550           5,159   17
+cli-flag    cheap #2       yes   7/9     88,353           2,180   14
+cli-flag    cheap #3       yes   7/9    103,709           1,669   14
+null-guard  strong         yes   7/9     70,584   20,460    384    7
+null-guard  cheap #1       yes   7/9     54,138             992    9
+null-guard  cheap #2       yes   7/9     43,974             944    8
+null-guard  cheap #3       yes   7/9     92,848           1,444   14
+timezone    strong         yes   7/9     83,472   37,208  1,383    9
+timezone    cheap #1       yes   7/9     87,473           2,183   14
+timezone    cheap #2       yes   7/9    100,765           2,392   16
+timezone    cheap #3       yes   7/9     81,348           1,276    8
+strong arm  3 attempts     3/3          331,351           3,469
+cheap arm   9 attempts     9/9          775,158          18,239
+
+metered spend (ledger rows read 00:31Z)
+strong      cli-flag $0.1207   timezone $0.0819   null-guard $0.0759   sum $0.2785
+cheap       cli-flag $0.0196 / $0.0112 / $0.0143
+            null-guard $0.0074 / $0.0037 / $0.0085
+            timezone $0.0110 / $0.0125 / $0.0051                       sum $0.0932
+parent key  box compute plus the refused glm call                      $0.0069
+key total   $0.3785 of a $1.00 cap
+```
+
+7/9 means the targeted bug was fixed and the other two were left alone.
+
+**Round 2.** 00:32:45 to 00:40:51 UTC. Same repository, agent and models. Prompt: "Three of the nine tests fail. Make all 9 tests pass." At most 60 tool calls and 600 s per attempt. Six cheap and two strong attempts, n = 8. Result: 8 of 8 passed, each at 9 tests, 9 pass, 0 fail, with only the three source files changed.
+
+```text
+arm        input    cached   output  tool calls
+cheap #1    69,088   57,728   1,242   10
+cheap #2    85,430   71,398   1,599   10
+cheap #3   106,778   91,288   2,241   14
+cheap #4    59,995   53,956   1,839   11
+cheap #5   111,795  101,738   3,048   14
+cheap #6    70,731   57,796   1,720   17
+strong #1  120,318   61,039     989   12
+strong #2  119,346   57,008     998   12
+
+metered spend (ledger rows read 00:43Z)
+cheap   $0.0083  $0.0104  $0.0125  $0.0069  $0.0115  $0.0100   desk sum $0.0595
+strong  $0.1032  $0.1092                                       sum $0.2124
+key total after round 2: $0.6544 of $1.00 (includes the parent key's own rows: box compute and the refused glm call)
+```
+
+**Round 3, pre-registered.** 00:43:15 to 00:50:24 UTC. The task, prompt and grader were written and hashed before any attempt (bundle sha256 b224efea43ea5a78e5b1a5b1b98b2bc2a1562990ba2c9c563c5a6fa6cd1abf61). Repository parcel-quote, a two-commit Node repo whose last commit changed weightOf() from kilograms to grams and updated only shipping. The visible failure is a checkout total, 23400 against 710. Prompt: "In ~/parcel-quote, `npm test` started failing after the last commit. Fix the regression." An attempt passed when the visible suite passed (4 of 4), a held-out file the agent never saw passed (5 of 5: customs over 2 kg, customs under 2 kg, the large box, the kilogram label, and the grams contract kept), and no test file, package.json or .npmrc changed. We checked the grader without a model on our build host: the seeded bug fails 1 visible and 4 held-out tests, our reference fix passes all, and a fix of only the two callers the visible test exercises passes the visible suite and fails 2 held-out tests. The pre-registration planned more strong attempts; at 00:43:51Z, before any strong attempt, the lead amended it to one, because a second could not fit under the run's $0.92 stop. The strong arm is n = 1. Result: cheap 6 of 6 passed, strong 0 of 1. Cheap attempt 4 also edited units.js and shipping.js and kept the grams contract. The strong attempt fixed packaging, insurance and customs, not the label.
+
+```text
+arm        input    cached   output  tool calls  visible  held-out
+cheap #1    62,640   48,560   2,618   10          4/4      5/5
+cheap #2    76,921   62,228   2,676   14          4/4      5/5
+cheap #3   102,872   89,656   1,857    9          4/4      5/5
+cheap #4    83,897   70,250   3,204   18          4/4      5/5
+cheap #5    60,958   48,862   1,836   10          4/4      5/5
+cheap #6    89,211   75,016   2,743   15          4/4      5/5
+strong #1  118,430   77,038   1,910   12          4/4      4/5 (label failed)
+
+metered spend (child-key rows, key closed 00:51:30Z)
+cheap   $0.0121  $0.0126  $0.0107  $0.0132  $0.0097  $0.0127   sum $0.0710
+strong  $0.0862                                                sum $0.0862
+key total at close: $0.8144 of $1.00
+```
+
+The tax-return numbers come from our applied benchmark, run on 19 Jul 2026: 51 TY24 returns, line accuracy, single samples, not matched cost.
+
+**fleets/fan-out.** Fleet fleet_b6e630a465a646d98378f5ad, recorded 12 Nov 2026, exit 0, sandbox SDK 1.0.168, Codex. Reviewers started 6.9 s after script start. Four finished between 17.2 s and 19.7 s; api finished at 45.6 s. fleet.finished reported durationMs 39308 and spentUsd 0.037288 against a $3 cap.
+
+**fleets/cancel-on-cap.** Fleet fleet_db3cca8418444c7cb7b75a49, recorded 18 Nov 2026, exit 0, sandbox SDK 1.0.443, Claude Code on deepseek/deepseek-v4.1-flash. Six attempts, budgetUsd 2, soft cap $0.20 polled every 5 s. The run printed:
+
+```text
+agent-0 cancelled 0.037119454
+agent-1 cancelled 0.040766365
+agent-2 cancelled 0.034504221999999994
+agent-3 cancelled 0.028346381
+agent-4 cancelled 0.034091015
+agent-5 cancelled 0.038037101
+$0.21 spent, 6 agents stopped
+```
+
+fleet.cancel() returned interrupted 6, matching the six cancelled results; the field is undocumented, so read each result's status.
+
+**Hard cap.** The contract quoted comes from the sandbox SDK typings at 1.0.438: "Turns already running are not aborted: each is refused at its own next charge." The ending status is budget_exhausted.
+
+**Sandbox prices** are live and change; read them from the rate card linked above. We print none here.
+
+[^weighted]: Weighted tokens per correct answer, input plus four times output and reasoning tokens, as the ratio of orchestration to task-only inference: 1.41 to 5.15 on Codeforces, 1.42 to 5.88 on Lichess and 1.82 to 4.97 on AMC (§4.5). This is a token ratio, not dollars.
+
+[^cap]: From the sandbox SDK typings: "Turns already running are not aborted: each is refused at its own next charge."
+
+<FigureNotes figures={bestOfFiveFigures} />
