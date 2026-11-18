@@ -1,10 +1,10 @@
 ---
-title: 'AI Coding Agent API Integration: Measuring Agent Readiness'
+title: 'Agent-Ready APIs: Design the Tools, Fix the Spec, Test With Tasks'
 slug: agent-readiness-index-methodology
 summary: >-
-  Measure AI coding agent API integration with current-contract tasks, hidden execution checks, calibration, and denominators.
+  You want coding agents to call your API correctly and need to know what to build first. This is how to shape the tools, when a generated MCP server is enough, and how to measure agent readiness with tasks whose outcomes you can check.
 date: '2026-07-24'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - benchmarks
@@ -14,243 +14,217 @@ tags:
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { agentReadyApiFigures, openApiToMcp } from '../../data/blog/agent-readiness-index-methodology'
+
+The fastest way to make an API agent-ready is also a common mistake: turn every endpoint into a tool.
+Agents do better with a few distinct, namespaced tools shaped around the jobs your users do, because too many or overlapping tools distract them, described the way you would brief a new hire.
+Generate them from an OpenAPI spec you have repaired first.
+Then prove it with real multi-step tasks against your product: check each outcome, record accuracy, runtime, tool calls, tokens and errors, read the transcripts, and keep a held-out set you never tune against.
+A score for your docs or your spec cannot tell you whether an agent finishes the job.
+
+We owe you a correction first.
+An earlier version of this page described an "Agent Readiness Index" as if we ran it.
+We never built it, and there are no results behind the name.
+What follows is the method we would use, and every outside number comes from one named source.
+
+This post starts after an agent has found you.
+Whether agents find you at all, through llms.txt, Markdown docs or your server logs, is covered in [How AI agents discover products](/blog/how-ai-agents-discover-products/).
+
+## Build one tool per job your customers do
+
+Anthropic's team calls endpoint wrapping "a common error" in their guide to [writing tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents).
+The reason is context: agents do better with a few distinct, namespaced tools, and too many or overlapping tools distract them.
+Your server can page through ten thousand contacts for free.
+An agent pays for every token it reads, so a list-everything tool burns its attention on rows it never needed.
+
+Their advice is to build "a few thoughtful tools targeting specific high-impact workflows".
+One tool can make several API calls underneath and return only what the agent needs next.
+Their own examples make the shape clear:
+
+```text
+One tool per endpoint                 One tool per job
+-----------------------------------   ------------------------------------------------
+list_users, list_events,              schedule_event
+create_event                            finds a free slot and books it
+get_customer_by_id,                   get_customer_context
+list_transactions, list_notes           the customer, recent transactions and notes
+read_logs                             search_logs
+                                        matching lines with surrounding context
+list_contacts                         search_contacts
+```
+
+Most published servers still wrap.
+A study of 116 official MCP servers found that 92% expose tools as bare API wrappers.[^v4]
+The same servers expose a median of only 19% of their API's operations.
+So vendors already leave most operations out, and the tools they keep still mirror endpoints.
+When the authors filtered and regrouped operations, the median tool count per API fell by a third.
+We read that as room to cut further.
+
+Give each tool one distinct purpose and a namespace; Anthropic found that too many or overlapping tools distract agents.
+Name tools so an agent can tell yours from everyone else's.
+Anthropic groups related tools under a shared prefix, by service (asana_search) or by resource (asana_projects_search).
+They found that putting the namespace at the front or the back changed their eval results, and the better choice varied by model.
+We would pick one scheme and let the eval below decide.
+
+Our rule is to start from the tasks you will test with and write one tool per family of tasks.
+Add a tool only when a task fails without it.
+
+## Write descriptions, responses and errors as prompts
+
+Every tool description and parameter spec is loaded into the agent's context.
+We treat them as prompts, because that is how the agent reads them: explicit descriptions, parameter names that leave no room for a guess, and strict schemas for inputs and outputs.
+Anthropic's test is to describe the tool the way you would explain it to a new hire.
+Spell out the query formats, the niche terms and how your resources relate, because the agent knows none of it.
+
+Parameter names should leave no room for a guess.
+Anthropic's example is a parameter called "user".
+We would rename it to say user ID, so the agent never has to guess what goes in it.
+Anthropic also says to enforce the expected inputs and outputs with strict data models, so a malformed call is refused with a clear message instead of running.
+
+Responses should carry meaning rather than plumbing.
+Return names an agent can reason about, not opaque UUIDs it has to copy around.
+Anthropic found that resolving UUIDs to readable names made Claude noticeably more precise in retrieval tasks.
+When an agent needs both, give it a switch between concise and detailed output.
+In their example the concise response was 72 tokens against 206 for the detailed one.
+
+Long responses need defaults that keep them short.
+Paginate, filter or truncate, and tell the agent how to ask for more.
+Claude Code restricts tool responses to 25,000 tokens by default, and we design for well under that.[^cap]
+
+Errors are prompts too.
+An error code with no explanation leaves the agent to guess and retry.
+An error that names the bad field and the fix gives the agent what it needs to get the second call right.
+Here is the difference, in an example we wrote:
+
+```text
+Unhelpful
+  {"error": "INVALID_REQUEST"}
+
+Helpful
+  {"error": "start must be a date like 2026-11-17, got 'next tuesday'.
+             Resolve relative dates before calling schedule_event."}
+```
+
+## A generated MCP server inherits every gap in your spec
+
+If you have an OpenAPI spec, generating an MCP server from it is a reasonable first draft.
+Mastouri and colleagues measured exactly that.
+In the paper's third version, the source of the widely repeated 99.9%, about three in four generated tool calls worked as generated.
+Every failure traced back to something missing or inconsistent in the spec.
+
+<Figure n={1} figure={openApiToMcp} kicker="arXiv 2507.16044 · OpenAPI to MCP" headline="About 76% of sampled calls (v3) or tools (v4) worked as generated, before the spec was repaired" />
 
-A developer asks a coding agent to add a payment flow.
-The agent reads the provider docs, writes the client, runs a test, and reports success.
-The code compiles.
-The first real customer still gets the wrong subscription state because the API changed after the model learned the old example.
+Fixing the specs by hand, about 19 lines per API, took that version to 99.9%.
+That number gets quoted without its condition.
+It needed a person to find and fix each spec, and it comes from the paper's earlier version.
+The latest version studies more APIs and repairs the spec automatically, and reports 94.2%.
 
-That is the problem with **AI coding agent API integration**.
-The agent must discover a live contract, turn it into a request, and produce the right side effect.
-Recalling an old tutorial is not enough.
+We read two things from this.
+Your spec is the real interface, so fix its omissions before you generate anything.
+And the generator in v3 (AutoMCP) produced one tool per endpoint (5,066 endpoints, 5,066 tools), the shape the previous section warns against.
+Its success rates measure whether a generated tool could be called correctly, not whether an agent completed a user's job with it.
 
-The **Agent Readiness Index** measures this narrower ability: a benchmark of coding-agent configurations on current API-integration tasks.
-A result reports tested model configurations and their execution wrappers, not a guarantee about every Tangle product or every production integration.
+So generation is enough to get a server running, and every failure traced to the spec.
+It is not enough to call your API agent-ready: in v3 only 76.5% of generated calls worked until about 19 lines of spec fixes per API raised that to 99.9%.
+Generate from a repaired spec, then consolidate the operations agents actually chain into job-shaped tools.
 
-In Tangle's Sandbox SDK, `client.create` starts a machine with a `claude-code` backend, `box.prompt` returns the turn with `success`, `usage` and `costUsd`, and `box.exec` runs the check in that same machine. The reader sees the check's exit code, not the agent's summary.
+## Agent readiness is a task the agent finishes
 
-## The failure that looks like a provider problem
+Readiness scores already exist, and they are worth running.
+For example, [Fern's Agent Score](https://labs.buildwithfern.com/) checks your docs and grades them from 0 to 100.
+We think of them as a lint pass.
 
-Stripe’s current documentation distinguishes pausing payment collection from pausing a subscription.
-The documented field named "pause_collection" leaves the subscription status unchanged, while the [pause-subscription API endpoint](https://docs.stripe.com/api/subscriptions/pause.md?api-version=preview) can set the status to "paused".
-The [Stripe API reference](https://docs.stripe.com/api/subscriptions/update) and [pause-subscription guide](https://docs.stripe.com/billing/subscriptions/pause) make that difference explicit.
+They score documents.
+We want to know whether an agent, handed a real multi-step job with a verifiable outcome, gets it done with your tools.
+That needs the method Anthropic describes: realistic tasks, a checkable outcome for each, and a record of how the agent got there.
 
-A client written from memory can call the old-looking field, receive a successful HTTP response, and leave service delivery active when the product meant to pause it.
-The integration did not fail at compilation.
-It failed at the state the customer sees.
+### Write tasks the way customers ask
 
-The pause endpoint is a separate `POST /v1/subscriptions/{id}/pause` operation.
-The current guide says it requires Stripe API version `2025-06-30.preview` or later.
+A good task reads like a support ticket and needs several tool calls.
+A weak one tells the agent which call to make.
+These two tasks are from Anthropic's lists of strong and weak tasks:
 
-Stripe also removed subscription-level "current_period_start" and "current_period_end" in the "2025-03-31.basil" release and moved billing periods to subscription items.
-The [dated Stripe changelog entry](https://docs.stripe.com/changelog/basil/2025-03-31/deprecate-subscription-current-period-start-and-end) documents the replacement.
-Code that reads the old field can lose the value it expects without a compile-time failure.
+```text
+Strong
+  Customer ID 9182 reported that they were charged three times for a single
+  purchase attempt. Find all relevant log entries and determine if any other
+  customers were affected by the same issue.
 
-Those are useful benchmark tasks because the stale answer can look reasonable.
-The checker must inspect the request, response, and resulting state rather than trusting a status code.
+Weak
+  Search the payment logs for purchase_complete and customer_id=9182.
+```
 
-## Define the complete agent profile
+The weak task tests whether the agent can type a query.
+The strong one tests whether your tools let it work out which query to type.
 
-A leaderboard row is not a model result when several moving parts produced it.
+### Check the outcome, not the agent's account of it
 
-An **agent profile** is the complete configuration presented to a task.
-It can include the model, prompt or instruction set, available tools, and other declared behavior.
+Pair every task with a result you can verify.
+For an API that usually means reading the state afterwards: one refund exists, the meeting is on the calendar, the right log lines came back.
+A string match against a known answer is fine when the answer is text.
+Keep the check loose enough to accept a correct answer phrased differently.
 
-The **harness** is the program and execution wrapper that runs the agent loop.
-The **execution environment** is the process, filesystem, network, and tool boundary in which that loop runs.
-The model, profile, harness, and environment can each change the result.
+We do not let the agent grade itself.
+Its summary is a claim, and the state of your system is the evidence.
+The check runs outside the agent, against the system it changed.
 
-The benchmark treats a row as a configuration, not as a timeless property of a model.
-Two rows can show the same model and harness while representing different profile variants.
-If a published row does not expose the changed profile axis, the reader cannot attribute the difference to one cause.
+### Record more than pass or fail
 
-An evaluation record should make the profile boundary explicit.
-An illustrative row:
+We treat accuracy as the headline, but it hides the reason.
+Anthropic also recommends collecting runtime per tool call and per task, the number of calls, total tokens and tool errors.
+Those point at the fix.
+Many redundant calls suggest your pagination or limits are wrong.
+Many invalid-parameter errors suggest a description needs work.
 
-~~~json
-{
-  "model": "gpt-5.4-mini",
-  "harness": "pi",
-  "profile": "documented-api-search",
-  "tools": ["public-web", "filesystem", "test-runner"],
-  "environment": "isolated-node-runtime",
-  "tasks": 12,
-  "passes": 7
-}
-~~~
+We read the raw transcripts too.
+Agents often leave things out when they explain themselves, and the raw transcript shows what they actually did.
+Anthropic's example is Claude appending the year to its web search queries, which a better tool description fixed.
 
-The object is a methodology example, not a published result.
-Its purpose is to show why the sample score of 58 percent is incomplete.
-The harness may change tool timing and retry behavior.
-The profile may change the instructions and available sources.
-The environment may change which files or network calls the agent can reach.
+### Keep a set of tasks you never tune against
 
-## Four design choices keep the measurement honest
+Once you start editing descriptions to pass tasks, you will overfit them.
+Anthropic kept held-out test sets for exactly this reason.
+We would split the tasks before the first run and only look at the held-out score when deciding to ship.
 
-| Choice | Measurement decision | Why it matters |
-| --- | --- | --- |
-| Fresh contract | Tasks come from dated API changes and current documentation | Memory of old examples is not enough |
-| Live discovery | The agent can search public sources during the run | The benchmark tests the source-search work required for integration |
-| Hidden execution | The submitted code runs against a server that checks behavior | A prose answer or status code cannot pass alone |
-| Calibration | Empty, current-reference, and stale solutions are tested before admission | A task must separate doing nothing, knowing the contract, and remembering the old contract |
+## Run each task in a sandbox and gate on the baseline
 
-The benchmark task suite, mock server, and full task assertions remain private.
-That protects the hidden assertions, but it limits independent reproduction.
-The [AI agent discovery guide](/blog/how-ai-agents-discover-products) covers the public surfaces an agent can inspect first.
+Here is that loop in our own Sandbox SDK and eval package.
+Each task gets a fresh sandbox with a coding agent in it.
+The check is a command we run after the agent's turn, and its exit code is the score.
+The candidate has to score at least as well as the shipped version or the build fails.
 
-## A hidden execution test checks behavior
+<Example path="evals/regression-gate" title="Score each task by a command the caller runs, and fail on a regression" />
 
-Each task gives the agent a goal and access to public documentation.
-The task does not hand over the exact request shape that the agent is expected to discover.
+The tasks here fix failing tests, not API integrations.[^example]
+For your API, we would swap the task text and the check.
+The task becomes a customer request against a test account.
+The check becomes a query against that account's state after the agent finishes.
 
-The fix-a-test example below runs the caller's own test command after the agent reports a fix, and fails the run on a nonzero exit code.
+## Ship the next tool only when tasks say so
 
-<Example path="sandboxes/fix-a-test" title="Check the agent's claim with a command the caller runs" />
+Before you build another tool, write a few dozen tasks from real customer requests, each with an outcome you can check.
+Split off a held-out set.
+Run them against what you have today, whether that is raw endpoints or a generated server.
+Then change one thing at a time: consolidate a family of endpoints, rewrite a description, fix the spec, sharpen an error.
+Keep the change if the held-out pass rate goes up and the errors and token counts go down.
 
-It proves the fix passed the caller's test command, not that the fix is right beyond that test.
+[^v4]: Mastouri et al., arXiv 2507.16044, version 4. The same paper reports the median exposure and the one-third reduction in tool count.
 
-The submitted code runs against a mock server that implements the Stripe behavior recorded for the benchmark task.
-The mock returns the request and response behavior needed to check the integration without sending the benchmark run to a live payment account.
+[^cap]: The 25,000-token default is from Anthropic's guide to writing tools for agents, read on 17 Nov 2026. Check your agent's own limit; it may differ and may change.
 
-A useful grader checks fields and side effects:
+[^example]: The example scores two failing-test scenarios in a public demo repository with a Claude Code backend running GLM-5.3. It shows the shape of the loop, not results on any API.
 
-~~~json
-{
-  "request": {
-    "method": "POST",
-    "path": "/v1/subscriptions/sub_example/pause"
-  },
-  "expected": {
-    "status": "paused",
-    "service_delivery": "stopped",
-    "invoice_generation": "paused"
-  },
-  "result": "pass only when the state matches the task"
-}
-~~~
+## How we tested
 
-The grader above is illustrative.
-Updating `/v1/subscriptions/{id}` with `pause_collection` pauses payment collection while the subscription remains active; the separate pause operation produces the paused status.
-The benchmark does not publish its task assertions.
-A client can receive status 200 and still fail if it changed the wrong resource state.
+We did not run an Agent Readiness Index, and none exists. A search of our GitHub organization's code and our internal project index on 17 Nov 2026 found the name only in the earlier version of this post. The method above is how we would measure, and no results are claimed.
 
-## Calibration rejects easy or broken tasks
+Every outside claim was checked against its source on 17 Nov 2026:
 
-A task enters the suite only after three solutions are tested.
+- Tool design, response, error and evaluation guidance: Anthropic, [Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents). The 206- and 72-token responses, the 25,000-token Claude Code default, the namespacing result and the held-out sets are all from that post.
+- OpenAPI-to-MCP results: Mastouri et al., arXiv 2507.16044. Version 3, posted 10 Sep 2025, reports 50 APIs, 5,066 endpoints, 1,023 sampled tool calls, 76.5% out of the box, and 99.9% after manual spec fixes averaging 19 lines per API. Version 4, posted 6 Apr 2026, reports 80 OpenAPI contracts, 76% baseline and 94.2% after automated repair, plus the 116 official MCP servers, 92% bare wrappers, 19% median operation exposure and the one-third tool-count reduction. Quote the version with its number.
+- Readiness scorers: Fern Agent Score grades docs from 0 to 100. We list it for comparison. We have not run it or compared its scores with task outcomes.
+- The recorded example, regression-gate, ran on production on 2 Nov 2026 with exit 0 and $0.1818 of reported usage. It is a code-fix task, not an API-integration task.
 
-An **empty solution** must fail.
-
-A **current-contract reference** must pass.
-
-A **stale-memory solution** must fail on the intended behavior.
-
-The calibration matrix is:
-
-| Candidate | Expected result | What it establishes |
-| --- | --- | --- |
-| Empty implementation | Fail | The task requires work |
-| Current documented implementation | Pass | The task is solvable |
-| Deliberately stale implementation | Fail on the trap | The task separates current knowledge from memory |
-
-Calibration is an admission rule, not a score bonus.
-If a task fails calibration, remove or repair it before comparing agent profiles.
-
-## A percentage is a count with uncertainty
-
-The denominator is part of the result.
-A 95% Wilson interval gives a range for the underlying pass rate under the benchmark’s sampling assumptions.
-On a small task set the interval is wide, so close configurations are hard to distinguish.
-If one additional task changes a row from 10/12 to 11/12, the displayed percentage moves by 8.3 points even though the underlying behavior may not have changed in a durable way.
-
-A reviewer should keep three quantities together:
-
-~~~text
-observed result = passes / completed attempts
-uncertainty = interval around that result
-comparison = same tasks, same execution procedure, same profile definition
-~~~
-
-If a row has fewer completed attempts, say so before comparing it.
-Do not fill a missing attempt with a guessed failure or silently compare a 10-task row with a 12-task row as if the denominators were identical.
-
-The interval also does not correct for every bias.
-If the task set omits a provider feature, or if one profile gets a different tool boundary, the uncertainty around the pass rate can be narrow while the comparison is still unfair.
-
-## What a score means
-
-A pass means the submitted integration produced the expected behavior for one task against the benchmark’s current contract.
-It does not mean the agent can build any integration.
-
-The suite measures one provider, one task set, and one execution procedure.
-It does not measure:
-
-- General software engineering or repository-scale maintenance.
-- User-interface work or browser interaction.
-- Production credentials, rate limits, or live payment risk.
-- Every endpoint or version of the provider’s API.
-- Whether a company’s documentation is easy for a human to understand.
-- Whether an agent can recover after a task that was not included in the suite.
-
-The score is also time-sensitive.
-Stripe’s [API versioning documentation](https://docs.stripe.com/api/versioning) explains that major releases can contain backward-incompatible changes.
-A score from one release should not be treated as a permanent capability label.
-
-## Refresh the suite without changing the question
-
-An API benchmark has two kinds of change: the provider’s contract changes, which the suite is meant to detect, and the benchmark’s own task or checker changes, which can make a new score incomparable with an old one.
-
-When the provider changes, preserve the old task as a dated version if its failure mode is still useful.
-Add a new task for the new contract and calibrate it independently.
-Do not silently edit the assertion behind an existing task and call the resulting percentage a trend.
-
-When the grader changes, publish the boundary of the change.
-It may be a bug fix that corrects a false pass, a new timeout that changes completed attempts, or an execution-environment change that gives agents a different tool path.
-Each can be legitimate, but the row needs a new run identity and an explanation before readers compare it with the previous snapshot.
-
-The durable comparison is not “this month’s percentage minus last month’s percentage.”
-It is “the same calibrated task versions, same profile definition, same harness and environment, and same scoring rule produced this change.”
-
-Keep the raw task outcomes behind the summary.
-A row with 8 passes out of 12 should retain which four tasks failed, whether the failure was a wrong request or a runtime error, and whether the task was completed after a retry.
-The average is the headline; the failure shape says what to fix.
-
-## Protect the grading boundary
-
-A hidden execution test is only informative if the agent cannot read the answer key from its environment.
-If the mock server exposes its source, assertions, or reference implementation to the agent, the run can become a file-discovery task instead of an API-integration task.
-
-The safe design keeps the task assertions outside the agent workspace, records the requests and tool actions needed for audit, and rejects runs that cross the boundary.
-The benchmark owner should publish the boundary and the contamination policy even when the task text remains private.
-
-A model judge cannot decide a pass.
-A trace judge such as `evals/score-a-trace` can score whether the agent read the current docs and reran its checks, but the pass condition still comes from execution against the controlled contract.
-A model can write a persuasive explanation of an API call while the code sends the wrong field.
-
-## What an API company can do with a low result
-
-A low score is useful when the per-task failure points to a documentation or API-design change.
-
-Publish each breaking change in a dated, searchable page.
-Name the replacement field or endpoint in the error when doing so is safe.
-Prefer an error that tells an agent what to search for over a silent empty field.
-Keep the request and response examples aligned with the current API version.
-Then rerun the same calibrated task set after the documentation changes.
-
-The company should also test whether a stale request fails loudly.
-A wrong field that returns 400 can trigger a search and retry.
-A removed field that returns an empty value can ship incorrect business behavior.
-
-## Decision rule
-
-Use this method when you need to know whether coding agents can integrate a changing API from public sources.
-Read the task count, row identity, denominator, interval, and last-run date before comparing any two results.
-
-Treat the score as a work list.
-Use per-task failures to improve docs and errors.
-Use fresh tasks to check whether the improvement survives the next API change.
-
-## API benchmark FAQ
-
-### How should a company use a low score?
-
-Inspect the per-task failure pattern, make the current contract discoverable, make silent failures loud where possible, and rerun the same calibrated tasks after the change.
+<FigureNotes figures={agentReadyApiFigures} />
