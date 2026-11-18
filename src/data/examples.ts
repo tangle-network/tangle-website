@@ -106,10 +106,11 @@ const cancel = events.find(event => event.name === 'cancel')!;
 const cap = Number(idea.code.match(/softCapUsd\s*=\s*([\d.]+)/)![1]);
 const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 const last = spend.at(-1)!;
+const top = Math.ceil(Math.max(cap, last.result.spentUsd) * 5) / 5; // the next $0.20 above the cap and the spend
 const figure = timeSeries([{ id: 'spend', label: 'Fleet spend, USD', points: spend.map(event => ({ x: event.atMs + (event.durationMs ?? 0), y: event.result.spentUsd })) }], {
   x: { label: '', domain: [0, Math.ceil(idea.run!.ms / 100000) * 100000] },
-  y: { label: 'Fleet spend, USD', unit: 'USD', domain: [0, Math.ceil(Math.max(cap, last.result.spentUsd) * 5) / 5],
-    ticks: [0, 0.4, 0.8].map(at => ({ at, label: `$${at.toFixed(2)}` })),
+  y: { label: 'Fleet spend, USD', unit: 'USD', domain: [0, top],
+    ticks: [0, top / 2, top].map(at => ({ at, label: `$${at.toFixed(2)}` })),
     targets: [{ from: cap, to: cap, label: `softCapUsd = ${cap}`, kind: 'stretch' }] },
   marks: [{ at: cancel.atMs, label: `fleet.cancel() at ${clock(cancel.atMs)}, $${last.result.spentUsd.toFixed(2)}`, kind: 'event' }],
   formatX: clock, formatY: value => `$${value.toFixed(2)}`, legend: false, width: 720, dense: false,
