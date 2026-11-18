@@ -18,17 +18,19 @@ for (const post of posts) {
   const text = readFileSync(post, 'utf8');
   const slug = basename(post, '.mdx');
   let n = 0;
-  for (const match of text.matchAll(/^(```|~~~)(?:ts|typescript)\b[^\n]*\n([\s\S]*?)^\1/gm)) {
+  mkdirSync(join(out, slug), { recursive: true });
+  for (const match of text.matchAll(/^(```|~~~)(?:ts|typescript)\b([^\n]*)\n([\s\S]*?)^\1/gm)) {
     n += 1;
-    const name = `${slug}.${n}.mts`;
+    // A fence titled with a file name is written under that name, so a later fence can import it as the post shows.
+    const name = `${slug}/${/\btitle="([\w.-]+\.m?ts)"/.exec(match[2])?.[1] ?? `${n}.mts`}`;
     const line = text.slice(0, match.index).split('\n').length + 1;
-    writeFileSync(join(out, name), match[2]);
+    writeFileSync(join(out, name), match[3]);
     fences.set(name, { post: post.replace(`${root}`, ''), line });
   }
 }
 if (fences.size === 0) { console.log('check:blog-code: no ts fences to check'); process.exit(0); }
 
-writeFileSync(project, JSON.stringify({ extends: './tsconfig.blog.json', include: [`${scratch}/*.mts`] }));
+writeFileSync(project, JSON.stringify({ extends: './tsconfig.blog.json', include: [`${scratch}/**/*.mts`] }));
 process.on('exit', () => { rmSync(out, { recursive: true, force: true }); rmSync(project, { force: true }); });
 const tsc = spawnSync('npx', ['--no-install', 'tsc', '-p', project, '--pretty', 'false'], { cwd: harness, encoding: 'utf8' });
 if (tsc.error) throw tsc.error;
@@ -40,6 +42,10 @@ for (const line of `${tsc.stdout}\n${tsc.stderr}`.split('\n')) {
   const key = fence ? `${fence.post}:${fence.line + Number(m[2]) - 1}` : m[1];
   if (!problems.has(key)) problems.set(key, []);
   problems.get(key).push(m[4]);
+}
+if (tsc.status !== 0 && !problems.size) { // tsc missing or crashed: nothing was checked, so this must not read as ok
+  console.error(`${tsc.stdout}\n${tsc.stderr}`.trim(), '\ncheck:blog-code failed: tsc did not run cleanly');
+  process.exit(1);
 }
 if (problems.size) {
   for (const [where, messages] of problems) console.error(`${where}\n  ${messages.join('\n  ')}`);

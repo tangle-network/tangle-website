@@ -1,10 +1,12 @@
 ---
-title: 'OpenAI Compatible Routers for Agents'
+title: 'Is your LLM router safe for agents?'
 slug: openai-compatible-routers-for-agents
 summary: >-
-  OpenAI-compatible routers keep one request shape while exposing model discovery,
-  routing policy, usage records, and provider or cost changes.
+  A router between your agent and the model providers keeps your code working and quietly decides which model
+  answers, what reaches it, how often a failure is retried and what a key can spend. Here is what to check on
+  OpenRouter, LiteLLM, Portkey or Tangle Router, and the settings that make each one fail loudly.
 date: '2026-06-20'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - agents
@@ -12,343 +14,248 @@ tags:
   - infrastructure
 series: Introduction to Tangle
 seriesOrder: 3
-updated: '2026-11-01'
 ---
 
-import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { ceiling, retries, routerFigures } from '../../data/blog/openai-compatible-routers-for-agents'
 
-At 10:03, a coding agent reaches the part of a task that calls a language model.
-The code contains `model: "glm-5.3"`, the billing account is wired to one provider, and the fallback logic is scattered across three workers.
-At 10:04, that model is unavailable in the region where the process runs.
-The agent does not need a better prompt at that moment.
-It needs a controlled way to discover a usable model, choose a route, record what happened, and decide whether a fallback is safe.
+An OpenAI-compatible router decides which model answers your agent, which fields reach it, how often a failed step reruns, who reads the prompt and what a key can spend. Your code keeps working, and a normal response reports none of it. Before an agent depends on any router, ours included, check each with one request and make it fail loudly.
 
-An OpenAI-compatible router for agents provides that management layer behind a familiar HTTP shape.
-Tangle Router exposes an OpenAI-style `/v1/chat/completions` endpoint, a live `/v1/models` catalog, routing controls, and generation and routing traces, records of those decisions.
-That lets an existing client change its base URL while the platform owns provider selection.
-It does not make every model interchangeable, and it does not turn a fallback into a correct answer.
+In August, our Tangle Router answered `gpt-5.5` requests with Gemini after one of our OpenAI projects hit its spend limit. Every one of our products whose default named an OpenAI model ran on Gemini. Nothing failed, the status page and catalog read healthy, and none of our code read the body naming Gemini. We made substitution opt-in that day. Here is the checklist we should have run, with our answers, flattering or not.
 
-Use a router when model choice, provider failure, usage attribution, or policy needs to change independently of every agent call site.
-Keep a direct provider connection when one model, one account, and one failure policy are genuinely enough.
+## The bad routers are worse than ours was
 
-## The model ID is a hidden dependency
+Researchers ran a coding agent through 428 routers bought from resellers or collected from public lists. Nine injected malicious code into its tool calls; seventeen touched AWS credentials the researchers planted ([Liu et al.](https://arxiv.org/abs/2604.08407)). Those were resold and free relays, not the gateways you are weighing. Still, every router terminates your TLS and reads every prompt and tool call in plain text ([Crosley](https://blakecrosley.com/blog/your-agent-has-a-middleman)). Pick one you have reason to trust, then check it.
 
-A model identifier looks like data, but in an agent it controls behavior, cost, latency, context length, tool support, and sometimes safety policy.
-Hard-coding that identifier in every workflow makes those decisions difficult to review and expensive to change.
+## Check which model answered, on every call
 
-An agent profile is the configuration for one kind of agent.
-It can include the model, tools, permissions, budget, retry rules, and other policies that shape a run.
-The [Tangle terminology guide](https://docs.tangle.tools/vision/core-concepts) defines an agent profile as a configuration of models, tools, budgets, and policies.
+OpenRouter names the served model in the body ([model fallbacks](https://openrouter.ai/docs/guides/routing/model-fallbacks)); a LiteLLM proxy names the serving deployment in a header ([reliability](https://docs.litellm.ai/docs/proxy/reliability)). Tangle Router uses headers on non-streaming chat responses:
 
-A router should therefore sit between the profile and the provider.
-The profile can say “use a model that supports tool calls and stays below this per-task budget.”
-The router can translate that requirement into a current model and provider route.
-The task code can keep its normal request shape.
-The [AI agent sandbox](/blog/ai-agent-sandbox) article follows the same model-call boundary inside a longer tool workflow.
-
-That separation only helps if the router exposes the information needed to make the choice.
-A single opaque endpoint hides the dependency rather than removing it.
-
-## What OpenAI compatibility means
-
-OpenAI compatibility usually means that a service accepts the same broad request and response shape as the OpenAI Chat Completions API.
-The [OpenAI API reference](https://developers.openai.com/api/reference/resources/chat) documents the canonical chat-completion objects, message roles, tool definitions, finish reasons, and usage fields.
-An OpenAI-compatible gateway can preserve those shapes while changing the backend that fulfills the request.
-
-Compatibility is a contract shape, not a guarantee of equal behavior.
-A provider may support tools but not the same tool schema.
-A model may have a different context limit, tokenizer, refusal pattern, image capability, or structured-output behavior.
-The gateway may also add headers or request fields that the original provider never sees.
-
-Tangle’s public API reference documents a `POST https://router.tangle.tools/v1/chat/completions` route with standard parameters such as `tools`, `tool_choice`, and `response_format`.
-It also documents gateway-specific routing options and headers in the same request contract.
-Read the [Tangle request reference](https://docs.tangle.tools/gateway/api-chat) beside the [OpenAI reference](https://developers.openai.com/api/reference/resources/chat) before assuming a feature is portable.
-
-The smallest public integration is one HTTP request:
-
-```typescript
-const response = await fetch('https://router.tangle.tools/v1/chat/completions', {
-  method: 'POST',
-  headers: {
-    Authorization: `Bearer ${process.env.TANGLE_API_KEY}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    model: 'glm-5.3',
-    messages: [{ role: 'user', content: 'List the risks in this deployment plan.' }],
-  }),
-})
-
-const { choices } = await response.json()
-console.log(choices[0]?.message.content)
+```text
+POST /v1/chat/completions  {"model": "openai/gpt-4o-mini", ...}
+200
+x-tangle-requested-model: openai/gpt-4o-mini
+x-tangle-served-model: openai/gpt-4o-mini
+x-tangle-refused-substitutes: google/gemini-2.5-flash-lite
 ```
 
-This example uses the public base URL and model format shown in [Tangle Router’s live quickstart](https://router.tangle.tools/).
-It prints the reply text.
-The model name is a current example, not a promise that it will remain available.
-Production code should discover a routeable model and check its supported features before it sends an agent task.
+Its ranked substitute for an OpenAI model came from another vendor. Nothing fails when the two differ, so reject answers you did not plan for:
 
-## A model that uses a sandbox as its tools
-
-A routed model can only answer with text unless the caller runs its tool calls.
-The example below gives the model the sandbox's exec, read, write, search and run-code tools through `openaiTools(box)`, and `handleAssistantMessage` returns each tool result for the next request.
-The loop ends when the model replies without a tool call, or after 40 steps.
-
-<Example path="products/worker-loop" />
-
-The example shows a routed model driving a real sandbox end to end.
-It does not show that the model's change is correct; the task's own checks still have to decide that.
-
-## Discover before you choose
-
-A model catalog is the first useful router surface.
-It lets an agent or deployment tool ask what exists now instead of assuming that yesterday’s model list still applies.
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer $TANGLE_API_KEY" \
-  "https://router.tangle.tools/v1/models/user?availability=available"
+```js
+// A sketch, not a file we ran.
+const { data, response } = await openai.chat.completions.create({ model, messages }).withResponse()
+const served = response.headers.get('x-tangle-served-model') ?? data.model
+// Allow the dated snapshot ids you expect, such as OpenAI's gpt-4o-mini-2024-07-18.
+if (served !== model) throw new Error(`asked for ${model}, ${served} answered`)
 ```
 
-The key-scoped catalog at `/v1/models/user?availability=available` lists the models your key can call now. Each entry carries a top-level `routeable` boolean, an `availability.status`, and `pricing.prompt` and `pricing.completion` in US dollars per token; filter for `routeable === true` before choosing a model.
-The catalog also exposes provider and model metadata through the Router’s public models page.
-Treat the catalog as a discovery input, not as an evaluation result.
+A stream sends headers before the router knows which model will finish it; the streams we recorded carried no served-model header. Read the model from the last chunk, the one with usage, never the first.
 
-A small discovery step can keep an agent from selecting a model that is listed but not currently routeable:
+## Make substitution an error you can see
 
-```typescript
-type CatalogModel = {
-  id: string
-  routeable?: boolean
-  availability: { status: string }
-}
+OpenRouter, Portkey, LiteLLM and Tangle Router all accept your own fallback list and return its answer as a success. On Tangle Router that list is the `models` field, tried in order. Router-picked substitutes, which caused our August incident, are off on Tangle Router unless you turn them on. Require-model refuses every model the router picks on its own.
 
-const catalogResponse = await fetch(
-  'https://router.tangle.tools/v1/models/user?availability=available',
-  {
-    headers: {
-      Authorization: 'Bearer ' + process.env.TANGLE_API_KEY,
-    },
-  },
-)
-
-if (!catalogResponse.ok) {
-  throw new Error('Model discovery failed with ' + catalogResponse.status)
-}
-
-const catalog = await catalogResponse.json() as { data: CatalogModel[] }
-const candidates = catalog.data.filter(
-  (model) => model.routeable === true && model.availability.status === 'available',
-)
-
-if (candidates.length === 0) {
-  throw new Error('No routeable model matched the profile')
-}
-
-console.log(candidates.map((model) => model.id))
-```
-
-This is an illustrative caller-side filter.
-The exact catalog fields and supported parameters belong to the live API contract.
-An agent should also check whether a candidate supports the features its task needs, such as tools or structured output.
-
-Discovery is especially important for long-running workers.
-A worker that retries a stale model ID can burn its budget while never reaching a model.
-A worker that silently changes model families can complete the task with different behavior.
-The profile should record whether a change is allowed and which alternatives are acceptable.
-
-## A router is a policy boundary
-
-Routing is more than “try another provider.”
-It decides which provider may see the request, which models may be selected, how much the call may cost, and whether a failed request can be repeated safely.
-
-The policy should be explicit:
-
-| Decision | Example policy | Failure if it is missing |
-| --- | --- | --- |
-| Capability | Require tool calls and JSON output | The agent receives text where code expects a schema |
-| Data handling | Allow only providers with the required retention policy | Sensitive prompts reach an unapproved route |
-| Budget | Cap one task at $0.20 | A retry loop spends without a hard stop |
-| Reliability | Retry one transient route error | A provider outage becomes a user-visible failure |
-| Semantics | Never downgrade a legal review task | A cheap fallback produces an answer the workflow cannot accept |
-| Attribution | Attach task and profile identifiers | Usage cannot be tied back to a customer or run |
-
-Tangle Router’s request reference documents routing headers for selecting automatic routing, an operator path, a Blueprint, a service, or a specific operator.
-Those controls are useful when the caller knows which deployment or policy it needs.
-They are not a substitute for checking the response and recording the route.
-
-In Tangle terminology, an operator is an independent infrastructure provider that runs a Tangle Blueprint.
-A Blueprint is a reusable service definition that specifies the software, jobs, inputs, outputs, and execution requirements.
-A service instance is one live deployment of that Blueprint.
-The [Blueprint introduction](https://docs.tangle.tools/developers/blueprints/introduction) explains those boundaries and the difference between a template and a running service.
-
-This matters when a router sends an agent call to a Blueprint-backed model service.
-The model string identifies a capability.
-The operator and service instance identify where and under which deployment policy the capability was served.
-
-A router can rank routes using price, latency, availability, or a provider policy.
-It still needs a rule for what to do when the lowest-cost route lacks a required feature.
-“Cheapest” is not a complete agent policy.
-
-## Make the route decision explicit
-
-A catalog response and a fallback header do not define a safe route by themselves.
-The application still needs a small decision record before it sends a request.
-
-```typescript
-const routeDecision = {
-  profile: 'support-triage-v3',
-  requiredFeatures: ['tool-calls', 'structured-output'],
-  allowedProviders: ['approved-provider-a', 'approved-provider-b'],
-  maxCostUsd: 0.2,
-  allowModelFamilyChange: false,
-}
-```
-
-First filter the live catalog for routeability and the features in `requiredFeatures`.
-Then remove providers that the profile does not allow.
-Rank what remains by the policy’s priority, such as availability first and price second.
-If no candidate satisfies the feature or provider rules, return a policy failure instead of silently choosing the nearest model.
-
-After the call, compare the requested policy with the served model and route.
-If the served model changed families while `allowModelFamilyChange` was false, mark the task as a routing violation even if the HTTP request succeeded.
-If the request failed after the provider accepted it, keep the route decision and transport state together so a retry can query the original job or charge record before sending work again.
-
-This record is the caller’s explanation for why a route was allowed, not a Router response schema.
-Keeping it beside the evaluation result makes a later cost or quality regression attributable to a policy change rather than to an unexplained model swap.
-
-Consider a support profile that requires tool calls, accepts two providers, and allows a model-family change only for a low-risk summarization step.
-The catalog returns one routeable model with tool support from the preferred provider and one cheaper model without tool support.
-The first model is the only valid candidate for the tool call.
-The cheaper model is not an acceptable fallback when it lacks the required tool support.
-
-If the preferred provider returns a transport error before accepting the request, the router may try the second approved candidate when its capabilities match.
-If the provider accepts the request and the client loses the response, the runtime should query the generation or job record before sending a second tool call.
-If the model returns valid JSON with the wrong business decision, the failure belongs to evaluation, not route availability.
-
-## Keep the route visible
-
-A trace is a structured record of a run’s important events.
-For a routed model call, that may include the selected model, route, timing, usage, and error state.
-Tangle’s docs expose [generation lookup](https://docs.tangle.tools/gateway/api-generation) and a [routing-trace view](https://docs.tangle.tools/gateway/routing-trace) so a team can inspect the path after a request.
-
-Do not log only the final answer.
-For an agent task, retain enough information to answer these questions:
-
-| Question | Useful record |
-| --- | --- |
-| Which profile ran? | Profile name and version |
-| Which model answered? | Requested and served model IDs |
-| Which route handled it? | Provider, operator, Blueprint, or service when available |
-| What did it cost? | Prompt tokens, output tokens, and billed amount |
-| Did the request change shape? | Tool, structured-output, streaming, and fallback flags |
-| Why did the run stop? | Finish reason, timeout, refusal, or policy rejection |
-
-A route trace does not prove the answer is correct.
-It proves that the team can investigate the path that produced the answer.
-
-## The evaluation that catches a bad fallback
-
-The [Tangle evaluation terminology](https://docs.tangle.tools/vision/core-concepts) is the reference for the term.
-A single successful completion is a smoke check.
-An evaluation runs a repeatable task set and records whether the workflow met its expected conditions.
-
-Use an evaluation to test the router and the model:
-
-| Task | Expected check | Failure worth surfacing |
-| --- | --- | --- |
-| Extract a purchase order | Valid JSON with all required keys | Fallback loses structured output |
-| Call a repository tool | Tool call validates against its schema | Provider accepts text but ignores the tool |
-| Summarize a policy | Required clauses appear | A cheaper model omits a safety condition |
-| Recover from a timeout | One retry, one charge, one trace | Retry duplicates work or hides the first failure |
-
-Run the same task set with the direct provider and the router.
-Keep the agent profile fixed except for the route.
-Compare success, tool-call validity, cost, latency, and failure category.
-If the router changes the model family, label that as a deliberate comparison rather than calling it a transparent substitution.
-
-A useful candidate record is small:
-
-```json
+```js
+// Request fields, not a file we ran.
 {
-  "profile": "support-triage-v3",
-  "requestedModel": "auto",
-  "servedModel": "glm-5.3",
-  "route": "operator-or-provider-record",
-  "toolCalls": 2,
-  "validOutput": true,
-  "costUsd": 0.07,
-  "failure": null
+  model: 'openai/gpt-4o-mini',
+  require_model: true,           // or the x-tangle-require-model header
+  // no `models` list when exactly one model may answer: require_model still tries your own fallbacks
+  provider: {
+    allow_fallbacks: false,      // the default: no router-picked substitutes
+    ignore: ['openrouter'],      // no same-model hop through OpenRouter
+    require_parameters: true,    // refuse a field the model cannot take
+  },
 }
 ```
 
-The field names above are an application record, not a Tangle response schema.
+OpenRouter falls back between providers of one model by default, the easiest swap to miss ([provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)). Its own measurements found tool-call accuracy varies by provider.[^exacto]
 
-## Where routers fail
+Tangle Router does too, for some maker-named models, Anthropic's among them. When the direct provider fails on its side, the request goes once to OpenRouter, pinned to the maker's endpoint. Substitution switches do not stop that hop; ignoring OpenRouter, a price ceiling, data residency or your own provider key does.
 
-A router can introduce failure modes that a direct provider call does not have.
+A fallback we asked for, on a stream:
 
-A fallback can change semantics.
-A model that completes a task with free-form text may be a poor fallback for a tool-driven workflow.
-A provider can return an error after the request has already been accepted, leaving the caller unsure whether repeating it will duplicate side effects.
-A provider policy can reject a prompt that another provider would accept.
-A catalog can be briefly out of date.
-A route can be healthy while the model itself is overloaded.
+```text
+{"model": "google/gemini-2.5-flash", "models": ["openai/gpt-4o-mini"], "stream": true,
+ "provider": {"first_token_timeout": 1000}, ...}
 
-The safe response is not to retry everything.
-Classify the failure as discovery, authentication, capability mismatch, provider availability, transport uncertainty, or task-quality failure.
-Discovery, capability mismatch, and provider availability may be candidates for an automatic route change.
-Authentication failure usually needs credential or policy repair, transport uncertainty needs a query before another request, and a task-quality failure needs evaluation evidence before a new model is promoted.
+1,196 ms  headers and first event   {"model": "google/gemini-2.5-flash", "delta": {"role": "assistant"}}
+1,783 ms  next event                {"model": "openai/gpt-4o-mini", ...}
+1,816 ms  "46", then usage          every chunk "openai/gpt-4o-mini"
+```
 
-A router also has a privacy boundary.
-Changing providers changes who processes the prompt.
-A profile that permits automatic routing should state which data may cross that boundary.
-For sensitive work, use provider filters, a bring-your-own-key policy, or a protected execution path when the current product supports it.
-Do not describe a route as private merely because the client uses one API key.
+Gemini had not produced a token by the deadline, so `gpt-4o-mini` answered, yet the empty opening event names Gemini.
 
-## When not to add a router
+## Fields you send can vanish in translation
 
-A direct provider client is often the better design when:
+Each field you send is honored, refused or silently dropped, and only the last hurts. Tangle Router sends only a maker's own models natively: OpenAI models on Responses, unless the request requires zero data retention, and Anthropic models on Messages. Everything else is translated through chat completions, and the [API reference](https://router.tangle.tools/openapi.json) lists what survives. A translated Responses request drops reasoning effort, metadata, storage and truncation. Chat completions accepts unlisted fields without forwarding them.
 
-- one model is required by the product contract;
-- one provider account already supplies the needed availability;
-- the task has no fallback that preserves semantics;
-- the team does not need provider-level attribution;
-- the extra network hop would dominate a short request;
-- the provider’s native API is required for a feature the compatibility layer does not expose.
+If a dropped field would change your result, turn on require-parameters: it refuses a field the model does not support before any provider call. A parameter missing from the catalog entry is unknown, not unsupported.
 
-A router becomes useful when the cost of changing providers inside every agent is higher than the cost of operating the routing policy in one place.
+## Fail over only on errors that are safe to repeat
 
+A fallback is a retry on another model, safe for an agent only after a transient failure on a call that has returned no output and run no tool. A wrong key, empty budget, refusal or malformed request fails the same way on the next model, or succeeds there and hides the bug. Routers differ most here:
 
-## What is an OpenAI-compatible router for agents?
+| Router | Fails over on |
+|---|---|
+| [OpenRouter](https://openrouter.ai/docs/guides/routing/model-fallbacks) | Any error by default, context-length validation and moderation flags included |
+| [Portkey](https://portkey.ai/docs/product/ai-gateway/fallbacks) | Any non-2xx status unless you list codes |
+| [LiteLLM proxy](https://docs.litellm.ai/docs/proxy/reliability) | Error class, with separate context-window and content-policy lists |
+| Tangle Router | Connection, server and rate-limit errors, its own provider account failing, silent streams at the first-token deadline |
 
-It is an API layer that keeps a familiar OpenAI-style request and response shape while selecting among models, providers, or service policies for agent calls.
+Tangle Router does not fail over on errors your request caused or with your own provider key (check 4 below). A stream switches models only before any text reaches you; after that, failures arrive as error events. The API reference does not list these classes yet; that gap is ours, so test the ones your agent depends on.
 
-## Does OpenAI compatibility mean every model behaves the same?
+## Let exactly one layer retry
 
-No.
-It describes the transport and object shape.
-Tool support, context limits, latency, refusals, structured output, and cost can still differ.
+The OpenAI Node SDK retries connection errors, timeouts, conflicts, rate limits and server errors twice by default ([openai-node](https://github.com/openai/openai-node#retries)).
 
-## Why should an agent call `/v1/models`?
+<Figure n={1} figure={retries} kicker="Worked arithmetic · OpenAI Node SDK defaults" headline="One failing step reaches the router nine times when the agent and the SDK both retry twice" />
 
-The model catalog lets the agent discover current IDs and routeability before it hard-codes a choice.
-The caller should still check the candidate’s supported features.
+Let one layer own retries, with a deadline and a budget, and turn the others off. Honor the router's retry-after time or back off with jitter. Accept one result per step, and drop a late answer to an attempt you already gave up on. When Tangle Router knows before dispatch that no route can answer, it sends a retry-after time and tells the OpenAI SDK not to retry ([client source](https://github.com/openai/openai-node/blob/master/src/client.ts)).
 
-## What does a Tangle operator do?
+A provider switch carries no session state, and the router cannot know which tools ran. Reconcile executed tools before retrying a step with side effects.
 
-An operator runs a Tangle Blueprint service and supplies the infrastructure that handles jobs.
-The Router can use operator and service information when the request selects that path.
+## Cap a key before a leak or a loop spends it
 
-## What should I record for a routed agent call?
+Tangle Router spends prepaid credit only, with no subscription required and no free credit. A key from the [setup skill](https://router.tangle.tools/agent-setup.md) has a lifetime cap of $1 to $1,000 across every product it may use; the [account manifest](https://id.tangle.tools/.well-known/tangle-agent.json) sets the default. One revocation under [Keys](https://id.tangle.tools/app/keys) stops it everywhere. Keys made there can add a monthly budget, a per-minute request limit, an expiry and a model allow-list, which also drops fallbacks outside it.
 
-Record the agent profile, requested and served model, route or provider when available, usage, cost, latency, fallback state, and task result.
-A trace makes the failure inspectable; it does not certify answer quality.
+A per-request price ceiling, in dollars per million tokens, refuses routes above it, as on OpenRouter (check 5 below). The ceiling is compared with the provider's list price, while the response reports a billable rate that includes our markup.[^ceiling]
 
-## The decision
+<Figure n={2} figure={ceiling} kicker="Tangle Router · openai/gpt-4o-mini" headline="A $0.155 ceiling passed a request whose reported input rate was $0.15825" />
 
-Start by listing the freedoms your agent requires.
-If it needs one fixed model, a direct client is simpler.
-If it needs discovery, controlled fallbacks, provider policy, and route-level records, test an OpenAI-compatible router against the direct path on a fixed evaluation set.
-Keep the route visible in the trace and reject fallback behavior that changes the task contract.
-Once a route is chosen, [x402 payments for AI agents](/blog/x402-payments-for-ai-agents) covers the request-level authorization and settlement boundary.
+Which price the ceiling should bound is an open question we have put to the router's maintainers. Until it is answered, set ceilings with the markup in mind.
+
+## Read the cost from the response
+
+Tangle Router bills per token: the [model catalog](https://router.tangle.tools/models)'s list price times a platform markup, 1.055 when we tested. Non-streaming chat responses carry the rates and cost in headers. Our recorded streams carried usage in the last chunk but no price headers; multiply usage by catalog price and markup. OpenRouter bills inference at list price and takes its fee, 5.5% on its Standard plan, when you buy credits ([pricing](https://openrouter.ai/pricing)). Self-hosted LiteLLM has no per-token fee, only the machine and its upkeep.
+
+## Decide who else reads the prompt
+
+Tangle Router is hosted only; there is no on-premises version. Standard requests go to managed providers, and an independent operator's route only when you select one ([router home](https://router.tangle.tools/)). The OpenRouter hop is the exception: when taken, a second router reads the request. We have not yet seen a response take that route; the router's source marks it with a reroute header the docs do not list.[^anthropic]
+
+If you require zero-data-retention providers and none qualifies, the request fails rather than going to one that keeps data. The OpenRouter hop passes the requirement on.
+
+Every router, ours included, has one limit: its served-model header is its own word. An audit found that checking outputs cannot reliably prove which model ran ([Cai et al.](https://arxiv.org/abs/2504.04715)). Our header catches an honest mistake like ours in August, not a dishonest router.
+
+## Run the same requests against any router
+
+Run it against your current router and your candidate; lines that differ are questions for the vendor.
+
+```js
+// check-router.mjs: what does an OpenAI-compatible router do behind the model name?
+// Node 18+, no dependencies. Five small requests, max_tokens 16 each.
+// BASE_URL=https://router.tangle.tools/v1 API_KEY=... (or API_KEY_FILE=path) MODEL=openai/gpt-4o-mini OTHER=google/gemini-2.5-flash node check-router.mjs
+import { readFileSync } from "node:fs";
+const { BASE_URL, MODEL, OTHER } = process.env;
+const API_KEY = process.env.API_KEY ?? readFileSync(process.env.API_KEY_FILE, "utf8").trim();
+const ask = { max_tokens: 16, messages: [{ role: "user", content: "Reply with one word: ok" }] };
+
+async function send(body) {
+  const res = await fetch(`${BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ ...ask, ...body }),
+  });
+  const text = await res.text();
+  let json = {};
+  try { json = JSON.parse(text); } catch {}
+  // Header names differ per router; print every one that names a model, a price or a cost.
+  const said = [...res.headers].filter(([k]) => /model|price|cost/i.test(k)).map(([k, v]) => `${k}=${v}`);
+  return { status: res.status, json, text, said };
+}
+
+// 1. Which model answered, and what did it cost?
+let r = await send({ model: MODEL });
+console.log(`1 asked ${MODEL}: ${r.status}, body.model=${r.json.model}, usage=${JSON.stringify(r.json.usage && { in: r.json.usage.prompt_tokens, out: r.json.usage.completion_tokens })}`);
+console.log(`  headers: ${r.said.join(" ") || "none"}`);
+
+// 2. On a stream, does the first chunk name the same model as the last, and does usage arrive?
+r = await send({ model: MODEL, stream: true, stream_options: { include_usage: true } });
+const chunks = r.text.split("\n").filter((l) => l.startsWith("data: {")).map((l) => JSON.parse(l.slice(6)));
+console.log(`2 stream: ${r.status}, first chunk model=${chunks[0]?.model}, last=${chunks.at(-1)?.model}, usage in last chunk=${Boolean(chunks.at(-1)?.usage)}`);
+
+// 3. A field the second model may not support: refused, or dropped without a word?
+r = await send({ model: OTHER, logprobs: true });
+console.log(`3 logprobs on ${OTHER}: ${r.status}, ${r.json.error ? "error: " + String(r.json.error.message).slice(0, 90) : "answered; logprobs returned=" + Boolean(r.json.choices?.[0]?.logprobs)}`);
+
+// 4. A request error with a fallback listed: does the fallback answer it?
+r = await send({ model: MODEL, models: [OTHER], temperature: 5 });
+console.log(`4 temperature 5, fallback ${OTHER} listed: ${r.status}, body.model=${r.json.model ?? "-"}, ${r.json.error ? "error: " + r.json.error.message : "answered"}`);
+
+// 5. A price ceiling below the model's price: refused, or ignored?
+r = await send({ model: MODEL, provider: { max_price: { prompt: 0.01, completion: 0.01 } } });
+console.log(`5 max_price $0.01/M: ${r.status}, ${r.json.error ? "error: " + r.json.error.message : "answered by " + r.json.model + " (ceiling ignored)"}`);
+```
+
+Against Tangle Router:
+
+```text
+1 asked openai/gpt-4o-mini: 200, body.model=openai/gpt-4o-mini, usage={"in":13,"out":1}
+  headers: x-tangle-cost-usd=0.00000269 x-tangle-price-input=1.5824999999999998e-7 x-tangle-price-output=6.329999999999999e-7 x-tangle-requested-model=openai/gpt-4o-mini x-tangle-response-model=openai/gpt-4o-mini x-tangle-served-model=openai/gpt-4o-mini
+2 stream: 200, first chunk model=openai/gpt-4o-mini, last=openai/gpt-4o-mini, usage in last chunk=true
+3 logprobs on google/gemini-2.5-flash: 400, error: Invalid JSON payload received. Unknown name "logprobs": Cannot find field.
+4 temperature 5, fallback google/gemini-2.5-flash listed: 400, body.model=-, error: temperature must be 0-2
+5 max_price $0.01/M: 400, error: Provider "openai" model "openai/gpt-4o-mini" prompt price $0.15/M exceeds provider.max_price.prompt $0.01/M.
+```
+
+## Which router fits your agent
+
+If nobody else may sit between your agent and the provider, host LiteLLM; ours is hosted only. Prompts still reach the providers, and the proxy holds every provider key in one process, which has had its own security advisories ([Crosley's list](https://blakecrosley.com/blog/your-agent-has-a-middleman)). For the widest catalog and provider choice, use OpenRouter, with Exacto endpoints when tool-call accuracy matters more than price. For governance across many teams, look at [Portkey](https://portkey.ai/alternatives/openrouter-alternatives).
+
+We think Tangle Router fits an agent that should fail loudly: on chat responses it names what served, what it cost and what it refused, with substitution off by default. One capped key also runs Tangle sandboxes.
+
+## Switching an agent to Tangle Router
+
+An agent can request a key through the setup skill and hand the account owner a link to approve it once. That one key works on chat completions, Responses and Messages, for every product the owner approved.
+
+```js
+// Not run as written: our probes sent the raw requests shown below it.
+import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
+
+// One retry layer: yours. The SDK's own retries are off.
+const openai = new OpenAI({ baseURL: 'https://router.tangle.tools/v1', apiKey: process.env.TANGLE_API_KEY, maxRetries: 0 })
+// authToken, not apiKey: the router reads the key only as a Bearer token today
+const anthropic = new Anthropic({ baseURL: 'https://router.tangle.tools', authToken: process.env.TANGLE_API_KEY })
+```
+
+```text
+POST /v1/messages  x-api-key: sk-tan-...            -> 401 invalid_credentials
+POST /v1/messages  Authorization: Bearer sk-tan-... -> 200
+```
+
+Our home page still shows the Anthropic example with the wrong option; the fix is filed. The key-scoped catalog lists the models your key can use now; keep those marked routeable with an available status. The health endpoint shows the platform's circuit breaker.
+
+```text
+GET https://router.tangle.tools/v1/models/user?availability=available
+GET https://router.tangle.tools/api/health
+```
+
+Start with one self-contained, read-only step, then widen what the agent does.
+
+[^ceiling]: A chat completion for `openai/gpt-4o-mini` with `provider.max_price` of 0.155 prompt and 0.62 completion (dollars per million tokens) answered 200, and its `x-tangle-price-input` header reported 1.5825e-7 per token ($0.15825/M). We compared response headers, not a ledger debit, so this is not an observed charge above the ceiling.
+
+[^exacto]: OpenRouter's measurements found tool-call accuracy varied "between providers significantly more than the standard benchmarking would suggest" ([Exacto](https://openrouter.ai/blog/announcements/provider-variance-introducing-exacto/)).
+
+[^anthropic]: We tested one Anthropic model, `claude-haiku-4-5`. Three requests for it were refused with 503. The others named it only to test a field, a key header or a fallback, and were refused with 400 or 401.
+
+## How we tested
+
+Every live request in this post ran on 17 November 2026 between 20:04 and 20:20 UTC, against the Tangle Router release in production that day, with one key and no top-up. We made 29 HTTP requests: 24 probes and the five in the script above. Every request capped output at 64 tokens or fewer. Three models were in scope: `openai/gpt-4o-mini`, `google/gemini-2.5-flash` and `anthropic/claude-haiku-4-5`.
+
+- **Served model.** Successful non-streaming chat responses carried `x-tangle-requested-model` and `x-tangle-served-model`, and `x-tangle-refused-substitutes` unless a price ceiling had turned substitutes off. The four streams we recorded carried no served-model or price header. A `/v1/responses` request for `gpt-4o-mini` went to OpenAI natively and returned OpenAI's dated id `gpt-4o-mini-2024-07-18` with none of the router's `x-tangle-` headers.
+- **The fallback hop.** The timed stream above (20:10 UTC) took 2,019 ms end to end under one `x-generation-id` header; the chunk ids change just after `gpt-4o-mini` takes over. Two earlier runs of the same request, with and without `require_model: true`, produced the same chunk sequence but took 44,230 ms and 34,107 ms; we cannot see the cause from outside, so the post does not use them. The trigger (the first-token deadline rather than another failover class) is inferred from timing, not reported by the router. The `require_model` run was answered by `gpt-4o-mini` because it was on our own `models` list.
+- **Fields.** `provider.require_parameters: true` refuses an unsupported parameter with 400 `unsupported_parameters` before any provider call. A translated Responses request with `previous_response_id` returns 400 `previous_response_not_supported`, as the API reference says. A chat request to `gemini-2.5-flash` with `logprobs: true` returned Google's own 400, passed through. Responses to `gemini-2.5-flash` with `reasoning: { effort: "high" }` answered 200; that the field was dropped comes from the API reference, and the receipt cannot show whether effort was applied. A forced `get_weather` tool call to `gpt-4o-mini` returned `get_weather({"city":"Paris"})`. Tool-call errors such as `model_requires_responses_for_tools` come from the API reference.
+- **Failover classes.** From the router's source at the tested release: failover on connection failure, 5xx, 429, upstream 402 or quota exhaustion, upstream 401/403/412 (the router's own credential) and a suspended upstream account; for streams also `first_token_timeout` and `empty_completion`, decided before any text is forwarded. No failover on other 4xx (an error the request caused), 404 (a model it cannot find), a refusal, or bring-your-own-key requests. Your own key's 401, your key's rate limit and your account's 402 are answered before any model is tried. Script check 4 sent `temperature: 5` with `gemini-2.5-flash` as the listed fallback; the router returned 400 "temperature must be 0-2" and no answer from Gemini. A separate probe with the same error and `claude-haiku-4-5` as the fallback returned 400 with no generation id.
+- **Retry header.** When every route for a model is refused before dispatch, the router answers 503 with `Retry-After` and `x-should-retry: false`; the OpenAI Node SDK reads `x-should-retry` and does not retry.
+- **Same-model hop to OpenRouter.** From source: the native Messages and Responses routes send a request once to OpenRouter for the same model, pinned to the maker's endpoint, when the direct provider fails on its side: it is out of quota, refuses the router's credential, is rate limited, is down or drops the connection. It is skipped for client errors, a caller's own key, a Responses request with `previous_response_id` or `conversation`, a stream that already produced output, a lane the team's compliance settings or guardrail policies exclude, `provider.ignore` or `only` excluding OpenRouter, `max_price` and data residency. A zero-data-retention requirement is passed to OpenRouter as `zdr: true`.
+- **Zero data retention.** `provider.zdr: true` on `gpt-4o-mini` returned 400 `no_zdr_providers`: no provider for that model qualified, so the request failed.
+- **Spend.** `max_price {prompt: 0.01, completion: 0.01}` returned 400 `max_price_exceeded`, quoting the list price $0.15/M. A request for a model outside the key's allow-list is refused with 400 `model_not_allowed`. The lifetime cap is `budget_usd`, 1 to 1,000; two public manifests disagree on its default, so we link the account manifest and state none.
+- **Cost.** `pricing_policy.markup` was 1.055 in `GET /v1/models/user`. Script check 1 reported `x-tangle-cost-usd` 0.00000269 for 13 input and 1 output token, which is 13 × 1.5825e-7 + 1 × 6.33e-7 = 2.69025e-6, rounded. Headers we saw summed to $0.000114680 across the run; six streaming or Responses passthrough calls carried no cost header.
+- **Anthropic.** We tested one Anthropic model, `claude-haiku-4-5`. Three requests (chat, logprobs and tools) were each refused with 503; the two 400s for unsupported parameters and `previous_response_id` under Fields were also requests for it.
+- **Anthropic SDK.** `/v1/messages` with `x-api-key` answered 401 `invalid_credentials` twice; with `Authorization: Bearer` it answered 200, served by `gpt-4o-mini` in Anthropic's response shape.
+- **The August incident.** Recorded in the router's source beside the substitution check: a `gpt-5.5` request returned 200 with `body.model` `gemini-2.5-flash` because an OpenAI project had hit its enforced spend limit; a catalog check and a status check both read clean. The fix made router-picked substitution require `provider.allow_fallbacks: true`. How long the swap lasted is not recorded.
+- **Other routers.** OpenRouter, LiteLLM, Portkey and OpenAI SDK behavior is quoted from their public documentation and pricing pages as fetched on 17 November 2026; we did not send them requests.
+
+<FigureNotes figures={routerFigures} />
