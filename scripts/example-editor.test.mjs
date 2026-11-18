@@ -42,6 +42,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     ...(engine === chromium ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}),
     ...(name === 'phone' ? { recordVideo: { dir: `${out}/video`, size: { width, height } } } : {}) });
   await context.route('**/*', route => ['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort());
+  // The live demo beside the editor asks id.tangle.tools whether sessions are open as soon as it is on screen. Answer
+  // "closed" here, so this editor check never waits on that service or loads Turnstile: WebKit reports a status fetch
+  // that the next navigation cancels, and Turnstile's frame access, as page errors.
+  await context.route('https://id.tangle.tools/v1/live-demo', route => route.fulfill({ json: { state: 'closed' }, headers: { 'access-control-allow-origin': '*' } }));
   const page = await context.newPage(), errors = [], requestFailures = [], item = { name, width, height, errors, requestFailures, errorDetails: [] };
   report.cases.push(item);
   page.on('pageerror', error => { errors.push(String(error)); item.errorDetails.push({ message: String(error), stack: error.stack, at: Date.now() }); });
