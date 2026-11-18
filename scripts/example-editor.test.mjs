@@ -169,7 +169,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
           (origin === 'https://www.googletagmanager.com' && pathname === '/gtag/js') ||
           (origin === 'https://static.cloudflareinsights.com' && /^\/beacon\.min\.js(?:\/|$)/.test(pathname));
       };
-      return error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(knownTelemetry);
+      // WebKit reports any failed cross-origin fetch as a page error, even one the page handles: on a local preview
+      // the live-demo status read can fail, and LiveDemo then shows the demo as closed.
+      const previewDemoStatus = /^Fetch API cannot load https:\/\/id\.tangle\.tools\/v1\/live-demo due to access control checks\.$/.test(error.stack?.split('\n')[0] ?? '') && new URL(base).hostname === '127.0.0.1';
+      return previewDemoStatus || (error.message === 'Cross-origin script load denied by Cross-Origin Resource Sharing policy.' && failedScripts.length > 0 && failedScripts.every(knownTelemetry));
     };
     item.optionalTelemetryErrors = item.errorDetails.filter(optionalTelemetry);
     item.appErrors = item.errorDetails.filter(error => !optionalTelemetry(error));
