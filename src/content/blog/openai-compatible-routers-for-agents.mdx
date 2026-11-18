@@ -56,7 +56,7 @@ const served = response.headers.get('x-tangle-served-model') ?? data.model
 if (served !== model) throw new Error(`asked for ${model}, ${served} answered`)
 ```
 
-A stream sends headers before the router knows which model will finish it; the streams we recorded carried no served-model header. Read the model from the last chunk, the one with usage, never the first.
+On a stream, the first data event names the model that answers, and so does every chunk after it; read the model from any of them. A stream carries no served-model header, because it sends headers before the router knows which model will finish it. Until the router's fix on 17 November, the first event could name the model you asked for instead; the example below shows both.
 
 ## Make substitution an error you can see
 
@@ -80,7 +80,7 @@ OpenRouter falls back between providers of one model by default, the easiest swa
 
 Tangle Router does too, for some maker-named models, Anthropic's among them. When the direct provider fails on its side, the request goes once to OpenRouter, pinned to the maker's endpoint. Substitution switches do not stop that hop; ignoring OpenRouter, a price ceiling, data residency or your own provider key does.
 
-A fallback we asked for, on a stream:
+A fallback we asked for, on a stream, before the fix (17 Nov, 20:10 UTC):
 
 ```text
 {"model": "google/gemini-2.5-flash", "models": ["openai/gpt-4o-mini"], "stream": true,
@@ -91,7 +91,16 @@ A fallback we asked for, on a stream:
 1,816 ms  "46", then usage          every chunk "openai/gpt-4o-mini"
 ```
 
-Gemini had not produced a token by the deadline, so `gpt-4o-mini` answered, yet the empty opening event names Gemini.
+Gemini had not produced a token by the deadline, so `gpt-4o-mini` answered, yet the empty opening event named Gemini. After the fix, with the 1,000 ms deadline, Gemini's thinking summary arrived in time, so Gemini answered and its first event named Gemini. With a 300 ms deadline (18 Nov, 00:13 UTC):
+
+```text
+{"model": "google/gemini-2.5-flash", "models": ["openai/gpt-4o-mini"], "stream": true,
+ "provider": {"first_token_timeout": 300}, ...}
+
+1,225 ms  headers, then ": committed"   an SSE comment, no data yet
+1,907 ms  first event                   {"model": "openai/gpt-4o-mini", "choices": []}
+2,002 ms  "46", then usage              every chunk "openai/gpt-4o-mini"; usage.cost 0.000003323
+```
 
 ## Fields you send can vanish in translation
 
@@ -126,15 +135,15 @@ A provider switch carries no session state, and the router cannot know which too
 
 Tangle Router spends prepaid credit only, with no subscription required and no free credit. A key from the [setup skill](https://router.tangle.tools/agent-setup.md) has a lifetime cap of $1 to $1,000 across every product it may use; the [account manifest](https://id.tangle.tools/.well-known/tangle-agent.json) sets the default. One revocation under [Keys](https://id.tangle.tools/app/keys) stops it everywhere. Keys made there can add a monthly budget, a per-minute request limit, an expiry and a model allow-list, which also drops fallbacks outside it.
 
-A per-request price ceiling, in dollars per million tokens, refuses routes above it, as on OpenRouter (check 5 below). The ceiling is compared with the provider's list price, while the response reports a billable rate that includes our markup.[^ceiling]
+A per-request price ceiling, in dollars per million tokens, refuses routes above it, as on OpenRouter (check 5 below). It bounds the rate you are billed: the list price times our markup, the rate the response's price headers report. Until the router's fix on 17 November it was compared with the list price, so a ceiling between the two let a request through at a higher rate.[^ceiling]
 
-<Figure n={2} figure={ceiling} kicker="Tangle Router · openai/gpt-4o-mini" headline="A $0.155 ceiling passed a request whose reported input rate was $0.15825" />
+<Figure n={2} figure={ceiling} kicker="Tangle Router · openai/gpt-4o-mini" headline="Before the fix, a $0.155 ceiling passed a $0.15825 input rate; after it, the same ceiling is refused" />
 
-Which price the ceiling should bound is an open question we have put to the router's maintainers. Until it is answered, set ceilings with the markup in mind.
+We asked the router's maintainers which price the ceiling should bound, and the answer is the billed rate. Set the ceiling to the most you will pay per million tokens.
 
 ## Read the cost from the response
 
-Tangle Router bills per token: the [model catalog](https://router.tangle.tools/models)'s list price times a platform markup, 1.055 when we tested. Non-streaming chat responses carry the rates and cost in headers. Our recorded streams carried usage in the last chunk but no price headers; multiply usage by catalog price and markup. OpenRouter bills inference at list price and takes its fee, 5.5% on its Standard plan, when you buy credits ([pricing](https://openrouter.ai/pricing)). Self-hosted LiteLLM has no per-token fee, only the machine and its upkeep.
+Tangle Router bills per token: the [model catalog](https://router.tangle.tools/models)'s list price times a platform markup, 1.055 when we tested. Non-streaming chat responses carry the rates and cost in headers. A stream carries its cost in the usage chunk, the last before `[DONE]`, as `usage.cost`, the field OpenRouter uses; it is left out when any part of the charge is estimated. The streams we recorded before the fix had usage but no cost. OpenRouter bills inference at list price and takes its fee, 5.5% on its Standard plan, when you buy credits ([pricing](https://openrouter.ai/pricing)). Self-hosted LiteLLM has no per-token fee, only the machine and its upkeep.
 
 ## Decide who else reads the prompt
 
@@ -194,7 +203,7 @@ r = await send({ model: MODEL, provider: { max_price: { prompt: 0.01, completion
 console.log(`5 max_price $0.01/M: ${r.status}, ${r.json.error ? "error: " + r.json.error.message : "answered by " + r.json.model + " (ceiling ignored)"}`);
 ```
 
-Against Tangle Router:
+Against Tangle Router on 17 November, before the fixes (check 5 now quotes the billed rate, $0.15825/M):
 
 ```text
 1 asked openai/gpt-4o-mini: 200, body.model=openai/gpt-4o-mini, usage={"in":13,"out":1}
@@ -222,16 +231,22 @@ import Anthropic from '@anthropic-ai/sdk'
 
 // One retry layer: yours. The SDK's own retries are off.
 const openai = new OpenAI({ baseURL: 'https://router.tangle.tools/v1', apiKey: process.env.TANGLE_API_KEY, maxRetries: 0 })
-// authToken, not apiKey: the router reads the key only as a Bearer token today
-const anthropic = new Anthropic({ baseURL: 'https://router.tangle.tools', authToken: process.env.TANGLE_API_KEY })
+// apiKey sends x-api-key, which the router checks exactly as it checks a Bearer token
+const anthropic = new Anthropic({ baseURL: 'https://router.tangle.tools', apiKey: process.env.TANGLE_API_KEY })
 ```
 
 ```text
-POST /v1/messages  x-api-key: sk-tan-...            -> 401 invalid_credentials
-POST /v1/messages  Authorization: Bearer sk-tan-... -> 200
+Before the fix (17 Nov, 20:04-20:20 UTC)
+POST /v1/messages  x-api-key: sk-tan-...                  -> 401 invalid_credentials
+POST /v1/messages  Authorization: Bearer sk-tan-...       -> 200
+
+After the fix (18 Nov, 00:08-00:28 UTC)
+POST /v1/messages  x-api-key: sk-tan-...                  -> 200 (Anthropic Python SDK, api_key=)
+POST /v1/messages  x-api-key and Bearer, different keys   -> 401 conflicting_credentials
+POST /v1/messages  x-api-key: a revoked key               -> 401 invalid_key, reason key_revoked
 ```
 
-Our home page still shows the Anthropic example with the wrong option; the fix is filed. The key-scoped catalog lists the models your key can use now; keep those marked routeable with an available status. The health endpoint shows the platform's circuit breaker.
+The key-scoped catalog lists the models your key can use now; keep those marked routeable with an available status. The health endpoint shows the platform's circuit breaker.
 
 ```text
 GET https://router.tangle.tools/v1/models/user?availability=available
@@ -240,7 +255,7 @@ GET https://router.tangle.tools/api/health
 
 Start with one self-contained, read-only step, then widen what the agent does.
 
-[^ceiling]: A chat completion for `openai/gpt-4o-mini` with `provider.max_price` of 0.155 prompt and 0.62 completion (dollars per million tokens) answered 200, and its `x-tangle-price-input` header reported 1.5825e-7 per token ($0.15825/M). We compared response headers, not a ledger debit, so this is not an observed charge above the ceiling.
+[^ceiling]: A chat completion for `openai/gpt-4o-mini` with `provider.max_price` of 0.155 prompt and 0.62 completion (dollars per million tokens) answered 200, and its `x-tangle-price-input` header reported 1.5825e-7 per token ($0.15825/M). We compared response headers, not a ledger debit, so this is not an observed charge above the ceiling. Figure 2's notes give the same request after the fix.
 
 [^exacto]: OpenRouter's measurements found tool-call accuracy varied "between providers significantly more than the standard benchmarking would suggest" ([Exacto](https://openrouter.ai/blog/announcements/provider-variance-introducing-exacto/)).
 
@@ -248,19 +263,19 @@ Start with one self-contained, read-only step, then widen what the agent does.
 
 ## How we tested
 
-Every live request in this post ran on 17 November 2026 between 20:04 and 20:20 UTC, against the Tangle Router release in production that day, with one key and no top-up. We made 29 HTTP requests: 24 probes and the five in the script above. Every request capped output at 64 tokens or fewer. Three models were in scope: `openai/gpt-4o-mini`, `google/gemini-2.5-flash` and `anthropic/claude-haiku-4-5`.
+The first round of live requests ran on 17 November 2026 between 20:04 and 20:20 UTC, against the Tangle Router release in production that day, with one key and no top-up: 29 HTTP requests, 24 probes and the five in the script above. After the router's fixes were served, we repeated the affected requests on 18 November between 00:08 and 01:04 UTC, against releases `61111287` and `022c7f68`, with two more keys; each of those results below names its generation id. Every request capped output at 64 tokens or fewer. Three models were in scope: `openai/gpt-4o-mini`, `google/gemini-2.5-flash` and `anthropic/claude-haiku-4-5`.
 
-- **Served model.** Successful non-streaming chat responses carried `x-tangle-requested-model` and `x-tangle-served-model`, and `x-tangle-refused-substitutes` unless a price ceiling had turned substitutes off. The four streams we recorded carried no served-model or price header. A `/v1/responses` request for `gpt-4o-mini` went to OpenAI natively and returned OpenAI's dated id `gpt-4o-mini-2024-07-18` with none of the router's `x-tangle-` headers.
+- **Served model.** Successful non-streaming chat responses carried `x-tangle-requested-model` and `x-tangle-served-model`, and `x-tangle-refused-substitutes` unless a price ceiling had turned substitutes off. The four streams we recorded carried no served-model or price header. After the fix, streams still carried no served-model header. The forced fallback above (`gen_01M7P004BN7M3F6003P75KBM0N`) named `gpt-4o-mini` in its first data event and in every chunk after it; with the 1,000 ms deadline, Gemini answered itself and its first event named Gemini (`gen_01M7NZPXPC8GFDXEPN09D9TRWR`). A `/v1/responses` request for `gpt-4o-mini` went to OpenAI natively and returned OpenAI's dated id `gpt-4o-mini-2024-07-18` with none of the router's `x-tangle-` headers.
 - **The fallback hop.** The timed stream above (20:10 UTC) took 2,019 ms end to end under one `x-generation-id` header; the chunk ids change just after `gpt-4o-mini` takes over. Two earlier runs of the same request, with and without `require_model: true`, produced the same chunk sequence but took 44,230 ms and 34,107 ms; we cannot see the cause from outside, so the post does not use them. The trigger (the first-token deadline rather than another failover class) is inferred from timing, not reported by the router. The `require_model` run was answered by `gpt-4o-mini` because it was on our own `models` list.
 - **Fields.** `provider.require_parameters: true` refuses an unsupported parameter with 400 `unsupported_parameters` before any provider call. A translated Responses request with `previous_response_id` returns 400 `previous_response_not_supported`, as the API reference says. A chat request to `gemini-2.5-flash` with `logprobs: true` returned Google's own 400, passed through. Responses to `gemini-2.5-flash` with `reasoning: { effort: "high" }` answered 200; that the field was dropped comes from the API reference, and the receipt cannot show whether effort was applied. A forced `get_weather` tool call to `gpt-4o-mini` returned `get_weather({"city":"Paris"})`. Tool-call errors such as `model_requires_responses_for_tools` come from the API reference.
 - **Failover classes.** From the router's source at the tested release: failover on connection failure, 5xx, 429, upstream 402 or quota exhaustion, upstream 401/403/412 (the router's own credential) and a suspended upstream account; for streams also `first_token_timeout` and `empty_completion`, decided before any text is forwarded. No failover on other 4xx (an error the request caused), 404 (a model it cannot find), a refusal, or bring-your-own-key requests. Your own key's 401, your key's rate limit and your account's 402 are answered before any model is tried. Script check 4 sent `temperature: 5` with `gemini-2.5-flash` as the listed fallback; the router returned 400 "temperature must be 0-2" and no answer from Gemini. A separate probe with the same error and `claude-haiku-4-5` as the fallback returned 400 with no generation id.
 - **Retry header.** When every route for a model is refused before dispatch, the router answers 503 with `Retry-After` and `x-should-retry: false`; the OpenAI Node SDK reads `x-should-retry` and does not retry.
 - **Same-model hop to OpenRouter.** From source: the native Messages and Responses routes send a request once to OpenRouter for the same model, pinned to the maker's endpoint, when the direct provider fails on its side: it is out of quota, refuses the router's credential, is rate limited, is down or drops the connection. It is skipped for client errors, a caller's own key, a Responses request with `previous_response_id` or `conversation`, a stream that already produced output, a lane the team's compliance settings or guardrail policies exclude, `provider.ignore` or `only` excluding OpenRouter, `max_price` and data residency. A zero-data-retention requirement is passed to OpenRouter as `zdr: true`.
 - **Zero data retention.** `provider.zdr: true` on `gpt-4o-mini` returned 400 `no_zdr_providers`: no provider for that model qualified, so the request failed.
-- **Spend.** `max_price {prompt: 0.01, completion: 0.01}` returned 400 `max_price_exceeded`, quoting the list price $0.15/M. A request for a model outside the key's allow-list is refused with 400 `model_not_allowed`. The lifetime cap is `budget_usd`, 1 to 1,000; two public manifests disagree on its default, so we link the account manifest and state none.
-- **Cost.** `pricing_policy.markup` was 1.055 in `GET /v1/models/user`. Script check 1 reported `x-tangle-cost-usd` 0.00000269 for 13 input and 1 output token, which is 13 × 1.5825e-7 + 1 × 6.33e-7 = 2.69025e-6, rounded. Headers we saw summed to $0.000114680 across the run; six streaming or Responses passthrough calls carried no cost header.
+- **Spend.** `max_price {prompt: 0.01, completion: 0.01}` returned 400 `max_price_exceeded`, quoting the list price $0.15/M; after the fix it quoted the billed rate, $0.15825/M (`gen_01M7NZPTSSE7TME8Q2R675M350`). A request for a model outside the key's allow-list is refused with 400 `model_not_allowed`. The lifetime cap is `budget_usd`, 1 to 1,000; the router's manifest now points to the account manifest for its range and default, so we link that one.
+- **Cost.** `pricing_policy.markup` was 1.055 in `GET /v1/models/user`. Script check 1 reported `x-tangle-cost-usd` 0.00000269 for 13 input and 1 output token, which is 13 × 1.5825e-7 + 1 × 6.33e-7 = 2.69025e-6, rounded. Headers we saw summed to $0.000114680 across the run; six streaming or Responses passthrough calls carried no cost header. After the fix, a `gpt-4o-mini` stream's usage chunk carried `usage.cost` 0.000003323 for 17 input and 1 output token (`gen_01M7NZPWJ6RZXC89QMCEFTSWQS`), which is 17 × 1.5825e-7 + 1 × 6.33e-7 = 3.32325e-6, rounded. Google's endpoint reports usage on its content chunks and sends no usage chunk of its own; for a `gemini-2.5-flash` stream the router added one after them, carrying `usage.cost` 0.000075011 for 12 input and 27 output tokens, 26 of them thinking (`gen_01M7P2YT66KGTZ8JAR8EZ4QWJ3`, release `022c7f68`, 01:04 UTC).
 - **Anthropic.** We tested one Anthropic model, `claude-haiku-4-5`. Three requests (chat, logprobs and tools) were each refused with 503; the two 400s for unsupported parameters and `previous_response_id` under Fields were also requests for it.
-- **Anthropic SDK.** `/v1/messages` with `x-api-key` answered 401 `invalid_credentials` twice; with `Authorization: Bearer` it answered 200, served by `gpt-4o-mini` in Anthropic's response shape.
+- **Anthropic SDK.** `/v1/messages` with `x-api-key` answered 401 `invalid_credentials` twice; with `Authorization: Bearer` it answered 200, served by `gpt-4o-mini` in Anthropic's response shape. After the fix the Anthropic Python SDK 0.66.0 with `api_key=` (which sends `x-api-key`) answered 200, served by `gpt-4o-mini` (`gen_01M7NZPS16MQJP1RSGHF8GN01P`); the same key in `x-api-key` with a different Bearer key answered 401 `conflicting_credentials`; after the key was revoked, the same call and a Bearer call each answered 401 `invalid_key` with `reason: key_revoked` (00:28 UTC).
 - **The August incident.** Recorded in the router's source beside the substitution check: a `gpt-5.5` request returned 200 with `body.model` `gemini-2.5-flash` because an OpenAI project had hit its enforced spend limit; a catalog check and a status check both read clean. The fix made router-picked substitution require `provider.allow_fallbacks: true`. How long the swap lasted is not recorded.
 - **Other routers.** OpenRouter, LiteLLM, Portkey and OpenAI SDK behavior is quoted from their public documentation and pricing pages as fetched on 17 November 2026; we did not send them requests.
 
