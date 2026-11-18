@@ -1,5 +1,5 @@
 // The figures in /blog/how-ai-agents-discover-products.
-// Figure 1 is our own run: six coding agents in fresh Tangle sandboxes, one task, counted per run.
+// Figure 1 is our own run: two sets of six coding agents in fresh Tangle sandboxes, one task, counted per run, before and after a README in the box.
 // Figure 2 is Evil Martians' two months of agent traffic on their own site, evilmartians.com, copied from their post.
 // Figure 3 is Vercel's reported share of new signups referred by ChatGPT, copied from their post.
 import { metricBars, type Figure, type Refusal } from '@tangle-network/charts';
@@ -20,31 +20,37 @@ const provenance = (figure: Figure | Refusal, n: number, p: Provenance) =>
 
 const runs = (count: number) => ({ count, label: count === 1 ? 'run' : 'runs' });
 
-/** What six coding agents did when asked to add a Tangle Router client to an empty Node project. */
+/** What six coding agents did with one task, before and after a README in the box linked the Router's llms.txt. */
 export const sixAgents = provenance(metricBars([
-  { id: 'found-in-box', label: 'Found the Router in its own box', value: 6, observations: runs(6),
-    detail: 'settings or environment (5), preinstalled packages (1)' },
-  { id: 'hand-wrote', label: 'Hand-wrote an OpenAI-compatible client', value: 4, observations: runs(6),
-    detail: 'no dependency; tests stub fetch' },
-  { id: 'working', label: 'Finished with a working client', value: 4, observations: runs(6) },
-  { id: 'budget-burned', label: 'Used the whole budget, mostly on internal packages', value: 2, observations: runs(6),
-    detail: 'read the CLI packages in the image' },
-  { id: 'made-up-key', label: 'Sent a request with a made-up credential', value: 2, observations: runs(6),
+  { id: 'llms-before', label: 'Fetched llms.txt, first set', value: 0, observations: runs(6),
+    detail: "the box's network policy blocked the Router's llms.txt then" },
+  { id: 'llms-after', label: 'Fetched llms.txt, with the README', value: 3, observations: runs(6),
+    detail: 'each right after reading the README' },
+  { id: 'install-before', label: 'Installed any package, first set', value: 0, observations: runs(6) },
+  { id: 'install-after', label: 'Installed any package, with the README', value: 0, observations: runs(6) },
+  { id: 'cred-before', label: 'Sent a made-up credential, first set', value: 2, observations: runs(6),
     detail: 'refused by the Router, no inference ran' },
-  { id: 'read-llms', label: 'Fetched llms.txt or agent-setup.md', value: 0, observations: runs(6) },
-  { id: 'installed', label: 'Installed our package, or any package', value: 0, observations: runs(6) },
-], { measure: 'runs, out of six', unit: '', domain: [0, 6], formatValue: String, width: 720, id: 'six-agents-discovery' }), 1, {
+  { id: 'cred-after', label: 'Sent any credential, with the README', value: 0, observations: runs(6) },
+  { id: 'tests-before', label: 'Left a client whose tests passed, first set', value: 4, observations: runs(6) },
+  { id: 'tests-after', label: 'Left a client whose tests passed, with the README', value: 4, observations: runs(6) },
+  { id: 'limit-before', label: 'Used all 40 tool calls, first set', value: 2, observations: runs(6),
+    detail: 'mostly reading internal packages' },
+  { id: 'limit-after', label: 'Used all 40 tool calls, with the README', value: 4, observations: runs(6),
+    detail: 'first file write at call 26 to 28; two after their tests passed' },
+], { measure: 'runs, out of six per set', unit: '', domain: [0, 6], formatValue: String, width: 720, id: 'six-agents-discovery' }), 1, {
   status: 'measured',
-  period: '18 Nov 2026, 00:08 to 00:14 UTC',
-  unit: 'agent runs (six in total)',
+  period: '18 Nov 2026: first set 00:08 to 00:14 UTC, second set 07:45 to 07:54 UTC',
+  unit: 'agent runs (six per set)',
   source: { label: 'How we tested', href: '#how-we-tested' },
-  method: 'Six fresh Tangle sandboxes, one agent each: Claude Code three times and Codex three times, all on ' +
+  method: 'Two sets of six fresh Tangle sandboxes, one agent each: Claude Code three times and Codex three times per set, all on ' +
     'deepseek/deepseek-v4.1-flash through Tangle Router (served model confirmed by a non-streaming probe of the served-model header). ' +
     'The Router does not serve Anthropic models for our internal work, so Claude Code ran on DeepSeek. ' +
-    'Task, the same for all six: "Add a client for Tangle\'s model router to this Node project. Do not send any authenticated request." ' +
+    'Task, the same for all twelve runs: "Add a client for Tangle\'s model router to this Node project. Do not send any authenticated request." ' +
     'Each box started with an empty npm init -y project. Cap: 40 tool calls per run. ' +
     'Each box carried its own scoped child Router key, and the coding agents\' own configuration files and environment already named ' +
     'https://router.tangle.tools, so this was neither a credential-free box nor a cold start. ' +
+    'Before the second set, the default image gained a 13-line README naming the Router\'s key variables and linking its llms.txt, ' +
+    'and the box network policy began allowing the Router\'s llms.txt, setup guide, OpenAPI file and docs. ' +
     'Counted once per run. One model, one prompt, one product; it does not measure answer engines.',
 });
 

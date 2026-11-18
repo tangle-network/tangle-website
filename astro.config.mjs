@@ -5,7 +5,8 @@ import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
 import mdx from '@astrojs/mdx';
 import sitemap from '@astrojs/sitemap';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { loadCatalog } from './src/data/harness-catalog.mjs';
 
 const buildRevision = process.env.TANGLE_BUILD_REVISION?.trim();
 
@@ -36,7 +37,19 @@ export default defineConfig({
   // "internal controls visible in marketing flow" on /sandbox, /browser-agent,
   // /brand-kit. Re-enable with ASTRO_DEV_TOOLBAR=1.
   devToolbar: { enabled: process.env.ASTRO_DEV_TOOLBAR === '1' },
-  integrations: [react(), mdx(), sitemap({
+  integrations: [react(), mdx(), {
+    // The harness recordings the home page replays, copied from Sandbox into this build.
+    name: 'harness-casts',
+    hooks: { 'astro:build:done': async ({ dir }) => {
+      const out = new URL('harness-casts/', dir);
+      mkdirSync(out, { recursive: true });
+      for (const url of (await loadCatalog()).casts) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+        writeFileSync(new URL(url.split('/').pop(), out), await response.text());
+      }
+    } },
+  }, sitemap({
     serialize: (item) => {
       const slug = new URL(item.url).pathname.match(/^\/blog\/([^/]+)\/?$/)?.[1];
       const date = slug && postDates.get(slug);
