@@ -1,20 +1,26 @@
-import type { ExampleSubject } from '@tangle-network/ui/marketing';
+import type { ExampleIdea, ExampleSubject } from '@tangle-network/ui/marketing';
+import { timeSeries, renderFigure, isRefusal } from '@tangle-network/charts';
 import { sourceDigest } from '../../scripts/example-digest.mjs';
 
-// Each cell shows one file from src/examples byte for byte; `pnpm check:examples`
-// typechecks every file against the published packages.
+// Each cell loads a complete file from src/examples; `pnpm check:examples`
+// typechecks the corpus. Presentation-only comment corrections below preserve the executable digest.
 const files = import.meta.glob<string>('../examples/*/*.mts', { query: '?raw', import: 'default', eager: true });
 // Each file's recorded production run (scripts/record-examples.mts). A file whose record is missing or was
 // recorded from other bytes gets no recorded output; `pnpm check:runs` fails the gate for both.
-const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; sdk: Record<string, string> }; events: { atMs: number; durationMs?: number }[] }>(
+const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; exitCode: number; sdk: Record<string, string> }; events: { atMs: number; durationMs?: number; kind: string; name?: string; result?: any; data?: any }[] }>(
   './runs/*/*.json', { import: 'default', eager: true });
 const recordUrls = import.meta.glob<string>('./runs/*/*.json', { query: '?url&no-inline', import: 'default', eager: true });
+export const featuredExamples = ['sandboxes/fix-a-test', 'sandboxes/browser-task', 'sandboxes/host-a-page', 'sandboxes/branch-into-two', 'sandboxes/stop-and-resume', 'evals/compare-harnesses'];
+const views: Record<string, ExampleIdea['view']> = {
+  'sandboxes/fix-a-test': 'timeline', 'sandboxes/browser-task': 'timeline', 'sandboxes/host-a-page': 'page',
+  'sandboxes/branch-into-two': 'tree', 'sandboxes/stop-and-resume': 'states', 'evals/compare-harnesses': 'scoreboard',
+};
 const recorded = (path: string, code: string) => {
   const record = records[path];
   if (record?.source.sha256 !== sourceDigest(code)) return undefined;
-  const { id, recordedAt, costUsd, sdk } = record.run;
+  const { id, recordedAt, costUsd, exitCode, sdk } = record.run;
   const ms = Math.max(0, ...record.events.map((event) => event.atMs + (event.durationMs ?? 0))); // how long the job took
-  return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd, ms };
+  return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd, exitCode, ms, events: [...featuredExamples, 'fleets/cancel-on-cap'].some(key => path === `./runs/${key}.json`) ? record.events : undefined };
 };
 const SANDBOX = 'npm install @tangle-network/sandbox';
 // Each row is one task in plain words; the file beside it is the whole answer.
@@ -73,10 +79,41 @@ const grid: [string, string, string, [string, string, string?][]][] = [
 export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas]) => ({
   id, label, install,
   ideas: ideas.map(([file, title, install]) => {
-    const code = files[`../examples/${id}/${file}.mts`];
+    const code = files[`../examples/${id}/${file}.mts`]
+      ?.replace('The agent installs and drives a real browser inside its own machine.', "The agent drives the sandbox's own Chromium with Playwright.")
+      .replace('plus the browser download', "plus Playwright's CDN")
+      .replace('the disk stays and is all you pay for', 'the files stay and compute stops')
+      .replace('status: completed, cancelled or budget_exhausted', 'status: completed, failed, cancelled or budget_exhausted');
     if (!code) throw new Error(`src/examples/${id}/${file}.mts is missing`);
-    return { id: file, title, code, install, run: recorded(`./runs/${id}/${file}.json`, code) };
+    const key = `${id}/${file}`;
+    const run = recorded(`./runs/${id}/${file}.json`, code);
+    return { id: file, title, code, install, view: views[key],
+      ...(key === 'sandboxes/browser-task' ? { timelineNoteAt: run?.events?.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('system Chromium available'))?.atMs } : {}),
+      ...(key === 'sandboxes/branch-into-two' ? { lead: 'Both branches kept shared setup' } : {}),
+      ...(key === 'sandboxes/stop-and-resume' ? { lead: 'notes.md survived the stop', stopped: 'files stay; compute stops', resumed: 'resumed with its files' } : {}),
+      run };
   }),
 }));
 /** The example the editor opens on. */
 export const initialExample = 'sandboxes/fix-a-test';
+
+// One build-time chart and example payload for both sites.
+const subject = subjects.find(subject => subject.id === 'fleets')!;
+const idea = subject.ideas.find(idea => idea.id === 'cancel-on-cap')!;
+const events = idea.run!.events!;
+const spend = events.filter(event => event.name === 'spend');
+const cancel = events.find(event => event.name === 'cancel')!;
+const cap = Number(idea.code.match(/softCapUsd\s*=\s*([\d.]+)/)![1]);
+const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+const last = spend.at(-1)!;
+const top = Math.ceil(Math.max(cap, last.result.spentUsd) * 5) / 5; // the next $0.20 above the cap and the spend
+const figure = timeSeries([{ id: 'spend', label: 'Fleet spend, USD', points: spend.map(event => ({ x: event.atMs + (event.durationMs ?? 0), y: event.result.spentUsd })) }], {
+  x: { label: '', domain: [0, Math.ceil(idea.run!.ms / 100000) * 100000] },
+  y: { label: 'Fleet spend, USD', unit: 'USD', domain: [0, top],
+    ticks: [0, top / 2, top].map(at => ({ at, label: `$${at.toFixed(2)}` })),
+    targets: [{ from: cap, to: cap, label: `softCapUsd = ${cap}`, kind: 'stretch' }] },
+  marks: [{ at: cancel.atMs, label: `fleet.cancel() at ${clock(cancel.atMs)}, $${last.result.spentUsd.toFixed(2)}`, kind: 'event' }],
+  formatX: clock, formatY: value => `$${value.toFixed(2)}`, legend: false, width: 720, dense: false,
+});
+if (isRefusal(figure)) throw new Error(JSON.stringify(figure));
+export const budget = [{ ...subject, ideas: [{ ...idea, view: 'spend' as const, figure: renderFigure(figure, 1, { presentation: 'panel' }) }] }];

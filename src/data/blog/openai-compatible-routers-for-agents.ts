@@ -1,6 +1,7 @@
 // The figures in /blog/openai-compatible-routers-for-agents. Figure 1 is worked arithmetic from the OpenAI Node SDK's
 // documented retry default. Figure 2 is three numbers from one day of live requests against Tangle Router: the
-// catalog's list price, the price ceiling we sent, and the input rate the response's price header reported.
+// catalog's list price, the price ceiling we sent before and after the router's max_price fix, and the input rate the
+// response's price header reported.
 import { metricBars, type Figure, type Refusal } from '@tangle-network/charts';
 
 type Provenance = { status: 'measured' | 'illustrative'; period: string; unit: string; source: { label: string; href: string }; method: string };
@@ -29,9 +30,10 @@ export const retries = provenance(metricBars([
 
 /** Dollars per million input tokens for openai/gpt-4o-mini on Tangle Router. */
 export const ceiling = provenance(metricBars([
-  { id: 'list', label: 'Provider list price', value: 0.15, detail: 'catalog; what the ceiling is checked against' },
-  { id: 'ceiling', label: 'Our price ceiling', value: 0.155, detail: 'sent as the max_price prompt value; request passed' },
-  { id: 'rate', label: 'Billable rate reported', value: 0.15825, detail: 'list × 1.055 markup, from the price header' },
+  { id: 'list', label: 'Provider list price', value: 0.15, detail: 'catalog; what the ceiling was checked against before the fix' },
+  { id: 'ceiling', label: 'Our price ceiling, before the fix', value: 0.155, detail: 'sent as the max_price prompt value; request passed' },
+  { id: 'ceiling-after', label: 'The same ceiling, after the fix', value: 0.155, detail: 'refused: 400 max_price_exceeded at the billed rate' },
+  { id: 'rate', label: 'Billable rate reported', value: 0.15825, detail: 'list × 1.055 markup, from the price header; what the ceiling bounds now' },
 ], { measure: 'input price for openai/gpt-4o-mini', unit: '', domain: [0, 0.2], formatValue: (value) => `$${value}`, width: 720,
   id: 'router-price-ceiling' }), 2, {
   status: 'measured',
@@ -42,8 +44,10 @@ export const ceiling = provenance(metricBars([
     'GET /v1/models/user (0.00000015 per token), with pricing_policy.markup 1.055 in the same response. Ceiling: a chat completion with ' +
     'provider.max_price {prompt: 0.155, completion: 0.62} answered 200. ' +
     'Billable rate: that response\'s x-tangle-price-input header, 1.5825e-7 per token ' +
-    '(output 6.33e-7). This compares response headers, not a ledger debit; whether max_price should bound the list price or the billable rate is an open ' +
-    'question we have put to the router\'s maintainers.',
+    '(output 6.33e-7). This compares response headers, not a ledger debit. ' +
+    'After the router\'s fix (release 61111287, 18 Nov 2026 00:08 UTC), the same request was refused with 400 max_price_exceeded: "billed prompt ' +
+    'price $0.15825/M exceeds provider.max_price.prompt $0.155/M" (gen_01M7NZPV3VZ471BYN512FD7CHB), and a ceiling of ' +
+    '{prompt: 0.15825, completion: 0.633} answered 200 with the same price headers (gen_01M7NZPVGM8T5AWK4YBX55VQMS).',
 });
 
 export const routerFigures = [retries, ceiling];

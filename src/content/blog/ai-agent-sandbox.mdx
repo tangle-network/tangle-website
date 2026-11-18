@@ -1,10 +1,10 @@
 ---
-title: 'AI Agent Sandbox: Build a Controlled Agent Workspace'
+title: 'AI Agent Sandbox: Isolation, Persistence and Measured Start Times for LLM Code'
 slug: ai-agent-sandbox
 summary: >-
-  What an AI agent sandbox must answer about files, processes, and network access, and how a harmless test project proves each limit.
+  Choosing a hosted sandbox for coding agents, or leaving one that lost your files or started slowly? What Tangle's sandbox isolates, keeps, costs and fails at, with measured p50 and p95 start times.
 date: '2026-06-18'
-updated: '2026-11-17'
+updated: '2026-11-18'
 author: Drew Stone
 tags:
   - agents
@@ -15,301 +15,207 @@ seriesOrder: 2
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { failures, firstReply, lifecycle, sandboxFigures } from '../../data/blog/ai-agent-sandbox'
 
-A coding agent is asked to upgrade one dependency and open a review.
-It edits the manifest, installs packages, runs the test suite, sees a failure, changes an import, and runs the tests again.
-The final patch is useful only if the reviewer can also see which files changed, which commands ran, and whether the agent ever reached outside the project.
+We run Claude Code, Codex and OpenCode inside Tangle's hosted sandbox, and we measure it the way you would have to defend it to your team. A Tangle sandbox keeps an agent's files through stop and resume. It limits the network by policy, and it caps a fleet's machines and spend before anything boots. The catches are as concrete. The default boundary is a container, where E2B gives every session a Firecracker microVM and Modal uses gVisor; on Tangle, Firecracker is something you ask for. In our benchmark week, a new sandbox was ready in 1.5 s at the median and 12.4 s at p95, eight times the median. And 13% of create attempts failed. So ask for Firecracker when the code is hostile, size timeouts to p95, and retry every create.
 
-An **AI agent sandbox** is an isolated workspace for that loop.
-It gives an agent files, processes, packages, and sometimes a browser or GPU while placing boundaries around the host machine, network, credentials, lifetime, and evidence.
-The sandbox does not make the model correct.
-It gives the model a place where a wrong action has a smaller blast radius and a run can leave inspectable results.
+## A hosted sandbox moves the blast radius off your machine
 
-Tangle Sandbox’s public TypeScript SDK is the surface this post rests on. `client.create()` returns a machine, `box.exec()` returns `exitCode`, `stdout` and `stderr`, `box.snapshot()` saves the filesystem, and `box.delete()` removes the temporary machine. The workspace must outlive an individual prompt, while the evidence must outlive the temporary machine.
+A coding agent installs packages, runs tests and executes code a model wrote a second ago. On a laptop, that code runs next to your SSH keys, your cloud credentials and every other repository you have checked out. A local Docker container narrows the filesystem. It still shares your network and whatever you mounted into it.
 
-## The workspace is part of the agent
+A hosted sandbox is an isolated machine with files, a terminal and, if you want one, a browser. The agent's code runs there, and nothing of yours is on that disk unless you put it there.
 
-A coding agent changes state as it works.
-It needs a directory to inspect, a process to run tests, a package manager to install dependencies, and enough time to recover from a failed attempt.
+The threat is runaway or prompt-injected code. One agent deletes the wrong directory. Another reads a poisoned README and tries to send your code somewhere. The sandbox contains the first on its own. The second needs a network path and something worth stealing, so close both: restrict egress, and keep the credentials you control out of the box. The box is not empty of keys: it carries a scoped per-box key that the platform mints and revokes.[^boxkey] In our 18 November runs, each box's router key allowed only the requested model, expired an hour after create and was revoked when the box was deleted.
 
-Running that loop directly on a developer laptop gives the agent access to unrelated files, credentials, processes, and network destinations.
-Running every command in a fresh one-shot function removes the state the agent needs to diagnose its own failure.
+The SDK helps with the credentials. Application secrets you inject can carry a lifetime, after which the runtime removes them. The same call refuses platform-managed credentials such as your Tangle API key.[^creds]
 
-The sandbox sits between those two extremes.
-It makes the working directory explicit, limits the resources and lifetime, and gives the application a place to capture the side effects.
-The prompt explains the task.
-The sandbox controls where the task can act.
+If you are weighing a local container library against a hosted sandbox, compare what surrounds the container. You want a disk that outlives your process, a network policy the platform enforces, caps on a fleet, and a machine that holds none of your secrets.
 
-## What the sandbox boundary must answer
+## The default boundary is a container, so ask for Firecracker for untrusted code
 
-Before an agent receives a repository or a secret, the workspace contract should answer six questions.
+The boundary on each:
 
-| Question | Concrete answer |
-| --- | --- |
-| What can the agent read and write? | Named workspace paths and file permissions |
-| Which processes may run? | An image, command policy, timeout, and resource budget |
-| Where may data go? | An egress policy that names allowed network destinations |
-| What survives a reconnect? | A session identifier, snapshot, or durable artifact |
-| What can a reviewer inspect? | Changed files, output, errors, screenshots, and run metadata |
-| When does the workspace end? | An explicit stop, expiry, idle timeout, or deletion event |
+- **Tangle, default.** A container on the host kernel. Our recorded egress test's default box ran on the docker runtime.
+- **Tangle, on request.** A Firecracker microVM with its own kernel, chosen with `runtime: "firecracker"` at create. It never falls back to Docker. An account not placed on Firecracker gets a runtime-disabled error.
+- **E2B.** A Firecracker microVM per session.
+- **Modal.** gVisor, according to third-party comparisons such as [LogRocket's](https://blog.logrocket.com/comparing-ai-agent-sandbox-platforms-e2b-modal-daytona-and-more/).
 
-A **runtime** is the software and machine that execute an agent’s actions. The sandbox is one runtime boundary inside a larger product.
+The SDK README also mentions Firecracker as an isolated image builder for container boxes. That builder is a separate thing from the per-sandbox runtime above.
 
-A **policy** is the set of rules that decides whether an action is allowed.
-The model may propose `npm install`, but the process enforcing the policy must decide which packages, network hosts, and write paths are permitted.
-A sentence in a prompt is guidance.
-An enforcement service is a control.
+We think the no-fallback rule is right, because a silent downgrade is the bug you would never notice. Check availability for your account before you build on it. Our one recorded Firecracker box is the egress test below; every other recorded example in this post used the default.
 
-An **agent profile** is a versioned bundle of model settings, tools, permissions, resource limits, and budget for one kind of run.
-For a dependency-upgrade agent, the profile might allow package installation and tests inside a disposable workspace while forbidding access to production credentials.
-Changing the profile changes the experiment, so its identity belongs in the run record.
+Is a container enough? Anthropic's guidance on securing source code with LLMs draws the line where we would. Containers are fine for an agent reading code, but the target and its exploit code belong in a microVM or full VM with egress locked down.[^anthropic] So an agent editing your own repository can live in the default container. An agent running code from strangers gets Firecracker, where your account has it, and a blocked network: a microVM runs its own kernel, while a container shares the host's.
 
-## Start with the public contract
+## Lock egress to an allowlist before the agent reads anything untrusted
 
-Tangle publishes a [Sandbox manifest](https://sandbox.tangle.tools/.well-known/tangle-agent.json) with the package name, API-key environment variable, safe discovery calls, and authenticated calls.
-The [Sandbox documentation](https://docs.tangle.tools/sandbox) describes the product as an isolated computer with a shell, filesystem, ports, snapshots, optional GPU, and durable sessions.
+Set the policy at create: `egressPolicy: { mode: "strict", allowDomains: [...] }` sets an allowlist of the domains you list, and `includeImplicitDomains: true` adds the platform's default allowlist to yours.
 
-The first checks should be read-only:
+- Mode `blocked` refused every request in our test below. The other modes are `open` and `strict`.
+- Omit the policy and the box inherits your team's policy, or the platform default outside a team.
+- To tighten a running box, the SDK typings document `box.egress.update()`. We have not run that call.
 
-```bash
-npm install @tangle-network/sandbox
-curl -fsS https://sandbox.tangle.tools/health
-curl -fsS https://sandbox.tangle.tools/.well-known/tangle-agent.json
-curl -fsS https://sandbox.tangle.tools/v1/public-templates
+<Example path="sandboxes/browser-task" />
+
+That run listed the Playwright download hosts and Hacker News. Hacker News got through, and the agent read the headlines. The browser download redirected to storage.googleapis.com, which was not listed, and strict mode refused it with a 403 `EGRESS_DOMAIN_NOT_ALLOWED`, so the agent used the box's own Chromium.
+
+We have recorded a refusal in blocked mode. On 18 November 2026 we created two fresh boxes with egress blocked, one on Firecracker and one on the default docker runtime. In each, curl and Node's fetch to example.com were refused by the egress proxy.
+
+```text
+Summary of the recorded results, not raw output:
+curl -sS -m 5 https://example.com   ->  "CONNECT tunnel failed, response 403", exit 7
+fetch('https://example.com')         ->  status 403 from the egress proxy
 ```
 
-The manifest tells a caller which package and authentication variable to use.
-The template call exposes a public catalog without creating an account-owned workspace.
+That one refused host is our only strict-mode refusal on record; we have not run a deliberate strict-mode test, so test your own list before you rely on it.
 
-Those calls do not prove that your API key is valid, that a requested environment can be provisioned, or that your command will pass.
+## A new sandbox was ready in 1.5 s at the median and 12.4 s at p95
 
-The package’s [public README](https://www.npmjs.com/package/@tangle-network/sandbox) contains the current SDK examples and entry points.
+The short version, from one benchmark week (2 to 9 November 2026, 11,066 samples across every measure):[^window]
 
-## Create, run, inspect, and delete
+- A new sandbox was ready in 1.5 s at the median and 12.4 s at p95: the tail was 8 times the median, so plan for p95, not the median. A base-image create's p95 was 5.5 times its median.
+- Measured from the create call, Factory Droid, Codex and Claude Code first replied in 2.9 to 3.4 s at the median.
+- A timeout set from the median cancels creates that were about to succeed, so we set ours from p95.
 
-The smallest useful SDK loop is one command on a fresh machine. The example below is a verified run on production; its caption gives the date, exit code, and SDK version. It calls `client.create`, `box.exec`, and `box.delete`, and prints the exit code and the platform string the machine reports.
+These are live values, so read the [benchmarks page](https://tangle.tools/benchmarks/) for today's numbers.
 
-<Example path="sandboxes/run-code" />
+<Figure n={1} kicker="Tangle sandbox benchmark, one week" headline="A new sandbox was ready in 1.5 s at the median and 12.4 s at p95; branching into 16 children took 12.7 s at the median." figure={lifecycle} />
 
-The lifecycle has five observable moments:
+For a coding agent, the number your user feels is the first reply.
 
-1. `create` requests a machine. Pass `resources` when the workload needs explicit CPU, memory, or disk.
-2. `box.waitFor('running')` blocks until the machine accepts work; call it before the first `exec` when provisioning may still be in progress.
-3. `exec` returns `exitCode`, `stdout`, and `stderr`.
-4. The application copies any patch, report, or log that must survive the run.
-5. `delete` releases temporary state even when the command throws.
+<Figure n={2} kicker="Tangle sandbox benchmark, one week" headline="Claude Code and Codex first replied in 3.4 s and 3.3 s at the median; their p95 was 11.8 s and 18.1 s." figure={firstReply} />
 
-The `finally` block is part of the example’s correctness.
-A timeout or failed command must not turn a temporary workspace into an abandoned bill or an untracked machine.
-If the next run needs the same files, call `stop()` and `resume()` later: a stopped sandbox keeps its disk and is billed for neither the disk nor compute until it resumes, and by default it is kept at least 30 days (`deleteAfterStoppedSeconds` sets your own limit). A snapshot also keeps the files. Either is better than silently skipping cleanup.
+The tail varies by agent here. Codex's p95 was 5.5 times its median and Claude Code's was 3.5 times. With the sandbox already running, Codex replied in 0.66 s at the median and Claude Code in 1.06 s. If the first reply sits on your product's critical path, keep a sandbox running per user.
 
-## A failed test is a useful result
+## Rivals' start numbers come from different tests
 
-Consider a package upgrade that produces this sequence:
+As published on 17 November 2026, Daytona advertises sub-90 ms sandbox creation. Modal says sub-second starts, and its July post reports a median under half a second in a test of a million sandboxes. Northflank says ready in 0.8 seconds, and Beam says about half a second. E2B publishes usage, not a start time.
 
-| Event | Evidence | What it says |
-| --- | --- | --- |
-| Workspace ready | Sandbox ID, environment, resource request | The runtime accepted the create request |
-| Install started | Command, working directory, start time | The agent attempted the dependency change |
-| Install failed | Non-zero exit code and error text | The first attempt did not complete |
-| File changed | Diff or file hash | The agent changed a specific artifact |
-| Tests rerun | Command and exit code | Recovery was attempted and observed |
-| Cleanup completed | Delete result or expiry state | Temporary execution ended |
+Each of those is the vendor's own number from the vendor's own test. We have not run any of them through our benchmark, so they cannot be ranked against our 1.5 s, and we will not try. The [compare pages](https://tangle.tools/compare/) link each claim to its source.
 
-The final answer can summarize that sequence, but the sequence itself is the evidence.
+If start time decides your choice, time your own image and task on each provider. This script times create, first command and delete.
 
-The check that separates the two cases is one more command. `sandboxes/fix-a-test` clones a repository, asks Claude Code to fix the failing test with `box.prompt`, then runs `npm test` itself with `box.exec`. A finished agent turn does not end the task: the script writes `fix.patch` only after the test command exits 0.
+<Example path="runtime/time-a-cold-start" />
+
+## Files survive stop and resume, and a parked sandbox keeps them for 30 days
+
+What happens to a stopped sandbox:
+
+- **Files.** `stop()` keeps the filesystem and `resume()` brings every file back. The run below shows it.
+- **Retention.** Without `deleteAfterStoppedSeconds`, the platform keeps a parked sandbox at least 30 days and may reclaim it after that. Set the field for a shorter life.
+- **Secrets.** When the platform removes a stopped box's runtime, resume must supply your secret env values again. It throws `ResumeEnvRequiredError`, which names the missing keys.
+- **Cost.** A stopped sandbox accrues no compute charge. The SDK README says compute, which covers vCPU, memory, disk and the hourly minimum, accrues only while the sandbox runs ([rate card](https://sandbox.tangle.tools/v1/pricing/sandboxes)).
+
+<Example path="sandboxes/stop-and-resume" />
+
+I got persistence wrong in the first version of this post, which implied that only a snapshot or a durable session kept files. Keep anything precious in a snapshot or your own repository.
+
+## Branching copies the workspace into parallel attempts
+
+Fan out from a snapshot or from a running box:
+
+- **Snapshot, then create.** `box.snapshot()` saves the filesystem, and `client.create({ fromSnapshot })` starts new sandboxes from it. The fork took 1.85 s at the median.
+- **Branch.** `parent.branch(n)` copies a running sandbox into n children. Sixteen children took 12.7 s at the median.
+- **Memory.** The example's comment says memory is copied too. Our run shows files only, and we have not tested process state.
+
+<Example path="sandboxes/branch-into-two" />
+
+Both children saw the shared setup plus their own line. Branching is also the least reliable call we measured: in the Branching panel, 87 of 226 attempts failed. Snapshot-and-fork attempts failed 16% of the time. If you fan out four approaches today, we would fork from a snapshot and retry the failures.
+
+## Run Claude Code, Codex or OpenCode inside the box
+
+The whole loop is short:
+
+- Clone the repository at create with `git: { url }`.
+- Name the coding agent in `backend: { type }`: claude-code, codex, opencode or pi.
+- Send the task with `box.prompt()`.
+- Check the result yourself with `box.exec("npm test")`. The agent's own report of success is not the check.
+- Keep model credentials on a trusted server: grant a stored one with `grantNativeCredential`, or route model calls through Tangle Router.
 
 <Example path="sandboxes/fix-a-test" />
 
-The run proves that one `npm test` exited 0 after the agent’s edit. It does not prove the patch is minimal or that a reviewer would accept it.
-A **trace** is the structured record of the run’s inputs, actions, outputs, errors, identifiers, and artifacts.
-It lets a reviewer distinguish “the agent fixed the dependency” from “the agent claimed it fixed the dependency after a test command failed.”
+A clean second sandbox that applies the patch is a stricter check still. The [benchmarks page](https://tangle.tools/benchmarks/) lists every coding agent we measure.
 
-Tangle’s public Sandbox docs describe durable sessions that can reconnect after a client crash, deployment, or browser reload.
-That matters when the command continues after the user interface disconnects.
+## You pay for compute by the hour and for model tokens per turn
 
-## Keep state across attempts without keeping authority forever
+We price compute per CPU core-hour, memory GB-hour and disk GB-hour, with a minimum hourly charge. Rates change, so read them from the [pricing endpoint](https://sandbox.tangle.tools/v1/pricing/sandboxes).
 
-A retry should see the files it needs, but it should not inherit permissions accidentally.
+Model spend is billed separately. Each turn reports its token usage and its model cost. The test fix above cost $0.0145 in model spend, and most of its input tokens were cache reads. The browser task cost $0.02.
 
-The SDK supports snapshots for preserving filesystem state. The block below installs dependencies, saves the workspace, restores it into a new machine, and runs `npm test` there. It prints the exit code and stdout of the restored run.
+## Cap machines and spend before the fleet boots
+
+Use the control that fits the job:
+
+- **Fleet policy.** Hard caps on machines, concurrent creates, CPU, memory and spend, checked before the platform provisions anything. They sit under your account quotas, not in place of them.
+- **Fleet budget.** The platform refuses any charge past it, mid-turn included.
+- **`runBatch()`.** For one-off parallel tasks, it creates temporary sandboxes and removes them after the run.
+
+This is the policy from the SDK README's fleet example. We have not run it.
 
 ```ts
-import { Sandbox } from '@tangle-network/sandbox'
-
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: 'https://sandbox.tangle.tools',
-})
-
-const box = await client.create({
-  git: { url: 'https://github.com/tangle-network/sandbox-demo' },
-})
-try {
-  const install = await box.exec('npm install')
-  if (install.exitCode !== 0) throw new Error(install.stderr)
-
-  const snapshot = await box.snapshot({ tags: ['dependency-baseline'] })
-
-  const restored = await client.create({
-    fromSnapshot: snapshot.snapshotId,
-    fromSandboxId: box.id,
-  })
-  try {
-    await restored.waitFor('running')
-    const tests = await restored.exec('npm test', { timeoutMs: 10 * 60 * 1000 })
-    console.log(tests.exitCode, tests.stdout)
-  } finally {
-    await restored.delete()
-  }
-} finally {
-  await box.delete()
-}
+  policy: {
+    maxMachines: 3,
+    maxConcurrentCreates: 2,
+    maxTotalCpu: 6,
+    maxTotalMemoryMb: 12_288,
+    maxSpendUsd: 2,
+    allowAccelerators: false,
+  },
 ```
 
-This block typechecks against the published SDK. It is not one of the production-verified examples, so it has no run caption.
+This recorded example sets a $2 hard cap and cancels every agent once the fleet has spent $0.20, checked from the client; the run stopped all six at $0.21 total.
 
-Use the same `idempotencyKey` only when retrying the same logical create request.
-An idempotency key is a caller-chosen identifier that lets a service recognize a retry rather than provisioning a second copy of the same request.
-It does not mean that every command inside the workspace is idempotent.
+<Example path="fleets/cancel-on-cap" />
 
-For longer agent sessions, the application should retain both the session ID and the execution ID returned by the SDK.
-Those identifiers make it possible to reconnect to the exact run instead of accidentally appending a new turn or replaying a completed action.
+Expect parallel creates to slow down as the batch grows. In the benchmark, 25 creates at once were ready in 4.0 s at the median, and 100 at once took 14.4 s.[^many]
 
-## Network access deserves its own test
+## Your agent code can move to E2B or Daytona, but Tangle cannot move to your servers
 
-Many coding tasks need a package registry or a public documentation site.
-They rarely need every destination on the internet.
+Tangle's agent-runtime puts Tangle, E2B and Daytona behind one provider interface. Swap the provider and keep the profile, the coding agent and the task.
 
-Start with the narrowest network policy that can complete the task.
-Record whether a request was allowed, denied, or failed for another reason.
-Treat a denied request as evidence about policy, not as proof that the model made a bad decision.
+<Example path="runtime/any-cloud-e2b" />
 
-Inject a short-lived, task-scoped secret only when the job needs it.
-Do not mount a developer’s general-purpose credential directory into a workspace that can read arbitrary files or send network requests.
-If the model needs a GitHub connection, expose the smallest operation set that satisfies the task and keep writes disabled until a reviewer approves them.
+We have recorded the Tangle version of this script on production. The E2B and Daytona versions typecheck against the published packages, and we have not run them.
 
-The public Sandbox package exposes capability clients for files, processes, network, egress, previews, backends, and related resources.
-Unsupported capabilities should fail as typed SDK errors rather than being silently treated as available.
-The exact option names belong in the live [SDK documentation](https://sandbox.tangle.tools/docs/sdk/typescript), not in an agent’s guess.
+Self-hosting is the harder answer. Tangle offers hosted infrastructure only, and on-premises hosting is planned but not available today.[^llms]
 
-## Prove the boundary with a canary task
+## Expect failed creates, and retry with the same idempotency key
 
-An isolation claim becomes useful only when a small test can try the boundary and record the result.
-Use a harmless canary project before giving the workspace customer data or production credentials.
+In the benchmark week, 56 of 425 create attempts failed, and so did 31 of 209 base-image lifecycle runs. Your code needs a retry path on day one:
 
-| Canary step | Expected observation | What a failure means |
-| --- | --- | --- |
-| Write a file under the workspace root | The file exists in the workspace and appears in the artifact list | The file or artifact boundary is unclear |
-| Request a path outside the workspace | The operation is denied or the path is absent | The host and workspace boundaries need review |
-| Call an allowed package registry | The request succeeds and the destination is recorded | The network policy is too narrow for the task |
-| Call an unapproved destination | The request is denied with an attributable policy result | Egress enforcement is missing or opaque |
-| Kill the client during a command | The session or execution can be found again without a duplicate run | Reconnection semantics are incomplete |
-| Delete the workspace | Temporary files disappear while copied artifacts remain | Cleanup or retention is not doing what the product promises |
+- Pass an idempotency key on create, and reuse it only when retrying the same logical request.
+- Let the SDK pace its own retries from the platform's retry-after value.
+- Set create timeouts from the p95, not the median.
+- For one sandbox per customer, call `client.instances.ensure()`. It creates, resumes or replaces a sandbox that was deleted or keeps failing to start. While it waits to replace a sandbox that keeps failing to start (60 s by default), it throws a restarting error with a retry delay.
 
-This canary is not a substitute for a security review.
-This canary connects the policy a team wrote to the behavior the runtime enforced.
-Run it with the same image, credentials, network rules, and cleanup policy used by the real agent.
-If the production profile differs, the canary is testing a different environment.
+<Figure n={3} kicker="Tangle sandbox benchmark, one week" headline="Between 13% and 16% of create, lifecycle and snapshot attempts failed; branching failed 38%." figure={failures} />
 
-## Container, microVM, or TEE
+The benchmark does not say whether each failure came from the platform or from the benchmark's own client. Read these as failed attempts in our test, not a service level.
 
-The word sandbox describes a boundary, not one implementation.
-A provider may use a container, a microvirtual machine, or another isolated execution driver.
-The useful properties are the ones a caller can test: separate filesystem state, process limits, network policy, cleanup, and evidence.
+## Which sandbox should you pick?
 
-A **TEE**, or Trusted Execution Environment, is a hardware-backed execution boundary.
-An **attestation** is signed evidence about that boundary, such as a measurement of the code or environment that ran.
-Attestation can help a caller verify an execution claim when the measurement, verification policy, input, and output are bound together.
-It does not prove that the agent chose the right command or that the resulting patch is safe.
-Tangle’s [attestation explanation](/blog/tee-attestation-ai-services) makes the distinction explicit.
+Pick Tangle's sandbox when your agents need files across sessions, a fleet with a spend cap, and percentiles you can plan against. Ask for Firecracker before you run code from strangers, and confirm your account has it. If you need a microVM per session by default, E2B's default gives you one. If you must run on your own servers, Tangle does not fit yet. Whichever you shortlist, run the cold-start script with your own image on each, and decide on the p95.
 
-Choose a confidential runtime when the trust decision depends on protecting inputs or proving code identity.
-Choose an ordinary isolated workspace when the main requirement is containing filesystem and process side effects.
-In both cases, test the actual permissions and failure paths you plan to deploy.
+## How we tested
 
-## Sandbox versus a one-shot code runner
+- **Benchmark window.** 2 November 2026 16:25 UTC to 9 November 2026 16:25 UTC, from the data behind https://tangle.tools/benchmarks/. The window's 11,066 samples count every measure together; no single row has that many. Each figure's note gives its rows' sample and attempt counts. Failures are counted per panel attempt; the percentiles cover the steps that returned a timing.
+- **Runtime.** The recorded examples set no runtime, so they ran on the platform default. The benchmark data does not record which runtime its runs used. Our one Firecracker box is the egress refusal run.
+- **Egress.** The browser run used strict mode with the default allowlist plus the Playwright hosts and news.ycombinator.com; it proves listed domains pass. On 18 November 2026 we created two boxes with `egressPolicy: { mode: "blocked" }`, one with `runtime: "firecracker"` (sandbox-96e412dc6d06) and one on the default docker runtime (sandbox-5ca151905f1b). In each, `curl -sS -m 5 https://example.com` exited 7 with "CONNECT tunnel failed, response 403", and Node's `fetch` got status 403 from the egress proxy. Both boxes were deleted and read back as deleted. Strict-mode refusal of an unlisted domain has not been deliberately tested; the browser run's receipt shows one incidental refusal of storage.googleapis.com.
+- **Recorded examples.** Each `<Example>` renders the example file with its production run receipt; the receipts' call lines and output match the files. All were recorded on 12 November 2026 with `@tangle-network/sandbox` 1.0.168, except `fleets/cancel-on-cap`, which was re-recorded on 18 November 2026 with 1.0.443 (tangle-website#547). The stop-and-resume run printed "first draft" after the resume. The branch run printed "shared setup" plus each child's line in both children. `fix-a-test` reported $0.0145 of model spend over 192,627 input tokens, 175,408 of them cache reads. `browser-task` reported $0.02. The E2B example has no run receipt; it is typechecked only.
+- **One cold-start run.** `runtime/time-a-cold-start` on 12 November 2026: create 1,842 ms, first command 567 ms, delete 872 ms. One run is a smoke test, not a distribution.
+- **Lifecycle extras.** Base-image stop took 1.2 s at the median. Resume took 4.7 s at the median and 10.7 s at p95. Fork a snapshot: 1.85 s at the median and 16.8 s at p95. The "Snapshots and checkpoints" panel, snapshot and fork together, failed 82 of 506 attempts.
+- **Tail ratios.** For a new sandbox (Ready), p95 was 8.0 times the median; for a base-image create, 5.5 times. Other create rows in the data fall outside that range, such as a desktop-image create at 3.0 times and a large-size create at 22 times.
+- **Stopped-sandbox billing.** From the `@tangle-network/sandbox` 1.0.447 README, read 18 November 2026: "A stopped sandbox accrues no compute charge". An earlier version of this post, through its example's comment, said a stopped sandbox bills for its disk; that was wrong. That comment, line 8 of the stop-and-resume example, was corrected on 17 November 2026 (tangle-website#545), after the example's 12 November run; the receipt's call lines and output still match the file; only that comment changed.
+- **Rivals.** Daytona, Modal, Northflank and Beam figures are their own published claims, as linked from https://tangle.tools/compare/. Modal's half-second median is from its post of 16 July 2026. E2B's Firecracker microVM is from the same compare data. We have not run any rival through our benchmark.
+- **SDK behaviour.** Runtime, credential, retention, retry, fleet-policy, batch and ensure behaviour is from the [`@tangle-network/sandbox` README](https://www.npmjs.com/package/@tangle-network/sandbox), version 1.0.440, read on 17 November 2026. The egress modes and `box.egress.update()` are from its typings.
 
-| Workload | Smaller tool that may fit | Why an agent sandbox earns its cost |
-| --- | --- | --- |
-| One calculation from fixed input | Code interpreter or function runner | Usually no persistent project state is needed |
-| A public page check | Browser automation | The browser owns the important state |
-| A fixed batch transform | Serverless job | A single invocation can finish without interaction |
-| Dependency upgrade and repair | Agent sandbox | The agent needs files, packages, commands, retries, and a review record |
-| Long-running coding session | Agent sandbox with sessions | A client disconnect should not destroy the work |
-| Parallel repository checks | Sandbox fleet or batch API | Each worker needs its own state and bounded resource policy |
+[^window]: The window ran from 2 to 9 November 2026. Numbers in this post are from that window; the benchmarks page shows the current one.
+[^creds]: The README says the runtime rejects platform-managed credentials, including `TANGLE_API_KEY`, when you call `setRuntimeEnv`, and that `{ ttlMs }` removes each injected key after its lifetime. That covers what you inject through that call. It is not a statement about every credential a box can hold.
+[^boxkey]: Our run receipt for six boxes on 18 Nov 2026: each box got its own router key named `auto:sandbox:router:<sandbox id>`, limited to the requested model, set to expire one hour after create, and revoked at box delete. We did not confirm which environment variable holds it; the recorded browser run's environment listed a `TANGLE_API_KEY` and a model auth token, values redacted.
 
-The [Browser Agent driver](https://github.com/tangle-network/browser-agent-driver) can control a browser and capture page evidence.
-Sandbox can hold the test files, comparison scripts, and reports around that browser session.
-They solve different boundaries and can be combined when the task needs both.
-The [browser automation guide](/blog/ai-e2e-testing-browser-agents/) shows how to keep the page evidence separate from the workspace evidence.
+[^anthropic]: Anthropic, "Using LLMs to secure source code", 27 May 2026: "Containers are fine for the discovery agent reading code, but run the target and its PoCs in a microVM (like Firecracker) or a full VM with egress locked down."
+[^many]: "Many at once" panel: 10 at once had a median of 1.4 s (n=10); 25 at once 4.0 s (n=25); 100 at once 14.4 s at the median and 20.4 s at p95 (n=7). The 100-wide sample is small.
+[^llms]: From https://tangle.tools/llms.txt: "Tangle offers hosted infrastructure; on-premises hosting is planned and is not available today."
 
-## How to evaluate a sandbox workload
-
-An **evaluation**, or eval, is a repeatable run over named cases with explicit success criteria.
-For a sandbox, the cases should cover more than a successful `echo` command.
-
-Use one small project and test these cases:
-
-1. The agent creates a file inside the workspace and the host cannot see it through an unrelated path.
-2. A command fails and returns its exit code, output, and error.
-3. A permitted network request succeeds and a forbidden destination is denied.
-4. A second command sees the first attempt’s files and logs.
-5. A client reconnects to the same session without starting a duplicate run.
-6. A snapshot restores the expected state.
-7. Deletion removes temporary state while saved artifacts remain available.
-
-The eval should store a trace for each case.
-It should also distinguish a provisioning failure, a policy denial, a command failure, and a wrong agent decision.
-Those failures require different fixes.
-
-`@tangle-network/agent-eval` is a public package for running cases, applying judges or deterministic checks, comparing candidates, and preserving the data needed to explain a score.
-The [agent-eval repository](https://github.com/tangle-network/agent-eval) documents that evaluation path.
-You can use a simpler local test suite for a first sandbox, but keep the same separation between what the runtime observed and what the evaluator concluded.
-
-## What the sandbox does not prove
-
-A successful `create` proves that a service accepted a provisioning request.
-A running state proves that the workspace reached a lifecycle state the service reports as usable.
-A zero exit code proves that one command returned success.
-A saved patch proves which files were captured.
-
-None of those facts proves that the agent’s patch is correct, that every secret was handled safely, or that an untested network path is harmless.
-The application still needs code review, deterministic tests, credential policy, and a decision about which side effects require human approval.
-
-## The decision for builders
-
-Use an AI agent sandbox when the job needs a live project directory, several commands, intermediate state, recovery, or a reviewable artifact.
-Start with the public health check, one authenticated create, one successful command, one deliberate failure, and cleanup.
-
-Keep the task disposable until a reviewer can answer three questions from the trace:
-which files could the agent reach, which side effects did it attempt, and what remains after the workspace is deleted.
-If those answers are unclear, adding a larger model or more tools will increase uncertainty rather than remove it.
-
-
-## What is an AI agent sandbox?
-
-An AI agent sandbox is an isolated workspace where an agent can read and write files, run processes, use approved tools, and preserve evidence without receiving direct control of the host machine.
-
-## Is a code interpreter the same as an agent sandbox?
-
-Usually not.
-A code interpreter is optimized for a bounded execution request, while a sandbox keeps a project workspace alive for multi-step work, retries, and review.
-
-## Is an AI agent sandbox safe by default?
-
-No.
-Safety depends on filesystem scope, network policy, credential scope, resource limits, timeouts, logging, cleanup, and the application’s approval rules.
-A sandbox reduces the area a mistake can affect, but it does not remove the need to test those controls.
-
-## When should I use Tangle Sandbox?
-
-Use Tangle Sandbox when an agent needs a disposable or resumable development environment with files, processes, packages, sessions, snapshots, and inspectable results.
-Start from the [public manifest](https://sandbox.tangle.tools/.well-known/tangle-agent.json) and run one small workload before connecting a larger agent.
-
-## Does a TEE attestation prove that an agent did the right thing?
-
-No.
-Attestation can describe the code and execution boundary that produced a result.
-Correctness still requires task-specific tests, result checks, or human review.
+<FigureNotes figures={sandboxFigures} />
