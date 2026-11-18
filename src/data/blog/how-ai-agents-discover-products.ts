@@ -36,7 +36,7 @@ export const sixAgents = provenance(metricBars([
   { id: 'limit-before', label: 'Used all 40 tool calls, first set', value: 2, observations: runs(6),
     detail: 'mostly reading internal packages' },
   { id: 'limit-after', label: 'Used all 40 tool calls, with the README', value: 4, observations: runs(6),
-    detail: 'first file write at call 19 to 28; two after their tests passed' },
+    detail: 'first file write at call 26 to 28; two after their tests passed' },
 ], { measure: 'runs, out of six per set', unit: '', domain: [0, 6], formatValue: String, width: 720, id: 'six-agents-discovery' }), 1, {
   status: 'measured',
   period: '18 Nov 2026: first set 00:08 to 00:14 UTC, second set 07:45 to 07:54 UTC',
