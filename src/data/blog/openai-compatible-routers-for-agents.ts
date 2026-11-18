@@ -45,8 +45,9 @@ export const ceiling = provenance(metricBars([
     'provider.max_price {prompt: 0.155, completion: 0.62} answered 200. ' +
     'Billable rate: that response\'s x-tangle-price-input header, 1.5825e-7 per token ' +
     '(output 6.33e-7). This compares response headers, not a ledger debit. ' +
-    'After the router\'s fix, release ⟦release⟧ at ⟦price_time⟧ UTC: the same request was refused with 400 max_price_exceeded, quoting ' +
-    'the billed rate $0.15825/M, and a ceiling of {prompt: 0.15825, completion: 0.633} answered 200.',
+    'After the router\'s fix (release 61111287, 18 Nov 2026 00:08 UTC), the same request was refused with 400 max_price_exceeded: "billed prompt ' +
+    'price $0.15825/M exceeds provider.max_price.prompt $0.155/M" (gen_01M7NZPV3VZ471BYN512FD7CHB), and a ceiling of ' +
+    '{prompt: 0.15825, completion: 0.633} answered 200 with the same price headers (gen_01M7NZPVGM8T5AWK4YBX55VQMS).',
 });
 
 export const routerFigures = [retries, ceiling];
