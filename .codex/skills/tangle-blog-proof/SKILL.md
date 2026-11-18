@@ -35,6 +35,9 @@ pnpm build
 
 The script catches structure, not judgment. Score judgment with the [judge rubric](https://github.com/tangle-network/gtm/blob/master/research/technical-blogs/rubric.json) and its blind protocol; report the per-dimension scores.
 
+A post from the factory [technical-post graph](https://github.com/tangle-network/factory/blob/main/graphs/technical-post.graph.yaml) merges only on its gate's ship decision (voice, blind ranking, no blocking fact-check finding, the reader exam), and a rewrite must also beat the live post's text in a blind head-to-head.
+After the deploy, open the served URL at 1440 and 390 px wide: it answers 200 with the new title, has no horizontal overflow, no figure wider than the page and no broken image; until then the post is not live.
+
 ## Output
 
 Report:
