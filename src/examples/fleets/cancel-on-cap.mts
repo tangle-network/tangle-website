@@ -5,7 +5,7 @@ const client = new Sandbox({
   baseUrl: "https://sandbox.tangle.tools",
 });
 
-// The Platform refuses any charge past $2; this script stops everyone at $1.
+// Claude Code harness, DeepSeek V4.1 Flash. The Platform refuses any charge past $2; this script stops everyone at $0.20.
 const ideas = ["a lookup table", "a streaming parser", "fewer allocations",
   "worker threads", "WebAssembly", "a hand written tokenizer"];
 const fleet = await client.fleets.create({
@@ -15,12 +15,12 @@ const fleet = await client.fleets.create({
   placement: "dedicated",
   defaults: {
     git: { url: "https://github.com/tangle-network/sandbox-demo" },
-    backend: { type: "claude-code" },
+    backend: { type: "claude-code", model: { model: "deepseek/deepseek-v4.1-flash" } },
   },
   budgetUsd: 2,
 });
 
-const softCapUsd = 1;
+const softCapUsd = 0.2;
 async function checkSpend() {
   const { spentUsd } = await fleet.spend();
   if (spentUsd < softCapUsd) return;
