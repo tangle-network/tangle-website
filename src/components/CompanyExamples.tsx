@@ -46,7 +46,7 @@ function Picker({ label, value, options, choose }: {
 }) {
   const current = options.find(item => item.id === value);
   const [open, setOpen] = useState(false);
-  return <DropdownMenu open={open} onOpenChange={setOpen}>
+  return <DropdownMenu modal={false} open={open} onOpenChange={setOpen}>
     <DropdownMenuTrigger asChild
       // A touch release can land on a menu item when Radix opens the menu on pointer-down.
       onPointerDownCapture={event => { if (event.button === 0 && !event.ctrlKey) event.stopPropagation(); }}

@@ -72,6 +72,20 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await picker.click();
       await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
     };
+    const lastStepGap = await output.evaluate(pane => {
+      const last = [...pane.querySelectorAll('[data-timeline-step]')].at(-1);
+      return last ? pane.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom : Infinity;
+    });
+    check(lastStepGap >= 0 && lastStepGap < 24, 'Idle activity sits at the bottom of the stream', item);
+    await picker.evaluate(button => button.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    const pagePosition = () => page.evaluate(() => [Math.round(scrollY), document.documentElement.scrollHeight]);
+    const beforeMenu = await pagePosition();
+    if (width <= 680) await picker.tap();
+    else await picker.click();
+    await menu.waitFor();
+    check((await pagePosition()).every((value, index) => Math.abs(value - beforeMenu[index]) <= 1), 'Opening the picker preserves the document position and height', item);
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
     const planes = await controls.evaluate(root => ['.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
     check(new Set(planes).size === 2 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'Source and output have distinct surfaces', item);
     check(await editor.locator('.qs-actions .qs-run-id, .qs-actions .qs-stamp, .qs-actions .qs-clock').evaluateAll(nodes => nodes.every(node => !node.getClientRects().length)), 'Run metadata does not create a toolbar', item);
