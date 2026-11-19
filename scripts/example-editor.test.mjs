@@ -90,12 +90,12 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await selectedFile('python-csv').waitFor();
       await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
     } else {
-      await controls.getByRole('button', { name: /^Topic,/ }).click();
-      await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).click();
+      await controls.getByRole('button', { name: /^Topic,/ }).tap();
+      await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).tap();
       await selectedFile('any-cloud').waitFor();
-      await editor.getByRole('button', { name: 'Pause the recorded run' }).click();
-      await controls.getByRole('button', { name: /^Example,/ }).click();
-      await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).click();
+      await editor.getByRole('button', { name: 'Pause the recorded run' }).tap();
+      await controls.getByRole('button', { name: /^Example,/ }).tap();
+      await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).tap();
       await editor.locator('.qs-main[data-state="running"]').waitFor();
     }
     // Hold the real island response so the early-click regression is reproducible on a fast connection too.

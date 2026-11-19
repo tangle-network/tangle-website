@@ -17,7 +17,7 @@ function Picker({ label, value, options, choose }: {
   return <DropdownMenu open={open} onOpenChange={setOpen}>
     <DropdownMenuTrigger asChild
       // A touch release can land on a menu item when Radix opens the menu on pointer-down.
-      onPointerDown={event => { if (event.button === 0 && !event.ctrlKey) event.preventDefault(); }}
+      onPointerDownCapture={event => { if (event.button === 0 && !event.ctrlKey) event.stopPropagation(); }}
       onClick={() => setOpen(value => !value)}><Button variant="outline" aria-label={`${label}, ${current?.label}`}>
       <span>{current?.label}</span><span aria-hidden="true">▾</span>
     </Button></DropdownMenuTrigger>
