@@ -2,6 +2,7 @@
 //
 //   record:  dotenvx get WEBSITE_EXAMPLE_RECORDER_API_KEY -f <vault> | node scripts/record-examples.mts [subject/idea ...]
 //            (an example that names no model runs on the first model its key allows)
+//   public: node scripts/record-examples.mts router/list-serving-models
 //   check:   node scripts/record-examples.mts --check   (pnpm check:runs)
 //
 // Every example needs a fresh, matching, successful run except the files NO_RUN lists with their reason; check mode
@@ -14,7 +15,7 @@
 // names the call, the source sha256 (comments and blank lines excluded) matches, the run exited 0 and the record is under 30 days old.
 import { spawn } from "node:child_process";
 import { sourceDigest } from "./example-digest.mjs";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
@@ -27,7 +28,6 @@ const HARNESS = join(ROOT, "scripts/examples-typecheck");
 const MAX_AGE_DAYS = 30;
 // Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
 const NO_RUN: Record<string, string> = {
-  "router/list-serving-models": "reads the public Router status endpoint without making an SDK call",
   "router/security-model": "requires a customer-selected, key-restricted model; no live run recorded",
   "router/review-a-route": "requires a customer-selected Router model; no live run recorded",
   "runtime/any-cloud-e2b": "no credential in vault",
@@ -46,7 +46,7 @@ type RunRecord = { source: { path: string; sha256: string }; run: Record<string,
 // Preload: instrument one example process.
 async function instrument(out: string, file: string) {
   const { AsyncLocalStorage } = await import("node:async_hooks");
-  const fileUrl = pathToFileURL(file).href;
+  const fileUrl = pathToFileURL(realpathSync(file)).href;
   const self = import.meta.url;
   const t0 = performance.now();
   const TEXT = 4000, DEPTH = 4;
@@ -184,10 +184,12 @@ async function instrument(out: string, file: string) {
     },
   });
 
-  const require = createRequire(file);
-  for (const entry of ["@tangle-network/sandbox", "@tangle-network/sandbox/agent"]) {
-    const sdk = await import(pathToFileURL(require.resolve(entry)).href);
-    instrumentValue(Object.create(sdk.Sandbox.prototype));
+  if (readFileSync(file, "utf8").includes("@tangle-network/")) {
+    const require = createRequire(file);
+    for (const entry of ["@tangle-network/sandbox", "@tangle-network/sandbox/agent"]) {
+      const sdk = await import(pathToFileURL(require.resolve(entry)).href);
+      instrumentValue(Object.create(sdk.Sandbox.prototype));
+    }
   }
 
   const realFetch = globalThis.fetch;
@@ -370,7 +372,8 @@ async function record(key: string, target: string) {
   const events = compact(fold(source.split("\n"), raw));
   const { id, costUsd } = collect(events);
   const exitCode = codes.every((code) => code === 0) && !events.some(failed) ? 0 : codes.at(-1)! || 1;
-  const versions = Object.fromEntries([...new Set(["@tangle-network/sandbox", ...Array.from(source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g), (match) => match[1])])].map((name) =>
+  const imports = Array.from(source.matchAll(/from ["'](@tangle-network\/[^/"']+)/g), (match) => match[1]);
+  const versions = Object.fromEntries([...new Set(imports.length ? ["@tangle-network/sandbox", ...imports] : [])].map((name) =>
     [name, JSON.parse(readFileSync(join(HARNESS, "node_modules", name, "package.json"), "utf8")).version]));
   const result: RunRecord = {
     source: { path: sourcePath, sha256: sourceDigest(source) },
@@ -429,9 +432,10 @@ if (preload && process.argv[1] !== fileURLToPath(import.meta.url)) {
     save(path, { source, run: { id, recordedAt, exitCode, costUsd, sdk }, events });
   }
 } else {
-  const key = readFileSync(0, "utf8").trim();
-  if (!key) throw new Error("Pipe the production key on stdin.");
   const targets = process.argv.slice(2).length ? process.argv.slice(2) : examples().filter((target) => !(target in NO_RUN));
+  const publicRead = targets.every(target => target === "router/list-serving-models");
+  const key = publicRead ? "" : readFileSync(0, "utf8").trim();
+  if (!publicRead && !key) throw new Error("Pipe the production key on stdin.");
   const concurrency = Number(process.env.RECORD_CONCURRENCY ?? 4);
   const queue = [...targets];
   const codes: Record<string, number> = {};

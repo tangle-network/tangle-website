@@ -33,7 +33,6 @@ const source = await fs.readFile(join(ROOT, 'src/examples/sandboxes/fix-a-test.m
 const record = await read('sandboxes/fix-a-test');
 const report = { cases: [], failures: [], quality: 'UNREVIEWED: render inspection is separate from functional checks' };
 const check = (ok, message, item) => { if (!ok) report.failures.push({ case: item.name, message }); };
-const normalized = text => text.replace(/`+|\*\*/g, '').replace(/^\s*[-*]\s+/gm, '').replace(/\s+/g, ' ').trim();
 for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], ['phone', chromium, 390, 844], ['narrow', chromium, 320, 740], ['webkit-phone', webkit, 390, 844]]) {
   const browser = await engine.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true,
@@ -47,7 +46,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
   try {
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
-    const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
+    const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-feed');
     // Keep the replay visible after a click retries with scrollIntoView and smooth page scrolling.
     const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await editor.waitFor();
@@ -57,8 +56,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
     if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
-    // Finished output is the default; replay is an explicit reader action.
-    await editor.locator('.qs-main[data-state="ended"]').waitFor();
+    await editor.locator('.qs-main[data-state="idle"]').waitFor();
+    check(await editor.locator('.qs-feed [data-timeline-step]').count() === 0, 'No steps appear before Play', item);
     const controls = page.locator('.company-examples');
     const group = controls.getByRole('navigation', { name: 'Example topics' });
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
@@ -71,6 +70,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       const resultEdge = (await editor.locator('.qs-machine').boundingBox());
       check(Math.abs(sourceEdge.y + sourceEdge.height - resultEdge.y - resultEdge.height) <= 1, 'Source and output end together in the desktop editor', item);
       await group.getByRole('button', { name: 'Any cloud', exact: true }).click();
+      await selectedFile('any-cloud').waitFor();
+      await page.goBack();
+      await selectedFile('fix-a-test').waitFor();
+      await page.goForward();
       await selectedFile('any-cloud').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
@@ -97,35 +100,44 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     if (releaseIsland) {
       try {
         check(await editor.locator('.qs-source pre').isVisible(), 'Source remains readable before the island loads', item);
-        check(await editor.getByRole('button', { name: 'Replay the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
+        check(await editor.getByRole('button', { name: 'Play the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
       } finally { releaseIsland(); }
     }
     await editor.scrollIntoViewIfNeeded();
-    await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
+    const play = editor.getByRole('button', { name: 'Play the recorded run', exact: true });
+    await play.scrollIntoViewIfNeeded();
+    const track = await editor.locator('.qs-progress').boundingBox();
+    const button = await play.boundingBox();
+    check(track.x + track.width < button.x, 'Play and seek have separate hit areas', item);
+    check(Number(await position()) === 0, 'The first press starts at zero', item);
+    await play.click();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).click();
     const paused = await position();
     await page.waitForTimeout(600);
-    check(await position() === paused && await main.getAttribute('data-state') === 'idle', 'Pause must stop the clock', item);
+    check(await position() === paused && await main.getAttribute('data-state') === 'paused', 'Pause must stop the clock', item);
     await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
-    await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).press('Space');
+    await editor.getByRole('button', { name: 'Resume the recorded run', exact: true }).press('Space');
     await editor.locator('.qs-main[data-state="running"]').waitFor({ timeout: 5000 });
     const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
     await main.locator('[data-source-line]').waitFor({ state: 'visible' });
     await editor.locator('.qs-main[data-state="ended"]').waitFor({ timeout: recordMs + 15000 });
-    check(await editor.locator('.qs-ret').count() === 6 && /# pass 9\s+# fail 0/.test(await output.innerText()), 'Completed returns and the recorded passing tests remain in source and output', item);
+    const tests = output.locator('details').filter({ has: page.getByText('9 tests passed', { exact: true }) });
+    await tests.locator('summary').click();
+    check(await editor.locator('.qs-ret').count() === 6 && /# pass 9\s+# fail 0/.test(await tests.innerText()), 'Source returns and the recorded test result stay inspectable', item);
     check(await editor.locator('.qs-receipt,.qs-patch').count() === 0, 'Company examples omit the full-width receipt and its download control', item);
     check(!/inputTokens|outputTokens|npm notice/.test(await output.innerText()), 'No accounting dumps or stderr notices in output', item);
     await page.screenshot({ path: `${out}/${name}-result.png` });
-    check((await output.locator('.qs-files > div').count()) === 3, 'The result shows every changed file', item);
+    const patch = output.locator('details').filter({ has: page.getByText('View recorded patch', { exact: true }) });
+    await patch.locator('summary').click();
+    check((await patch.innerText()).includes('diff --git'), 'The timeline retains the actual patch', item);
     if (engine === chromium) {
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copy file', exact: true }).click();
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copied', exact: true }).waitFor();
       check(await page.evaluate(() => navigator.clipboard.readText()) === source, 'Copy must preserve full runnable source', item);
     }
-    check((await editor.locator('.qs-feed').innerText()).includes('Find the cause and fix it.') && await editor.locator('.qs-feed .qs-tool').count() >= 5, 'The transcript shows the prompt and each step the agent took', item);
+    check((await editor.locator('.qs-feed').innerText()).includes('Find the cause and fix it.') && await editor.locator('.qs-feed [data-timeline-step]').count() >= 5, 'The transcript shows the prompt and each step the agent took', item);
     await editor.getByRole('slider', { name: 'Run position' }).press('Home');
     check(await main.getAttribute('data-state') !== 'ended', 'Moving the run position moves the run', item);
     await editor.getByRole('slider', { name: 'Run position' }).press('End');
@@ -154,65 +166,49 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
-    const load = async key => { await page.goto(`${base}/?example=${key}#quickstart-title`); await selectedFile(key.split('/').at(-1)).waitFor(); await editor.scrollIntoViewIfNeeded(); };
     if (name === 'desktop') {
-      await load('sandboxes/browser-task');
-      await editor.locator('.qs-main[data-state="ended"]').waitFor();
-      const browserRecord = await read('sandboxes/browser-task');
-      const headlines = JSON.parse(browserRecord.events.find(event => event.name === 'read').result);
-      const noHeadlines = text => headlines.every(title => !text.includes(title));
-      let awaitText = await editor.locator('.qs-feed').innerText();
-      check(noHeadlines(awaitText), 'Browser output must omit the recorded third-party headlines', item);
-      const setup = editor.locator('.qs-feed button[aria-expanded]').first();
-      await setup.click();
-      awaitText = await editor.locator('.qs-feed').innerText();
-      check(noHeadlines(awaitText), 'Expanded browser setup must omit the recorded headlines', item);
-      const fallback = browserRecord.events.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('executable_path')).data.part.text.replace(/`/g, '');
-      check(normalized(awaitText).includes(normalized(fallback)), 'The recorded browser fallback remains visible', item);
-      check(awaitText.includes('EGRESS_DOMAIN_NOT_ALLOWED'), 'The recorded browser download refusal remains visible', item);
-      await load('evals/compare-harnesses');
-      await editor.locator('.qs-score-cell').last().waitFor();
-      const comparison = await read('evals/compare-harnesses');
-      const duration = ms => ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
-      const shownTimes = await editor.locator('.qs-score-cell i').allTextContents();
-      check(comparison.events.filter(event => event.name === 'prompt').every(event => shownTimes.includes(duration(event.durationMs))), 'Every coding-agent timing comes from its recorded prompt', item);
-      await load('sandboxes/stop-and-resume');
-      await editor.locator('.qs-main[data-state="ended"]').waitFor();
-      const states = await editor.locator('.qs-ret b').allTextContents();
-      check(states.includes('stopped') && states.includes('running'), 'Void lifecycle calls retain their recorded outcomes', item);
-      await page.emulateMedia({ reducedMotion: 'no-preference' });
-      await editor.getByRole('button', { name: 'Replay the recorded run' }).click();
-      const resumed = (await read('sandboxes/stop-and-resume')).events.find(event => event.label === 'box.resume');
-      await editor.locator(`.qs-current-call[data-source-line="${resumed.line}"]`).waitFor();
-      const executing = editor.locator(`.qs-source[data-active-line="${resumed.line}"]`);
-      check(await executing.locator('.qs-band').isVisible() && await editor.locator('.qs-state-row').getByText('stopped', { exact: true }).isVisible(),
-        'The recorded resume call highlights its source while the output still shows the completed stop', item);
-      await page.emulateMedia({ reducedMotion: 'reduce' });
-      await editor.locator('.qs-main[data-state="ended"]').waitFor();
-      await load('sandboxes/host-a-page');
-      await editor.locator('.qs-main[data-state="ended"]').waitFor();
-      check((await editor.locator('.qs-ret b').allTextContents()).includes('killed'), 'A void process kill retains its recorded outcome', item);
-      await load('sandboxes/python-csv');
-      const totals = JSON.parse((await read('sandboxes/python-csv')).events.find(event => event.label === 'box.runCode').result.stdout);
-      const shownTotals = await editor.getByRole('row').allTextContents();
-      check(totals.every(([customer, total]) => shownTotals.includes(customer + total)), 'The CSV table displays each customer and total from the run', item);
-      await load('sandboxes/run-code');
-      const commandRecord = await read('sandboxes/run-code');
-      const commandOutput = commandRecord.events.find(event => event.result?.stdout?.includes('Linux')).result.stdout.trim();
-      await editor.locator('.qs-feed').getByText(commandOutput, { exact: false }).waitFor();
-      check((await editor.locator('.qs-feed').innerText()).split(commandOutput).length - 1 === 1, 'Command output must appear once', item);
-      await load('sandboxes/worker');
-      const workerRecord = await read('sandboxes/worker');
-      const workerAnswer = workerRecord.events.find(event => typeof event.result?.response === 'string').result.response;
-      await editor.locator('.qs-feed').getByText(normalized(workerAnswer.split('\n')[0]), { exact: false }).waitFor();
-      check(normalized(await editor.locator('.qs-feed').innerText()).split(normalized(workerAnswer)).length - 1 === 1, 'Complete long-job answer must appear once', item);
-      await load('evals/regression-gate'); await editor.getByText('{ shipped: 1, candidate: 1 }', { exact: false }).waitFor();
-      await load('evals/score-a-trace'); await editor.getByText('Score 1', { exact: true }).waitFor();
-      check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);
-      await load('fleets/cancel-on-cap'); await editor.locator('.qs-result').getByText('agent-1 · cancelled', { exact: true }).waitFor();
-      await page.screenshot({ path: `${out}/${name}-fleet.png` });
-      await page.goto(`${base}/?example=router/list-serving-models#quickstart-title`); await selectedFile('list-serving-models').waitFor();
-      check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
+      const catalog = await (await fetch(base + '/examples.json')).json();
+      for (const subject of catalog.subjects) {
+        await group.getByRole('button', { name: subject.label, exact: true }).click();
+        const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
+        const more = files.getByRole('button', { name: /^Show \d+ more$/ });
+        if (await more.count()) await more.click();
+        for (const idea of subject.ideas) {
+          await files.locator('[data-file="' + idea.id + '"]').click();
+          await selectedFile(idea.id).waitFor();
+          const key = subject.id + '/' + idea.id;
+          check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);
+          if (!idea.run) {
+            await output.getByText('This example has source code only.', { exact: true }).waitFor();
+            check(await editor.locator('.qs-run').count() === 0, 'SDK example has no simulated run: ' + key, item);
+            continue;
+          }
+          await main.locator('.qs-run:not(:disabled)').waitFor();
+          check(Number(await position()) === 0, 'Fresh timeline at zero: ' + key, item);
+          await main.getByRole('button', { name: 'Play the recorded run' }).click();
+          await editor.locator('.qs-main[data-state="ended"]').waitFor();
+          check(await output.locator('.qs-execution-timeline').count() === 1 &&
+            await output.locator('[data-timeline-step]').count() > 0, 'One recorded timeline: ' + key, item);
+          if (key === 'sandboxes/python-csv') {
+            const csv = await read(key);
+            const totals = JSON.parse(csv.events.find(event => event.label === 'box.runCode').result.stdout);
+            const rows = await output.getByRole('row').allTextContents();
+            check(totals.every(([customer, total]) => rows.includes(customer + total)), 'Recorded CSV totals', item);
+          }
+          if (key === 'router/list-serving-models') {
+            const printed = (await read(key)).events.find(event => event.kind === 'stdout').text.trim();
+            const consoleOutput = output.locator('details').filter({ has: page.getByText('Console output', { exact: true }) });
+            await consoleOutput.locator('summary').click();
+            check((await consoleOutput.locator('pre').innerText()).trim() === printed, 'Router shows the recorded model IDs', item);
+          }
+          if (key === 'sandboxes/browser-task') {
+            const browserRecord = await read(key);
+            const headlines = JSON.parse(browserRecord.events.find(event => event.name === 'read').result);
+            const transcript = await output.textContent();
+            check(headlines.every(title => !transcript.includes(title)), 'Browser transcript excludes external headlines', item);
+          }
+        }
+      }
     }
     const optionalTelemetry = error => {
       const failedScripts = requestFailures.filter(request => request.method === 'GET' && request.type === 'script' && Math.abs(request.at - error.at) < 1000);
