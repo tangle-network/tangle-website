@@ -13,11 +13,15 @@ function Picker({ label, value, options, choose }: {
 }) {
   const groups = [...new Set(options.map(item => item.group))];
   const current = options.find(item => item.id === value);
-  return <DropdownMenu>
-    <DropdownMenuTrigger asChild><Button variant="outline" aria-label={`${label}, ${current?.label}`}>
+  const [open, setOpen] = useState(false);
+  return <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenuTrigger asChild
+      // A touch release can land on a menu item when Radix opens the menu on pointer-down.
+      onPointerDown={event => { if (event.button === 0 && !event.ctrlKey) event.preventDefault(); }}
+      onClick={() => setOpen(value => !value)}><Button variant="outline" aria-label={`${label}, ${current?.label}`}>
       <span>{current?.label}</span><span aria-hidden="true">▾</span>
     </Button></DropdownMenuTrigger>
-    <DropdownMenuContent align="start" className="ce-menu" aria-label={label}>
+    <DropdownMenuContent align="start" sideOffset={4} className="ce-menu" aria-label={label}>
       <DropdownMenuRadioGroup value={value}>{groups.map(group => <Fragment key={group ?? 'options'}>
         {group && <DropdownMenuLabel>{group}</DropdownMenuLabel>}
         {options.filter(item => item.group === group).map(item =>
