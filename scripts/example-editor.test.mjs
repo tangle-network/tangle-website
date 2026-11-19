@@ -88,7 +88,19 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await page.getByRole('option', { name: 'Review an API route', exact: true }).click();
       await selectedFile('review-a-route').waitFor();
     }
-    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
+    // Hold the real island response so the early-click regression is reproducible on a fast connection too.
+    let releaseIsland;
+    if (name === 'narrow') {
+      const held = new Promise(resolve => { releaseIsland = resolve; });
+      await page.route('**/CompanyExamples.*.js', async route => { await held; await route.continue(); }, { times: 1 });
+    }
+    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`, { waitUntil: 'domcontentloaded' });
+    if (releaseIsland) {
+      try {
+        check(await editor.locator('.qs-source pre').isVisible(), 'Source remains readable before the island loads', item);
+        check(await editor.getByRole('button', { name: 'Replay the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
+      } finally { releaseIsland(); }
+    }
     await editor.scrollIntoViewIfNeeded();
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();

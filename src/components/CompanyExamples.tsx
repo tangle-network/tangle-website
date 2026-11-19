@@ -17,6 +17,7 @@ function Picker({ label, value, options, choose }: {
 }
 
 export default function CompanyExamples({ subjects, initial }: Props) {
+  const [ready, setReady] = useState(false);
   const [selection, setSelection] = useState(initial);
   const [expanded, setExpanded] = useState(false);
   const [topic, file] = selection.split('/');
@@ -37,6 +38,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       setExpanded(false);
     };
     read();
+    setReady(true);
     window.addEventListener('popstate', read);
     return () => window.removeEventListener('popstate', read);
   }, [initial, subjects]);
@@ -53,7 +55,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     setExpanded(false);
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
-  return <div className="company-examples">
+  return <fieldset className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>
@@ -79,5 +81,5 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       </nav>
       <ExampleEditor key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>
-  </div>;
+  </fieldset>;
 }
