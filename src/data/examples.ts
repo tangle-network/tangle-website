@@ -54,8 +54,8 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['what-did-it-do', 'Ask what the agent did'],
   ]],
   ['products', 'Agent apps', SANDBOX, [
-    ['legal-agent', 'One sandbox per customer'],
     ['email-assistant', 'Connect an email assistant', 'npm install @tangle-network/agent-app'],
+    ['legal-agent', 'One sandbox per customer'],
     ['support-thread', 'A chat that remembers'],
     ['gtm-agent', 'Call a hosted agent'],
     ['charge-per-turn', 'Bill a customer per turn'],

@@ -45,7 +45,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     if (['run-code', 'python-csv', 'host-a-page', 'worker'].includes(item.id)) return 'Commands and services';
     return 'Coding agents';
   };
-  const groups = subject.id === 'products' ? ['Agent App SDK', 'Sandbox app patterns'] : [...new Set(ordered.map(groupFor))];
+  const groups = [...new Set(ordered.map(groupFor))];
   const files = groups.flatMap(group => ordered.filter(item => groupFor(item) === group));
 
   useEffect(() => {
