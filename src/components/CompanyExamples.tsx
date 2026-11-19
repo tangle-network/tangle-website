@@ -1,5 +1,8 @@
 import { ExampleEditor, type ExampleSubject } from '@tangle-network/ui/marketing';
-import { Button, Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@tangle-network/ui/primitives';
+import {
+  Button, DropdownMenu, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+} from '@tangle-network/ui/primitives';
 import { Fragment, useEffect, useState } from 'react';
 import './company-examples.css';
 
@@ -9,41 +12,52 @@ function Picker({ label, value, options, choose }: {
   label: string; value: string; options: { id: string; label: string; group?: string }[]; choose: (value: string) => void;
 }) {
   const groups = [...new Set(options.map(item => item.group))];
-  return <div>
-    <Select value={value} onValueChange={choose}>
-      <SelectTrigger size="touch" aria-label={label}><SelectValue /></SelectTrigger>
-      <SelectContent>{groups.map(group => <SelectGroup key={group ?? 'options'}>
-        {group && <SelectLabel>{group}</SelectLabel>}
+  const current = options.find(item => item.id === value);
+  const [open, setOpen] = useState(false);
+  return <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenuTrigger asChild
+      // A touch release can land on a menu item when Radix opens the menu on pointer-down.
+      onPointerDownCapture={event => { if (event.button === 0 && !event.ctrlKey) event.stopPropagation(); }}
+      onClick={() => setOpen(value => !value)}><Button variant="outline" aria-label={`${label}, ${current?.label}`}>
+      <span>{current?.label}</span><span aria-hidden="true">▾</span>
+    </Button></DropdownMenuTrigger>
+    <DropdownMenuContent align="start" sideOffset={4} className="ce-menu" aria-label={label}>
+      <DropdownMenuRadioGroup value={value}>{groups.map(group => <Fragment key={group ?? 'options'}>
+        {group && <DropdownMenuLabel>{group}</DropdownMenuLabel>}
         {options.filter(item => item.group === group).map(item =>
-          <SelectItem className="ce-option" value={item.id} key={item.id}>{item.label}</SelectItem>)}
-      </SelectGroup>)}</SelectContent>
-    </Select>
-  </div>;
+          <DropdownMenuRadioItem className="ce-option" value={item.id} key={item.id} onSelect={() => choose(item.id)}>{item.label}</DropdownMenuRadioItem>)}
+      </Fragment>)}</DropdownMenuRadioGroup>
+    </DropdownMenuContent>
+  </DropdownMenu>;
 }
 
 export default function CompanyExamples({ subjects, initial }: Props) {
   const [ready, setReady] = useState(false);
   const [selection, setSelection] = useState(initial);
-  const [expanded, setExpanded] = useState(false);
+  const [interaction, setInteraction] = useState(0);
   const [topic, file] = selection.split('/');
   const subject = subjects.find(item => item.id === topic) ?? subjects[0];
   const idea = subject.ideas.find(item => item.id === file) ?? subject.ideas[0];
   const initialFile = subject.ideas.find(item => `${subject.id}/${item.id}` === initial);
   const ordered = initialFile ? [initialFile, ...subject.ideas.filter(item => item !== initialFile)] : subject.ideas;
-  const hasGuides = ordered.some(item => !item.run);
-  const ideas = hasGuides ? [...ordered.filter(item => item.run), ...ordered.filter(item => !item.run)] : ordered;
-  const groupFor = (item: typeof idea) => item.run ? 'Recorded runs' : 'SDK examples';
-  // Keep a directly linked example in the short list, including when it belongs farther down.
-  const shortlist = ideas.slice(0, 5);
-  if (!shortlist.includes(idea)) shortlist[shortlist.length - 1] = idea;
-  const files = expanded ? ideas : shortlist;
+  const groupFor = (item: typeof idea) => {
+    if (subject.id === 'products') return item.id === 'email-assistant' ? 'Agent App SDK' : 'Sandbox app patterns';
+    if (subject.id === 'router') return item.run ? 'Recorded runs' : 'API examples';
+    if (subject.id === 'runtime') return item.run ? 'Recorded runs' : 'SDK examples';
+    if (subject.id !== 'sandboxes') return undefined;
+    if (['stop-and-resume', 'branch-into-two', 'snapshot-and-revert'].includes(item.id)) return 'Machine lifecycle';
+    if (['run-code', 'python-csv', 'host-a-page', 'worker'].includes(item.id)) return 'Commands and services';
+    return 'Coding agents';
+  };
+  const groups = [...new Set(ordered.map(groupFor))];
+  const files = groups.flatMap(group => ordered.filter(item => groupFor(item) === group));
 
   useEffect(() => {
     const read = () => {
       const value = new URL(window.location.href).searchParams.get('example');
       const valid = subjects.some(s => s.ideas.some(i => `${s.id}/${i.id}` === value));
       setSelection(valid && value ? value : initial);
-      setExpanded(false);
+      setInteraction(0);
     };
     read();
     setReady(true);
@@ -53,15 +67,16 @@ export default function CompanyExamples({ subjects, initial }: Props) {
 
   function choose(key: string) {
     const url = new URL(window.location.href);
-    if (url.searchParams.get('example') === key) return;
-    url.searchParams.set('example', key);
-    window.history.pushState(window.history.state, '', url);
+    if (url.searchParams.get('example') !== key) {
+      url.searchParams.set('example', key);
+      window.history.pushState(window.history.state, '', url);
+    }
+    setInteraction(count => count + 1);
     setSelection(key);
   }
   function chooseSubject(id: string) {
     const next = subjects.find(item => item.id === id);
     if (!next) return;
-    setExpanded(false);
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
   return <fieldset className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
@@ -70,13 +85,13 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     </nav>
     <div className="ce-pickers">
       <Picker label="Topic" value={subject.id} options={subjects} choose={chooseSubject} />
-      <Picker label="Example" value={idea.id} options={ideas.map(item => ({ id: item.id, label: item.title, group: hasGuides ? groupFor(item) : undefined }))}
+      <Picker label="Example" value={idea.id} options={files.map(item => ({ id: item.id, label: item.title, group: groupFor(item) }))}
         choose={id => choose(`${subject.id}/${id}`)} />
     </div>
     <div className="ce-workbench dark" data-theme="website">
       <nav className="ce-files" aria-label={`${subject.label} examples`}>
         {files.map((item, index) => <Fragment key={item.id}>
-          {hasGuides && (!index || groupFor(files[index - 1]) !== groupFor(item)) &&
+          {groupFor(item) && (!index || groupFor(files[index - 1]) !== groupFor(item)) &&
             <span className="ce-file-group">{groupFor(item)}</span>}
           <Button variant="ghost" size="sm" type="button" aria-pressed={item.id === idea.id}
           onKeyDown={event => {
@@ -88,11 +103,9 @@ export default function CompanyExamples({ subjects, initial }: Props) {
           }}
           data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}</Button>
         </Fragment>)}
-        {ideas.length > shortlist.length && <Button className="ce-more" variant="ghost" size="sm" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Show fewer' : `Show ${ideas.length - shortlist.length} more`}
-        </Button>}
       </nav>
-      <ExampleEditor showReceipt={false} key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
+      <ExampleEditor key={`${selection}:${interaction}`} playOnSelect={interaction > 0}
+        showReceipt={false} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>
   </fieldset>;
 }
