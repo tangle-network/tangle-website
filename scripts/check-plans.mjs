@@ -1,7 +1,7 @@
 // Fails the deploy when the plans the homepage states differ from the plans
 // the identity service serves, or when the built page does not render them.
 import { readFile } from 'node:fs/promises';
-import { PLANS, PLANS_URL, planPrice } from '../src/data/plans.mjs';
+import { PLANS, PLANS_URL, formatUsdCents } from '../src/data/plans.mjs';
 
 export function comparePlans(served) {
   const problems = [];
@@ -27,7 +27,7 @@ export function renderedPlanProblems(html) {
   const problems = [];
   for (const plan of PLANS) {
     if (!html.includes(`data-plan="${plan.id}"`)) problems.push(`the page has no plan card for ${plan.id}`);
-    if (!text.includes(planPrice(plan))) problems.push(`the page does not print ${plan.name}'s price ${planPrice(plan)}`);
+    if (!text.includes(formatUsdCents(plan.monthlyPriceCents))) problems.push(`the page does not print ${plan.name}'s price ${formatUsdCents(plan.monthlyPriceCents)}`);
     for (const feature of plan.features) if (!text.includes(feature)) problems.push(`the page does not say: ${feature}`);
   }
   return problems;

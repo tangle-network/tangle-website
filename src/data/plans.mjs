@@ -37,7 +37,7 @@ export const PLANS = [
 ];
 
 /** "$29.99" or "$0": the price the way the plans page prints it. */
-export function planPrice(plan) {
-  const dollars = plan.monthlyPriceCents / 100;
+export function formatUsdCents(cents) {
+  const dollars = cents / 100;
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
 }
