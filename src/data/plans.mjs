@@ -41,3 +41,7 @@ export function formatUsdCents(cents) {
   const dollars = cents / 100;
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;
 }
+
+export function planPrice(plan) {
+  return formatUsdCents(plan.monthlyPriceCents);
+}
