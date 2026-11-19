@@ -1,102 +1,578 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SandboxQuickstart from '../components/SandboxQuickstart.astro';
-import BudgetSection from '../components/BudgetSection.astro';
 import LiveDemo from '../components/LiveDemo.tsx';
-import { Section, InstallRow, RunTrace, HarnessStrip, BillingProof, PlanTable, InstallCloser, CliPlayground, UseCaseCards } from '@tangle-network/ui/marketing';
-import { PLANS } from '../data/plans.mjs';
-import { loadCatalog } from '../data/harness-catalog.mjs';
-import useCaseIndex from '../../public/usecases.json';
-import record from '../data/runs/sandboxes/fix-a-test.json';
-import source from '../examples/sandboxes/fix-a-test.mts?raw';
+import { PLANS, planPrice } from '../data/plans.mjs';
 
-const description = 'Tangle runs your agents on their own Linux machines, routes their model calls and records every step.';
-const run = {
-  url: '/runs/sandboxes/fix-a-test.json', recordedAt: record.run.recordedAt,
-  runId: record.run.id, sha: record.source.sha256,
-  sdk: record.run.sdk['@tangle-network/sandbox'], costUsd: record.run.costUsd,
-  ms: Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0))),
+const canonicalUrl = 'https://tangle.tools/';
+const organizationJsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'Organization',
+      '@id': `${canonicalUrl}#organization`,
+      name: 'Tangle',
+      legalName: 'Tangle Technologies, Inc.',
+      url: canonicalUrl,
+      logo: 'https://tangle.tools/icons/tangle-icon-512.png',
+      description:
+        'Tangle provides isolated runtimes, model routing, browser automation, and evaluation tools for AI agents.',
+      sameAs: [
+        'https://twitter.com/tangle_network',
+        'https://github.com/tangle-network',
+        'https://www.youtube.com/@TangleNetwork',
+        'https://discord.com/invite/cv8EfJu3Tn',
+      ],
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${canonicalUrl}#website`,
+      name: 'Tangle',
+      url: canonicalUrl,
+      publisher: { '@id': `${canonicalUrl}#organization` },
+      inLanguage: 'en-US',
+    },
+    {
+      '@type': 'WebPage',
+      '@id': `${canonicalUrl}#webpage`,
+      url: canonicalUrl,
+      name: 'Run AI agents',
+      description:
+        'Tangle gives coding agents isolated machines, routes their model calls and records each run.',
+      isPartOf: { '@id': `${canonicalUrl}#website` },
+      about: { '@id': `${canonicalUrl}#organization` },
+      inLanguage: 'en-US',
+    },
+  ],
 };
-const task = source.match(/box\.prompt\("([^"]+)"/)?.[1];
-const repo = source.match(/git: \{ url: "https:\/\/github.com\/([^"]+)"/)?.[1];
-const backend = source.match(/backend: \{ type: "([^"]+)"/)?.[1];
-if (!task || !repo || !backend) throw new Error('The hero must bind to the recorded example source.');
-const pricingUrl = 'https://sandbox.tangle.tools/v1/pricing/sandboxes';
-const response = await fetch(pricingUrl);
-if (!response.ok) throw new Error(`Sandbox pricing returned ${response.status}`);
-const pricing = await response.json();
-const pool = pricing.pools.general;
-const rate = {
-  size: '2 vCPU · 4096 MB · 2 GB',
-  perHour: Math.max(pool.minChargeHourUsd, 2 * pool.cpuCoreHourUsd + 4 * pool.memoryGBHourUsd + 2 * pool.diskGBHourUsd),
-  minimum: pool.minChargeHourUsd, href: pricingUrl,
-};
-const useCases = useCaseIndex.cases;
-const { catalog } = await loadCatalog();
-const commands = [
-  '# Claude Pro or Max: `claude setup-token` prints the token',
-  'tangle secret create CLAUDE_TOKEN --value-stdin <<< "$CLAUDE_CODE_OAUTH_TOKEN"',
-  'tangle sandbox create --name my-claude --backend claude-code \\\n    --cli-auth CLAUDE_TOKEN \\\n    --git-url https://github.com/your-org/your-repo --idle-timeout 900',
-  'tangle agent prompt my-claude "Find the failing test and fix it." \\\n    --session fix-tests --stream',
+
+// Harness commands and launch IDs are separate: Prime's CLI is prime-agent,
+// while the Sandbox launch API accepts prime.
+// Prime mark: https://github.com/PrimeIntellect-ai.png?size=256
+import benchmarks from '../data/benchmarks/sandbox.json';
+const rate = benchmarks.rate_card;
+const perHour = (n: number) => `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
+// What one key meters into one balance, drawn by the pricing figure.
+const bills = [
+  { id: 'compute', name: 'Compute', unit: `sandboxes, from ${perHour(rate.minChargeHourUsd)} an hour`, y: 45 },
+  { id: 'inference', name: 'Inference', unit: 'model tokens, at the listed price', y: 115 },
+  { id: 'observability', name: 'Observability', unit: 'traces and evals', y: 185 },
 ];
-const rows = [
-  { credential: 'Claude subscription', billedTo: 'Your Claude plan' },
-  { credential: 'ChatGPT plan or OpenAI key', billedTo: 'Your ChatGPT plan or OpenAI account' },
-  { credential: 'Coding plan', billedTo: 'That provider' },
-  { credential: 'Tangle Router (default)', billedTo: 'Your Tangle credit' },
+
+const harnesses = [
+  { harness: 'claude-code', name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
+  { harness: 'codex', name: 'Codex', logo: '/images/harness/codex.png' },
+  { harness: 'opencode', name: 'OpenCode', logo: '/images/harness/opencode.svg' },
+  { harness: 'hermes', name: 'Hermes', logo: '/images/harness/hermes.png' },
+  { harness: 'openclaw', name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
+  { harness: 'kimi-code', name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
+  { harness: 'pi', name: 'Pi', logo: '/images/harness/pi.svg' },
+  { harness: 'prime', name: 'Prime Agent', logo: '/images/harness/prime-agent.png' },
 ];
-const before = source.split('\n').find(line => line.includes('git: { url:'))!;
-const after = before.replace('https://github.com/tangle-network/sandbox-demo', 'https://github.com/your-org/your-repo');
+
 ---
-<BaseLayout title="Machines for agents, model routing and run records" description={description} bodyClass="home-page">
-  <Section id="top" heading="Machines for agents, model routing and run records." sub={description} level={1} align="center">
-    <div class="mk-actions">
-      <a class="mk-btn mk-primary" href="https://sandbox.tangle.tools/dashboard/new">Create a sandbox</a>
-      <InstallRow command="npm install @tangle-network/sandbox" />
+
+<BaseLayout
+  title="Run coding agents across clouds"
+  bodyClass="company-home"
+  description="Tangle gives coding agents isolated machines, routes their model calls and records each run."
+>
+  <script type="application/ld+json" set:html={JSON.stringify(organizationJsonLd)} />
+
+
+  <!-- ===== HERO (dark): a field of sandboxes; each light is one agent's own machine ===== -->
+  <section class="hero" aria-labelledby="hero-title" data-cta-placement="hero">
+    <div class="hero-art" aria-hidden="true">
+      <canvas id="hero-field" data-logos={harnesses.map((h) => h.logo).join(' ')}></canvas>
     </div>
-    <RunTrace run={run} events={record.events} task={task} repo={repo} backend={backend} />
-  </Section>
-  <Section id="agents" heading={`${catalog.harnesses.length} coding agents, installed.`} sub="Pick one to replay a real session recorded in a Tangle sandbox, then run it on your own account.">
-    <HarnessStrip client:visible harnesses={catalog.harnesses} liveLabel="Run Pi now, no account">
-      <LiveDemo client:visible />
-    </HarnessStrip>
-  </Section>
-  <Section id="cli" layout="split" heading="The same machine from your terminal." sub="Output recorded from the tangle CLI against production. Sign in once and the commands run on your account.">
-    <CliPlayground client:visible commands={catalog.cli} login={catalog.login} />
-  </Section>
-  <Section id="use-cases" heading="Recorded runs you can start from.">
-    <UseCaseCards client:visible cases={useCases} />
-  </Section>
+
+    <div class="shell">
+      <div class="hero-copy">
+        <h1 id="hero-title">
+          Run your coding agent.
+          <span class="grad-text">Across clouds.</span>
+        </h1>
+        <p>Tangle gives your agents isolated machines, routes their model calls and records each run.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="https://sandbox.tangle.tools/dashboard/new" target="_blank" rel="noopener noreferrer">Create a sandbox</a>
+          <a class="btn btn-ghost" href="https://docs.tangle.tools" target="_blank" rel="noopener noreferrer">Read the docs</a>
+          <a class="btn btn-ghost" href="#live-demo" data-track="demo-start-hero">Try Pi live</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <SandboxQuickstart />
-  <!-- Keys waits for the egress run record, per ship gate 2. -->
-  <Section id="claude" layout="split" heading="Claude Code runs on your Claude plan." sub="Store the token from `claude setup-token` once. The create request carries only the secret's name, and the agent's model calls bill to your plan." link={{ label: 'Claude Code subscription ↗', href: 'https://sandbox.tangle.tools/docs/cloud-agents/claude-code' }}>
-    <BillingProof title="~/your-repo" commands={commands} rows={rows} foot="Tangle bills sandbox compute per second in every case." />
-  </Section>
-  <BudgetSection />
-  <Section id="pricing" heading="One key. One bill." sub="Compute, inference and observability draw on one balance.">
-    <PlanTable plans={PLANS.map(({ popular, ...plan }) => ({ ...plan, isPopular: popular }))} names={{ free: 'Free', pro: 'Pro', enterprise: 'Team' }} rate={rate}
-      actions={[{ label: 'Create a sandbox', href: 'https://sandbox.tangle.tools/dashboard/new', primary: true }, { label: 'See plans', href: 'https://id.tangle.tools/app/plans' }]}
-      more={{ label: 'Cost and limits ↗', href: 'https://docs.tangle.tools/sandbox/cost' }} />
-  </Section>
-  <InstallCloser heading="Run Claude Code on your public repo." file={{ path: 'sandboxes/fix-a-test.mts', source }}
-    line={source.split('\n').findIndex(line => line === before) + 1} before={before} after={after}
-    commands={['npm install @tangle-network/sandbox', 'export TANGLE_API_KEY=sk-tan-…', 'npx tsx fix-a-test.mts']}
-    actions={[{ label: 'Get an API key', href: 'https://sandbox.tangle.tools/dashboard/api-keys' }, { label: 'Copy fix-a-test.mts', copy: source }]} />
+
+  <!-- ========= HARNESSES (dark): each one starts in its own sandbox ========= -->
+  <section class="rail" aria-labelledby="rail-title">
+    <div class="shell">
+      <div class="rail-head">
+        <h2 id="rail-title">Your coding agent, installed.</h2>
+        <p>Choose an agent. Sign in to create its sandbox.</p>
+      </div>
+      <div id="live-demo"><LiveDemo client:visible /></div>
+      <div class="rail-grid" aria-label="Coding agents in the standard sandbox environment">
+        {harnesses.map((h) => (
+          <a class="rail-tile" href={`https://sandbox.tangle.tools/dashboard/new?harness=${h.harness}`} aria-label={`Create a sandbox for ${h.name}`} target="_blank" rel="noopener noreferrer">
+            <img class="rail-logo" src={h.logo} alt="" width="40" height="40" loading="lazy" />
+            <span class="rail-name">{h.name}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== ONE KEY, ONE BILL (paper) ==================== -->
+  <section class="pricing" data-theme="website" id="pricing" aria-labelledby="pricing-title" data-cta-placement="pricing">
+    <div class="shell">
+      <div class="pricing-top">
+        <div class="pricing-head">
+          <h2 id="pricing-title">One key. <span class="grad-text">One bill.</span></h2>
+          <p>Compute, inference and observability, on one balance.</p>
+        </div>
+        <figure class="bill" aria-label="One API key meters compute, inference and observability into one balance">
+          <svg class="bill-svg" viewBox="0 0 560 230" role="img" aria-hidden="true">
+            <defs>
+              <linearGradient id="bill-grad" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="472" y2="0">
+                <stop offset="0%" style="stop-color: var(--accent-text)" />
+                <stop offset="100%" style="stop-color: var(--brand-glow)" />
+              </linearGradient>
+            </defs>
+            {bills.map((bill) => (
+              <g class="bill-flow" data-flow={bill.id}>
+                <path class="bill-path" d={`M 118 115 C 180 115, 180 ${bill.y}, 236 ${bill.y}`} />
+                <path class="bill-path" d={`M 400 ${bill.y} C 450 ${bill.y}, 450 115, 472 115`} />
+                <rect class="bill-node" x="236" y={bill.y - 19} width="164" height="38" rx="10" />
+                <text class="bill-label" font-size="15" x="318" y={bill.y + 5}>{bill.name}</text>
+                <text class="bill-unit" font-size="11" x="318" y={bill.y + 36}>{bill.unit}</text>
+              </g>
+            ))}
+            <g class="bill-key">
+              <rect x="14" y="96" width="104" height="38" rx="19" />
+              <text class="bill-label" font-size="15" x="66" y="120">sk-tan-…</text>
+            </g>
+            <g class="bill-balance">
+              <circle cx="508" cy="115" r="36" />
+              <text class="bill-label" font-size="22" x="508" y="122">$</text>
+            </g>
+          </svg>
+        </figure>
+      </div>
+      <div class="plans" data-plans>
+        {PLANS.map((plan) => (
+          <article class={`plan${plan.popular ? ' plan-popular' : ''}`} data-plan={plan.id}>
+            <h3>{plan.name}</h3>
+            <p class="plan-price"><span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}</p>
+            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `Your ${planPrice(plan)} comes back as credit each month` : 'No included credit'}</p>
+            <ul class="plan-features">
+              {plan.features.map((feature) => <li>{feature}</li>)}
+            </ul>
+          </article>
+        ))}
+      </div>
+      <div class="pricing-actions">
+        <a class="btn btn-primary" href="https://sandbox.tangle.tools/dashboard/new" target="_blank" rel="noopener noreferrer">Create a sandbox</a>
+        <a class="btn btn-ghost" href="https://id.tangle.tools/app/plans" target="_blank" rel="noopener noreferrer">See plans</a>
+      </div>
+    </div>
+  </section>
+
 </BaseLayout>
+
 <script>
-  // Keep the existing live session state machine; only its ready action changes.
-  const slot = document.querySelector('.mk-live-slot');
-  if (slot) {
-    const island = slot.querySelector('astro-island');
-    const update = () => {
-      if (island?.hasAttribute('ssr')) return;
-      const button = slot.querySelector('[data-track="demo-start"]');
-      if (button instanceof HTMLButtonElement && !button.disabled && button.textContent === 'Try Pi live') {
-        button.textContent = 'Run Pi now, no account';
-      }
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Hero "Try Pi live": the link jumps to the demo; a person's plain click also asks the demo to start.
+  // The flag outlives the island's hydration on view; the event reaches an island already hydrated.
+  document.querySelector<HTMLAnchorElement>('[data-track="demo-start-hero"]')?.addEventListener('click', (event) => {
+    if (!event.isTrusted || event.metaKey || event.ctrlKey || event.shiftKey) return;
+    Object.assign(window, { liveDemoStart: true });
+    dispatchEvent(new CustomEvent('live-demo-start'));
+  });
+
+  // Hero: a floor of sandboxes running to the horizon, one dot per machine.
+  // Agents claim machines one at a time; a fleet claims a block at once and
+  // releases it together, inside one outline. Near machines name the harness
+  // inside. Canvas 2D, batched by brightness, paused off screen and in hidden
+  // tabs; reduced motion draws one still frame.
+  const field = document.querySelector<HTMLCanvasElement>('#hero-field');
+  const ctx = field?.getContext('2d');
+  if (field && ctx) {
+    const css = getComputedStyle(field);
+    const token = (name: string) => css.getPropertyValue(name).trim();
+    const ink = [token('--text-primary'), token('--brand-cool'), token('--brand-glow')];
+    const edge = token('--brand-vibrant');
+    // The mark of the harness a near machine runs, standing on it.
+    const logos = (field.dataset.logos ?? '').split(' ').filter(Boolean).map((src) => Object.assign(new Image(), { decoding: 'async', src }));
+    const COLS = 120, ROWS = 64, GAP = 0.22, SPEED = 0.00022, LEVELS = 8; // SPEED: rows per ms
+    const born = new Float64Array(COLS * ROWS), dies = new Float64Array(COLS * ROWS);
+    const kind = new Uint8Array(COLS * ROWS), tag = new Uint8Array(COLS * ROWS);
+    const fleets: { col: number; row: number; w: number; d: number; born: number; dies: number }[] = [];
+    let seed = 20261030;
+    const random = () => { // mulberry32: a seeded, even spread, so every visit opens the same way
+      let t = (seed = (seed + 0x6d2b79f5) | 0);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
-    island?.addEventListener('astro:hydrate', update);
-    new MutationObserver(update).observe(slot, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
-    update();
+    const motion = !reduced;
+    const view = { W: 0, H: 0, horizon: 0, focal: 1, height: 6, cx: 0, near: 1, narrow: false };
+    let clock = 0, depth = 0, far = ROWS - 1, nextOne = 0, nextFleet = 1800, camX = 0, aimX = 0, dpr = 1;
+
+    const slot = (row: number, col: number) => (row % ROWS) * COLS + col;
+    const zOf = (row: number) => row - depth + view.near - 1;
+    const sx = (x: number, z: number) => view.cx + (view.focal * (x - camX)) / z;
+    const sy = (z: number) => view.horizon + (view.focal * view.height) / z;
+    const colAt = (px: number, z: number) => Math.floor(((px - view.cx) * z) / view.focal + camX + COLS / 2);
+    const veil = (px: number) => (view.narrow ? 1 : Math.min(1, Math.max(0, (px - view.W * 0.4) / (view.W * 0.2))));
+    const fade = (z: number) => Math.max(0, 1 - (z - view.near) / ROWS) ** 1.6;
+    const light = (row: number, col: number, start: number, end: number, k: number) => {
+      if (col < 0 || col >= COLS) return;
+      const i = slot(row, col);
+      if (k === 1 && kind[i] === 2 && clock < dies[i]) return; // a fleet's machines stay its own
+      born[i] = start; dies[i] = end; kind[i] = k; tag[i] = (row * 5 + col * 3) % Math.max(1, logos.length);
+    };
+    // A fleet claims a block that touches no other fleet, lit outward from its middle.
+    const claimFleet = (lo: number, hi: number, w: number, d: number, life: number) => {
+      const { row, col } = spot(lo, hi, w, 0.52);
+      if (!fleets.every((f) => row > f.row + f.d || row + d < f.row || col > f.col + f.w || col + w < f.col)) return false;
+      for (let r = 0; r < d; r++) for (let c = 0; c < w; c++) light(row + r, col + c, clock + (Math.abs(c - w / 2) + r) * 80, clock + life, 2);
+      fleets.push({ col, row, w, d, born: clock, dies: clock + life });
+      return true;
+    };
+    const glow = (start: number, end: number, rise: number) => {
+      const up = Math.min(1, Math.max(0, (clock - start) / rise));
+      const down = clock < end ? 1 : Math.max(0, 1 - (clock - end) / 1400);
+      return (1 - (1 - up) ** 3) * down;
+    };
+    // A random machine on screen and clear of the headline, `lo`..`hi` rows from the front.
+    const spot = (lo: number, hi: number, w = 1, edge = 0.46) => {
+      const row = Math.floor(depth) + lo + Math.floor(random() ** 0.7 * (hi - lo)); // most machines are far away
+      const z = zOf(row) + 0.5;
+      const left = Math.max(colAt(view.narrow ? 0 : view.W * edge, z), 0), right = Math.min(colAt(view.W, z) - w, COLS - w);
+      return { row, col: left + Math.floor(random() * Math.max(1, right - left)) };
+    };
+
+    const step = (dt: number) => {
+      clock += dt;
+      if (motion) depth += dt * SPEED;
+      const front = Math.floor(depth);
+      while (far < front + ROWS - 1) { far++; for (let c = 0; c < COLS; c++) kind[slot(far, c)] = 0; }
+      for (; clock >= nextOne; nextOne += 8 + random() * 14) {
+        const { row, col } = spot(1, ROWS - 2);
+        light(row, col, nextOne, nextOne + 2200 + random() * 5000, 1);
+      }
+      if (clock >= nextFleet) {
+        nextFleet += 1600 + random() * 1400;
+        claimFleet(2, 26, 3 + Math.floor(random() * 6), 2 + Math.floor(random() * 4), 3400 + random() * 2600);
+      }
+      for (let i = fleets.length - 1; i >= 0; i--) if (clock > fleets[i].dies + 1400 || fleets[i].row < front) fleets.splice(i, 1);
+      camX += (aimX - camX) * Math.min(1, dt / 500);
+    };
+
+    const quad = (path: Path2D, x0: number, x1: number, z0: number, z1: number) => {
+      path.moveTo(sx(x0, z0), sy(z0)); path.lineTo(sx(x1, z0), sy(z0));
+      path.lineTo(sx(x1, z1), sy(z1)); path.lineTo(sx(x0, z1), sy(z1)); path.closePath();
+    };
+    const draw = () => {
+      const { W, H } = view;
+      if (!W || !H) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      // Light on the horizon: the field keeps going.
+      const dawn = ctx.createRadialGradient(view.cx, view.horizon, 0, view.cx, view.horizon, W * 0.55);
+      dawn.addColorStop(0, ink[1]); dawn.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 0.12; ctx.fillStyle = dawn;
+      ctx.setTransform(dpr, 0, 0, dpr * 0.22, 0, view.horizon * dpr * 0.78);
+      ctx.fillRect(0, -H * 5, W, H * 10);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Batch every quad into one path per kind and brightness level.
+      const dots = Array.from({ length: LEVELS }, () => new Path2D());
+      const halo = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
+      const core = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
+      const marks: [number, number, number, number, number][] = []; // logo, x, y, machine size, alpha; nearest first
+      const front = Math.floor(depth);
+      for (let row = front; row < front + ROWS; row++) {
+        const z0 = zOf(row) + GAP, z1 = zOf(row) + 1 - GAP;
+        if (z1 < view.near * 0.8) continue;
+        const zm = (z0 + z1) / 2, ym = sy(zm), size = view.focal / zm, haze = fade(z0);
+        const first = Math.max(0, colAt(-size, zm)), last = Math.min(COLS - 1, colAt(W + size, zm));
+        for (let c = first; c <= last; c++) {
+          const x0 = c - COLS / 2 + GAP, x1 = c - COLS / 2 + 1 - GAP, xm = sx((x0 + x1) / 2, zm);
+          const i = slot(row, c), shade = haze * veil(xm);
+          if (shade < 0.02) continue;
+          const b = kind[i] ? glow(born[i], dies[i], 450) : 0;
+          if (kind[i] && b <= 0 && clock > dies[i]) kind[i] = 0;
+          if (b * shade < 0.04) {
+            const r = Math.max(0.6, size * 0.03);
+            dots[Math.min(LEVELS - 1, Math.floor(shade * LEVELS))].rect(xm - r, ym - r, r * 2, r * 2);
+            continue;
+          }
+          const level = Math.min(LEVELS - 1, Math.floor(b * shade * LEVELS));
+          if (size < 40) quad(halo[kind[i]][level], x0 - 0.3, x1 + 0.3, z0 - 0.3, z1 + 0.3);
+          quad(core[kind[i]][level], x0, x1, z0, z1);
+          if (kind[i] === 1 && size > 56 && b > 0.35 && ym < H - 8 && logos.length) marks.push([tag[i], xm, ym, size, b * shade]);
+        }
+      }
+      ctx.fillStyle = ink[0];
+      dots.forEach((path, level) => { ctx.globalAlpha = 0.05 + 0.25 * (level / LEVELS); ctx.fill(path); });
+      ctx.globalCompositeOperation = 'lighter';
+      for (const k of [1, 2]) {
+        ctx.fillStyle = ink[k];
+        halo[k].forEach((path, level) => { ctx.globalAlpha = 0.14 * (level + 1) / LEVELS; ctx.fill(path); });
+        core[k].forEach((path, level) => { ctx.globalAlpha = (k === 2 ? 1 : 0.6) * (level + 1) / LEVELS; ctx.fill(path); });
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      for (const [t, x, y, size, a] of marks.slice(0, 6).reverse()) { // far marks first, so a near one sits in front
+        const img = logos[t];
+        if (!img.complete || !img.naturalWidth) continue;
+        const s = Math.min(96, Math.max(36, size * 0.52)), r = s * 0.22;
+        ctx.globalAlpha = Math.min(1, a * 1.2);
+        ctx.save(); ctx.beginPath(); ctx.roundRect(x - s / 2, y - s, s, s, r); ctx.clip();
+        ctx.drawImage(img, x - s / 2, y - s, s, s); ctx.restore();
+      }
+      // One outline per fleet: the machines it holds under one budget.
+      ctx.strokeStyle = edge; ctx.lineWidth = 1.5;
+      for (const fleet of fleets) {
+        const z0 = zOf(fleet.row) - 0.05, z1 = zOf(fleet.row + fleet.d) + 0.05;
+        if (z0 < view.near * 0.8) continue;
+        const x0 = fleet.col - COLS / 2 - 0.05, x1 = fleet.col + fleet.w - COLS / 2 + 0.05;
+        const outline = new Path2D();
+        quad(outline, x0, x1, z0, z1);
+        ctx.globalAlpha = glow(fleet.born, fleet.dies, 700) * fade(z0) * veil(sx((x0 + x1) / 2, z0)) * 0.9;
+        ctx.stroke(outline);
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    const fit = () => {
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = field.clientWidth, H = field.clientHeight, narrow = W < 860;
+      const horizon = H * (narrow ? 0.06 : 0.26), height = 6;
+      const focal = H * (narrow ? 1.1 : 0.9);
+      Object.assign(view, { W, H, narrow, horizon, height, focal, cx: W * (narrow ? 0.5 : 0.68), near: (focal * height) / (H - horizon) });
+      field.width = Math.round(W * dpr);
+      field.height = Math.round(H * dpr);
+      draw();
+    };
+
+    let running = false, visible = true, last = 0;
+    const frame = (time: number) => {
+      if (!running) return;
+      step(last ? Math.min(50, time - last) : 16);
+      last = time;
+      draw();
+      requestAnimationFrame(frame);
+    };
+    const play = () => {
+      if (running || !motion || !visible || document.hidden) return;
+      running = true; last = 0;
+      requestAnimationFrame(frame);
+    };
+    fit();
+    for (let t = 0; t < (motion ? 4000 : 6000); t += 20) step(20); // open on a field already at work
+    for (let tries = 0; tries < 8 && !claimFleet(4, 12, 8, 5, 6400); tries++); // then a fleet claims its block
+    if (!motion) for (let t = 0; t < 1200; t += 20) step(20);
+    draw();
+    new ResizeObserver(fit).observe(field);
+    new IntersectionObserver((entries) => {
+      visible = entries[0].isIntersecting;
+      if (visible) play(); else running = false;
+    }).observe(field);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) running = false; else play(); });
+    addEventListener('pointermove', (event) => { aimX = (event.clientX / innerWidth - 0.5) * 3; }, { passive: true });
+    play();
+    for (const img of logos) img.addEventListener('load', draw, { once: true }); // a still frame gains its marks as they arrive
+    field.classList.add('ready');
   }
+
 </script>
+
+<style>
+  /* ---------- shared ---------- */
+  .shell {
+    position: relative;
+    z-index: 1;
+    width: min(78rem, 90vw);
+    margin: 0 auto;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: 'tnum';
+  }
+
+  section h1,
+  section h2,
+  section h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.028em;
+    text-wrap: balance;
+  }
+
+  section h2 {
+    font-size: clamp(2rem, 3vw, 2.9rem);
+    line-height: 1.1;
+  }
+
+  .grad-text {
+    display: block;
+    background-image: linear-gradient(92deg, var(--brand-purple) 0%, var(--brand-cool) 40%, var(--btn-primary-bg) 75%, var(--brand-purple) 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: var(--brand-glow); /* fallback */
+    /* background-clip: text paints only the line box; descenders need room. */
+    padding-bottom: 0.1em;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.8rem;
+    padding: 0.75rem 1.3rem;
+    border-radius: 9px;
+    font-family: var(--font-sans);
+    font-size: 0.94rem;
+    font-weight: 600;
+    text-decoration: none;
+    transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+  }
+
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: scale(0.98); }
+
+  .btn-primary {
+    background: var(--btn-primary-bg);
+    border: 1px solid var(--btn-primary-hover);
+    color: var(--btn-primary-text);
+  }
+
+  .btn-ghost {
+    background: rgba(237, 237, 244, 0.06);
+    border: 1px solid rgba(237, 237, 244, 0.18);
+    color: var(--text-primary);
+  }
+
+  /* ---------- hero (dark): the sandbox field ---------- */
+  .hero {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 86vh;
+    overflow: hidden;
+    background: var(--md3-surface-container-lowest);
+    border-bottom: 1px solid rgba(199, 201, 238, 0.1);
+  }
+
+  .hero-art {
+    position: absolute;
+    inset: 0;
+  }
+
+  #hero-field {
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  #hero-field.ready { opacity: 1; }
+
+  .hero-copy {
+    position: relative;
+    z-index: 1;
+    max-width: 760px;
+    padding: 128px 0 112px;
+  }
+
+  .hero-copy h1 {
+    color: var(--text-primary);
+    font-size: var(--font-size-display);
+    line-height: 1;
+    letter-spacing: -0.036em;
+  }
+
+  .hero-copy > p:first-of-type {
+    max-width: 34rem;
+    margin: 24px 0 0;
+    color: rgba(240, 240, 250, 0.88);
+    font-size: var(--font-size-xl);
+    line-height: 1.75rem;
+    text-wrap: pretty;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin-top: 2rem;
+  }
+
+
+  /* ---------- harness rail (dark) ---------- */
+  .rail { padding: 8rem 0; background: linear-gradient(180deg, var(--depth-1) 0%, var(--md3-surface-container-low) 100%); border-top: 1px solid rgba(199, 201, 238, 0.08); }
+  .rail-head { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 2.5rem; align-items: start; }
+  .rail-head h2 { color: var(--text-primary); letter-spacing: -0.032em; }
+  .rail-head p { margin: 0; color: rgba(237, 237, 244, 0.8); font-size: clamp(1.15rem, 1.5vw, 1.4rem); line-height: 1.6; max-width: 40rem; }
+  .rail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; margin-top: 3.2rem; }
+  .rail-tile { display: grid; grid-template-columns: 40px 1fr; gap: 0.8rem; align-items: center; padding: 0.9rem 1rem; border: 1px solid rgba(199, 201, 238, 0.14); border-radius: 12px; background: var(--md3-surface-container-low); text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease; }
+  .rail-tile:hover, .rail-tile:focus-visible { border-color: rgba(129, 140, 248, 0.6); background: var(--md3-surface-container); }
+  .rail-tile:focus-visible { outline: 2px solid var(--brand-glow); outline-offset: 2px; }
+  .rail-logo { width: 40px; height: 40px; border-radius: 9px; object-fit: cover; box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14); }
+  .rail-name { color: var(--text-primary); font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+
+  /* ---------- one key, one bill (paper) ---------- */
+  .pricing { background: var(--bg-root); color: var(--text-primary); padding: 8rem 0 7.5rem; }
+  .pricing-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 3rem; align-items: center; }
+  .pricing-head h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.032em; color: var(--text-primary); font-size: clamp(2.3rem, 3.6vw, 3.5rem); line-height: 1.05; }
+  .pricing-head p { margin: 1.1rem 0 0; color: var(--text-secondary); font-size: clamp(1.15rem, 1.4vw, 1.35rem); line-height: 1.6; max-width: 32rem; }
+  .bill { margin: 0; }
+  .bill-svg { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); }
+  .bill-path { fill: none; stroke: url(#bill-grad); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 5 9; animation: billFlow 1.4s linear infinite; }
+  .bill-node, .bill-key rect, .bill-balance circle { fill: var(--bg-card); stroke: var(--md3-outline-variant); stroke-width: 1.5; transition: stroke 0.3s ease, fill 0.3s ease; }
+  .bill-label { fill: var(--text-primary); font-weight: 600; text-anchor: middle; }
+  .bill-unit { fill: var(--text-muted); text-anchor: middle; }
+  .bill-key rect { stroke: var(--accent-text); }
+  .bill-balance circle { stroke: var(--accent-text); stroke-width: 2; }
+  .bill-flow:hover .bill-path { stroke: var(--accent-text); stroke-width: 3; }
+  .bill-flow:hover .bill-node { fill: var(--accent-surface-strong); stroke: var(--accent-text); }
+  @keyframes billFlow { to { stroke-dashoffset: -28; } }
+  @media (prefers-reduced-motion: reduce) { .bill-path { animation: none; stroke-dasharray: none; } }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 4rem; }
+  .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
+  .plan-popular { border-color: var(--accent-text); }
+  .plan h3 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text-primary); }
+  .plan-price { margin: 0.9rem 0 0; color: var(--text-primary); }
+  .plan-amount { font-family: var(--font-display); font-size: clamp(2.2rem, 3vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
+  .plan-per { color: var(--text-muted); font-size: 0.95rem; }
+  .plan-credit { margin: 0.5rem 0 0; color: var(--accent-text); font-size: 0.95rem; font-weight: 600; }
+  .plan-features { margin: 1.2rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.5; }
+  .plan-features li { padding-left: 1.1rem; position: relative; }
+  .plan-features li::before { content: ''; position: absolute; left: 0; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent-text); }
+  .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
+  .pricing .btn-ghost { background: var(--bg-card); border-color: var(--md3-outline-variant); color: var(--text-primary); }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 980px) {
+    .rail-grid, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rail-head, .pricing-top { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+  }
+  @media (max-width: 720px) {
+    .shell { width: min(92vw, 78rem); }
+    .hero-copy > p:first-of-type { font-size: var(--text-lead); line-height: 1.75rem; }
+    .rail-grid, .plans { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  /* Narrow screens stack the copy over the field so the field never sits behind text. */
+  @media (max-width: 860px) {
+    .hero { flex-direction: column; align-items: stretch; min-height: 0; }
+    .hero-art { position: relative; inset: auto; order: 2; height: 40svh; min-height: 18rem; margin-top: 24px; }
+    .hero-copy { padding: 96px 0 0; }
+  }
+</style>
