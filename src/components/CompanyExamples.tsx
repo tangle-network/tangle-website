@@ -3,7 +3,7 @@ import {
   Button, DropdownMenu, DropdownMenuContent, DropdownMenuLabel,
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
 } from '@tangle-network/ui/primitives';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import './company-examples.css';
 
 interface Props { subjects: ExampleSubject[]; initial: string }
@@ -16,7 +16,6 @@ const outputInks = {
 
 // Color the existing selectable text. The original +/- patch and TAP markers stay readable everywhere.
 function highlightOutput(root: HTMLFieldSetElement) {
-  if (!('highlights' in CSS)) return;
   const logs = root.querySelectorAll('.qs-event-output[open]');
   for (const [name, pattern] of Object.entries(outputInks)) {
     const ink = new Highlight();
@@ -61,6 +60,7 @@ function Picker({ label, value, options, choose }: {
 }
 
 export default function CompanyExamples({ subjects, initial }: Props) {
+  const editor = useRef<HTMLFieldSetElement>(null);
   const [ready, setReady] = useState(false);
   const [selection, setSelection] = useState(initial);
   const [interaction, setInteraction] = useState(0);
@@ -94,8 +94,15 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     return () => window.removeEventListener('popstate', read);
   }, [initial, subjects]);
 
-  useEffect(() => () => {
-    for (const name of Object.keys(outputInks)) CSS.highlights?.delete(name);
+  useEffect(() => {
+    const root = editor.current;
+    if (!root || !('highlights' in CSS)) return;
+    const highlight = () => highlightOutput(root);
+    root.addEventListener('toggle', highlight, true);
+    return () => {
+      root.removeEventListener('toggle', highlight, true);
+      for (const name of Object.keys(outputInks)) CSS.highlights.delete(name);
+    };
   }, [selection, interaction]);
 
   function choose(key: string) {
@@ -112,7 +119,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     if (!next) return;
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
-  return <fieldset onToggleCapture={event => highlightOutput(event.currentTarget)} className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
+  return <fieldset ref={editor} className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>
