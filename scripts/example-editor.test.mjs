@@ -68,6 +68,9 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
     check(await editor.locator('.qs-actions .qs-run-id, .qs-actions .qs-stamp, .qs-actions .qs-clock').evaluateAll(nodes => nodes.every(node => !node.getClientRects().length)), 'Run metadata does not create a toolbar', item);
     if (name === 'desktop') {
+      const sourceEdge = (await editor.locator('.qs-source').boundingBox());
+      const resultEdge = (await editor.locator('.qs-machine').boundingBox());
+      check(Math.abs(sourceEdge.y + sourceEdge.height - resultEdge.y - resultEdge.height) <= 1, 'Source and output end together above the desktop receipt', item);
       await group.getByRole('button', { name: 'Any cloud', exact: true }).click();
       await selectedFile('any-cloud').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
@@ -172,6 +175,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await load('sandboxes/host-a-page');
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
       check((await editor.locator('.qs-ret b').allTextContents()).includes('killed'), 'A void process kill retains its recorded outcome', item);
+      await load('sandboxes/python-csv');
+      const totals = JSON.parse((await read('sandboxes/python-csv')).events.find(event => event.label === 'box.runCode').result.stdout);
+      const shownTotals = await editor.getByRole('row').allTextContents();
+      check(totals.every(([customer, total]) => shownTotals.includes(customer + total)), 'The CSV table displays each customer and total from the run', item);
       await load('sandboxes/run-code');
       const commandRecord = await read('sandboxes/run-code');
       const commandOutput = commandRecord.events.find(event => event.result?.stdout?.includes('Linux')).result.stdout.trim();
