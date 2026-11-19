@@ -61,6 +61,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await output.getByText(/client\.create/).first().waitFor();
     check(await main.getAttribute('data-state') === 'idle', 'Previewing the first recorded call does not start playback', item);
     const controls = page.locator('.company-examples');
+    const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
+    check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
     const group = controls.getByRole('navigation', { name: 'Example topics' });
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
     const transcript = () => output.textContent();
@@ -77,6 +79,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-main[data-state="running"]').waitFor();
       await page.goBack();
       await selectedFile('fix-a-test').waitFor();
+      check(await heading.innerText() === 'Give each agent its own machine.', 'Back restores the Sandbox heading', item);
       await page.goForward();
       await selectedFile('any-cloud').waitFor();
       await editor.locator('.qs-main[data-state="idle"]').waitFor();
@@ -85,7 +88,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
       check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
-      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are visible in the task groups', item);
+      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are accessible directly', item);
       await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
       await selectedFile('python-csv').waitFor();
       await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
@@ -93,6 +96,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await controls.getByRole('button', { name: /^Topic,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).tap();
       await selectedFile('any-cloud').waitFor();
+      check((await guide.getAttribute('href')).endsWith('/sandbox/other-providers') && /cloud/.test(await heading.innerText()), 'Touch topic selection updates the heading and guide', item);
       await editor.getByRole('button', { name: 'Pause the recorded run' }).tap();
       await controls.getByRole('button', { name: /^Example,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).tap();
@@ -172,9 +176,14 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     if (name === 'desktop') {
       const catalog = await (await fetch(base + '/examples.json')).json();
+      const topicGuides = new Map();
       for (const subject of catalog.subjects) {
         await group.getByRole('button', { name: subject.label, exact: true }).click();
+        const topicHeading = await heading.innerText(), topicGuide = await guide.getAttribute('href');
+        check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
+        topicGuides.set(topicHeading, topicGuide);
         const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
+        check(await files.locator(':scope > :not(button)').count() === 0, 'Only example choices appear in ' + subject.label, item);
         for (const idea of subject.ideas) {
           await files.locator('[data-file="' + idea.id + '"]').click();
           await selectedFile(idea.id).waitFor();
