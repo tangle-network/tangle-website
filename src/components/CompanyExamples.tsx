@@ -1,9 +1,9 @@
 import { ExampleEditor, type ExampleSubject } from '@tangle-network/ui/marketing';
 import {
-  Button, DropdownMenu, DropdownMenuContent, DropdownMenuLabel,
+  Button, DropdownMenu, DropdownMenuContent,
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
 } from '@tangle-network/ui/primitives';
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './company-examples.css';
 
 interface Props { subjects: ExampleSubject[]; initial: string }
@@ -70,9 +70,8 @@ const introductions: Record<string, { title: string; description: string; link: 
 };
 
 function Picker({ label, value, options, choose }: {
-  label: string; value: string; options: { id: string; label: string; group?: string }[]; choose: (value: string) => void;
+  label: string; value: string; options: { id: string; label: string }[]; choose: (value: string) => void;
 }) {
-  const groups = [...new Set(options.map(item => item.group))];
   const current = options.find(item => item.id === value);
   const [open, setOpen] = useState(false);
   return <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -83,11 +82,13 @@ function Picker({ label, value, options, choose }: {
       <span>{current?.label}</span><span aria-hidden="true">▾</span>
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="start" sideOffset={4} className="ce-menu" aria-label={label}>
-      <DropdownMenuRadioGroup value={value}>{groups.map(group => <Fragment key={group ?? 'options'}>
-        {group && <DropdownMenuLabel>{group}</DropdownMenuLabel>}
-        {options.filter(item => item.group === group).map(item =>
-          <DropdownMenuRadioItem className="ce-option" value={item.id} key={item.id} onSelect={() => choose(item.id)}>{item.label}</DropdownMenuRadioItem>)}
-      </Fragment>)}</DropdownMenuRadioGroup>
+      <DropdownMenuRadioGroup value={value}>
+        {options.map(item => (
+          <DropdownMenuRadioItem className="ce-option" value={item.id} key={item.id} onSelect={() => choose(item.id)}>
+            {item.label}
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
     </DropdownMenuContent>
   </DropdownMenu>;
 }
@@ -102,19 +103,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
   const intro = introductions[subject.id];
   const idea = subject.ideas.find(item => item.id === file) ?? subject.ideas[0];
   const initialFile = subject.ideas.find(item => `${subject.id}/${item.id}` === initial);
-  const ordered = initialFile ? [initialFile, ...subject.ideas.filter(item => item !== initialFile)] : subject.ideas;
-  const groupFor = (item: typeof idea) => {
-    if (subject.id === 'products') return item.id === 'email-assistant' ? 'Agent App SDK' : 'Sandbox app patterns';
-    if (subject.id === 'router') return item.run ? 'Recorded runs' : 'API examples';
-    if (subject.id === 'runtime') return item.run ? 'Recorded runs' : 'SDK examples';
-    if (subject.id !== 'sandboxes') return undefined;
-    if (['stop-and-resume', 'branch-into-two', 'snapshot-and-revert'].includes(item.id)) return 'Machine lifecycle';
-    if (['run-code', 'python-csv', 'host-a-page', 'worker'].includes(item.id)) return 'Commands and services';
-    return 'Coding agents';
-  };
-  const groups = [...new Set(ordered.map(groupFor))];
-  const files = groups.flatMap(group => ordered.filter(item => groupFor(item) === group));
-
+  const files = initialFile ? [initialFile, ...subject.ideas.filter(item => item !== initialFile)] : subject.ideas;
   useEffect(() => {
     const read = () => {
       const value = new URL(window.location.href).searchParams.get('example');
@@ -166,15 +155,13 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     </nav>
     <div className="ce-pickers">
       <Picker label="Topic" value={subject.id} options={subjects} choose={chooseSubject} />
-      <Picker label="Example" value={idea.id} options={files.map(item => ({ id: item.id, label: item.title, group: groupFor(item) }))}
+      <Picker label="Example" value={idea.id} options={files.map(item => ({ id: item.id, label: item.title }))}
         choose={id => choose(`${subject.id}/${id}`)} />
     </div>
     <div className="ce-workbench dark" data-theme="website">
       <nav className="ce-files" aria-label={`${subject.label} examples`}>
-        {files.map((item, index) => <Fragment key={item.id}>
-          {groupFor(item) && (!index || groupFor(files[index - 1]) !== groupFor(item)) &&
-            <span className="ce-file-group">{groupFor(item)}</span>}
-          <Button variant="ghost" size="sm" type="button" aria-pressed={item.id === idea.id}
+        {files.map((item, index) => (
+          <Button key={item.id} variant="ghost" size="sm" type="button" aria-pressed={item.id === idea.id}
           onKeyDown={event => {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             event.preventDefault();
@@ -183,7 +170,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
             event.currentTarget.closest('nav')?.querySelector<HTMLButtonElement>(`[data-file="${next.id}"]`)?.focus();
           }}
           data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}</Button>
-        </Fragment>)}
+        ))}
       </nav>
       <ExampleEditor key={`${selection}:${interaction}`} playOnSelect={interaction > 0}
         showReceipt={false} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />

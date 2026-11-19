@@ -88,7 +88,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
       check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
-      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are visible in the task groups', item);
+      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are accessible directly', item);
       await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
       await selectedFile('python-csv').waitFor();
       await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
@@ -183,6 +183,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
         topicGuides.set(topicHeading, topicGuide);
         const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
+        check(await files.locator(':scope > :not(button)').count() === 0, 'Only example choices appear in ' + subject.label, item);
         for (const idea of subject.ideas) {
           await files.locator('[data-file="' + idea.id + '"]').click();
           await selectedFile(idea.id).waitFor();
