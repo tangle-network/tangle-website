@@ -42,16 +42,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     ...(engine === chromium ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}),
     ...(name === 'phone' ? { recordVideo: { dir: `${out}/video`, size: { width, height } } } : {}) });
   await context.route('**/*', route => ['GET', 'HEAD', 'OPTIONS'].includes(route.request().method()) ? route.continue() : route.abort());
-  // The live demo above the editor asks id.tangle.tools whether sessions are open once it is on screen. Answer "closed",
-  // so this check never depends on that service and never loads Turnstile, whose frame access WebKit reports as a page error.
-  await context.route('https://id.tangle.tools/v1/live-demo', route => route.fulfill({ json: { state: 'closed' }, headers: { 'access-control-allow-origin': '*' } }));
   const page = await context.newPage(), errors = [], requestFailures = [], item = { name, width, height, errors, requestFailures, errorDetails: [] };
   report.cases.push(item);
   page.on('pageerror', error => { errors.push(String(error)); item.errorDetails.push({ message: String(error), stack: error.stack, at: Date.now() }); });
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
-  // A click near the top of the editor can bring the live demo on screen just before the check navigates. WebKit reports
-  // the demo's status fetch that the navigation cancels as a page error, so let the demo show its answer first.
-  const go = async url => { await page.locator('#live-demo').scrollIntoViewIfNeeded(); await page.locator('#live-demo a.live-demo-btn').waitFor(); await page.goto(url); };
   try {
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
     const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
@@ -90,7 +84,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await page.getByRole('option', { name: 'Review an API route', exact: true }).click();
       await selectedFile('review-a-route').waitFor();
     }
-    await go(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
+    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
     await editor.scrollIntoViewIfNeeded();
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
@@ -148,7 +142,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor();
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
-    const load = async key => { await go(`${base}/?example=${key}#quickstart-title`); await selectedFile(key.split('/').at(-1)).waitFor(); await editor.scrollIntoViewIfNeeded(); };
+    const load = async key => { await page.goto(`${base}/?example=${key}#quickstart-title`); await selectedFile(key.split('/').at(-1)).waitFor(); await editor.scrollIntoViewIfNeeded(); };
     if (name === 'desktop') {
       await load('sandboxes/browser-task');
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
@@ -192,7 +186,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);
       await load('fleets/cancel-on-cap'); await editor.locator('.qs-result').getByText('agent-1 · cancelled', { exact: true }).waitFor();
       await page.screenshot({ path: `${out}/${name}-fleet.png` });
-      await go(`${base}/?example=router/review-a-route#quickstart-title`); await selectedFile('review-a-route').waitFor();
+      await page.goto(`${base}/?example=router/review-a-route#quickstart-title`); await selectedFile('review-a-route').waitFor();
       check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
     }
     const optionalTelemetry = error => {
