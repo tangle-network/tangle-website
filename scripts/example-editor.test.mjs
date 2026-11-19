@@ -115,7 +115,6 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
     await main.locator('[data-source-line]').waitFor({ state: 'visible' });
     await editor.locator('.qs-main[data-state="ended"]').waitFor({ timeout: recordMs + 15000 });
-    await editor.locator('.qs-main[data-state="ended"]').waitFor();
     check(await editor.locator('.qs-ret').count() === 6 && /# pass 9\s+# fail 0/.test(await output.innerText()), 'Completed returns and the recorded passing tests remain in source and output', item);
     check(await editor.locator('.qs-receipt,.qs-patch').count() === 0, 'Company examples omit the full-width receipt and its download control', item);
     check(!/inputTokens|outputTokens|npm notice/.test(await output.innerText()), 'No accounting dumps or stderr notices in output', item);
@@ -181,6 +180,15 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
       const states = await editor.locator('.qs-ret b').allTextContents();
       check(states.includes('stopped') && states.includes('running'), 'Void lifecycle calls retain their recorded outcomes', item);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await editor.getByRole('button', { name: 'Replay the recorded run' }).click();
+      const resumed = (await read('sandboxes/stop-and-resume')).events.find(event => event.label === 'box.resume');
+      await editor.locator(`.qs-current-call[data-source-line="${resumed.line}"]`).waitFor();
+      const executing = editor.locator(`.qs-source[data-active-line="${resumed.line}"]`);
+      check(await executing.locator('.qs-band').isVisible() && await editor.locator('.qs-state-row').getByText('stopped', { exact: true }).isVisible(),
+        'The recorded resume call highlights its source while the output still shows the completed stop', item);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await editor.locator('.qs-main[data-state="ended"]').waitFor();
       await load('sandboxes/host-a-page');
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
       check((await editor.locator('.qs-ret b').allTextContents()).includes('killed'), 'A void process kill retains its recorded outcome', item);
