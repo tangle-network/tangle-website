@@ -1,7 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SandboxQuickstart from '../components/SandboxQuickstart.astro';
-import LiveDemo from '../components/LiveDemo.tsx';
+import { loadCatalog } from '../data/harness-catalog.mjs';
 import { PLANS, planPrice } from '../data/plans.mjs';
 
 const canonicalUrl = 'https://tangle.tools/';
@@ -46,9 +46,6 @@ const organizationJsonLd = {
   ],
 };
 
-// Harness commands and launch IDs are separate: Prime's CLI is prime-agent,
-// while the Sandbox launch API accepts prime.
-// Prime mark: https://github.com/PrimeIntellect-ai.png?size=256
 const pricing = await fetch('https://sandbox.tangle.tools/v1/pricing/sandboxes');
 if (!pricing.ok) throw new Error(`Sandbox pricing returned ${pricing.status}`);
 const rate = (await pricing.json()).pools.general;
@@ -60,16 +57,12 @@ const bills = [
   { id: 'observability', name: 'Observability', unit: 'traces and evals', y: 185 },
 ];
 
-const harnesses = [
-  { harness: 'claude-code', name: 'Claude Code', logo: '/images/harness/claude-code.svg' },
-  { harness: 'codex', name: 'Codex', logo: '/images/harness/codex.png' },
-  { harness: 'opencode', name: 'OpenCode', logo: '/images/harness/opencode.svg' },
-  { harness: 'hermes', name: 'Hermes', logo: '/images/harness/hermes.png' },
-  { harness: 'openclaw', name: 'OpenClaw', logo: '/images/harness/openclaw.png' },
-  { harness: 'kimi-code', name: 'Kimi Code', logo: '/images/harness/kimi-code.png' },
-  { harness: 'pi', name: 'Pi', logo: '/images/harness/pi.svg' },
-  { harness: 'prime', name: 'Prime Agent', logo: '/images/harness/prime-agent.png' },
-];
+type Agent = { id: string; name: string; logo?: string | null; launchHref?: string | null };
+const { catalog } = await loadCatalog();
+const agents: Agent[] = catalog.harnesses;
+const launchable = agents.filter((agent): agent is Agent & { launchHref: string } => Boolean(agent.launchHref));
+const cliAgents = agents.filter((agent) => !agent.launchHref);
+const profiles: Agent[] = catalog.profileOnly ?? [];
 
 ---
 
@@ -84,7 +77,7 @@ const harnesses = [
   <!-- ===== HERO (dark): a field of sandboxes; each light is one agent's own machine ===== -->
   <section class="hero" aria-labelledby="hero-title" data-cta-placement="hero">
     <div class="hero-art" aria-hidden="true">
-      <canvas id="hero-field" data-logos={harnesses.map((h) => h.logo).join(' ')}></canvas>
+      <canvas id="hero-field" data-logos={launchable.map((agent) => agent.logo).filter(Boolean).join(' ')}></canvas>
     </div>
 
     <div class="shell">
@@ -111,16 +104,41 @@ const harnesses = [
     <div class="shell">
       <div class="rail-head">
         <h2 id="rail-title">Your coding agent, installed.</h2>
-        <p>Choose an agent. Sign in to create its sandbox.</p>
+        <p>Choose an agent to open its sandbox setup.</p>
       </div>
-      <div id="live-demo"><LiveDemo client:visible /></div>
-      <div class="rail-grid" aria-label="Coding agents in the standard sandbox environment">
-        {harnesses.map((h) => (
-          <a class="rail-tile" href={`https://sandbox.tangle.tools/dashboard/new?harness=${h.harness}`} aria-label={`Create a sandbox for ${h.name}`} target="_blank" rel="noopener noreferrer">
-            <img class="rail-logo" src={h.logo} alt="" width="40" height="40" loading="lazy" />
-            <span class="rail-name">{h.name}</span>
+      <div class="rail-grid" aria-label="Launch from the dashboard">
+        {launchable.map((agent) => (
+          <a class="rail-tile" href={agent.launchHref} aria-label={`Create a sandbox for ${agent.name}`} data-harness={agent.id}>
+            {agent.logo && <img class="rail-logo" src={agent.logo} alt="" width="40" height="40" loading="lazy" />}
+            <span class="rail-name">{agent.name}</span>
           </a>
         ))}
+      </div>
+      <div class="rail-more">
+        <div>
+          <h3>Configure with the CLI or API</h3>
+          <ul>
+            {cliAgents.map((agent) => (
+              <li data-harness={agent.id}>
+                {agent.logo && <img src={agent.logo} alt="" width="24" height="24" loading="lazy" />}
+                {agent.name}
+              </li>
+            ))}
+          </ul>
+          <a href="https://sandbox.tangle.tools/docs/cloud-agents">CLI and API setup</a>
+        </div>
+        {profiles.length > 0 && <div>
+          <h3>Agent profiles only</h3>
+          <ul>
+            {profiles.map((agent) => (
+              <li data-harness={agent.id}>
+                {agent.logo && <img src={agent.logo} alt="" width="24" height="24" loading="lazy" />}
+                {agent.name}
+              </li>
+            ))}
+          </ul>
+          <p>These profile IDs have no direct Sandbox backend.</p>
+        </div>}
       </div>
     </div>
   </section>
@@ -184,14 +202,6 @@ const harnesses = [
 
 <script>
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  // Hero "Try Pi live": the link jumps to the demo; a person's plain click also asks the demo to start.
-  // The flag outlives the island's hydration on view; the event reaches an island already hydrated.
-  document.querySelector<HTMLAnchorElement>('[data-track="demo-start-hero"]')?.addEventListener('click', (event) => {
-    if (!event.isTrusted || event.metaKey || event.ctrlKey || event.shiftKey) return;
-    Object.assign(window, { liveDemoStart: true });
-    dispatchEvent(new CustomEvent('live-demo-start'));
-  });
 
   // Hero: a floor of sandboxes running to the horizon, one dot per machine.
   // Agents claim machines one at a time; a fleet claims a block at once and
@@ -529,12 +539,19 @@ const harnesses = [
   .rail-head { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 2.5rem; align-items: start; }
   .rail-head h2 { color: var(--text-primary); letter-spacing: -0.032em; }
   .rail-head p { margin: 0; color: rgba(237, 237, 244, 0.8); font-size: clamp(1.15rem, 1.5vw, 1.4rem); line-height: 1.6; max-width: 40rem; }
-  .rail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.7rem; margin-top: 3.2rem; }
+  .rail-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.7rem; margin-top: 3.2rem; }
   .rail-tile { display: grid; grid-template-columns: 40px 1fr; gap: 0.8rem; align-items: center; padding: 0.9rem 1rem; border: 1px solid rgba(199, 201, 238, 0.14); border-radius: 12px; background: var(--md3-surface-container-low); text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease; }
   .rail-tile:hover, .rail-tile:focus-visible { border-color: rgba(129, 140, 248, 0.6); background: var(--md3-surface-container); }
   .rail-tile:focus-visible { outline: 2px solid var(--brand-glow); outline-offset: 2px; }
   .rail-logo { width: 40px; height: 40px; border-radius: 9px; object-fit: cover; box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14); }
   .rail-name { color: var(--text-primary); font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+  .rail-more { display: flex; flex-wrap: wrap; gap: 2rem 5rem; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-default); }
+  .rail-more h3 { margin: 0 0 .8rem; color: var(--text-primary); font-size: 1rem; }
+  .rail-more ul { display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; padding: 0; margin: 0 0 .9rem; list-style: none; }
+  .rail-more li { display: flex; align-items: center; gap: .45rem; color: var(--text-primary); font-weight: 500; }
+  .rail-more img { width: 24px; height: 24px; padding: 2px; object-fit: contain; border-radius: 4px; background: var(--text-primary); }
+  .rail-more p, .rail-more a { margin: 0; font-size: .875rem; color: var(--text-secondary); }
+  .rail-more a { text-decoration: underline; text-underline-offset: .2em; }
 
   /* ---------- one key, one bill (paper) ---------- */
   .pricing { background: var(--bg-root); color: var(--text-primary); padding: 8rem 0 7.5rem; }
