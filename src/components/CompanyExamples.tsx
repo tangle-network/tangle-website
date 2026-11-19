@@ -59,7 +59,7 @@ const introductions: Record<string, { title: string; description: string; link: 
   },
   fleets: {
     title: 'Run agents in parallel on one budget.',
-    description: 'Split a test suite across agents, or give each agent a different package to review.',
+    description: 'Split a test suite across machines, or give each agent a different package to review.',
     link: 'Fleet guide', path: 'sandbox/agents-fleet',
   },
   runtime: {
