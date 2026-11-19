@@ -52,7 +52,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.waitFor();
     await editor.scrollIntoViewIfNeeded();
     await page.waitForFunction(() => !document.querySelector('.qs-editor')?.closest('astro-island')?.hasAttribute('ssr'));
-    check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
+    check(await editor.getByRole('button', { name: /^Example,/ }).count() === 1, 'One example picker in the shared workbench', item);
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
     if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
@@ -66,8 +66,14 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const group = controls.getByRole('navigation', { name: 'Example topics' });
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
     const transcript = () => output.textContent();
-    const planes = await controls.evaluate(root => ['.ce-files', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
-    check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
+    const picker = controls.getByRole('button', { name: /^Example,/ });
+    const menu = page.getByRole('menu', { name: 'Examples' });
+    const chooseExample = async title => {
+      await picker.click();
+      await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
+    };
+    const planes = await controls.evaluate(root => ['.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
+    check(new Set(planes).size === 2 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'Source and output have distinct surfaces', item);
     check(await editor.locator('.qs-actions .qs-run-id, .qs-actions .qs-stamp, .qs-actions .qs-clock').evaluateAll(nodes => nodes.every(node => !node.getClientRects().length)), 'Run metadata does not create a toolbar', item);
     if (name === 'desktop') {
       const sourceEdge = (await editor.locator('.qs-source').boundingBox());
@@ -83,15 +89,18 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await page.goForward();
       await selectedFile('any-cloud').waitFor();
       await editor.locator('.qs-main[data-state="idle"]').waitFor();
-      await controls.locator('.ce-files [data-file=any-cloud]').press('Enter');
+      await picker.press('Enter');
+      await menu.getByRole('menuitemradio', { name: 'Tangle', exact: true }).press('Enter');
       await editor.locator('.qs-main[data-state="running"]').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
-      const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
-      check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
-      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are accessible directly', item);
-      await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
+      await picker.click();
+      const options = menu.getByRole('menuitemradio');
+      check(await options.count() === 13, 'All Sandbox examples are available from one picker', item);
+      await menu.getByRole('menuitemradio', { name: 'Run a command', exact: true }).focus();
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter');
       await selectedFile('python-csv').waitFor();
-      await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
+      await chooseExample('Fix a failing test');
     } else {
       await controls.getByRole('button', { name: /^Topic,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).tap();
@@ -182,10 +191,12 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         const topicHeading = await heading.innerText(), topicGuide = await guide.getAttribute('href');
         check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
         topicGuides.set(topicHeading, topicGuide);
-        const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
-        check(await files.locator(':scope > :not(button)').count() === 0, 'Only example choices appear in ' + subject.label, item);
+        await picker.click();
+        const titles = await menu.getByRole('menuitemradio').allTextContents();
+        check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
+        await page.keyboard.press('Escape');
         for (const idea of subject.ideas) {
-          await files.locator('[data-file="' + idea.id + '"]').click();
+          await chooseExample(idea.title);
           await selectedFile(idea.id).waitFor();
           const key = subject.id + '/' + idea.id;
           check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);
