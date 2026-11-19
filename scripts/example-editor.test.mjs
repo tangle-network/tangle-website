@@ -7,7 +7,6 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 const { chromium, webkit } = createRequire(new URL('./examples-typecheck/package.json', import.meta.url))('playwright');
 import fs from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const out = process.env.EDITOR_EVIDENCE_DIR ?? await fs.mkdtemp(join(tmpdir(), 'tangle-editor-'));
 const base = new URL(process.argv[2] ?? 'http://127.0.0.1:4321').origin;
@@ -31,7 +30,7 @@ if (process.env.TANGLE_BUILD_REVISION) {
 }
 const read = async key => JSON.parse(await fs.readFile(`${ROOT}src/data/runs/${key}.json`, 'utf8'));
 const source = await fs.readFile(join(ROOT, 'src/examples/sandboxes/fix-a-test.mts'), 'utf8');
-const record = await read('sandboxes/fix-a-test'), patch = record.events.find(event => event.result?.stdout?.startsWith('diff --git ')).result.stdout;
+const record = await read('sandboxes/fix-a-test');
 const report = { cases: [], failures: [], quality: 'UNREVIEWED: render inspection is separate from functional checks' };
 const check = (ok, message, item) => { if (!ok) report.failures.push({ case: item.name, message }); };
 const normalized = text => text.replace(/`+|\*\*/g, '').replace(/^\s*[-*]\s+/gm, '').replace(/\s+/g, ' ').trim();
@@ -57,7 +56,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
-    if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
+    if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
     // Finished output is the default; replay is an explicit reader action.
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     const controls = page.locator('.company-examples');
@@ -70,7 +69,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     if (name === 'desktop') {
       const sourceEdge = (await editor.locator('.qs-source').boundingBox());
       const resultEdge = (await editor.locator('.qs-machine').boundingBox());
-      check(Math.abs(sourceEdge.y + sourceEdge.height - resultEdge.y - resultEdge.height) <= 1, 'Source and output end together above the desktop receipt', item);
+      check(Math.abs(sourceEdge.y + sourceEdge.height - resultEdge.y - resultEdge.height) <= 1, 'Source and output end together in the desktop editor', item);
       await group.getByRole('button', { name: 'Any cloud', exact: true }).click();
       await selectedFile('any-cloud').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
@@ -85,10 +84,22 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await controls.getByRole('combobox', { name: 'Topic' }).click();
       await page.getByRole('option', { name: 'Router', exact: true }).click();
       await controls.getByRole('combobox', { name: 'Example' }).click();
-      await page.getByRole('option', { name: 'Review an API route', exact: true }).click();
-      await selectedFile('review-a-route').waitFor();
+      await page.getByRole('option', { name: 'List serving models', exact: true }).click();
+      await selectedFile('list-serving-models').waitFor();
     }
-    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
+    // Hold the real island response so the early-click regression is reproducible on a fast connection too.
+    let releaseIsland;
+    if (name === 'narrow') {
+      const held = new Promise(resolve => { releaseIsland = resolve; });
+      await page.route('**/CompanyExamples.*.js', async route => { await held; await route.continue(); }, { times: 1 });
+    }
+    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`, { waitUntil: 'domcontentloaded' });
+    if (releaseIsland) {
+      try {
+        check(await editor.locator('.qs-source pre').isVisible(), 'Source remains readable before the island loads', item);
+        check(await editor.getByRole('button', { name: 'Replay the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
+      } finally { releaseIsland(); }
+    }
     await editor.scrollIntoViewIfNeeded();
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
@@ -102,15 +113,12 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).press('Space');
     await editor.locator('.qs-main[data-state="running"]').waitFor({ timeout: 5000 });
     const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
-    await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor({ timeout: recordMs + 15000 });
-    await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    check(await editor.locator('.qs-ret').count() === 6 && (await editor.locator('.qs-receipt').innerText()).includes('in model calls'), 'A finished run shows what each call returned and what the run cost', item);
+    await main.locator('[data-source-line]').waitFor({ state: 'visible' });
+    await editor.locator('.qs-main[data-state="ended"]').waitFor({ timeout: recordMs + 15000 });
+    check(await editor.locator('.qs-ret').count() === 6 && /# pass 9\s+# fail 0/.test(await output.innerText()), 'Completed returns and the recorded passing tests remain in source and output', item);
+    check(await editor.locator('.qs-receipt,.qs-patch').count() === 0, 'Company examples omit the full-width receipt and its download control', item);
     check(!/inputTokens|outputTokens|npm notice/.test(await output.innerText()), 'No accounting dumps or stderr notices in output', item);
     await page.screenshot({ path: `${out}/${name}-result.png` });
-    const download = await Promise.all([page.waitForEvent('download'), editor.getByRole('link', { name: 'Download patch', exact: false }).click()]).then(([value]) => value);
-    const downloaded = await fs.readFile(await download.path(), 'utf8');
-    check(downloaded === patch, 'Full exact three-file patch preserved', item);
-    item.patchSha256 = createHash('sha256').update(downloaded).digest('hex');
     check((await output.locator('.qs-files > div').count()) === 3, 'The result shows every changed file', item);
     if (engine === chromium) {
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copy file', exact: true }).click();
@@ -144,7 +152,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(Number(await position()) < 0.25, 'Run again must restart', item);
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor();
+    await editor.locator('.qs-main[data-state="ended"]').waitFor();
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     const load = async key => { await page.goto(`${base}/?example=${key}#quickstart-title`); await selectedFile(key.split('/').at(-1)).waitFor(); await editor.scrollIntoViewIfNeeded(); };
     if (name === 'desktop') {
@@ -172,6 +180,15 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
       const states = await editor.locator('.qs-ret b').allTextContents();
       check(states.includes('stopped') && states.includes('running'), 'Void lifecycle calls retain their recorded outcomes', item);
+      await page.emulateMedia({ reducedMotion: 'no-preference' });
+      await editor.getByRole('button', { name: 'Replay the recorded run' }).click();
+      const resumed = (await read('sandboxes/stop-and-resume')).events.find(event => event.label === 'box.resume');
+      await editor.locator(`.qs-current-call[data-source-line="${resumed.line}"]`).waitFor();
+      const executing = editor.locator(`.qs-source[data-active-line="${resumed.line}"]`);
+      check(await executing.locator('.qs-band').isVisible() && await editor.locator('.qs-state-row').getByText('stopped', { exact: true }).isVisible(),
+        'The recorded resume call highlights its source while the output still shows the completed stop', item);
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await editor.locator('.qs-main[data-state="ended"]').waitFor();
       await load('sandboxes/host-a-page');
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
       check((await editor.locator('.qs-ret b').allTextContents()).includes('killed'), 'A void process kill retains its recorded outcome', item);
@@ -194,7 +211,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);
       await load('fleets/cancel-on-cap'); await editor.locator('.qs-result').getByText('agent-1 · cancelled', { exact: true }).waitFor();
       await page.screenshot({ path: `${out}/${name}-fleet.png` });
-      await page.goto(`${base}/?example=router/review-a-route#quickstart-title`); await selectedFile('review-a-route').waitFor();
+      await page.goto(`${base}/?example=router/list-serving-models#quickstart-title`); await selectedFile('list-serving-models').waitFor();
       check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
     }
     const optionalTelemetry = error => {

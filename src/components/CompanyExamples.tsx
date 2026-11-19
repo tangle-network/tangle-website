@@ -11,12 +11,13 @@ function Picker({ label, value, options, choose }: {
   return <div>
     <Select value={value} onValueChange={choose}>
       <SelectTrigger size="touch" aria-label={label}><SelectValue /></SelectTrigger>
-      <SelectContent>{options.map(item => <SelectItem value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
+      <SelectContent>{options.map(item => <SelectItem className="ce-option" value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
     </Select>
   </div>;
 }
 
 export default function CompanyExamples({ subjects, initial }: Props) {
+  const [ready, setReady] = useState(false);
   const [selection, setSelection] = useState(initial);
   const [expanded, setExpanded] = useState(false);
   const [topic, file] = selection.split('/');
@@ -37,6 +38,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       setExpanded(false);
     };
     read();
+    setReady(true);
     window.addEventListener('popstate', read);
     return () => window.removeEventListener('popstate', read);
   }, [initial, subjects]);
@@ -53,7 +55,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     setExpanded(false);
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
-  return <div className="company-examples">
+  return <fieldset className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>
@@ -77,7 +79,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
           {expanded ? 'Show fewer' : `Show ${ideas.length - shortlist.length} more`}
         </Button>}
       </nav>
-      <ExampleEditor key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
+      <ExampleEditor showReceipt={false} key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>
-  </div>;
+  </fieldset>;
 }
