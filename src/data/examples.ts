@@ -88,6 +88,8 @@ export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas])
     const key = `${id}/${file}`;
     const run = recorded(`./runs/${id}/${file}.json`, code);
     return { id: file, title, code, install, view: views[key],
+      ...(key === 'sandboxes/python-csv' ? { output: { call: 'box.runCode' as const, title: 'Customer totals', columns: ['Customer', 'Total'] } } : {}),
+      ...(key === 'sandboxes/run-code' ? { output: { call: 'box.exec' as const, title: 'Standard output' } } : {}),
       ...(key === 'sandboxes/browser-task' ? { timelineNoteAt: run?.events?.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('system Chromium available'))?.atMs } : {}),
       ...(key === 'sandboxes/branch-into-two' ? { lead: 'Both branches kept shared setup' } : {}),
       ...(key === 'sandboxes/stop-and-resume' ? { lead: 'notes.md survived the stop', stopped: 'files stay; compute stops', resumed: 'resumed with its files' } : {}),
