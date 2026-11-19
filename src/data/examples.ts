@@ -17,7 +17,7 @@ const views: Record<string, ExampleIdea['view']> = {
 };
 const recorded = (path: string, code: string) => {
   const record = records[path];
-  if (record?.source.sha256 !== sourceDigest(code)) return undefined;
+  if (record?.run.exitCode !== 0 || record.source.sha256 !== sourceDigest(code)) return undefined;
   const { id, recordedAt, costUsd, exitCode, sdk } = record.run;
   const ms = Math.max(0, ...record.events.map((event) => event.atMs + (event.durationMs ?? 0))); // how long the job took
   return { url: recordUrls[path], recordedAt, runId: id, sha: record.source.sha256, sdk: sdk['@tangle-network/sandbox'], costUsd, exitCode, ms, events: [...featuredExamples, 'fleets/cancel-on-cap'].some(key => path === `./runs/${key}.json`) ? record.events : undefined };
