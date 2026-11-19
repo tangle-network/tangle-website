@@ -68,6 +68,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     const nav = editor.getByRole('navigation', { name: 'Examples' });
     check(await nav.isVisible(), 'Examples are available beside the initial file', item);
+    if (width <= 680) {
+      const router = await nav.getByRole('button', { name: 'Router', exact: true }).boundingBox();
+      check(router && router.x + router.width <= width, 'The next product is visible on a phone before scrolling the subjects', item);
+    }
     const planes = await editor.evaluate(root => ['.qs-nav', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
     check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
     if (name === 'desktop') {
