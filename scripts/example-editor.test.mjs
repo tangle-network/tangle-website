@@ -67,7 +67,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
     const transcript = () => output.textContent();
     const picker = controls.getByRole('button', { name: /^Example,/ });
-    const menu = page.getByRole('menu', { name: 'Examples' });
+    const menu = page.getByRole('menu', { name: /^Example,/ });
     const chooseExample = async title => {
       await picker.click();
       await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
@@ -98,6 +98,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(await options.count() === 13, 'All Sandbox examples are available from one picker', item);
       await menu.getByRole('menuitemradio', { name: 'Run a command', exact: true }).focus();
       await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Crunch a CSV in Python');
       await page.keyboard.press('Enter');
       await selectedFile('python-csv').waitFor();
       await chooseExample('Fix a failing test');
