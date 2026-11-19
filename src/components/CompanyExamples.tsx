@@ -8,6 +8,35 @@ import './company-examples.css';
 
 interface Props { subjects: ExampleSubject[]; initial: string }
 
+const outputInks = {
+  'ce-add': /^(?:\+(?!\+\+).*|ok \d+\b.*|# pass \d+|# fail 0|\d+ tests passed)$/gm,
+  'ce-remove': /^(?:-(?!--).*|not ok \d+\b.*|# fail [1-9]\d*)$/gm,
+  'ce-hunk': /^@@.*$/gm,
+};
+
+// Color the existing selectable text. The original +/- patch and TAP markers stay readable everywhere.
+function highlightOutput(root: HTMLFieldSetElement) {
+  if (!('highlights' in CSS)) return;
+  const logs = root.querySelectorAll('.qs-event-output[open]');
+  for (const [name, pattern] of Object.entries(outputInks)) {
+    const ink = new Highlight();
+    for (const log of logs) {
+      const pre = log.querySelector('pre');
+      if (!pre || !/^(?:diff --git |TAP version )/m.test(pre.textContent ?? '')) continue;
+      for (const node of [pre.firstChild, log.querySelector('summary')?.firstChild]) {
+        if (!(node instanceof Text)) continue;
+        for (const line of node.data.matchAll(pattern)) {
+          const range = new Range();
+          range.setStart(node, line.index);
+          range.setEnd(node, line.index + line[0].length);
+          ink.add(range);
+        }
+      }
+    }
+    CSS.highlights.set(name, ink);
+  }
+}
+
 function Picker({ label, value, options, choose }: {
   label: string; value: string; options: { id: string; label: string; group?: string }[]; choose: (value: string) => void;
 }) {
@@ -65,6 +94,10 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     return () => window.removeEventListener('popstate', read);
   }, [initial, subjects]);
 
+  useEffect(() => () => {
+    for (const name of Object.keys(outputInks)) CSS.highlights?.delete(name);
+  }, [selection, interaction]);
+
   function choose(key: string) {
     const url = new URL(window.location.href);
     if (url.searchParams.get('example') !== key) {
@@ -79,7 +112,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     if (!next) return;
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
-  return <fieldset className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
+  return <fieldset onToggleCapture={event => highlightOutput(event.currentTarget)} className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>
