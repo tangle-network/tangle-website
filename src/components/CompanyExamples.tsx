@@ -73,7 +73,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       <Picker label="Example" value={idea.id} options={ideas.map(item => ({ id: item.id, label: item.title, group: hasGuides ? groupFor(item) : undefined }))}
         choose={id => choose(`${subject.id}/${id}`)} />
     </div>
-    <div className="ce-workbench">
+    <div className="ce-workbench dark" data-theme="website">
       <nav className="ce-files" aria-label={`${subject.label} examples`}>
         {files.map((item, index) => <Fragment key={item.id}>
           {hasGuides && (!index || groupFor(files[index - 1]) !== groupFor(item)) &&
