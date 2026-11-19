@@ -3,7 +3,7 @@ import '@fontsource-variable/source-serif-4/wght.css';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SandboxQuickstart from '../components/SandboxQuickstart.astro';
 import { loadCatalog } from '../data/harness-catalog.mjs';
-import { PLANS, planPrice } from '../data/plans.mjs';
+import { PLANS, formatUsdCents, planPrice } from '../data/plans.mjs';
 import fixRun from '../data/runs/sandboxes/fix-a-test.json';
 
 const patch = fixRun.events.find(event => event.label === 'box.exec' && event.result?.stdout?.startsWith('diff --git'))?.result?.stdout;
@@ -56,14 +56,9 @@ const organizationJsonLd = {
 const pricing = await fetch('https://sandbox.tangle.tools/v1/pricing/sandboxes');
 if (!pricing.ok) throw new Error(`Sandbox pricing returned ${pricing.status}`);
 const rate = (await pricing.json()).pools.general;
-const perHour = (n: number) => `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
-// What one key meters into one balance, drawn by the pricing figure.
-const bills = [
-  { id: 'compute', name: 'Sandboxes', unit: `from ${perHour(rate.minChargeHourUsd)} an hour`, y: 45 },
-  { id: 'inference', name: 'Inference', unit: 'model tokens, at the listed price', y: 115 },
-  { id: 'observability', name: 'Observability', unit: 'traces and evals', y: 185 },
-];
-
+const hourlyPrice = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 4,
+}).format(rate.minChargeHourUsd);
 type Agent = { id: string; name: string; logo?: string | null; launchHref?: string | null };
 const { catalog } = await loadCatalog();
 const agents: Agent[] = catalog.harnesses;
@@ -153,43 +148,22 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
     <div class="shell">
       <div class="pricing-top">
         <div class="pricing-head">
-          <h2 id="pricing-title">One key. <span class="grad-text">One bill.</span></h2>
-          <p>Compute, inference and observability, on one balance.</p>
+          <h2 id="pricing-title">One key. One bill.</h2>
+          <p>Your sandbox time and model calls draw from the same balance.</p>
         </div>
-        <figure class="bill" aria-label="One API key meters compute, inference and observability into one balance">
-          <svg class="bill-svg" viewBox="0 0 560 230" role="img" aria-hidden="true">
-            <defs>
-              <linearGradient id="bill-grad" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="472" y2="0">
-                <stop offset="0%" style="stop-color: var(--accent-text)" />
-                <stop offset="100%" style="stop-color: var(--brand-glow)" />
-              </linearGradient>
-            </defs>
-            {bills.map((bill) => (
-              <g class="bill-flow" data-flow={bill.id}>
-                <path class="bill-path" d={`M 118 115 C 180 115, 180 ${bill.y}, 236 ${bill.y}`} />
-                <path class="bill-path" d={`M 400 ${bill.y} C 450 ${bill.y}, 450 115, 472 115`} />
-                <rect class="bill-node" x="236" y={bill.y - 19} width="164" height="38" rx="10" />
-                <text class="bill-label" font-size="15" x="318" y={bill.y + 5}>{bill.name}</text>
-                <text class="bill-unit" font-size="11" x="318" y={bill.y + 36}>{bill.unit}</text>
-              </g>
-            ))}
-            <g class="bill-key">
-              <rect x="14" y="96" width="104" height="38" rx="19" />
-              <text class="bill-label" font-size="15" x="66" y="120">sk-tan-…</text>
-            </g>
-            <g class="bill-balance">
-              <circle cx="508" cy="115" r="36" />
-              <text class="bill-label" font-size="22" x="508" y="122">$</text>
-            </g>
-          </svg>
-        </figure>
+        <dl class="usage-rates">
+          <div><dt>Sandbox compute</dt><dd><a href="https://sandbox.tangle.tools/pricing">From {hourlyPrice} per hour</a></dd></div>
+          <div><dt>Model calls</dt><dd><a href="https://router.tangle.tools/models">Rates by model</a></dd></div>
+        </dl>
       </div>
       <div class="plans" data-plans>
         {PLANS.map((plan) => (
-          <article class={`plan${plan.popular ? ' plan-popular' : ''}`} data-plan={plan.id}>
+          <article class="plan" data-plan={plan.id}>
             <h3>{plan.name}</h3>
-            <p class="plan-price"><span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}</p>
-            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `Your ${planPrice(plan)} comes back as credit each month` : 'No included credit'}</p>
+            <p class="plan-price">
+              <span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}
+            </p>
+            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `${formatUsdCents(plan.creditsPerMonth)} in monthly credit` : 'No included credit'}</p>
             <ul class="plan-features">
               {plan.features.map((feature) => <li>{feature}</li>)}
             </ul>
@@ -234,17 +208,6 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
   section h2 {
     font-size: clamp(2rem, 3vw, 2.9rem);
     line-height: 1.1;
-  }
-
-  .grad-text {
-    display: block;
-    background-image: linear-gradient(92deg, var(--brand-purple) 0%, var(--brand-cool) 40%, var(--btn-primary-bg) 75%, var(--brand-purple) 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: var(--brand-glow); /* fallback */
-    /* background-clip: text paints only the line box; descenders need room. */
-    padding-bottom: 0.1em;
   }
 
   .btn {
@@ -377,44 +340,43 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
   .rail-more a { text-decoration: underline; text-underline-offset: .2em; }
 
   /* ---------- one key, one bill (paper) ---------- */
-  .pricing { background: var(--bg-root); color: var(--text-primary); padding: 8rem 0 7.5rem; }
-  .pricing-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 3rem; align-items: center; }
-  .pricing-head h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.032em; color: var(--text-primary); font-size: clamp(2.3rem, 3.6vw, 3.5rem); line-height: 1.05; }
-  .pricing-head p { margin: 1.1rem 0 0; color: var(--text-secondary); font-size: clamp(1.15rem, 1.4vw, 1.35rem); line-height: 1.6; max-width: 32rem; }
-  .bill { margin: 0; }
-  .bill-svg { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); }
-  .bill-path { fill: none; stroke: url(#bill-grad); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 5 9; animation: billFlow 1.4s linear infinite; }
-  .bill-node, .bill-key rect, .bill-balance circle { fill: var(--bg-card); stroke: var(--md3-outline-variant); stroke-width: 1.5; transition: stroke 0.3s ease, fill 0.3s ease; }
-  .bill-label { fill: var(--text-primary); font-weight: 600; text-anchor: middle; }
-  .bill-unit { fill: var(--text-muted); text-anchor: middle; }
-  .bill-key rect { stroke: var(--accent-text); }
-  .bill-balance circle { stroke: var(--accent-text); stroke-width: 2; }
-  .bill-flow:hover .bill-path { stroke: var(--accent-text); stroke-width: 3; }
-  .bill-flow:hover .bill-node { fill: var(--accent-surface-strong); stroke: var(--accent-text); }
-  @keyframes billFlow { to { stroke-dashoffset: -28; } }
-  @media (prefers-reduced-motion: reduce) { .bill-path { animation: none; stroke-dasharray: none; } }
-  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 4rem; }
-  .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
-  .plan-popular { border-color: var(--accent-text); }
-  .plan h3 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text-primary); }
-  .plan-price { margin: 0.9rem 0 0; color: var(--text-primary); }
-  .plan-amount { font-family: var(--font-display); font-size: clamp(2.2rem, 3vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
-  .plan-per { color: var(--text-muted); font-size: 0.95rem; }
-  .plan-credit { margin: 0.5rem 0 0; color: var(--accent-text); font-size: 0.95rem; font-weight: 600; }
-  .plan-features { margin: 1.2rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.5; }
-  .plan-features li { padding-left: 1.1rem; position: relative; }
-  .plan-features li::before { content: ''; position: absolute; left: 0; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent-text); }
-  .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
-  .pricing .btn-ghost { background: var(--bg-card); border-color: var(--md3-outline-variant); color: var(--text-primary); }
+  .pricing { color: var(--longform-ink); background: var(--longform-paper); }
+  .pricing > .shell { border-top: 1px solid var(--longform-rule); padding-block: clamp(3rem, 6vw, 6rem) 2.5rem; }
+  .pricing-top { display: grid; grid-template-columns: 1.15fr 1fr; gap: clamp(2rem, 7vw, 8rem); align-items: center; }
+  .pricing-head h2, .plan-amount { font-family: 'Source Serif 4 Variable', Georgia, serif; font-weight: 500; letter-spacing: -.045em; }
+  .pricing-head h2 { font-size: clamp(2.75rem, 5vw, 5rem); line-height: 1.05; }
+  .pricing-head p { max-width: 27rem; margin: 1rem 0 0; color: var(--longform-ink-muted); font-size: var(--font-size-lg); line-height: 1.5; }
+  .usage-rates { margin: 0; }
+  .usage-rates div { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-block: .95rem; border-bottom: 1px solid var(--longform-rule); }
+  .usage-rates dt { font-weight: 600; }
+  .usage-rates dd { margin: 0; text-align: right; }
+  .usage-rates a, .pricing .btn-ghost { color: var(--longform-ink); text-decoration: underline; text-underline-offset: .22em; }
+  .pricing a:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-block: clamp(2.4rem, 4.5vw, 4.5rem) 2rem; border-block: 1px solid var(--longform-rule); }
+  .plan { margin-block: 1.75rem; padding-inline: clamp(1.1rem, 3vw, 3rem); }
+  .plan:first-child { padding-inline-start: 0; }
+  .plan:last-child { padding-inline-end: 0; }
+  .plan + .plan { border-inline-start: 1px solid var(--longform-rule); }
+  .plan h3 { font-size: var(--font-size-lg); font-weight: 600; }
+  .plan-price { margin: .7rem 0 0; }
+  .plan-amount { font-size: clamp(2.5rem, 3.5vw, 3.5rem); line-height: 1; }
+  .plan-per, .plan-features { color: var(--longform-ink-muted); }
+  .plan-credit { margin: .4rem 0 0; }
+  .plan-features { list-style: none; padding: 0; margin: 1.1rem 0 0; line-height: 1.45; }
+  .plan-features li + li { margin-top: .45rem; }
+  .pricing-actions { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
+  .pricing .btn-ghost { padding-inline: .2rem; background: transparent; border: 0; }
 
   /* ---------- responsive ---------- */
   @media (max-width: 980px) {
-    .rail-grid, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .pricing-top { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+    .rail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 720px) {
     .shell, :global(#quickstart .quickstart-inner) { width: min(92vw, 78rem); }
-    .rail-grid, .plans { grid-template-columns: minmax(0, 1fr); }
+    .rail-grid, .plans, .pricing-top { grid-template-columns: minmax(0, 1fr); }
+    .pricing-top { gap: 1rem; }
+    .plan { margin-block: 0; padding: 1.4rem 0; }
+    .plan + .plan { border-inline-start: 0; border-top: 1px solid var(--longform-rule); }
   }
 
   @media (max-width: 700px) {
