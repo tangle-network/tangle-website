@@ -11,7 +11,7 @@ function Picker({ label, value, options, choose }: {
   return <div>
     <Select value={value} onValueChange={choose}>
       <SelectTrigger size="touch" aria-label={label}><SelectValue /></SelectTrigger>
-      <SelectContent>{options.map(item => <SelectItem value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
+      <SelectContent>{options.map(item => <SelectItem className="ce-option" value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
     </Select>
   </div>;
 }
@@ -79,7 +79,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
           {expanded ? 'Show fewer' : `Show ${ideas.length - shortlist.length} more`}
         </Button>}
       </nav>
-      <ExampleEditor key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
+      <ExampleEditor showReceipt={false} key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>
   </fieldset>;
 }
