@@ -72,6 +72,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await selectedFile('any-cloud').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
+      check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
       check(await files.locator('[data-file]').count() === 5, 'Only five examples from the active topic open initially', item);
       await files.getByRole('button', { name: /^Show \d+ more$/ }).click();
       await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');

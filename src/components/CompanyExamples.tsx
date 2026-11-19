@@ -1,6 +1,6 @@
 import { ExampleEditor, type ExampleSubject } from '@tangle-network/ui/marketing';
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tangle-network/ui/primitives';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import './company-examples.css';
 
 interface Props { subjects: ExampleSubject[]; initial: string }
@@ -8,11 +8,9 @@ interface Props { subjects: ExampleSubject[]; initial: string }
 function Picker({ label, value, options, choose }: {
   label: string; value: string; options: { id: string; label: string }[]; choose: (value: string) => void;
 }) {
-  const id = useId();
   return <div>
-    <label htmlFor={id}>{label}</label>
     <Select value={value} onValueChange={choose}>
-      <SelectTrigger id={id} size="touch" aria-label={label}><SelectValue /></SelectTrigger>
+      <SelectTrigger size="touch" aria-label={label}><SelectValue /></SelectTrigger>
       <SelectContent>{options.map(item => <SelectItem value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
     </Select>
   </div>;
@@ -55,7 +53,6 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     setExpanded(false);
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
-  const filename = `${idea.id}.mts`;
   return <div className="company-examples">
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
@@ -75,9 +72,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
             choose(`${subject.id}/${next.id}`);
             event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-file="${next.id}"]`)?.focus();
           }}
-          data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}
-          {item.id === idea.id && <code aria-hidden="true">{filename}</code>}
-        </Button>)}
+          data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}</Button>)}
         {ideas.length > shortlist.length && <Button className="ce-more" variant="ghost" size="sm" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Show fewer' : `Show ${ideas.length - shortlist.length} more`}
         </Button>}
