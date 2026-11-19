@@ -77,12 +77,15 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       const value = new URL(window.location.href).searchParams.get('example');
       const valid = subjects.some(s => s.ideas.some(i => `${s.id}/${i.id}` === value));
       setSelection(valid && value ? value : initial);
+    };
+    const restore = () => {
+      read();
       setEntry(previous => ({ revision: previous.revision + 1, play: false }));
     };
     read();
     setReady(true);
-    window.addEventListener('popstate', read);
-    return () => window.removeEventListener('popstate', read);
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
   }, [initial, subjects]);
 
   function choose(key: string) {
