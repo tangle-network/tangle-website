@@ -11,22 +11,28 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const out = process.env.EDITOR_EVIDENCE_DIR ?? await fs.mkdtemp(join(tmpdir(), 'tangle-editor-'));
 const base = new URL(process.argv[2] ?? 'http://127.0.0.1:4321').origin;
 await fs.mkdir(out, { recursive: true });
-let ready = false;
-for (let attempt = 0; attempt < 100; attempt++) {
-  try { ready = (await fetch(`${base}/version.json`)).ok; } catch {}
-  if (ready) break;
-  await wait(100);
+const home = `${base}/#quickstart-title`;
+const directExample = `${base}/?example=sandboxes/fix-a-test#quickstart-title`;
+const expectedRevision = process.env.TANGLE_BUILD_REVISION;
+// Pages can switch version.json before the unmodified public document URLs reach the new release.
+async function waitForDocument(url) {
+  let observed = 'unavailable';
+  const deadline = Date.now() + (expectedRevision ? 150_000 : 10_000);
+  do {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const html = await response.text();
+      observed = response.ok ? html.match(/<html\b[^>]*\bdata-build-revision="([^"]+)"/)?.[1] ?? 'unversioned' : `HTTP ${response.status}`;
+      if (response.ok && (!expectedRevision || observed === expectedRevision)) return;
+    } catch (error) { observed = String(error); }
+    await wait(expectedRevision ? 5000 : 100);
+  } while (Date.now() < deadline);
+  throw new Error(`Expected ${expectedRevision ?? 'a ready document'} at ${url}, received ${observed}`);
 }
-assert.ok(ready, `Preview unavailable at ${base}`);
-if (process.env.TANGLE_BUILD_REVISION) {
-  // Cloudflare serves the previous deploy for up to a minute after the upload returns.
-  let version;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    version = await (await fetch(`${base}/version.json?revision=${process.env.TANGLE_BUILD_REVISION}&attempt=${attempt}`)).json();
-    if (version.revision === process.env.TANGLE_BUILD_REVISION) break;
-    await wait(5000);
-  }
-  assert.equal(version.revision, process.env.TANGLE_BUILD_REVISION);
+await Promise.all([home, directExample].map(waitForDocument));
+async function visit(page, url) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  if (expectedRevision) assert.equal(await page.locator('html').getAttribute('data-build-revision'), expectedRevision, url);
 }
 const read = async key => JSON.parse(await fs.readFile(`${ROOT}src/data/runs/${key}.json`, 'utf8'));
 const source = await fs.readFile(join(ROOT, 'src/examples/sandboxes/fix-a-test.mts'), 'utf8');
@@ -45,7 +51,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
   page.on('pageerror', error => { errors.push(String(error)); item.errorDetails.push({ message: String(error), stack: error.stack, at: Date.now() }); });
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
   try {
-    await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
+    await visit(page, home);
     const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-feed');
     // Keep the replay visible after a click retries with scrollIntoView and smooth page scrolling.
     const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
@@ -132,13 +138,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       const held = new Promise(resolve => { releaseIsland = resolve; });
       await page.route('**/CompanyExamples.*.js', async route => { await held; await route.continue(); }, { times: 1 });
     }
-    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`, { waitUntil: 'domcontentloaded' });
-    if (releaseIsland) {
-      try {
+    try {
+      await visit(page, directExample);
+      if (releaseIsland) {
         check(await editor.locator('.qs-source pre').isVisible(), 'Source remains readable before the island loads', item);
         check(await editor.getByRole('button', { name: 'Play the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
-      } finally { releaseIsland(); }
-    }
+      }
+    } finally { releaseIsland?.(); }
     await editor.scrollIntoViewIfNeeded();
     const play = editor.getByRole('button', { name: 'Play the recorded run', exact: true });
     await play.scrollIntoViewIfNeeded();
