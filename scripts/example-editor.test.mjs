@@ -56,7 +56,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
-    if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
+    if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
     // Finished output is the default; replay is an explicit reader action.
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     const controls = page.locator('.company-examples');
