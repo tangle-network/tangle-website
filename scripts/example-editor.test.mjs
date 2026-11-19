@@ -66,24 +66,27 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
     // Finished output is the default; replay is an explicit reader action.
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    const nav = editor.getByRole('navigation', { name: 'Examples' });
-    check(await nav.isVisible(), 'Examples are available beside the initial file', item);
-    if (width <= 680) {
-      const router = await nav.getByRole('button', { name: 'Router', exact: true }).boundingBox();
-      check(router && router.x + router.width <= width, 'The next product is visible on a phone before scrolling the subjects', item);
-    }
-    const planes = await editor.evaluate(root => ['.qs-nav', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
+    const controls = page.locator('.company-examples');
+    const group = controls.getByRole('navigation', { name: 'Example topics' });
+    const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
+    const position = () => editor.getByRole('slider', { name: 'Run position' }).getAttribute('aria-valuenow');
+    const planes = await controls.evaluate(root => ['.ce-files', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
     check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
+    check(await editor.locator('.qs-actions .qs-run-id, .qs-actions .qs-stamp, .qs-actions .qs-clock').evaluateAll(nodes => nodes.every(node => !node.getClientRects().length)), 'Run metadata does not create a toolbar', item);
     if (name === 'desktop') {
-      await editor.getByRole('button', { name: 'Any cloud', exact: true }).click();
-      await editor.locator('.qs-file').filter({ hasText: 'runtime/any-cloud.mts' }).waitFor();
-      check(await editor.locator('.qs-rows:not([inert])').count() === 1, 'One subject is open at a time', item);
-      await editor.getByRole('button', { name: 'Sandboxes', exact: true }).click();
-      await editor.locator('.qs-file').filter({ hasText: 'run-code.mts' }).waitFor();
-      await editor.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
-      await editor.locator('.qs-file').filter({ hasText: 'python-csv.mts' }).waitFor();
-      await editor.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
-      await editor.locator('.qs-file').filter({ hasText: 'fix-a-test.mts' }).waitFor();
+      await group.getByRole('button', { name: 'Any cloud', exact: true }).click();
+      await selectedFile('any-cloud').waitFor();
+      await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
+      const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
+      check(await files.locator('[data-file]').count() === 5, 'Only five examples from the active topic open initially', item);
+      await files.getByRole('button', { name: /^Show \d+ more$/ }).click();
+      await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
+      await selectedFile('python-csv').waitFor();
+      await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
+    } else {
+      await controls.getByLabel('Topic', { exact: true }).selectOption('router');
+      await controls.getByLabel('Example', { exact: true }).selectOption('review-a-route');
+      await selectedFile('review-a-route').waitFor();
     }
     await go(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
     await editor.scrollIntoViewIfNeeded();
@@ -91,9 +94,9 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).click();
-    const paused = await editor.locator('.qs-clock').innerText();
+    const paused = await position();
     await page.waitForTimeout(600);
-    check(await editor.locator('.qs-clock').innerText() === paused && await main.getAttribute('data-state') === 'idle', 'Pause must stop the clock', item);
+    check(await position() === paused && await main.getAttribute('data-state') === 'idle', 'Pause must stop the clock', item);
     await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).press('Space');
@@ -118,15 +121,32 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.getByRole('slider', { name: 'Run position' }).press('Home');
     check(await main.getAttribute('data-state') !== 'ended', 'Moving the run position moves the run', item);
     await editor.getByRole('slider', { name: 'Run position' }).press('End');
+    const scroll = await editor.locator('.qs-code').evaluate(async pane => {
+      pane.scrollIntoView({ block: 'center', behavior: 'instant' });
+      pane.scrollTop = pane.scrollHeight;
+      await new Promise(requestAnimationFrame);
+      const lines = [...pane.querySelectorAll('pre > code > span')];
+      const last = lines.at(-1).getBoundingClientRect();
+      const box = pane.getBoundingClientRect();
+      const painted = document.elementFromPoint(box.left + 20, last.top + 3)?.closest('pre');
+      const anchors = lines.filter(line => parseFloat(getComputedStyle(line).paddingBottom) > 0)
+        .map(line => line.getBoundingClientRect().bottom - parseFloat(getComputedStyle(line).paddingBottom));
+      const labels = [...pane.querySelectorAll('.qs-ret')].map(label => label.getBoundingClientRect().top);
+      const aligned = anchors.length === labels.length && anchors.every((anchor, i) => Math.abs(anchor - labels[i]) <= 2);
+      const visible = last.bottom <= box.bottom + 1 && painted === pane.querySelector('pre');
+      pane.scrollTop = 0;
+      return { visible, aligned };
+    });
+    check(scroll.visible && scroll.aligned, 'The final code line paints and inline return labels stay anchored after scrolling to the end', item);
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
     await editor.getByRole('button', { name: 'Replay the recorded run', exact: true }).click();
     await settle();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
-    check(/^0:0\d/.test(await editor.locator('.qs-clock').innerText()), 'Run again must restart', item);
+    check(Number(await position()) < 0.25, 'Run again must restart', item);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await editor.locator('.qs-receipt').getByText('9 tests passed', { exact: true }).waitFor();
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
-    const load = async key => { await go(`${base}/?example=${key}#quickstart-title`); await editor.locator('.qs-file').filter({ hasText: `${key.split('/').at(-1)}.mts` }).waitFor(); await editor.scrollIntoViewIfNeeded(); };
+    const load = async key => { await go(`${base}/?example=${key}#quickstart-title`); await selectedFile(key.split('/').at(-1)).waitFor(); await editor.scrollIntoViewIfNeeded(); };
     if (name === 'desktop') {
       await load('sandboxes/browser-task');
       await editor.locator('.qs-main[data-state="ended"]').waitFor();
@@ -170,7 +190,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);
       await load('fleets/cancel-on-cap'); await editor.locator('.qs-result').getByText('agent-1 · cancelled', { exact: true }).waitFor();
       await page.screenshot({ path: `${out}/${name}-fleet.png` });
-      await go(`${base}/?example=router/review-a-route#quickstart-title`); await editor.locator('.qs-file').filter({ hasText: 'review-a-route.mts' }).waitFor();
+      await go(`${base}/?example=router/review-a-route#quickstart-title`); await selectedFile('review-a-route').waitFor();
       check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
     }
     const optionalTelemetry = error => {
