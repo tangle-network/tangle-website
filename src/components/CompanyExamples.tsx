@@ -1,5 +1,8 @@
 import { ExampleEditor, type ExampleSubject } from '@tangle-network/ui/marketing';
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@tangle-network/ui/primitives';
+import {
+  Button, DropdownMenu, DropdownMenuContent, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger,
+} from '@tangle-network/ui/primitives';
 import { Fragment, useEffect, useState } from 'react';
 import './company-examples.css';
 
@@ -11,7 +14,7 @@ function Picker({ label, value, options, choose }: {
   const groups = [...new Set(options.map(item => item.group))];
   const current = options.find(item => item.id === value);
   return <DropdownMenu>
-    <DropdownMenuTrigger asChild><Button variant="outline" aria-label={label}>
+    <DropdownMenuTrigger asChild><Button variant="outline" aria-label={`${label}, ${current?.label}`}>
       <span>{current?.label}</span><span aria-hidden="true">▾</span>
     </Button></DropdownMenuTrigger>
     <DropdownMenuContent align="start" className="ce-menu" aria-label={label}>
@@ -97,7 +100,8 @@ export default function CompanyExamples({ subjects, initial }: Props) {
           data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}</Button>
         </Fragment>)}
       </nav>
-      <ExampleEditor showReceipt={false} playOnSelect={interaction > 0} key={`${selection}:${interaction}`} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
+      <ExampleEditor key={`${selection}:${interaction}`} playOnSelect={interaction > 0}
+        showReceipt={false} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>
   </fieldset>;
 }

@@ -85,16 +85,18 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
       check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
-      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /show more/i }).count() === 0, 'All Sandbox examples are visible in the task groups', item);
+      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are visible in the task groups', item);
       await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
       await selectedFile('python-csv').waitFor();
       await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
     } else {
-      await controls.getByRole('button', { name: 'Topic' }).click();
-      await page.getByRole('menuitemradio', { name: 'Router', exact: true }).click();
-      await controls.getByRole('button', { name: 'Example' }).click();
-      await page.getByRole('menuitemradio', { name: 'List serving models', exact: true }).click();
-      await selectedFile('list-serving-models').waitFor();
+      await controls.getByRole('button', { name: /^Topic,/ }).click();
+      await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).click();
+      await selectedFile('any-cloud').waitFor();
+      await editor.getByRole('button', { name: 'Pause the recorded run' }).click();
+      await controls.getByRole('button', { name: /^Example,/ }).click();
+      await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).click();
+      await editor.locator('.qs-main[data-state="running"]').waitFor();
     }
     // Hold the real island response so the early-click regression is reproducible on a fast connection too.
     let releaseIsland;
@@ -124,7 +126,9 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await editor.getByRole('button', { name: 'Resume the recorded run', exact: true }).press('Space');
     await editor.locator('.qs-main[data-state="running"]').waitFor({ timeout: 5000 });
     const recordMs = Math.max(...record.events.map(event => event.atMs + (event.durationMs ?? 0)));
-    await main.locator('[data-source-line]').waitFor({ state: 'visible' });
+    await main.locator('.qs-band').waitFor();
+    const activeLine = await main.locator('.qs-code').getAttribute('data-active-line');
+    await output.locator('[data-timeline-step="tool"]').filter({ hasText: new RegExp('Line ' + activeLine + '\\b') }).first().waitFor();
     await editor.locator('.qs-main[data-state="ended"]').waitFor({ timeout: recordMs + 15000 });
     const tests = output.locator('details').filter({ has: page.getByText('9 tests passed', { exact: true }) });
     await tests.locator('summary').click();
@@ -177,7 +181,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
           const key = subject.id + '/' + idea.id;
           check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);
           if (!idea.run) {
-            await output.getByText('This example has source code only.', { exact: true }).waitFor();
+            await editor.locator('.qs-main[data-state="source"]').waitFor();
+            check(!await output.isVisible(), 'Source-only examples use the full editor without an empty output pane: ' + key, item);
             check(await editor.locator('.qs-run').count() === 0, 'SDK example has no simulated run: ' + key, item);
             continue;
           }
