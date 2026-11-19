@@ -42,6 +42,8 @@ const grid: [string, string, string, [string, string, string?][]][] = [
   ]],
   ['router', 'Router', 'npm install --save-dev tsx', [
     ['list-serving-models', 'List serving models'],
+    ['chat', 'Send a chat completion'],
+    ['review-a-route', 'Review code with a chosen model'],
   ]],
   ['evals', 'Evals', `${SANDBOX} @tangle-network/agent-eval`, [
     ['score-a-trace', 'Score an answer'],
@@ -51,8 +53,9 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['regression-gate', 'Gate a prompt change'],
     ['what-did-it-do', 'Ask what the agent did'],
   ]],
-  ['products', 'Products', SANDBOX, [
+  ['products', 'Agent apps', SANDBOX, [
     ['legal-agent', 'One sandbox per customer'],
+    ['email-assistant', 'Connect an email assistant', 'npm install @tangle-network/agent-app'],
     ['support-thread', 'A chat that remembers'],
     ['gtm-agent', 'Call a hosted agent'],
     ['charge-per-turn', 'Bill a customer per turn'],
@@ -67,7 +70,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['shard-tests', 'Shard the tests'],
     ['cancel-on-cap', 'Stop a fleet at a cap'],
   ]],
-  ['runtime', 'Any cloud', `${SANDBOX} @tangle-network/agent-runtime @tangle-network/agent-provider-tangle`, [
+  ['runtime', 'Providers', `${SANDBOX} @tangle-network/agent-runtime @tangle-network/agent-provider-tangle`, [
     ['any-cloud', 'Tangle'],
     ['any-cloud-e2b', 'E2B', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
     ['any-cloud-daytona', 'Daytona', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],

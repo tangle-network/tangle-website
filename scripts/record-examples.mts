@@ -28,6 +28,8 @@ const HARNESS = join(ROOT, "scripts/examples-typecheck");
 const MAX_AGE_DAYS = 30;
 // Examples with no recorded run, and why. Record mode skips them; the page shows "No live run yet" for them.
 const NO_RUN: Record<string, string> = {
+  "products/email-assistant": "attaches a real mailbox and needs an owner-authorized email connection",
+  "router/chat": "requires a customer-selected model and a billable inference request",
   "router/security-model": "requires a customer-selected, key-restricted model; no live run recorded",
   "router/review-a-route": "requires a customer-selected Router model; no live run recorded",
   "runtime/any-cloud-e2b": "no credential in vault",
