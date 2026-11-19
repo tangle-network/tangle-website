@@ -36,6 +36,39 @@ function highlightOutput(root: HTMLFieldSetElement) {
   }
 }
 
+const introductions: Record<string, { title: string; description: string; link: string; path: string }> = {
+  sandboxes: {
+    title: 'Give each agent its own machine.',
+    description: 'Run commands, edit files and inspect the changes alongside each step your agent took.',
+    link: 'Sandbox SDK reference', path: 'sandbox/sdk-typescript',
+  },
+  router: {
+    title: 'Choose a model for your request.',
+    description: 'See which models are serving, then send a chat request through Tangle Router.',
+    link: 'Router quickstart', path: 'gateway/getting-started',
+  },
+  evals: {
+    title: 'Compare agents on the same task.',
+    description: 'Score answers against a fixed set of cases to see whether a new model or prompt improves them.',
+    link: 'Evaluation guide', path: 'sandbox/evaluation',
+  },
+  products: {
+    title: 'Put an agent inside your app.',
+    description: 'Connect an email assistant or give each customer a conversation that keeps its history.',
+    link: 'Agent app examples', path: 'sandbox/examples/products',
+  },
+  fleets: {
+    title: 'Run agents in parallel on one budget.',
+    description: 'Split a test suite across agents, or give each agent a different package to review.',
+    link: 'Fleet guide', path: 'sandbox/agents-fleet',
+  },
+  runtime: {
+    title: 'Run the same agent on another cloud.',
+    description: 'Keep your agent profile and switch the provider that runs it on Tangle, E2B or Daytona.',
+    link: 'Provider guide', path: 'sandbox/other-providers',
+  },
+};
+
 function Picker({ label, value, options, choose }: {
   label: string; value: string; options: { id: string; label: string; group?: string }[]; choose: (value: string) => void;
 }) {
@@ -66,6 +99,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
   const [interaction, setInteraction] = useState(0);
   const [topic, file] = selection.split('/');
   const subject = subjects.find(item => item.id === topic) ?? subjects[0];
+  const intro = introductions[subject.id];
   const idea = subject.ideas.find(item => item.id === file) ?? subject.ideas[0];
   const initialFile = subject.ideas.find(item => `${subject.id}/${item.id}` === initial);
   const ordered = initialFile ? [initialFile, ...subject.ideas.filter(item => item !== initialFile)] : subject.ideas;
@@ -120,6 +154,13 @@ export default function CompanyExamples({ subjects, initial }: Props) {
     choose(initial.startsWith(id + '/') ? initial : `${id}/${next.ideas[0].id}`);
   }
   return <fieldset ref={editor} className="company-examples" aria-label="Code examples" aria-busy={!ready} disabled={!ready}>
+    <header className="quickstart-heading">
+      <h2 id="quickstart-title">{intro.title}</h2>
+      <div>
+        <p>{intro.description}</p>
+        <a className="quickstart-link" href={`https://docs.tangle.tools/${intro.path}`}>{intro.link} <span aria-hidden="true">↗</span></a>
+      </div>
+    </header>
     <nav className="ce-topics" aria-label="Example topics">
       {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>

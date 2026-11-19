@@ -61,6 +61,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     await output.getByText(/client\.create/).first().waitFor();
     check(await main.getAttribute('data-state') === 'idle', 'Previewing the first recorded call does not start playback', item);
     const controls = page.locator('.company-examples');
+    const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
+    check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
     const group = controls.getByRole('navigation', { name: 'Example topics' });
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
     const transcript = () => output.textContent();
@@ -77,6 +79,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-main[data-state="running"]').waitFor();
       await page.goBack();
       await selectedFile('fix-a-test').waitFor();
+      check(await heading.innerText() === 'Give each agent its own machine.', 'Back restores the Sandbox heading', item);
       await page.goForward();
       await selectedFile('any-cloud').waitFor();
       await editor.locator('.qs-main[data-state="idle"]').waitFor();
@@ -93,6 +96,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await controls.getByRole('button', { name: /^Topic,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).tap();
       await selectedFile('any-cloud').waitFor();
+      check((await guide.getAttribute('href')).endsWith('/sandbox/other-providers') && /cloud/.test(await heading.innerText()), 'Touch topic selection updates the heading and guide', item);
       await editor.getByRole('button', { name: 'Pause the recorded run' }).tap();
       await controls.getByRole('button', { name: /^Example,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).tap();
@@ -172,8 +176,12 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     if (name === 'desktop') {
       const catalog = await (await fetch(base + '/examples.json')).json();
+      const topicGuides = new Map();
       for (const subject of catalog.subjects) {
         await group.getByRole('button', { name: subject.label, exact: true }).click();
+        const topicHeading = await heading.innerText(), topicGuide = await guide.getAttribute('href');
+        check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
+        topicGuides.set(topicHeading, topicGuide);
         const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
         for (const idea of subject.ideas) {
           await files.locator('[data-file="' + idea.id + '"]').click();
