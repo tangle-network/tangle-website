@@ -1,8 +1,22 @@
 import { ExampleEditor, type ExampleSubject } from '@tangle-network/ui/marketing';
-import { useEffect, useState } from 'react';
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tangle-network/ui/primitives';
+import { useEffect, useId, useState } from 'react';
 import './company-examples.css';
 
 interface Props { subjects: ExampleSubject[]; initial: string }
+
+function Picker({ label, value, options, choose }: {
+  label: string; value: string; options: { id: string; label: string }[]; choose: (value: string) => void;
+}) {
+  const id = useId();
+  return <div>
+    <label htmlFor={id}>{label}</label>
+    <Select value={value} onValueChange={choose}>
+      <SelectTrigger id={id} size="touch" aria-label={label}><SelectValue /></SelectTrigger>
+      <SelectContent>{options.map(item => <SelectItem value={item.id} key={item.id}>{item.label}</SelectItem>)}</SelectContent>
+    </Select>
+  </div>;
+}
 
 export default function CompanyExamples({ subjects, initial }: Props) {
   const [selection, setSelection] = useState(initial);
@@ -44,19 +58,16 @@ export default function CompanyExamples({ subjects, initial }: Props) {
   const filename = `${idea.id}.mts`;
   return <div className="company-examples">
     <nav className="ce-topics" aria-label="Example topics">
-      {subjects.map(item => <button type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</button>)}
+      {subjects.map(item => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === subject.id} onClick={() => chooseSubject(item.id)}>{item.label}</Button>)}
     </nav>
     <div className="ce-pickers">
-      <label>Topic<select value={subject.id} onChange={event => chooseSubject(event.target.value)}>
-        {subjects.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
-      </select></label>
-      <label>Example<select value={idea.id} onChange={event => choose(`${subject.id}/${event.target.value}`)}>
-        {ideas.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-      </select></label>
+      <Picker label="Topic" value={subject.id} options={subjects} choose={chooseSubject} />
+      <Picker label="Example" value={idea.id} options={ideas.map(item => ({ id: item.id, label: item.title }))}
+        choose={id => choose(`${subject.id}/${id}`)} />
     </div>
     <div className="ce-workbench">
       <nav className="ce-files" aria-label={`${subject.label} examples`}>
-        {files.map((item, index) => <button type="button" key={item.id} aria-pressed={item.id === idea.id}
+        {files.map((item, index) => <Button variant="ghost" size="sm" type="button" key={item.id} aria-pressed={item.id === idea.id}
           onKeyDown={event => {
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             event.preventDefault();
@@ -66,10 +77,10 @@ export default function CompanyExamples({ subjects, initial }: Props) {
           }}
           data-file={item.id} onClick={() => choose(`${subject.id}/${item.id}`)}>{item.title}
           {item.id === idea.id && <code aria-hidden="true">{filename}</code>}
-        </button>)}
-        {ideas.length > shortlist.length && <button className="ce-more" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+        </Button>)}
+        {ideas.length > shortlist.length && <Button className="ce-more" variant="ghost" size="sm" type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? 'Show fewer' : `Show ${ideas.length - shortlist.length} more`}
-        </button>}
+        </Button>}
       </nav>
       <ExampleEditor key={selection} subjects={[{ ...subject, ideas: [idea] }]} initial={selection} />
     </div>

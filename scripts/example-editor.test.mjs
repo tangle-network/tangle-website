@@ -84,8 +84,10 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await selectedFile('python-csv').waitFor();
       await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
     } else {
-      await controls.getByLabel('Topic', { exact: true }).selectOption('router');
-      await controls.getByLabel('Example', { exact: true }).selectOption('review-a-route');
+      await controls.getByRole('combobox', { name: 'Topic' }).click();
+      await page.getByRole('option', { name: 'Router', exact: true }).click();
+      await controls.getByRole('combobox', { name: 'Example' }).click();
+      await page.getByRole('option', { name: 'Review an API route', exact: true }).click();
       await selectedFile('review-a-route').waitFor();
     }
     await go(`${base}/?example=sandboxes/fix-a-test#quickstart-title`);
