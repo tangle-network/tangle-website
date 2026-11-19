@@ -41,8 +41,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['worker', 'Run a long job'],
   ]],
   ['router', 'Router', 'npm install --save-dev tsx', [
-    ['security-model', 'Use a security model'],
-    ['review-a-route', 'Review an API route'],
+    ['list-serving-models', 'List serving models'],
   ]],
   ['evals', 'Evals', `${SANDBOX} @tangle-network/agent-eval`, [
     ['score-a-trace', 'Score an answer'],

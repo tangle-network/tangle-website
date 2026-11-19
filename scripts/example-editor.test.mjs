@@ -84,8 +84,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await controls.getByRole('combobox', { name: 'Topic' }).click();
       await page.getByRole('option', { name: 'Router', exact: true }).click();
       await controls.getByRole('combobox', { name: 'Example' }).click();
-      await page.getByRole('option', { name: 'Review an API route', exact: true }).click();
-      await selectedFile('review-a-route').waitFor();
+      await page.getByRole('option', { name: 'List serving models', exact: true }).click();
+      await selectedFile('list-serving-models').waitFor();
     }
     // Hold the real island response so the early-click regression is reproducible on a fast connection too.
     let releaseIsland;
@@ -211,7 +211,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(!/llmCall|promptTokens|costUsd|durationMs/.test(await editor.locator('.qs-result').innerText()), 'Judgment must omit diagnostics', item);
       await load('fleets/cancel-on-cap'); await editor.locator('.qs-result').getByText('agent-1 · cancelled', { exact: true }).waitFor();
       await page.screenshot({ path: `${out}/${name}-fleet.png` });
-      await page.goto(`${base}/?example=router/review-a-route#quickstart-title`); await selectedFile('review-a-route').waitFor();
+      await page.goto(`${base}/?example=router/list-serving-models#quickstart-title`); await selectedFile('list-serving-models').waitFor();
       check(await editor.locator('.qs-run').count() === 0 && await editor.locator('.qs-result, .qs-feed').count() === 0, 'Unrecorded source must not fabricate output or execution', item);
     }
     const optionalTelemetry = error => {
