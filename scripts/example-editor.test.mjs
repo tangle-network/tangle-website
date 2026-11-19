@@ -51,7 +51,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
   // A click near the top of the editor can bring the live demo on screen just before the check navigates. WebKit reports
   // the demo's status fetch that the navigation cancels as a page error, so let the demo show its answer first.
-  const go = async url => { await page.locator('.mk-live-slot').scrollIntoViewIfNeeded(); await page.locator('.mk-live-slot a.live-demo-btn').waitFor(); await page.goto(url); };
+  const go = async url => { await page.locator('#live-demo').scrollIntoViewIfNeeded(); await page.locator('#live-demo a.live-demo-btn').waitFor(); await page.goto(url); };
   try {
     await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
     const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-result');
@@ -66,8 +66,14 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     if (width <= 680) check(item.initial.codeSize === '12px', 'Phone code size', item);
     // Finished output is the default; replay is an explicit reader action.
     await editor.locator('.qs-main[data-state="ended"]').waitFor();
-    check(await editor.getByRole('tab').count() === 6, 'Six featured runs remain available', item);
-    await editor.getByRole('button', { name: 'All examples', exact: false }).click();
+    const nav = editor.getByRole('navigation', { name: 'Examples' });
+    check(await nav.isVisible(), 'Examples are available beside the initial file', item);
+    if (width <= 680) {
+      const router = await nav.getByRole('button', { name: 'Router', exact: true }).boundingBox();
+      check(router && router.x + router.width <= width, 'The next product is visible on a phone before scrolling the subjects', item);
+    }
+    const planes = await editor.evaluate(root => ['.qs-nav', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
+    check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
     if (name === 'desktop') {
       await editor.getByRole('button', { name: 'Any cloud', exact: true }).click();
       await editor.locator('.qs-file').filter({ hasText: 'runtime/any-cloud.mts' }).waitFor();
@@ -103,7 +109,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(downloaded === patch, 'Full exact three-file patch preserved', item);
     item.patchSha256 = createHash('sha256').update(downloaded).digest('hex');
     check((await output.locator('.qs-files > div').count()) === 3, 'The result shows every changed file', item);
-    if (engine === chromium && width > 680) {
+    if (engine === chromium) {
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copy file', exact: true }).click();
       await editor.locator('.qs-actions').getByRole('button', { name: 'Copied', exact: true }).waitFor();
       check(await page.evaluate(() => navigator.clipboard.readText()) === source, 'Copy must preserve full runnable source', item);
