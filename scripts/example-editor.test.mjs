@@ -78,6 +78,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const chooseExample = async title => {
       await picker.click();
       await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
+      await menu.waitFor({ state: 'hidden' });
     };
     const lastStepGap = await output.evaluate(pane => {
       const last = [...pane.querySelectorAll('[data-timeline-step]')].at(-1);
@@ -217,6 +218,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         const titles = await menu.getByRole('menuitemradio').allTextContents();
         check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
         await page.keyboard.press('Escape');
+        await menu.waitFor({ state: 'hidden' });
         for (const idea of subject.ideas) {
           await chooseExample(idea.title);
           await selectedFile(idea.id).waitFor();
