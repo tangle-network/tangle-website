@@ -71,13 +71,21 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['cancel-on-cap', 'Stop a fleet at a cap'],
   ]],
   ['runtime', 'Providers', `${SANDBOX} @tangle-network/agent-runtime @tangle-network/agent-provider-tangle`, [
-    ['any-cloud', 'Tangle'],
-    ['any-cloud-e2b', 'E2B', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
-    ['any-cloud-daytona', 'Daytona', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],
-    ['any-cloud-computesdk', 'ComputeSDK', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b'],
+    ['any-cloud', 'Read a repository'],
+    ['any-cloud-e2b', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
+    ['any-cloud-daytona', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],
+    ['any-cloud-computesdk', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b'],
     ['time-a-cold-start', 'Time a cold start'],
   ]],
 ];
+const tangle = { name: 'Tangle', logo: '/brand/tangle-icon-filled.svg' };
+const providers: Record<string, NonNullable<ExampleIdea['provider']>> = {
+  'any-cloud': tangle,
+  'time-a-cold-start': tangle,
+  'any-cloud-e2b': { name: 'E2B', logo: '/images/providers/e2b.png' },
+  'any-cloud-daytona': { name: 'Daytona', logo: '/images/providers/daytona.png' },
+  'any-cloud-computesdk': { name: 'ComputeSDK', logo: '/images/providers/computesdk.png' },
+};
 export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas]) => ({
   id, label, install,
   ideas: ideas.map(([file, title, install]) => {
@@ -89,7 +97,7 @@ export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas])
     if (!code) throw new Error(`src/examples/${id}/${file}.mts is missing`);
     const key = `${id}/${file}`;
     const run = recorded(`./runs/${id}/${file}.json`, code);
-    return { id: file, title, code, install, view: views[key],
+    return { id: file, title, code, install, view: views[key], provider: id === 'runtime' ? providers[file] : undefined,
       ...(key === 'sandboxes/python-csv' ? { output: { call: 'box.runCode' as const, title: 'Customer totals', columns: ['Customer', 'Total'] } } : {}),
       ...(key === 'sandboxes/run-code' ? { output: { call: 'box.exec' as const, title: 'Standard output' } } : {}),
       ...(key === 'sandboxes/browser-task' ? { timelineNoteAt: run?.events?.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('system Chromium available'))?.atMs } : {}),
