@@ -7,9 +7,10 @@ import { compute } from "computesdk";
 compute.setConfig({ provider: e2b({ apiKey: process.env.E2B_API_KEY }) });
 const provider = createComputeSdkProvider({ compute, router: { key: process.env.TANGLE_API_KEY! } });
 
-// The same profile as on Tangle: "claude-code", "codex", "opencode" or "pi".
+const model = process.env.TANGLE_MODEL;
+if (!model) throw new Error("Set TANGLE_MODEL to the Router model to run.");
 const client = providerAsSandboxClient(provider, {
-  defaults: { profile: { name: "repo-reader", harness: "claude-code" } },
+  defaults: { profile: { name: "repo-reader", harness: "claude-code", model: { default: model } } },
 });
 
 const box = await client.create({
