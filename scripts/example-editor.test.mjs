@@ -71,7 +71,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
     check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
     const group = controls.getByRole('navigation', { name: 'Example topics' });
-    const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
+    const selectedFile = (id, filename = `${id}.mts`) => editor.getByRole('region', { name: `${filename} source`, exact: true });
     const transcript = () => output.textContent();
     const picker = controls.getByRole('button', { name: /^Example,/ });
     const menu = page.getByRole('menu', { name: /^Example,/ });
@@ -221,7 +221,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         await menu.waitFor({ state: 'hidden' });
         for (const idea of subject.ideas) {
           await chooseExample(idea.title);
-          await selectedFile(idea.id).waitFor();
+          await selectedFile(idea.id, idea.filename).waitFor();
           const key = subject.id + '/' + idea.id;
           check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);
           if (!idea.run) {
