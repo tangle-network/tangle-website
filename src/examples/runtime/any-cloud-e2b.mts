@@ -4,9 +4,10 @@ import { providerAsSandboxClient } from "@tangle-network/agent-runtime/kernel";
 // E2B hosts the sandbox; the model still goes through the Tangle Router on your key.
 const provider = createE2BProvider({ router: { key: process.env.TANGLE_API_KEY! } });
 
-// The same profile as on Tangle: "claude-code", "codex", "opencode" or "pi".
+const model = process.env.TANGLE_MODEL;
+if (!model) throw new Error("Set TANGLE_MODEL to the Router model to run.");
 const client = providerAsSandboxClient(provider, {
-  defaults: { profile: { name: "repo-reader", harness: "claude-code" } },
+  defaults: { profile: { name: "repo-reader", harness: "claude-code", model: { default: model } } },
 });
 
 const box = await client.create({

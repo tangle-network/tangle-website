@@ -33,7 +33,8 @@ const NO_RUN: Record<string, string> = {
   "router/security-model": "requires a customer-selected, key-restricted model; no live run recorded",
   "router/review-a-route": "requires a customer-selected Router model; no live run recorded",
   "runtime/any-cloud-e2b": "no credential in vault",
-  "runtime/any-cloud-daytona": "no credential in vault",
+  "runtime/any-cloud-daytona": "the Daytona recording needs a prepared CLI Bridge snapshot and a permitted Router model",
+  "runtime/any-cloud-boat": "the Boat recording needs a Boat account and a permitted Router model",
   "runtime/any-cloud-computesdk": "no credential in vault",
 };
 // A call that threw, or returned the SDK's { success: false } turn or a { status: "failed" } run, failed the run even when the process exited 0.
