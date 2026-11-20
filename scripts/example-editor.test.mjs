@@ -11,22 +11,28 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const out = process.env.EDITOR_EVIDENCE_DIR ?? await fs.mkdtemp(join(tmpdir(), 'tangle-editor-'));
 const base = new URL(process.argv[2] ?? 'http://127.0.0.1:4321').origin;
 await fs.mkdir(out, { recursive: true });
-let ready = false;
-for (let attempt = 0; attempt < 100; attempt++) {
-  try { ready = (await fetch(`${base}/version.json`)).ok; } catch {}
-  if (ready) break;
-  await wait(100);
+const home = `${base}/#quickstart-title`;
+const directExample = `${base}/?example=sandboxes/fix-a-test#quickstart-title`;
+const expectedRevision = process.env.TANGLE_BUILD_REVISION;
+// Pages can switch version.json before the unmodified public document URLs reach the new release.
+async function waitForDocument(url) {
+  let observed = 'unavailable';
+  const deadline = Date.now() + (expectedRevision ? 150_000 : 10_000);
+  do {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const html = await response.text();
+      observed = response.ok ? html.match(/<html\b[^>]*\bdata-build-revision="([^"]+)"/)?.[1] ?? 'unversioned' : `HTTP ${response.status}`;
+      if (response.ok && (!expectedRevision || observed === expectedRevision)) return;
+    } catch (error) { observed = String(error); }
+    await wait(expectedRevision ? 5000 : 100);
+  } while (Date.now() < deadline);
+  throw new Error(`Expected ${expectedRevision ?? 'a ready document'} at ${url}, received ${observed}`);
 }
-assert.ok(ready, `Preview unavailable at ${base}`);
-if (process.env.TANGLE_BUILD_REVISION) {
-  // Cloudflare serves the previous deploy for up to a minute after the upload returns.
-  let version;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    version = await (await fetch(`${base}/version.json?revision=${process.env.TANGLE_BUILD_REVISION}&attempt=${attempt}`)).json();
-    if (version.revision === process.env.TANGLE_BUILD_REVISION) break;
-    await wait(5000);
-  }
-  assert.equal(version.revision, process.env.TANGLE_BUILD_REVISION);
+await Promise.all([home, directExample].map(waitForDocument));
+async function visit(page, url) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  if (expectedRevision) assert.equal(await page.locator('html').getAttribute('data-build-revision'), expectedRevision, url);
 }
 const read = async key => JSON.parse(await fs.readFile(`${ROOT}src/data/runs/${key}.json`, 'utf8'));
 const source = await fs.readFile(join(ROOT, 'src/examples/sandboxes/fix-a-test.mts'), 'utf8');
@@ -45,27 +51,51 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
   page.on('pageerror', error => { errors.push(String(error)); item.errorDetails.push({ message: String(error), stack: error.stack, at: Date.now() }); });
   page.on('requestfailed', request => requestFailures.push({ url: request.url(), method: request.method(), type: request.resourceType(), error: request.failure()?.errorText, at: Date.now() }));
   try {
-    await page.goto(`${base}/#quickstart-title`, { waitUntil: 'domcontentloaded' });
+    await visit(page, home);
     const editor = page.locator('#quickstart .qs-editor'), main = editor.locator('.qs-main'), output = editor.locator('.qs-feed');
     // Keep the replay visible after a click retries with scrollIntoView and smooth page scrolling.
     const settle = () => editor.evaluate(root => root.scrollIntoView({ block: 'center', behavior: 'instant' }));
     await editor.waitFor();
     await editor.scrollIntoViewIfNeeded();
     await page.waitForFunction(() => !document.querySelector('.qs-editor')?.closest('astro-island')?.hasAttribute('ssr'));
-    check(await editor.locator('select,[role=combobox]').count() === 0, 'No dropdowns in editor', item);
+    check(await editor.getByRole('button', { name: /^Example,/ }).count() === 1, 'One example picker in the shared workbench', item);
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
     if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
-    await editor.locator('.qs-main[data-state="idle"]').waitFor();
+    await settle();
+    await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(await editor.locator('[role=slider],input[type=range],.qs-progress').count() === 0, 'The editor has no seek control', item);
     await output.getByText(/client\.create/).first().waitFor();
-    check(await main.getAttribute('data-state') === 'idle', 'Previewing the first recorded call does not start playback', item);
+    await editor.getByRole('button', { name: 'Pause the recorded run' }).click();
     const controls = page.locator('.company-examples');
+    const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
+    check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
     const group = controls.getByRole('navigation', { name: 'Example topics' });
     const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
     const transcript = () => output.textContent();
-    const planes = await controls.evaluate(root => ['.ce-files', '.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
-    check(new Set(planes).size === 3 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'File list, source and output have different opaque surfaces', item);
+    const picker = controls.getByRole('button', { name: /^Example,/ });
+    const menu = page.getByRole('menu', { name: /^Example,/ });
+    const chooseExample = async title => {
+      await picker.click();
+      await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
+      await menu.waitFor({ state: 'hidden' });
+    };
+    const lastStepGap = await output.evaluate(pane => {
+      const last = [...pane.querySelectorAll('[data-timeline-step]')].at(-1);
+      return last ? pane.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom : Infinity;
+    });
+    check(lastStepGap >= 0 && lastStepGap < 24, 'The first activity sits at the bottom of the stream', item);
+    await picker.evaluate(button => button.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    const pagePosition = () => page.evaluate(() => [Math.round(scrollY), document.documentElement.scrollHeight]);
+    const beforeMenu = await pagePosition();
+    if (width <= 680) await picker.tap();
+    else await picker.click();
+    await menu.waitFor();
+    check((await pagePosition()).every((value, index) => Math.abs(value - beforeMenu[index]) <= 1), 'Opening the picker preserves the document position and height', item);
+    await page.keyboard.press('Escape');
+    await menu.waitFor({ state: 'hidden' });
+    const planes = await controls.evaluate(root => ['.qs-source', '.qs-machine'].map(selector => getComputedStyle(root.querySelector(selector)).backgroundColor));
+    check(new Set(planes).size === 2 && planes.every(color => color !== 'rgba(0, 0, 0, 0)'), 'Source and output have distinct surfaces', item);
     check(await editor.locator('.qs-actions .qs-run-id, .qs-actions .qs-stamp, .qs-actions .qs-clock').evaluateAll(nodes => nodes.every(node => !node.getClientRects().length)), 'Run metadata does not create a toolbar', item);
     if (name === 'desktop') {
       const sourceEdge = (await editor.locator('.qs-source').boundingBox());
@@ -77,22 +107,29 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await editor.locator('.qs-main[data-state="running"]').waitFor();
       await page.goBack();
       await selectedFile('fix-a-test').waitFor();
+      check(await heading.innerText() === 'Give each agent its own machine.', 'Back restores the Sandbox heading', item);
       await page.goForward();
       await selectedFile('any-cloud').waitFor();
-      await editor.locator('.qs-main[data-state="idle"]').waitFor();
-      await controls.locator('.ce-files [data-file=any-cloud]').press('Enter');
+      await settle();
+      await editor.locator('.qs-main[data-state="running"]').waitFor();
+      await picker.press('Enter');
+      await menu.getByRole('menuitemradio', { name: 'Tangle', exact: true }).press('Enter');
       await editor.locator('.qs-main[data-state="running"]').waitFor();
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
-      const files = controls.getByRole('navigation', { name: 'Sandboxes examples' });
-      check(await files.locator('code, time').count() === 0 && !/\.mts|\b\d+:\d{2}\b/.test(await files.innerText()), 'File choices contain only task names', item);
-      check(await files.locator('[data-file]').count() === 13 && await files.getByRole('button', { name: /^Show (?:\d+ )?more$/i }).count() === 0, 'All Sandbox examples are visible in the task groups', item);
-      await files.getByRole('button', { name: 'Run a command', exact: true }).press('ArrowDown');
+      await picker.click();
+      const options = menu.getByRole('menuitemradio');
+      check(await options.count() === 13, 'All Sandbox examples are available from one picker', item);
+      await menu.getByRole('menuitemradio', { name: 'Run a command', exact: true }).focus();
+      await page.keyboard.press('ArrowDown');
+      await page.waitForFunction(() => document.activeElement?.textContent === 'Crunch a CSV in Python');
+      await page.keyboard.press('Enter');
       await selectedFile('python-csv').waitFor();
-      await files.getByRole('button', { name: 'Fix a failing test', exact: true }).click();
+      await chooseExample('Fix a failing test');
     } else {
       await controls.getByRole('button', { name: /^Topic,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Providers', exact: true }).tap();
       await selectedFile('any-cloud').waitFor();
+      check((await guide.getAttribute('href')).endsWith('/sandbox/other-providers') && /cloud/.test(await heading.innerText()), 'Touch topic selection updates the heading and guide', item);
       await editor.getByRole('button', { name: 'Pause the recorded run' }).tap();
       await controls.getByRole('button', { name: /^Example,/ }).tap();
       await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).tap();
@@ -104,23 +141,22 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       const held = new Promise(resolve => { releaseIsland = resolve; });
       await page.route('**/CompanyExamples.*.js', async route => { await held; await route.continue(); }, { times: 1 });
     }
-    await page.goto(`${base}/?example=sandboxes/fix-a-test#quickstart-title`, { waitUntil: 'domcontentloaded' });
-    if (releaseIsland) {
-      try {
+    try {
+      await visit(page, directExample);
+      if (releaseIsland) {
         check(await editor.locator('.qs-source pre').isVisible(), 'Source remains readable before the island loads', item);
         check(await editor.getByRole('button', { name: 'Play the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
-      } finally { releaseIsland(); }
-    }
-    await editor.scrollIntoViewIfNeeded();
-    const play = editor.getByRole('button', { name: 'Play the recorded run', exact: true });
-    await play.scrollIntoViewIfNeeded();
-    check(await main.getAttribute('data-state') === 'idle', 'Direct links arrive at rest', item);
-    await play.click();
+      }
+    } finally { releaseIsland?.(); }
+    await settle();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).click();
     const paused = await transcript();
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await page.waitForTimeout(250);
+    await settle();
     await page.waitForTimeout(600);
-    check(await transcript() === paused && await main.getAttribute('data-state') === 'paused', 'Pause must stop the clock', item);
+    check(await transcript() === paused && await main.getAttribute('data-state') === 'paused', 'A manual pause survives leaving and returning to the workbench', item);
     await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
     await editor.getByRole('button', { name: 'Resume the recorded run', exact: true }).press('Space');
@@ -172,11 +208,19 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     check(await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).count() === 0, 'Reduced motion must finish without autoplay', item);
     if (name === 'desktop') {
       const catalog = await (await fetch(base + '/examples.json')).json();
+      const topicGuides = new Map();
       for (const subject of catalog.subjects) {
         await group.getByRole('button', { name: subject.label, exact: true }).click();
-        const files = controls.getByRole('navigation', { name: subject.label + ' examples' });
+        const topicHeading = await heading.innerText(), topicGuide = await guide.getAttribute('href');
+        check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
+        topicGuides.set(topicHeading, topicGuide);
+        await picker.click();
+        const titles = await menu.getByRole('menuitemradio').allTextContents();
+        check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
+        await page.keyboard.press('Escape');
+        await menu.waitFor({ state: 'hidden' });
         for (const idea of subject.ideas) {
-          await files.locator('[data-file="' + idea.id + '"]').click();
+          await chooseExample(idea.title);
           await selectedFile(idea.id).waitFor();
           const key = subject.id + '/' + idea.id;
           check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);

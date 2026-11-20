@@ -1,8 +1,9 @@
 ---
+import '@fontsource-variable/source-serif-4/wght.css';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import SandboxQuickstart from '../components/SandboxQuickstart.astro';
 import { loadCatalog } from '../data/harness-catalog.mjs';
-import { PLANS, planPrice } from '../data/plans.mjs';
+import { PLANS, formatUsdCents, planPrice } from '../data/plans.mjs';
 
 const canonicalUrl = 'https://tangle.tools/';
 const organizationJsonLd = {
@@ -49,14 +50,9 @@ const organizationJsonLd = {
 const pricing = await fetch('https://sandbox.tangle.tools/v1/pricing/sandboxes');
 if (!pricing.ok) throw new Error(`Sandbox pricing returned ${pricing.status}`);
 const rate = (await pricing.json()).pools.general;
-const perHour = (n: number) => `$${n.toFixed(n < 0.01 ? 4 : 3)}`;
-// What one key meters into one balance, drawn by the pricing figure.
-const bills = [
-  { id: 'compute', name: 'Sandboxes', unit: `from ${perHour(rate.minChargeHourUsd)} an hour`, y: 45 },
-  { id: 'inference', name: 'Inference', unit: 'model tokens, at the listed price', y: 115 },
-  { id: 'observability', name: 'Observability', unit: 'traces and evals', y: 185 },
-];
-
+const hourlyPrice = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 4,
+}).format(rate.minChargeHourUsd);
 type Agent = { id: string; name: string; logo?: string | null; launchHref?: string | null };
 const { catalog } = await loadCatalog();
 const agents: Agent[] = catalog.harnesses;
@@ -73,28 +69,46 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
   <script type="application/ld+json" set:html={JSON.stringify(organizationJsonLd)} />
 
 
-  <!-- ===== HERO (dark): a field of sandboxes; each light is one agent's own machine ===== -->
   <section class="hero" aria-labelledby="hero-title" data-cta-placement="hero">
-    <div class="hero-art" aria-hidden="true">
-      <canvas id="hero-field" data-logos={launchable.map((agent) => agent.logo).filter(Boolean).join(' ')}></canvas>
-    </div>
-
+    <picture class="hero-art">
+      <source media="(max-width: 700px)" srcset="/images/company-switchyard-mobile.webp" width="760" height="597" />
+      <img src="/images/company-switchyard.webp" width="1654" height="923" alt="" fetchpriority="high" />
+    </picture>
     <div class="shell">
       <div class="hero-copy">
-        <h1 id="hero-title">
-          Run your coding agent.
-          <span class="grad-text">Across clouds.</span>
-        </h1>
-        <p>Tangle gives your agents isolated machines, routes their model calls and records each run.</p>
-        <a class="hero-action" href="#quickstart">See a working example <span aria-hidden="true">↓</span></a>
+        <h1 id="hero-title">Run your coding agent across clouds.</h1>
+        <p>Run code in Sandbox, call models through Router, and see what your agent changed.</p>
+        <a class="hero-action" href="#quickstart">Explore the examples <span aria-hidden="true">↓</span></a>
       </div>
     </div>
   </section>
 
   <SandboxQuickstart />
 
-  <!-- ========= HARNESSES (dark): each one starts in its own sandbox ========= -->
-  <section class="rail" aria-labelledby="rail-title">
+  <section class="routing" aria-labelledby="routing-title">
+    <div class="shell routing-spread">
+      <img src="/images/router-workshop.webp" alt="" width="1080" height="720" loading="lazy" decoding="async" />
+      <div class="routing-copy">
+        <h2 id="routing-title">Keep your agent working through a model outage.</h2>
+        <p>List your preferred models in order. If the first is unavailable, Tangle Router calls the next. Its routing trace records every model and provider it tried.</p>
+        <a class="hero-action" href="https://docs.tangle.tools/gateway/fallbacks">Configure model fallbacks <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="run-story" data-theme="website" aria-labelledby="run-story-title">
+    <div class="shell routing-spread">
+      <div class="routing-copy">
+        <h2 id="run-story-title">Benchmark coding agents on your own repo.</h2>
+        <p>Give Claude Code and Codex the same bug report, the same model and separate copies of your repo. Run your tests on each fix before you choose which agent gets the next job.</p>
+        <a class="hero-action" href="/?example=evals%2Fcompare-harnesses#quickstart">Open the recorded comparison <span aria-hidden="true">↑</span></a>
+      </div>
+      <img src="/images/compare-agent-runs.webp" alt="" width="1020" height="680" loading="lazy" decoding="async" />
+    </div>
+  </section>
+
+  <!-- Each agent in the catalog links to its own supported setup. -->
+  <section class="rail" data-theme="website" aria-labelledby="rail-title">
     <div class="shell">
       <h2 id="rail-title">Choose your coding agent.</h2>
       <div class="rail-grid" aria-label="Launch from the dashboard">
@@ -110,7 +124,7 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
         <ul>
           {cliAgents.map((agent) => (
             <li data-harness={agent.id}>
-              {agent.logo && <img src={agent.logo} alt="" width="24" height="24" loading="lazy" />}
+              {agent.logo && <img class="rail-logo" src={agent.logo} alt="" width="24" height="24" loading="lazy" />}
               {agent.name}
             </li>
           ))}
@@ -125,43 +139,22 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
     <div class="shell">
       <div class="pricing-top">
         <div class="pricing-head">
-          <h2 id="pricing-title">One key. <span class="grad-text">One bill.</span></h2>
-          <p>Compute, inference and observability, on one balance.</p>
+          <h2 id="pricing-title">One key. One bill.</h2>
+          <p>Your sandbox time and model calls draw from the same balance.</p>
         </div>
-        <figure class="bill" aria-label="One API key meters compute, inference and observability into one balance">
-          <svg class="bill-svg" viewBox="0 0 560 230" role="img" aria-hidden="true">
-            <defs>
-              <linearGradient id="bill-grad" gradientUnits="userSpaceOnUse" x1="118" y1="0" x2="472" y2="0">
-                <stop offset="0%" style="stop-color: var(--accent-text)" />
-                <stop offset="100%" style="stop-color: var(--brand-glow)" />
-              </linearGradient>
-            </defs>
-            {bills.map((bill) => (
-              <g class="bill-flow" data-flow={bill.id}>
-                <path class="bill-path" d={`M 118 115 C 180 115, 180 ${bill.y}, 236 ${bill.y}`} />
-                <path class="bill-path" d={`M 400 ${bill.y} C 450 ${bill.y}, 450 115, 472 115`} />
-                <rect class="bill-node" x="236" y={bill.y - 19} width="164" height="38" rx="10" />
-                <text class="bill-label" font-size="15" x="318" y={bill.y + 5}>{bill.name}</text>
-                <text class="bill-unit" font-size="11" x="318" y={bill.y + 36}>{bill.unit}</text>
-              </g>
-            ))}
-            <g class="bill-key">
-              <rect x="14" y="96" width="104" height="38" rx="19" />
-              <text class="bill-label" font-size="15" x="66" y="120">sk-tan-…</text>
-            </g>
-            <g class="bill-balance">
-              <circle cx="508" cy="115" r="36" />
-              <text class="bill-label" font-size="22" x="508" y="122">$</text>
-            </g>
-          </svg>
-        </figure>
+        <dl class="usage-rates">
+          <div><dt>Sandbox compute</dt><dd><a href="https://sandbox.tangle.tools/pricing">From {hourlyPrice} per hour</a></dd></div>
+          <div><dt>Model calls</dt><dd><a href="https://router.tangle.tools/models">Rates by model</a></dd></div>
+        </dl>
       </div>
       <div class="plans" data-plans>
         {PLANS.map((plan) => (
-          <article class={`plan${plan.popular ? ' plan-popular' : ''}`} data-plan={plan.id}>
+          <article class="plan" data-plan={plan.id}>
             <h3>{plan.name}</h3>
-            <p class="plan-price"><span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}</p>
-            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `Your ${planPrice(plan)} comes back as credit each month` : 'No included credit'}</p>
+            <p class="plan-price">
+              <span class="plan-amount">{planPrice(plan)}</span>{plan.monthlyPriceCents > 0 && <span class="plan-per"> / month</span>}
+            </p>
+            <p class="plan-credit">{plan.creditsPerMonth > 0 ? `${formatUsdCents(plan.creditsPerMonth)} in monthly credit` : 'No included credit'}</p>
             <ul class="plan-features">
               {plan.features.map((feature) => <li>{feature}</li>)}
             </ul>
@@ -177,210 +170,11 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
 
 </BaseLayout>
 
-<script>
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  // Hero: a floor of sandboxes running to the horizon, one dot per machine.
-  // Agents claim machines one at a time; a fleet claims a block at once and
-  // releases it together, inside one outline. Near machines name the harness
-  // inside. Canvas 2D, batched by brightness, paused off screen and in hidden
-  // tabs; reduced motion draws one still frame.
-  const field = document.querySelector<HTMLCanvasElement>('#hero-field');
-  const ctx = field?.getContext('2d');
-  if (field && ctx) {
-    const css = getComputedStyle(field);
-    const token = (name: string) => css.getPropertyValue(name).trim();
-    const ink = [token('--text-primary'), token('--brand-cool'), token('--brand-glow')];
-    const edge = token('--brand-vibrant');
-    // The mark of the harness a near machine runs, standing on it.
-    const logos = (field.dataset.logos ?? '').split(' ').filter(Boolean).map((src) => Object.assign(new Image(), { decoding: 'async', src }));
-    const COLS = 120, ROWS = 64, GAP = 0.22, SPEED = 0.00022, LEVELS = 8; // SPEED: rows per ms
-    const born = new Float64Array(COLS * ROWS), dies = new Float64Array(COLS * ROWS);
-    const kind = new Uint8Array(COLS * ROWS), tag = new Uint8Array(COLS * ROWS);
-    const fleets: { col: number; row: number; w: number; d: number; born: number; dies: number }[] = [];
-    let seed = 20261030;
-    const random = () => { // mulberry32: a seeded, even spread, so every visit opens the same way
-      let t = (seed = (seed + 0x6d2b79f5) | 0);
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-    const motion = !reduced;
-    const view = { W: 0, H: 0, horizon: 0, focal: 1, height: 6, cx: 0, near: 1, narrow: false };
-    let clock = 0, depth = 0, far = ROWS - 1, nextOne = 0, nextFleet = 1800, camX = 0, aimX = 0, dpr = 1;
-
-    const slot = (row: number, col: number) => (row % ROWS) * COLS + col;
-    const zOf = (row: number) => row - depth + view.near - 1;
-    const sx = (x: number, z: number) => view.cx + (view.focal * (x - camX)) / z;
-    const sy = (z: number) => view.horizon + (view.focal * view.height) / z;
-    const colAt = (px: number, z: number) => Math.floor(((px - view.cx) * z) / view.focal + camX + COLS / 2);
-    const veil = (px: number) => (view.narrow ? 1 : Math.min(1, Math.max(0, (px - view.W * 0.4) / (view.W * 0.2))));
-    const fade = (z: number) => Math.max(0, 1 - (z - view.near) / ROWS) ** 1.6;
-    const light = (row: number, col: number, start: number, end: number, k: number) => {
-      if (col < 0 || col >= COLS) return;
-      const i = slot(row, col);
-      if (k === 1 && kind[i] === 2 && clock < dies[i]) return; // a fleet's machines stay its own
-      born[i] = start; dies[i] = end; kind[i] = k; tag[i] = (row * 5 + col * 3) % Math.max(1, logos.length);
-    };
-    // A fleet claims a block that touches no other fleet, lit outward from its middle.
-    const claimFleet = (lo: number, hi: number, w: number, d: number, life: number) => {
-      const { row, col } = spot(lo, hi, w, 0.52);
-      if (!fleets.every((f) => row > f.row + f.d || row + d < f.row || col > f.col + f.w || col + w < f.col)) return false;
-      for (let r = 0; r < d; r++) for (let c = 0; c < w; c++) light(row + r, col + c, clock + (Math.abs(c - w / 2) + r) * 80, clock + life, 2);
-      fleets.push({ col, row, w, d, born: clock, dies: clock + life });
-      return true;
-    };
-    const glow = (start: number, end: number, rise: number) => {
-      const up = Math.min(1, Math.max(0, (clock - start) / rise));
-      const down = clock < end ? 1 : Math.max(0, 1 - (clock - end) / 1400);
-      return (1 - (1 - up) ** 3) * down;
-    };
-    // A random machine on screen and clear of the headline, `lo`..`hi` rows from the front.
-    const spot = (lo: number, hi: number, w = 1, edge = 0.46) => {
-      const row = Math.floor(depth) + lo + Math.floor(random() ** 0.7 * (hi - lo)); // most machines are far away
-      const z = zOf(row) + 0.5;
-      const left = Math.max(colAt(view.narrow ? 0 : view.W * edge, z), 0), right = Math.min(colAt(view.W, z) - w, COLS - w);
-      return { row, col: left + Math.floor(random() * Math.max(1, right - left)) };
-    };
-
-    const step = (dt: number) => {
-      clock += dt;
-      if (motion) depth += dt * SPEED;
-      const front = Math.floor(depth);
-      while (far < front + ROWS - 1) { far++; for (let c = 0; c < COLS; c++) kind[slot(far, c)] = 0; }
-      for (; clock >= nextOne; nextOne += 8 + random() * 14) {
-        const { row, col } = spot(1, ROWS - 2);
-        light(row, col, nextOne, nextOne + 2200 + random() * 5000, 1);
-      }
-      if (clock >= nextFleet) {
-        nextFleet += 1600 + random() * 1400;
-        claimFleet(2, 26, 3 + Math.floor(random() * 6), 2 + Math.floor(random() * 4), 3400 + random() * 2600);
-      }
-      for (let i = fleets.length - 1; i >= 0; i--) if (clock > fleets[i].dies + 1400 || fleets[i].row < front) fleets.splice(i, 1);
-      camX += (aimX - camX) * Math.min(1, dt / 500);
-    };
-
-    const quad = (path: Path2D, x0: number, x1: number, z0: number, z1: number) => {
-      path.moveTo(sx(x0, z0), sy(z0)); path.lineTo(sx(x1, z0), sy(z0));
-      path.lineTo(sx(x1, z1), sy(z1)); path.lineTo(sx(x0, z1), sy(z1)); path.closePath();
-    };
-    const draw = () => {
-      const { W, H } = view;
-      if (!W || !H) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-      // Light on the horizon: the field keeps going.
-      const dawn = ctx.createRadialGradient(view.cx, view.horizon, 0, view.cx, view.horizon, W * 0.55);
-      dawn.addColorStop(0, ink[1]); dawn.addColorStop(1, 'transparent');
-      ctx.globalAlpha = 0.12; ctx.fillStyle = dawn;
-      ctx.setTransform(dpr, 0, 0, dpr * 0.22, 0, view.horizon * dpr * 0.78);
-      ctx.fillRect(0, -H * 5, W, H * 10);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      // Batch every quad into one path per kind and brightness level.
-      const dots = Array.from({ length: LEVELS }, () => new Path2D());
-      const halo = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
-      const core = ink.map(() => Array.from({ length: LEVELS }, () => new Path2D()));
-      const marks: [number, number, number, number, number][] = []; // logo, x, y, machine size, alpha; nearest first
-      const front = Math.floor(depth);
-      for (let row = front; row < front + ROWS; row++) {
-        const z0 = zOf(row) + GAP, z1 = zOf(row) + 1 - GAP;
-        if (z1 < view.near * 0.8) continue;
-        const zm = (z0 + z1) / 2, ym = sy(zm), size = view.focal / zm, haze = fade(z0);
-        const first = Math.max(0, colAt(-size, zm)), last = Math.min(COLS - 1, colAt(W + size, zm));
-        for (let c = first; c <= last; c++) {
-          const x0 = c - COLS / 2 + GAP, x1 = c - COLS / 2 + 1 - GAP, xm = sx((x0 + x1) / 2, zm);
-          const i = slot(row, c), shade = haze * veil(xm);
-          if (shade < 0.02) continue;
-          const b = kind[i] ? glow(born[i], dies[i], 450) : 0;
-          if (kind[i] && b <= 0 && clock > dies[i]) kind[i] = 0;
-          if (b * shade < 0.04) {
-            const r = Math.max(0.6, size * 0.03);
-            dots[Math.min(LEVELS - 1, Math.floor(shade * LEVELS))].rect(xm - r, ym - r, r * 2, r * 2);
-            continue;
-          }
-          const level = Math.min(LEVELS - 1, Math.floor(b * shade * LEVELS));
-          if (size < 40) quad(halo[kind[i]][level], x0 - 0.3, x1 + 0.3, z0 - 0.3, z1 + 0.3);
-          quad(core[kind[i]][level], x0, x1, z0, z1);
-          if (kind[i] === 1 && size > 56 && b > 0.35 && ym < H - 8 && logos.length) marks.push([tag[i], xm, ym, size, b * shade]);
-        }
-      }
-      ctx.fillStyle = ink[0];
-      dots.forEach((path, level) => { ctx.globalAlpha = 0.05 + 0.25 * (level / LEVELS); ctx.fill(path); });
-      ctx.globalCompositeOperation = 'lighter';
-      for (const k of [1, 2]) {
-        ctx.fillStyle = ink[k];
-        halo[k].forEach((path, level) => { ctx.globalAlpha = 0.14 * (level + 1) / LEVELS; ctx.fill(path); });
-        core[k].forEach((path, level) => { ctx.globalAlpha = (k === 2 ? 1 : 0.6) * (level + 1) / LEVELS; ctx.fill(path); });
-      }
-      ctx.globalCompositeOperation = 'source-over';
-      for (const [t, x, y, size, a] of marks.slice(0, 6).reverse()) { // far marks first, so a near one sits in front
-        const img = logos[t];
-        if (!img.complete || !img.naturalWidth) continue;
-        const s = Math.min(96, Math.max(36, size * 0.52)), r = s * 0.22;
-        ctx.globalAlpha = Math.min(1, a * 1.2);
-        ctx.save(); ctx.beginPath(); ctx.roundRect(x - s / 2, y - s, s, s, r); ctx.clip();
-        ctx.drawImage(img, x - s / 2, y - s, s, s); ctx.restore();
-      }
-      // One outline per fleet: the machines it holds under one budget.
-      ctx.strokeStyle = edge; ctx.lineWidth = 1.5;
-      for (const fleet of fleets) {
-        const z0 = zOf(fleet.row) - 0.05, z1 = zOf(fleet.row + fleet.d) + 0.05;
-        if (z0 < view.near * 0.8) continue;
-        const x0 = fleet.col - COLS / 2 - 0.05, x1 = fleet.col + fleet.w - COLS / 2 + 0.05;
-        const outline = new Path2D();
-        quad(outline, x0, x1, z0, z1);
-        ctx.globalAlpha = glow(fleet.born, fleet.dies, 700) * fade(z0) * veil(sx((x0 + x1) / 2, z0)) * 0.9;
-        ctx.stroke(outline);
-      }
-      ctx.globalAlpha = 1;
-    };
-
-    const fit = () => {
-      dpr = Math.min(2, window.devicePixelRatio || 1);
-      const W = field.clientWidth, H = field.clientHeight, narrow = W < 860;
-      const horizon = H * (narrow ? 0.06 : 0.26), height = 6;
-      const focal = H * (narrow ? 1.1 : 0.9);
-      Object.assign(view, { W, H, narrow, horizon, height, focal, cx: W * (narrow ? 0.5 : 0.68), near: (focal * height) / (H - horizon) });
-      field.width = Math.round(W * dpr);
-      field.height = Math.round(H * dpr);
-      draw();
-    };
-
-    let running = false, visible = true, last = 0;
-    const frame = (time: number) => {
-      if (!running) return;
-      step(last ? Math.min(50, time - last) : 16);
-      last = time;
-      draw();
-      requestAnimationFrame(frame);
-    };
-    const play = () => {
-      if (running || !motion || !visible || document.hidden) return;
-      running = true; last = 0;
-      requestAnimationFrame(frame);
-    };
-    fit();
-    for (let t = 0; t < (motion ? 4000 : 6000); t += 20) step(20); // open on a field already at work
-    for (let tries = 0; tries < 8 && !claimFleet(4, 12, 8, 5, 6400); tries++); // then a fleet claims its block
-    if (!motion) for (let t = 0; t < 1200; t += 20) step(20);
-    draw();
-    new ResizeObserver(fit).observe(field);
-    new IntersectionObserver((entries) => {
-      visible = entries[0].isIntersecting;
-      if (visible) play(); else running = false;
-    }).observe(field);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) running = false; else play(); });
-    addEventListener('pointermove', (event) => { aimX = (event.clientX / innerWidth - 0.5) * 3; }, { passive: true });
-    play();
-    for (const img of logos) img.addEventListener('load', draw, { once: true }); // a still frame gains its marks as they arrive
-    field.classList.add('ready');
-  }
-
-</script>
 
 <style>
   /* ---------- shared ---------- */
-  .shell {
+  .shell, :global(#quickstart .quickstart-inner) {
     position: relative;
     z-index: 1;
     width: min(78rem, 90vw);
@@ -405,17 +199,6 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
   section h2 {
     font-size: clamp(2rem, 3vw, 2.9rem);
     line-height: 1.1;
-  }
-
-  .grad-text {
-    display: block;
-    background-image: linear-gradient(92deg, var(--brand-purple) 0%, var(--brand-cool) 40%, var(--btn-primary-bg) 75%, var(--brand-purple) 100%);
-    background-clip: text;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    color: var(--brand-glow); /* fallback */
-    /* background-clip: text paints only the line box; descenders need room. */
-    padding-bottom: 0.1em;
   }
 
   .btn {
@@ -447,122 +230,150 @@ const cliAgents = agents.filter((agent) => !agent.launchHref);
     color: var(--text-primary);
   }
 
-  /* ---------- hero (dark): the sandbox field ---------- */
   .hero {
     position: relative;
-    display: flex;
-    align-items: center;
-    min-height: clamp(36rem, 80svh, 54rem);
+    isolation: isolate;
     overflow: hidden;
+    display: grid;
+    align-items: center;
+    min-height: clamp(32rem, 43vw, 45rem);
     background: var(--depth-1);
   }
-
-  .hero-art {
+  .hero-art, .hero-art img {
     position: absolute;
     inset: 0;
-  }
-
-  #hero-field {
-    display: block;
     width: 100%;
     height: 100%;
-    opacity: 0;
-    transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1);
   }
-
-  #hero-field.ready { opacity: 1; }
-  .hero-art { mask-image: linear-gradient(to bottom, black 0%, black 66%, transparent 100%); }
-
-  .hero-copy {
-    position: relative;
-    z-index: 1;
-    max-width: 58rem;
-    padding: clamp(5rem, 8vw, 8rem) 0;
+  .hero-art img { object-fit: cover; object-position: center 49%; }
+  .hero-art::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--depth-1) 72%, transparent), transparent 58%);
   }
-
+  .hero-copy { max-width: min(37vw, 35rem); padding-block: 2rem clamp(5rem, 9vw, 9rem); }
   .hero-copy h1 {
+    font-family: 'Source Serif 4 Variable', Georgia, serif;
+    font-size: clamp(3.2rem, 5.1vw, 5rem);
+    font-weight: 500;
+    line-height: 1.02;
+    letter-spacing: -.052em;
     color: var(--text-primary);
-    font-size: clamp(var(--font-size-display), 6.1vw, 6.25rem);
-    line-height: 1;
-    letter-spacing: -0.036em;
   }
-
-  .hero-copy > p:first-of-type {
-    max-width: 34rem;
-    margin: 24px 0 0;
-    color: rgba(240, 240, 250, 0.88);
+  .hero-copy p {
+    max-width: 25rem;
+    margin: 1.4rem 0 0;
+    color: var(--text-primary);
     font-size: var(--font-size-xl);
-    line-height: 1.75rem;
+    line-height: 1.45;
     text-wrap: pretty;
   }
-
-  .hero-action { display: inline-flex; align-items: center; gap: .65em; margin-top: 1.5rem; color: var(--accent-text); font-weight: 600; text-underline-offset: .25em; }
-  .hero-action:hover { text-decoration: underline; }
-  .hero-action:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
-  /* ---------- harness rail (dark) ---------- */
-  .rail { padding: 8rem 0; background: linear-gradient(180deg, var(--depth-1) 0%, var(--md3-surface-container-low) 100%); border-top: 1px solid rgba(199, 201, 238, 0.08); }
+  .hero-action {
+    display: inline-flex;
+    align-items: center;
+    gap: .65em;
+    margin-top: 1.4rem;
+    color: var(--text-primary);
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: .4em;
+  }
+  .hero-action:focus-visible { outline: 2px solid currentColor; outline-offset: 5px; }
+  .routing { background: var(--depth-1); color: var(--text-primary); }
+  .routing-spread {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    align-items: center;
+    gap: clamp(2rem, 6vw, 6rem);
+    padding-block: clamp(2rem, 5vw, 5rem);
+  }
+  .routing-spread img {
+    display: block;
+    width: 100%;
+    height: auto;
+    mask-image: linear-gradient(to right, transparent, black 3%, black 96%, transparent), linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+    mask-composite: intersect;
+  }
+  .routing-copy { max-width: 30rem; }
+  .routing-copy h2 {
+    font-family: 'Source Serif 4 Variable', Georgia, serif;
+    font-weight: 500;
+    font-size: clamp(2.6rem, 4vw, 4.4rem);
+    line-height: 1.04;
+    letter-spacing: -.045em;
+  }
+  .routing-copy p { margin: 1.2rem 0 0; font-size: var(--font-size-lg); line-height: 1.55; text-wrap: pretty; }
+  /* The directory sits on paper alongside plans. */
+  .run-story { background: var(--longform-paper); color: var(--longform-ink); }
+  .run-story .routing-spread { grid-template-columns: 1fr 1.1fr; }
+  .run-story .routing-spread img { mask-image: none; }
+  .run-story .routing-copy { min-width: 0; }
+  @media (max-width: 700px) { .run-story .routing-spread { grid-template-columns: minmax(0, 1fr); } }
+  .rail { padding: clamp(3rem, 5vw, 5rem) 0; background: var(--longform-paper); }
   #rail-title { color: var(--text-primary); letter-spacing: -0.032em; }
   .rail-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.7rem; margin-top: 3.2rem; }
-  .rail-tile { display: grid; grid-template-columns: 40px 1fr; gap: 0.8rem; align-items: center; padding: 0.9rem 1rem; border: 1px solid rgba(199, 201, 238, 0.14); border-radius: 12px; background: var(--md3-surface-container-low); text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease; }
-  .rail-tile:hover, .rail-tile:focus-visible { border-color: rgba(129, 140, 248, 0.6); background: var(--md3-surface-container); }
+  .rail-tile { display: grid; grid-template-columns: 40px 1fr; gap: 0.8rem; align-items: center; padding: 0.9rem 1rem; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-card); text-decoration: none; transition: border-color 0.2s ease, background 0.2s ease; }
+  .rail-tile:hover, .rail-tile:focus-visible { border-color: var(--accent-text); background: var(--md3-surface-container-low); }
   .rail-tile:focus-visible { outline: 2px solid var(--brand-glow); outline-offset: 2px; }
-  .rail-logo { width: 40px; height: 40px; border-radius: 9px; object-fit: cover; box-shadow: inset 0 0 0 1px rgba(199, 201, 238, 0.14); }
+  .rail-logo { display: block; flex: none; border-radius: 20%; object-fit: contain; background: var(--longform-paper); }
   .rail-name { color: var(--text-primary); font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
   .rail-more { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-default); }
   .rail-more h3 { margin: 0 0 .8rem; color: var(--text-primary); font-size: 1rem; }
   .rail-more ul { display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; padding: 0; margin: 0 0 .9rem; list-style: none; }
   .rail-more li { display: flex; align-items: center; gap: .45rem; color: var(--text-primary); font-weight: 500; }
-  .rail-more img { width: 24px; height: 24px; padding: 2px; object-fit: contain; border-radius: 4px; background: var(--text-primary); }
   .rail-more a { margin: 0; font-size: .875rem; color: var(--text-secondary); }
   .rail-more a { text-decoration: underline; text-underline-offset: .2em; }
 
   /* ---------- one key, one bill (paper) ---------- */
-  .pricing { background: var(--bg-root); color: var(--text-primary); padding: 8rem 0 7.5rem; }
-  .pricing-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 3rem; align-items: center; }
-  .pricing-head h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.032em; color: var(--text-primary); font-size: clamp(2.3rem, 3.6vw, 3.5rem); line-height: 1.05; }
-  .pricing-head p { margin: 1.1rem 0 0; color: var(--text-secondary); font-size: clamp(1.15rem, 1.4vw, 1.35rem); line-height: 1.6; max-width: 32rem; }
-  .bill { margin: 0; }
-  .bill-svg { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); }
-  .bill-path { fill: none; stroke: url(#bill-grad); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 5 9; animation: billFlow 1.4s linear infinite; }
-  .bill-node, .bill-key rect, .bill-balance circle { fill: var(--bg-card); stroke: var(--md3-outline-variant); stroke-width: 1.5; transition: stroke 0.3s ease, fill 0.3s ease; }
-  .bill-label { fill: var(--text-primary); font-weight: 600; text-anchor: middle; }
-  .bill-unit { fill: var(--text-muted); text-anchor: middle; }
-  .bill-key rect { stroke: var(--accent-text); }
-  .bill-balance circle { stroke: var(--accent-text); stroke-width: 2; }
-  .bill-flow:hover .bill-path { stroke: var(--accent-text); stroke-width: 3; }
-  .bill-flow:hover .bill-node { fill: var(--accent-surface-strong); stroke: var(--accent-text); }
-  @keyframes billFlow { to { stroke-dashoffset: -28; } }
-  @media (prefers-reduced-motion: reduce) { .bill-path { animation: none; stroke-dasharray: none; } }
-  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 4rem; }
-  .plan { display: flex; flex-direction: column; padding: 1.5rem 1.5rem 1.6rem; border: 1px solid var(--md3-outline-variant); border-radius: 14px; background: var(--bg-card); }
-  .plan-popular { border-color: var(--accent-text); }
-  .plan h3 { margin: 0; font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; letter-spacing: -0.015em; color: var(--text-primary); }
-  .plan-price { margin: 0.9rem 0 0; color: var(--text-primary); }
-  .plan-amount { font-family: var(--font-display); font-size: clamp(2.2rem, 3vw, 2.8rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
-  .plan-per { color: var(--text-muted); font-size: 0.95rem; }
-  .plan-credit { margin: 0.5rem 0 0; color: var(--accent-text); font-size: 0.95rem; font-weight: 600; }
-  .plan-features { margin: 1.2rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; color: var(--text-secondary); font-size: 0.98rem; line-height: 1.5; }
-  .plan-features li { padding-left: 1.1rem; position: relative; }
-  .plan-features li::before { content: ''; position: absolute; left: 0; top: 0.6em; width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--accent-text); }
-  .pricing-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 1.3rem; margin-top: 2rem; }
-  .pricing .btn-ghost { background: var(--bg-card); border-color: var(--md3-outline-variant); color: var(--text-primary); }
+  .pricing { color: var(--longform-ink); background: var(--longform-paper); }
+  .pricing > .shell { border-top: 1px solid var(--longform-rule); padding-block: clamp(3rem, 6vw, 6rem) 2.5rem; }
+  .pricing-top { display: grid; grid-template-columns: 1.15fr 1fr; gap: clamp(2rem, 7vw, 8rem); align-items: center; }
+  .pricing-head h2, .plan-amount { font-family: 'Source Serif 4 Variable', Georgia, serif; font-weight: 500; letter-spacing: -.045em; }
+  .pricing-head h2 { font-size: clamp(2.75rem, 5vw, 5rem); line-height: 1.05; }
+  .pricing-head p { max-width: 27rem; margin: 1rem 0 0; color: var(--longform-ink-muted); font-size: var(--font-size-lg); line-height: 1.5; }
+  .usage-rates { margin: 0; }
+  .usage-rates div { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding-block: .95rem; border-bottom: 1px solid var(--longform-rule); }
+  .usage-rates dt { font-weight: 600; }
+  .usage-rates dd { margin: 0; text-align: right; }
+  .usage-rates a, .pricing .btn-ghost { color: var(--longform-ink); text-decoration: underline; text-underline-offset: .22em; }
+  .pricing a:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 4px; }
+  .plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-block: clamp(2.4rem, 4.5vw, 4.5rem) 2rem; border-block: 1px solid var(--longform-rule); }
+  .plan { margin-block: 1.75rem; padding-inline: clamp(1.1rem, 3vw, 3rem); }
+  .plan:first-child { padding-inline-start: 0; }
+  .plan:last-child { padding-inline-end: 0; }
+  .plan + .plan { border-inline-start: 1px solid var(--longform-rule); }
+  .plan h3 { font-size: var(--font-size-lg); font-weight: 600; }
+  .plan-price { margin: .7rem 0 0; }
+  .plan-amount { font-size: clamp(2.5rem, 3.5vw, 3.5rem); line-height: 1; }
+  .plan-per, .plan-features { color: var(--longform-ink-muted); }
+  .plan-credit { margin: .4rem 0 0; }
+  .plan-features { list-style: none; padding: 0; margin: 1.1rem 0 0; line-height: 1.45; }
+  .plan-features li + li { margin-top: .45rem; }
+  .pricing-actions { display: flex; align-items: center; gap: 1.25rem; flex-wrap: wrap; }
+  .pricing .btn-ghost { padding-inline: .2rem; background: transparent; border: 0; }
 
   /* ---------- responsive ---------- */
   @media (max-width: 980px) {
-    .rail-grid, .plans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .pricing-top { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+    .rail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 720px) {
-    .shell { width: min(92vw, 78rem); }
-    .hero-copy > p:first-of-type { font-size: var(--text-lead); line-height: 1.75rem; }
-    .rail-grid, .plans { grid-template-columns: minmax(0, 1fr); }
+    .shell, :global(#quickstart .quickstart-inner) { width: min(92vw, 78rem); }
+    .rail-grid, .plans, .pricing-top { grid-template-columns: minmax(0, 1fr); }
+    .pricing-top { gap: 1rem; }
+    .plan { margin-block: 0; padding: 1.4rem 0; }
+    .plan + .plan { border-inline-start: 0; border-top: 1px solid var(--longform-rule); }
   }
 
-  /* Narrow screens stack the copy over the field so the field never sits behind text. */
-  @media (max-width: 860px) {
-    .hero { flex-direction: column; align-items: stretch; min-height: 0; }
-    .hero-art { position: relative; inset: auto; order: 2; height: clamp(12rem, 29svh, 18rem); margin-top: .5rem; }
-    .hero-copy { padding: clamp(3rem, 10vw, 5rem) 0 0; }
-    .hero-copy h1 { font-size: clamp(var(--font-size-display), 11.5vw, 4rem); }
+  @media (max-width: 700px) {
+    .routing-spread { grid-template-columns: 1fr; gap: 1.5rem; padding-block: 2.75rem; }
+    .routing-copy { grid-row: 1; }
+    .hero { display: flex; flex-direction: column; align-items: stretch; min-height: 0; }
+    .hero-copy { max-width: 30rem; padding-block: 2.75rem 1rem; }
+    .hero-copy h1 { font-size: clamp(2.75rem, 10vw, 3.75rem); }
+    .hero-copy p { font-size: var(--text-lead); margin-top: 1rem; }
+    .hero-art { position: relative; order: 2; height: auto; aspect-ratio: 1.9; }
+    .hero-art img { object-position: center 55%; }
+    .hero-art::after { background: linear-gradient(var(--depth-1), transparent 30%); }
   }
 </style>
