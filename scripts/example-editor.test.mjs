@@ -71,7 +71,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
     check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
     const group = controls.getByRole('navigation', { name: 'Example topics' });
-    const selectedFile = id => editor.getByRole('region', { name: `${id}.mts source`, exact: true });
+    const selectedFile = (id, filename = id + '.mts') => editor.getByRole('region', { name: `${filename} source`, exact: true });
+    const providerRail = editor.getByRole('radiogroup', { name: 'Sandbox provider' });
     const transcript = () => output.textContent();
     const picker = controls.getByRole('button', { name: /^Example,/ });
     const menu = page.getByRole('menu', { name: /^Example,/ });
@@ -112,9 +113,11 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await selectedFile('any-cloud').waitFor();
       await settle();
       await editor.locator('.qs-main[data-state="running"]').waitFor();
-      await picker.press('Enter');
-      await menu.getByRole('menuitemradio', { name: 'Tangle', exact: true }).press('Enter');
-      await editor.locator('.qs-main[data-state="running"]').waitFor();
+      const position = await pagePosition();
+      await providerRail.getByRole('radio', { name: 'Tangle' }).press('ArrowRight');
+      await selectedFile('any-cloud-e2b').waitFor();
+      check(await providerRail.getByRole('radio', { name: 'E2B' }).evaluate(button => button === document.activeElement), 'Arrow keys keep focus on the chosen provider', item);
+      check(Math.abs((await pagePosition())[0] - position[0]) <= 1, 'Keyboard provider selection keeps the page in place', item);
       await group.getByRole('button', { name: 'Sandboxes', exact: true }).click();
       await picker.click();
       const options = menu.getByRole('menuitemradio');
@@ -131,9 +134,11 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       await selectedFile('any-cloud').waitFor();
       check((await guide.getAttribute('href')).endsWith('/sandbox/other-providers') && /cloud/.test(await heading.innerText()), 'Touch topic selection updates the heading and guide', item);
       await editor.getByRole('button', { name: 'Pause the recorded run' }).tap();
-      await controls.getByRole('button', { name: /^Example,/ }).tap();
-      await page.getByRole('menuitemradio', { name: 'Tangle', exact: true }).tap();
-      await editor.locator('.qs-main[data-state="running"]').waitFor();
+      await providerRail.getByRole('radio', { name: 'Daytona' }).tap();
+      await selectedFile('any-cloud-daytona').waitFor();
+      await providerRail.getByRole('radio', { name: 'Tangle' }).tap();
+      await chooseExample('Time a cold start');
+      await selectedFile('time-a-cold-start').waitFor();
     }
     // Hold the real island response so the early-click regression is reproducible on a fast connection too.
     let releaseIsland;
@@ -214,14 +219,26 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         const topicHeading = await heading.innerText(), topicGuide = await guide.getAttribute('href');
         check(!topicGuides.has(topicHeading) && ![...topicGuides.values()].includes(topicGuide), 'Distinct heading and documentation for ' + subject.label, item);
         topicGuides.set(topicHeading, topicGuide);
-        await picker.click();
-        const titles = await menu.getByRole('menuitemradio').allTextContents();
-        check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
-        await page.keyboard.press('Escape');
-        await menu.waitFor({ state: 'hidden' });
+        if (subject.ideas.every(idea => idea.provider)) {
+          const labels = await providerRail.getByRole('radio').allTextContents();
+          const expected = [...new Set(subject.ideas.map(idea => idea.provider.name))];
+          check(JSON.stringify(labels) === JSON.stringify(expected), 'Every provider has a named tab', item);
+          const marks = await providerRail.locator('img').evaluateAll(async images => {
+            await Promise.all(images.map(image => image.decode()));
+            return images.map(image => image.naturalWidth);
+          });
+          check(marks.length === expected.length && marks.every(width => width > 0), 'Every provider mark loads', item);
+        } else {
+          await picker.click();
+          const titles = await menu.getByRole('menuitemradio').allTextContents();
+          check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
+          await page.keyboard.press('Escape');
+          await menu.waitFor({ state: 'hidden' });
+        }
         for (const idea of subject.ideas) {
-          await chooseExample(idea.title);
-          await selectedFile(idea.id).waitFor();
+          if (idea.provider) await providerRail.getByRole('radio', { name: idea.provider.name, exact: true }).click();
+          if (!idea.provider || subject.ideas.filter(other => other.provider?.name === idea.provider.name).length > 1) await chooseExample(idea.title);
+          await selectedFile(idea.id, idea.filename).waitFor();
           const key = subject.id + '/' + idea.id;
           check(new URL(page.url()).searchParams.get('example') === key, 'Shareable selection: ' + key, item);
           if (!idea.run) {
@@ -241,9 +258,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
           }
           if (key === 'router/list-serving-models') {
             const printed = (await read(key)).events.find(event => event.kind === 'stdout').text.trim();
-            const consoleOutput = output.locator('details').filter({ has: page.getByText('Console output', { exact: true }) });
-            await consoleOutput.locator('summary').click();
-            check((await consoleOutput.locator('pre').innerText()).trim() === printed, 'Router shows the recorded model IDs', item);
+            const consoleOutput = output.locator('pre[aria-label="Console output"]');
+            check((await consoleOutput.innerText()).trim() === printed, 'Router shows the recorded model IDs', item);
           }
           if (key === 'sandboxes/browser-task') {
             const browserRecord = await read(key);

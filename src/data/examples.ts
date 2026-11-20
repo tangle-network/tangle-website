@@ -4,7 +4,7 @@ import { sourceDigest } from '../../scripts/example-digest.mjs';
 
 // Each cell loads a complete file from src/examples; `pnpm check:examples`
 // typechecks the corpus. Presentation-only comment corrections below preserve the executable digest.
-const files = import.meta.glob<string>('../examples/*/*.mts', { query: '?raw', import: 'default', eager: true });
+const files = import.meta.glob<string>('../examples/*/*.{mts,tsx}', { query: '?raw', import: 'default', eager: true });
 // Each file's recorded production run (scripts/record-examples.mts). A file whose record is missing or was
 // recorded from other bytes gets no recorded output; `pnpm check:runs` fails the gate for both.
 const records = import.meta.glob<{ source: { sha256: string }; run: { id: string; recordedAt: string; costUsd: number | null; exitCode: number; sdk: Record<string, string> }; events: { atMs: number; durationMs?: number; kind: string; name?: string; result?: any; data?: any }[] }>(
@@ -54,6 +54,8 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['what-did-it-do', 'Ask what the agent did'],
   ]],
   ['products', 'Agent apps', SANDBOX, [
+    ['agent-chat', 'Add chat to a React app', 'npm create @tangle-network/agent-app@latest my-agent'],
+    ['replay-a-reply', 'Resume an interrupted reply', 'npm create @tangle-network/agent-app@latest my-agent'],
     ['email-assistant', 'Connect an email assistant', 'npm install @tangle-network/agent-app'],
     ['legal-agent', 'One sandbox per customer'],
     ['support-thread', 'A chat that remembers'],
@@ -71,25 +73,39 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['cancel-on-cap', 'Stop a fleet at a cap'],
   ]],
   ['runtime', 'Providers', `${SANDBOX} @tangle-network/agent-runtime @tangle-network/agent-provider-tangle`, [
-    ['any-cloud', 'Tangle'],
-    ['any-cloud-e2b', 'E2B', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
-    ['any-cloud-daytona', 'Daytona', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],
-    ['any-cloud-computesdk', 'ComputeSDK', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b'],
+    ['any-cloud', 'Read a repository'],
+    ['any-cloud-e2b', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
+    ['any-cloud-daytona', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],
+    ['any-cloud-boat', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-boat'],
+    ['any-cloud-computesdk', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b'],
     ['time-a-cold-start', 'Time a cold start'],
   ]],
 ];
+const tangle = { name: 'Tangle', logo: '/brand/tangle-icon-filled.svg' };
+const providers: Record<string, NonNullable<ExampleIdea['provider']>> = {
+  'any-cloud': tangle,
+  'time-a-cold-start': tangle,
+  'any-cloud-e2b': { name: 'E2B', logo: '/images/providers/e2b.png' },
+  'any-cloud-daytona': { name: 'Daytona', logo: '/images/providers/daytona.png' },
+  'any-cloud-boat': { name: 'Boat', logo: '/images/providers/boat.svg' },
+  'any-cloud-computesdk': { name: 'ComputeSDK', logo: '/images/providers/computesdk.png' },
+};
 export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas]) => ({
   id, label, install,
   ideas: ideas.map(([file, title, install]) => {
-    const code = files[`../examples/${id}/${file}.mts`]
+    const base = `../examples/${id}/${file}`;
+    const extension = files[base + '.tsx'] ? 'tsx' : 'mts';
+    const code = files[`${base}.${extension}`]
       ?.replace('The agent installs and drives a real browser inside its own machine.', "The agent drives the sandbox's own Chromium with Playwright.")
       .replace('plus the browser download', "plus Playwright's CDN")
       .replace('the disk stays and is all you pay for', 'the files stay and compute stops')
       .replace('status: completed, cancelled or budget_exhausted', 'status: completed, failed, cancelled or budget_exhausted');
-    if (!code) throw new Error(`src/examples/${id}/${file}.mts is missing`);
+    if (!code) throw new Error(`src/examples/${id}/${file}.${extension} is missing`);
     const key = `${id}/${file}`;
     const run = recorded(`./runs/${id}/${file}.json`, code);
     return { id: file, title, code, install, view: views[key],
+      ...(extension === 'tsx' ? { filename: `${file}.tsx` } : {}),
+      ...(id === 'runtime' ? { provider: providers[file] } : {}),
       ...(key === 'sandboxes/python-csv' ? { output: { call: 'box.runCode' as const, title: 'Customer totals', columns: ['Customer', 'Total'] } } : {}),
       ...(key === 'sandboxes/run-code' ? { output: { call: 'box.exec' as const, title: 'Standard output' } } : {}),
       ...(key === 'sandboxes/browser-task' ? { timelineNoteAt: run?.events?.find(event => event.data?.part?.type === 'text' && event.data.part.text.includes('system Chromium available'))?.atMs } : {}),
