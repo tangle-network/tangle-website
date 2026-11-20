@@ -36,7 +36,7 @@ const introductions: Record<string, { title: string; description: string; link: 
   },
   runtime: {
     title: 'Run the same agent on another cloud.',
-    description: 'Keep your agent profile and switch the provider that runs it on Tangle, E2B or Daytona.',
+    description: 'Keep the same agent and task. Choose a provider to see the setup.',
     link: 'Provider guide', path: 'sandbox/other-providers',
   },
 };
