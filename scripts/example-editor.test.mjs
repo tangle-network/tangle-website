@@ -223,7 +223,11 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
           const labels = await providerRail.getByRole('radio').allTextContents();
           const expected = [...new Set(subject.ideas.map(idea => idea.provider.name))];
           check(JSON.stringify(labels) === JSON.stringify(expected), 'Every provider has a named tab', item);
-          check(await providerRail.locator('img').evaluateAll(nodes => nodes.every(img => img.complete && img.naturalWidth > 0)), 'Every provider mark loads', item);
+          const marks = await providerRail.locator('img').evaluateAll(async images => {
+            await Promise.all(images.map(image => image.decode()));
+            return images.map(image => image.naturalWidth);
+          });
+          check(marks.length === expected.length && marks.every(width => width > 0), 'Every provider mark loads', item);
         } else {
           await picker.click();
           const titles = await menu.getByRole('menuitemradio').allTextContents();
