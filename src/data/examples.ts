@@ -55,7 +55,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
   ]],
   ['products', 'Agent apps', SANDBOX, [
     ['agent-chat', 'Add chat to a React app', 'npm create @tangle-network/agent-app@latest my-agent'],
-    ['replay-a-reply', 'Reconnect to a reply', 'npm create @tangle-network/agent-app@latest my-agent'],
+    ['replay-a-reply', 'Resume an interrupted reply', 'npm create @tangle-network/agent-app@latest my-agent'],
     ['email-assistant', 'Connect an email assistant', 'npm install @tangle-network/agent-app'],
     ['legal-agent', 'One sandbox per customer'],
     ['support-thread', 'A chat that remembers'],
