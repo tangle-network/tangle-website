@@ -3,11 +3,11 @@ import {
   type ChatComposerProps, type ChatUiMessage,
 } from "@tangle-network/agent-app/web-react";
 
-// Pass the messages and send handler from your app's conversation.
+// In the chat starter, pass messages, busy and send from Conversation.tsx.
 export function AgentChat({ messages, busy, send }: {
   messages: ChatUiMessage[];
   busy: boolean;
-  send: NonNullable<ChatComposerProps["onSend"]>;
+  send: NonNullable<ChatComposerProps["onSendParts"]>;
 }) {
   const scroll = useChatScroll();
 
@@ -19,7 +19,7 @@ export function AgentChat({ messages, busy, send }: {
           <ChatMessages messages={messages} loading={busy} />
         </div>
       </div>
-      <ChatComposer onSend={send} sendDisabled={busy} placeholder="Ask your agent…" />
+      <ChatComposer onSendParts={send} sendDisabled={busy} placeholder="Ask your agent…" />
     </>
   );
 }
