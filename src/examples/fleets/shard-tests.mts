@@ -13,8 +13,15 @@ const fleet = await client.fleets.create({
 });
 try {
   const started = performance.now();
-  const results = await Promise.all(files.map((name) => fleet.exec(name, `node --test test/${name}.test.js 2>&1 | tail -4`)));
-  files.forEach((name, i) => console.log(name, results[i].exitCode === 0 ? "pass" : "FAIL", results[i].stdout.trim().split("\n").at(-1)));
+  const results = await Promise.all(files.map((name) =>
+    fleet.exec(name, `node --test --test-reporter=tap test/${name}.test.js`),
+  ));
+  for (const [index, result] of results.entries()) {
+    console.log(`${files[index]}: ${result.exitCode === 0 ? "pass" : "FAIL"}`);
+    for (const line of result.stdout.split("\n")) {
+      if (line.startsWith("not ok ")) console.log(line);
+    }
+  }
   console.log(`${Math.round(performance.now() - started)} ms for all five`);
 } finally {
   await fleet.delete();
