@@ -1,0 +1,56 @@
+---
+import recording from '../data/runs/fleets/mix-models.json';
+
+const finished = recording.events.find(event => event.data?.type === 'fleet.finished')?.data?.results;
+if (!finished?.length) throw new Error('Missing mixed-model fleet results');
+const tasks: Record<string, string> = { imports: 'Find unused imports', docs: 'Document the packages', fix: 'Fix the timezone test' };
+const models: Record<string, string> = { 'deepseek/deepseek-v4.1-flash': 'DeepSeek Flash', 'glm-5.3': 'GLM' };
+const start = Math.min(...recording.events.filter(event => event.data?.type === 'agent.started').map(event => event.atMs));
+const rows = finished.map(agent => {
+  const label = tasks[agent.agentId];
+  const began = recording.events.find(event => event.data?.type === 'agent.started' && event.data.agentId === agent.agentId);
+  if (!label || !began || agent.status !== 'completed') throw new Error('Fleet task recording is incomplete');
+  return { label, model: models[agent.model] ?? agent.model, offset: began.atMs - start, ms: agent.durationMs };
+});
+const end = Math.max(...rows.map(row => row.offset + row.ms));
+---
+<figure class="fleet-run" aria-label="Time each agent spent on its task in the recorded run">
+  <figcaption>One repository <span aria-hidden="true">/</span> concurrent tasks</figcaption>
+  <ol>
+    {rows.map(row => <li style={`--offset:${100 * row.offset / end}%;--length:${100 * row.ms / end}%;--draw:${1.8 * row.ms / end}s`}>
+      <div class="task"><strong>{row.label}</strong><span>{row.model}</span></div>
+      <div class="track" aria-hidden="true"><i></i></div>
+      <span class="time">{Math.round(row.ms / 1000)} s</span>
+    </li>)}
+  </ol>
+</figure>
+
+<style>
+  .fleet-run { margin: 0; min-width: 0; padding: clamp(1.25rem, 3.2vw, 2.75rem); color: var(--text-primary); background: var(--depth-2); border: 1px solid var(--border-accent); border-radius: var(--radius-lg); }
+  figcaption { padding-bottom: 1.15rem; border-bottom: 1px solid var(--border-default); font-size: var(--font-size-base); }
+  figcaption span { color: var(--text-muted); margin-inline: .35rem; }
+  ol { padding: 0; margin: 0; list-style: none; }
+  li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .8rem; align-items: center; padding-top: 1.45rem; }
+  .task { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: .25rem .75rem; margin-bottom: .35rem; }
+  .task strong { font-weight: 550; }
+  .task span, .time { color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .time { min-width: 3.25em; text-align: right; font-variant-numeric: tabular-nums; }
+  .track { height: .45rem; background: var(--border-default); border-radius: 1rem; overflow: hidden; }
+  .track i { display: block; margin-left: var(--offset); width: var(--length); height: 100%; background: var(--brand-glow); border-radius: inherit; transform-origin: left; }
+  @media (prefers-reduced-motion: no-preference) {
+    .fleet-run.seen .track i { animation: draw var(--draw) ease-out both; }
+    @keyframes draw { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  }
+</style>
+<script>
+  if ('IntersectionObserver' in window && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        entry.target.classList.add('seen');
+        observer.unobserve(entry.target);
+      }
+    }, { threshold: .45 });
+    document.querySelectorAll('.fleet-run').forEach(figure => observer.observe(figure));
+  }
+</script>

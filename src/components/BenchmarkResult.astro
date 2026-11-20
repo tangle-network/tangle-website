@@ -1,0 +1,35 @@
+---
+import recording from '../data/runs/evals/compare-harnesses.json';
+
+const names: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+const rows = [];
+let start: number | undefined;
+let passes = 0;
+let total = 0;
+for (const event of recording.events) {
+  if (event.name === 'create') start ??= event.atMs;
+  if (event.name === 'exec') {
+    total++;
+    if (event.result?.exitCode === 0) passes++;
+  }
+  if (event.kind === 'stdout' && event.text) {
+    const harness = event.text.trim().split(/\s+/)[0];
+    if (start === undefined || !total || !names[harness]) throw new Error('Incomplete coding agent benchmark');
+    rows.push({ name: names[harness], passes, total, seconds: Math.round((event.atMs - start) / 1000) });
+    start = undefined;
+    passes = total = 0;
+  }
+}
+if (!rows.length) throw new Error('Missing coding agent benchmark results');
+---
+<table aria-label="Recorded benchmark results">
+  <thead><tr><th scope="col">Agent</th><th scope="col">Cases passed</th><th scope="col">Run time</th></tr></thead>
+  <tbody>{rows.map(row => <tr><th scope="row">{row.name}</th><td>{row.passes} / {row.total}</td><td>{row.seconds} s</td></tr>)}</tbody>
+</table>
+<style>
+  table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-variant-numeric: tabular-nums; font-size: var(--font-size-base); }
+  th, td { text-align: right; padding: .55rem 0 .55rem .5rem; border-bottom: 1px solid var(--longform-rule); }
+  th:first-child { text-align: left; padding-left: 0; }
+  thead th { color: var(--longform-ink-muted); font-size: var(--font-size-sm); font-weight: 500; }
+  tbody th { font-weight: 550; }
+</style>
