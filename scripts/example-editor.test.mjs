@@ -62,10 +62,11 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     item.initial = await editor.evaluate(root => ({ overflow: document.documentElement.scrollWidth - innerWidth, codeSize: getComputedStyle(root.querySelector('.qs-code code')).fontSize }));
     check(item.initial.overflow <= 1, 'The editor must not widen the page', item);
     if (width <= 680) check(item.initial.codeSize === '14px', 'Phone code size', item);
-    await editor.locator('.qs-main[data-state="idle"]').waitFor();
+    await settle();
+    await editor.locator('.qs-main[data-state="running"]').waitFor();
     check(await editor.locator('[role=slider],input[type=range],.qs-progress').count() === 0, 'The editor has no seek control', item);
     await output.getByText(/client\.create/).first().waitFor();
-    check(await main.getAttribute('data-state') === 'idle', 'Previewing the first recorded call does not start playback', item);
+    await editor.getByRole('button', { name: 'Pause the recorded run' }).click();
     const controls = page.locator('.company-examples');
     const heading = page.locator('#quickstart-title'), guide = page.locator('.quickstart-link');
     check(await heading.innerText() === 'Give each agent its own machine.', 'Default Sandbox heading', item);
@@ -77,12 +78,13 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
     const chooseExample = async title => {
       await picker.click();
       await menu.getByRole('menuitemradio', { name: title, exact: true }).click();
+      await menu.waitFor({ state: 'hidden' });
     };
     const lastStepGap = await output.evaluate(pane => {
       const last = [...pane.querySelectorAll('[data-timeline-step]')].at(-1);
       return last ? pane.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom : Infinity;
     });
-    check(lastStepGap >= 0 && lastStepGap < 24, 'Idle activity sits at the bottom of the stream', item);
+    check(lastStepGap >= 0 && lastStepGap < 24, 'The first activity sits at the bottom of the stream', item);
     await picker.evaluate(button => button.scrollIntoView({ block: 'center', behavior: 'instant' }));
     const pagePosition = () => page.evaluate(() => [Math.round(scrollY), document.documentElement.scrollHeight]);
     const beforeMenu = await pagePosition();
@@ -108,7 +110,8 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
       check(await heading.innerText() === 'Give each agent its own machine.', 'Back restores the Sandbox heading', item);
       await page.goForward();
       await selectedFile('any-cloud').waitFor();
-      await editor.locator('.qs-main[data-state="idle"]').waitFor();
+      await settle();
+      await editor.locator('.qs-main[data-state="running"]').waitFor();
       await picker.press('Enter');
       await menu.getByRole('menuitemradio', { name: 'Tangle', exact: true }).press('Enter');
       await editor.locator('.qs-main[data-state="running"]').waitFor();
@@ -145,16 +148,15 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         check(await editor.getByRole('button', { name: 'Play the recorded run' }).isDisabled(), 'Replay must wait for its handler', item);
       }
     } finally { releaseIsland?.(); }
-    await editor.scrollIntoViewIfNeeded();
-    const play = editor.getByRole('button', { name: 'Play the recorded run', exact: true });
-    await play.scrollIntoViewIfNeeded();
-    check(await main.getAttribute('data-state') === 'idle', 'Direct links arrive at rest', item);
-    await play.click();
+    await settle();
     await editor.locator('.qs-main[data-state="running"]').waitFor();
     await editor.getByRole('button', { name: 'Pause the recorded run', exact: true }).click();
     const paused = await transcript();
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await page.waitForTimeout(250);
+    await settle();
     await page.waitForTimeout(600);
-    check(await transcript() === paused && await main.getAttribute('data-state') === 'paused', 'Pause must stop the clock', item);
+    check(await transcript() === paused && await main.getAttribute('data-state') === 'paused', 'A manual pause survives leaving and returning to the workbench', item);
     await settle();
     await page.screenshot({ path: `${out}/${name}-paused.png` });
     await editor.getByRole('button', { name: 'Resume the recorded run', exact: true }).press('Space');
@@ -216,6 +218,7 @@ for (const [name, engine, width, height] of [['desktop', chromium, 1440, 900], [
         const titles = await menu.getByRole('menuitemradio').allTextContents();
         check(titles.length === subject.ideas.length && subject.ideas.every(idea => titles.some(title => title.trim() === idea.title)), 'Every ' + subject.label + ' example has a choice', item);
         await page.keyboard.press('Escape');
+        await menu.waitFor({ state: 'hidden' });
         for (const idea of subject.ideas) {
           await chooseExample(idea.title);
           await selectedFile(idea.id).waitFor();

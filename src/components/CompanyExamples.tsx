@@ -122,6 +122,7 @@ export default function CompanyExamples({ subjects, initial }: Props) {
       value={selection}
       initial={initial}
       onSelect={choose}
+      playOnView
       playOnSelect={entry.play}
       showReceipt={false}
     />
