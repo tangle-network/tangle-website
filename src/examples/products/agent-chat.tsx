@@ -19,7 +19,6 @@ export function AgentChat({ messages, busy, send }: {
           <ChatMessages messages={messages} loading={busy} />
         </div>
       </div>
-      {!scroll.following && <button onClick={scroll.jumpToLatest}>Latest reply</button>}
       <ChatComposer onSend={send} sendDisabled={busy} placeholder="Ask your agent…" />
     </>
   );
