@@ -76,6 +76,7 @@ const grid: [string, string, string, [string, string, string?][]][] = [
     ['any-cloud', 'Read a repository'],
     ['any-cloud-e2b', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-e2b'],
     ['any-cloud-daytona', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-daytona'],
+    ['any-cloud-boat', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-boat'],
     ['any-cloud-computesdk', 'Read a repository', 'npm install @tangle-network/agent-runtime @tangle-network/agent-provider-computesdk computesdk @computesdk/e2b'],
     ['time-a-cold-start', 'Time a cold start'],
   ]],
@@ -86,6 +87,7 @@ const providers: Record<string, NonNullable<ExampleIdea['provider']>> = {
   'time-a-cold-start': tangle,
   'any-cloud-e2b': { name: 'E2B', logo: '/images/providers/e2b.png' },
   'any-cloud-daytona': { name: 'Daytona', logo: '/images/providers/daytona.png' },
+  'any-cloud-boat': { name: 'Boat', logo: '/images/providers/boat.svg' },
   'any-cloud-computesdk': { name: 'ComputeSDK', logo: '/images/providers/computesdk.png' },
 };
 export const subjects: ExampleSubject[] = grid.map(([id, label, install, ideas]) => ({
