@@ -9,13 +9,13 @@ const provider = createTangleProvider({
     baseUrl: "https://sandbox.tangle.tools",
   }),
 });
-const client = providerAsSandboxClient(provider, {
-  defaults: { profile: { name: "timer", harness: "claude-code" } },
-});
+const client = providerAsSandboxClient(provider);
 
 const ms = (from: number) => `${Math.round(performance.now() - from)} ms`;
 const t0 = performance.now();
-const box = await client.create();
+const box = await client.create({
+  backend: { profile: { name: "timer", harness: "claude-code" } },
+});
 console.log("create", ms(t0));
 try {
   const t1 = performance.now();
