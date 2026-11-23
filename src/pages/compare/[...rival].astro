@@ -1,135 +1,92 @@
 ---
 import { formatSpanDuration as time } from '@tangle-network/charts';
 import { Code } from 'astro:components';
-import BlogLayout from '../../layouts/BlogLayout.astro';
+import ProductLayout from '../../layouts/ProductLayout.astro';
 import bench from '../../data/benchmarks/sandbox.json';
 import compare from '../../data/compare.json';
-import { formatDate } from '../../utils/date';
 
-// /compare/ lists every rival; /compare/<slug>/ compares one. Rival facts and their sources are in compare.json.
+// /compare/ sells Tangle against every rival at once, /compare/<slug>/ against one: the buyer's gain, the code that
+// shows it, reasons with our proof, how to move, and what every sandbox includes. Every link is ours, and every speed
+// figure is a row of the record /benchmarks draws. compare.json holds the copy.
+interface Claim { text: string; src: string }
+interface Sell {
+  headline: string;
+  summary: string;
+  code: { lang: 'ts' | 'python' | 'bash'; text: string; proof: string; src: string; agent?: string };
+  reasons: Claim[];
+  switch?: { lang: 'diff' | 'ts'; text: string; intro?: string; rest?: string; restSrc?: string; guide: { label: string; href: string } };
+  rows: (keyof typeof compare.tangle)[];
+  cta: { label: string; href: string };
+}
+const rivals = compare.rivals as { slug: string; name: string; sell: Sell }[];
+const { tangle } = compare;
+
 export const getStaticPaths = () => [undefined, ...compare.rivals.map((r) => r.slug)].map((rival) => ({ params: { rival } }));
 
-const { checked, tangle, rivals } = compare;
 const rival = rivals.find((r) => r.slug === Astro.params.rival);
-const others = rival ? [rival] : rivals;
+const page: Sell = rival?.sell ?? (compare.index as Sell);
 const name = rival?.name ?? `${rivals.slice(0, 3).map((r) => r.name).join(', ')} and ${rivals.length - 3} more`;
-const where = (src: string) => { const u = new URL(src); return `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.hash}`; };
-// Tangle numbers are rows of the record /benchmarks is built from, so both pages print the same runs.
-const measured = compare.measured.map((m) => {
-  const row = bench.panels.find((p) => p.title === m.panel)?.rows.find((r) => r.label === m.row);
-  if (!row) throw new Error(`compare: /benchmarks has no "${m.panel}" row "${m.row}"`);
-  return { ...row, label: m.label };
-});
-const dates = `${bench.window.from.slice(0, 10)} to ${bench.window.to.slice(0, 10)}`;
-// A selling page: what the buyer gains, the one difference as code, reasons with proof, the switch, one action.
-const sell = rival && 'sell' in rival ? rival.sell : undefined;
-const reply = bench.panels.find((p) => p.title === 'First reply, from create')?.rows.find((r) => r.label === 'Claude Code');
-if (sell && !reply) throw new Error('compare: /benchmarks has no "First reply, from create" row "Claude Code"');
 // The title carries the search a buyer types ("Tangle vs <rival>") and the gain.
-const sellTitle = sell && rival ? `Tangle vs ${rival.name}: ${sell.headline[0].toLowerCase()}${sell.headline.slice(1).replace(/\.$/, '')}` : undefined;
+const title = `Tangle vs ${name}: ${page.headline[0].toLowerCase()}${page.headline.slice(1).replace(/\.$/, '')}`;
+const where = (src: string) => { const u = new URL(src); return `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.hash}`; };
+// The first reply of the agent the code starts, from create.
+const reply = page.code.agent ? bench.panels.find((p) => p.title === 'First reply, from create')?.rows.find((r) => r.label === page.code.agent) : undefined;
+if (page.code.agent && !reply) throw new Error(`compare: /benchmarks has no "First reply, from create" row "${page.code.agent}"`);
+const move = rival && page.switch;
 ---
 
-<BlogLayout
-  crumb={{ href: '/compare/', label: 'Compare' }}
-  title={sellTitle ?? `Tangle vs ${name}: which sandbox for coding agents?`}
-  summary={sell?.summary ?? (rival ?? compare).summary}
-  date={sell?.checked ?? checked}
-  author="Drew Stone"
-  tags={['comparison', 'sandbox', 'coding agents', ...others.map((r) => r.name)]}
-  slug={rival?.slug ?? 'compare'}
-  seriesPosts={[]}
->
-  {sell && rival && reply ? (
+<ProductLayout title={title} description={page.summary} crumb={rival && { href: '/compare/', label: 'Compare' }}>
+  <Code code={page.code.text} lang={page.code.lang} theme="github-dark" />
+  <p>{page.code.proof} (<a href={page.code.src}>{where(page.code.src)}</a>).{reply && <> {page.code.agent}'s first reply arrives {time(reply.p50)} after create at p50 and {reply.p95 === null ? 'n/a' : time(reply.p95)} at p95, over {reply.n} measured runs (<a href="/benchmarks/">tangle.tools/benchmarks</a>).</>}</p>
+
+  <h2>What else you get</h2>
+  <ul>{page.reasons.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+
+  {rival && move ? (
     <>
-      <Code code={sell.code.text} lang={sell.code.lang as 'ts' | 'python'} theme="github-dark" />
-      <p>{sell.code.returns} come back from one call (<a href={sell.code.src}>{where(sell.code.src)}</a>). Claude Code's first reply arrives {time(reply.p50)} after create at p50 and {reply.p95 === null ? 'n/a' : time(reply.p95)} at p95, over {reply.n} measured runs (<a href="/benchmarks/">tangle.tools/benchmarks</a>).</p>
-      <h2>What else you get</h2>
-      <ul>{sell.reasons.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
       <h2>Move your code from {rival.name}</h2>
-      <Code code={sell.switch.text} lang={sell.switch.lang as 'diff'} theme="github-dark" />
-      {'rest' in sell.switch && sell.switch.rest && sell.switch.restSrc && <p>{sell.switch.rest} (<a href={sell.switch.restSrc}>{where(sell.switch.restSrc)}</a>)</p>}
-      <p>For everything else, <a href={sell.switch.guide.href}>{sell.switch.guide.label}</a>.</p>
-      <h2>What every sandbox includes</h2>
-      <table class="product-comparison">
-        <tbody>
-          {sell.rows.map((id) => {
-            const t = tangle[id as keyof typeof tangle];
-            return (
-              <tr>
-                <th scope="row">{t.label}</th>
-                <td>{t.text} (<a href={t.src}>{where(t.src)}</a>)</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {move.intro && <p>{move.intro}</p>}
+      <Code code={move.text} lang={move.lang} theme="github-dark" />
+      {move.rest && move.restSrc && <p>{move.rest} (<a href={move.restSrc}>{where(move.restSrc)}</a>)</p>}
+      <p>For everything else, <a href={move.guide.href}>{move.guide.label}</a>.</p>
     </>
   ) : (
-  <p>Last checked {formatDate(checked)}: each {rival ? rival.name : 'rival'} fact in the table links the page it came from, read that day.</p>
+    <>
+      <h2>Move your code</h2>
+      <ul>{rivals.map((r) => <li><a href={`/compare/${r.slug}/`}>From {r.name}</a>: {r.sell.headline}</li>)}</ul>
+    </>
   )}
 
-  {sell ? null : rival ? (
-    <>
-      <h2>Why pick Tangle over {rival.name}</h2>
-      <ul>{(('pickTangle' in rival && rival.pickTangle) || []).map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
-      <h2>{rival.name} and Tangle, row by row</h2>
-      <table class="product-comparison">
-        <thead><tr><th scope="col">Feature</th><th scope="col">{rival.name}</th><th scope="col">Tangle</th></tr></thead>
-        <tbody>
-          {rival.rows.map((r) => {
-            const t = tangle[r.id as keyof typeof tangle];
-            return (
-              <tr>
-                <th scope="row">{t.label}</th>
-                <td data-label={rival.name}>{r.text} (<a href={r.src}>{where(r.src)}</a>)</td>
-                <td data-label="Tangle">{t.text} (<a href={t.src}>{where(t.src)}</a>)</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </>
-  ) : rivals.map((r) => (
-    <>
-      <h2><a href={`/compare/${r.slug}/`}>Tangle vs {r.name}</a></h2>
-      <p>{r.summary}</p>
-    </>
-  ))}
-
-  {!sell && (<>
-  <h2>Start times, measured in production</h2>
-  <table class="product-comparison">
-    <thead><tr><th scope="col">Tangle, measured</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Runs</th><th scope="col">Failed</th></tr></thead>
+  <h2>What every sandbox includes</h2>
+  <table class="includes">
     <tbody>
-      {measured.map((m) => (
+      {page.rows.map((id) => (
         <tr>
-          <th scope="row">{m.label}</th>
-          <td data-label="p50">{time(m.p50)}</td>
-          <td data-label="p95">{m.p95 === null ? 'n/a' : time(m.p95)}</td>
-          <td data-label="Runs">{m.n}</td>
-          <td data-label="Failed">{m.failed} of {m.attempts}</td>
+          <th scope="row">{tangle[id].label}</th>
+          <td>{tangle[id].text} (<a href={tangle[id].src}>{where(tangle[id].src)}</a>)</td>
         </tr>
       ))}
     </tbody>
   </table>
-  <p>Production runs from {dates}, the same rows <a href="/benchmarks/">tangle.tools/benchmarks</a> draws.</p>
-  </>)}
-  {sell ? (
-    <p><a class="cta" href={sell.cta.href}>{sell.cta.label}</a></p>
-  ) : (
-    <>
-      <p>agent-runtime runs the same agent code on Tangle and on other providers, so you can run your own task on each and compare: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on other providers</a>.</p>
-      <h2>Pricing</h2>
-      <p>Tangle <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>.</p>
-    </>
-  )}
-</BlogLayout>
+
+  <p><a class="cta" href={page.cta.href}>{page.cta.label}</a></p>
+</ProductLayout>
 
 <style>
-  /* The call to action of a selling page, in the site's primary button colours. */
+  /* What every sandbox includes: a label column and its fact, stacked on a phone. */
+  table.includes { width: 100%; margin: 0 0 1rem; border-collapse: collapse; }
+  table.includes th, table.includes td { padding: 0.85rem 0; border-top: 1px solid var(--border-default); vertical-align: top; text-align: left; font-size: 1rem; line-height: 1.55; }
+  table.includes th { width: 12rem; padding-right: 1.5rem; color: var(--text-primary); font-weight: 600; }
+  table.includes td { color: var(--text-secondary); }
+  @media (max-width: 640px) {
+    table.includes th, table.includes td { display: block; width: auto; padding: 0; border: 0; }
+    table.includes tr { display: block; padding: 0.85rem 0; border-top: 1px solid var(--border-default); }
+    table.includes th { margin-bottom: 0.25rem; }
+  }
+  /* The one call to action, in the site's primary button colours. */
   a.cta {
     display: inline-flex;
-    margin-top: 1rem;
+    margin-top: 1.5rem;
     padding: 0.75rem 1.3rem;
     border-radius: 9px;
     background: var(--btn-primary-bg);
