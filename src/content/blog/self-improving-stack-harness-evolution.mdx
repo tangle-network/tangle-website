@@ -1,346 +1,279 @@
 ---
-title: 'Harness Evolution for AI Agents: When Prompts Plateau'
+title: 'Self-Improving AI Agents: The Loop From Failed Run to Rollback'
 slug: self-improving-stack-harness-evolution
 summary: >-
-  Harness evolution changes the software around an agent when prompts and skills cannot add tools, isolation, checks, traces, or rollback.
+  You want failed agent runs to become prompt, memory, agent-code or model changes without shipping regressions.
+  This is the loop end to end: what to capture, who checks the analyst, what the gate decides on how many independent cases, who approves, and how to undo it.
 date: '2026-06-04'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags: ['agents', 'systems', 'architecture', 'self-improvement']
 series: 'the-self-improving-stack'
-seriesOrder: 10
+seriesOrder: 3
+hero:
+  motif: trace
+  steps: [pass, retry, pass, pass, pass]
+  label: Five checkpoints before a change ships
+  alt: A failed run moves through five checks before its change ships; the second check fails once, when someone other than the analyst decides the finding, and the step runs again.
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { harnessEvolutionFigures, proofCost, trivialBaseline } from '../../data/blog/self-improving-stack-harness-evolution'
 
-The agent keeps saying it inspected the repository before proposing a change.
-The run record shows no file reads.
-The prompt says “run the tests,” but the runtime has no shell or test adapter.
+A loop that turns failed agent runs into shipped changes is only as trustworthy as its checkpoints.
+No result we have seen, in our archive or the strict harness paper, shows automated search beating a careful hand edit; to find out for your agent, compare three arms: the unchanged baseline, a direct edit and the optimizer.
+We have seen an analyst that a constant guess outscores, and gains that vanish on fresh cases.
+So the parts your team will trust are plain ones.
+Capture every attempt with its verdict and config.
+Have someone other than the analyst decide each finding.
+Gate on held-out cases counted as independent incidents.
+Put a person between the gate's ship decision and production.
+Keep the exact diff so you can undo it.
 
-Adding another instruction will not create either capability.
-This is the moment to change the harness.
+## Capture what the agent tried, why it was judged wrong, and what ran
 
-The **harness** is the software around the model that starts work, exposes tools, manages state and budgets, captures artifacts, runs checks, and decides what can continue.
-A **trace** is the record of the whole execution, including the final answer and the steps that produced it.
-A **validator** is a deterministic or semantic check that turns an artifact into evidence.
-A **candidate** is a proposed harness or profile change.
-A **runtime** is the software that starts model and tool work, manages limits, and records events.
-An **agent profile** is the versioned bundle of model, prompt, tools, permissions, skills, runtime settings, and evaluator identity for a run.
-An **evaluation** is a repeatable test that compares the candidate with a baseline on defined cases.
-A **baseline** is the version already trusted for comparison.
-A **judge** is a scorer for qualities that a deterministic validator cannot fully capture.
-A **holdout set** is a protected group of cases kept outside candidate search.
-A **sandbox** is an isolated execution boundary that limits files, networks, credentials, or processes.
-A **mutable surface** is the part of the system a candidate is allowed to change.
+A record is ready to replay when it can say what the agent tried, why it was judged wrong and what changed next.
+A trace that holds only the final answer cannot do that, so we store every attempt with the fields the agent-eval guide to feedback trajectories lists:[^ft]
 
-Harness evolution changes tools, workers, validators, traces, isolation, or release controls around the model.
-Because those changes affect execution, evidence capture, permissions, and rollback, they need broader tests than a prompt or skill edit.
+- the user's intent and the context the agent had;
+- every artifact or action it attempted;
+- objective validation results;
+- labels from users, reviewers or the environment, each with a reason;
+- the measured outcome, when one exists;
+- the model, a prompt or config hash, the code commit and the cost.
 
-On Tangle, a candidate harness runs as an agent profile through `providerAsSandboxClient` on a Tangle sandbox. Each run reports its cost on the `done` event (`totalCostUsd`), a check's exit code from `box.exec`, and the trace the runtime records.
-
-## Find the missing action
-
-Use the trace to identify what the current system could not do.
-
-| Trace evidence | Missing capability | Likely repair |
-| --- | --- | --- |
-| The model describes a file read that never happened | Repository access or tool dispatch | Tool adapter and observable call |
-| A requested second worker never appears | Worker creation or topology | Runtime driver |
-| A failed test is mentioned but not run | Execution or validator | Test adapter and hard check |
-| A branch changes shared files | Isolation | Sandbox or per-candidate workspace |
-| A score cannot be traced to an artifact | Capture or lineage | Trace schema and artifact store |
-| A candidate changes its own judge | Outer control boundary | Gate outside the mutable surface |
-
-The table is a diagnosis aid, not a reason to build a larger framework.
-If the agent already has the needed action and forgets to use it, a prompt or skill change may be enough.
-Evolve the harness when the missing move is not representable, not enforceable, or not observable.
-
-Anthropic’s public [agent architecture guidance](https://www.anthropic.com/engineering/building-effective-agents) recommends starting with the simplest composable system that fits the task.
-Cognition’s public account of [using Devin to build Devin](https://cognition.com/blog/how-cognition-uses-devin-to-build-devin) describes recurring playbooks, code review, automated fixes, and session insights as explicit workflow surfaces.
-The transferable lesson is not a particular vendor architecture.
-It is to turn repeated operational behavior into a named mechanism with a check.
-
-## The harness defines the reachable behavior
-
-Let h be the current harness and M be the set of mutations it can express.
-The system can search only the behaviors reachable through M.
-If M edits prompt text, it cannot produce a new worker process, an isolated workspace, or a raw provider capture sink.
-
-| Surface | Search can change | Search cannot create by itself |
-| --- | --- | --- |
-| Prompt | Instructions, examples, tool descriptions | A tool, process, permission, or durable record |
-| Skill | Reusable procedure and checks | An execution engine that invokes the procedure |
-| Runtime topology | Worker order, fanout, retry, handoff, budget | New evaluator or storage boundary unless exposed |
-| Harness | Tools, adapters, traces, validators, isolation, lifecycle | A trustworthy release decision if it owns the gate too |
-
-The [runtime topology article](/blog/self-improving-stack-agent-runtime-topology) covers the lower boundary.
-Harness evolution begins when the runtime itself is the object that needs to change.
-
-## Structural change is different from knob tuning
-
-Changing a concurrency limit or retry count can be useful.
-It is ordinary configuration search unless the change introduces a new mechanism.
-
-A structural candidate might:
-
-- Replace a summary-only record with child spans and artifact lineage.
-- Replace a single retry with isolated branches and an explicit winner rule.
-- Add a deterministic validator before a semantic judge.
-- Add a replay adapter that can rerun a failed tool step.
-- Move candidate generation into an isolated workspace.
-- Attach a stable agent profile to every evaluation cell.
-- Add a cancellation path that reaches child workers.
-
-A non-structural candidate might:
-
-- Add “be rigorous” to a prompt.
-- Rename a worker from reviewer to supervisor.
-- Raise the judge threshold after seeing a result.
-- Increase population size without changing the search mechanism.
-- Drop trace capture to make the candidate faster.
-
-The difference is whether the agent can now perform, prove, or stop an action it could not handle before.
-
-## A candidate lifecycle that can be rolled back
-
-Harness code should be treated as a release artifact.
-Each candidate needs an identity, a parent, a hypothesis, an isolated workspace, and a result.
+Then check each record against that test; if it fails, it is not training data yet.
+Do not skip the last field: rollback depends on it, because without the config hash you cannot say which version failed.
 
 ```text
-freeze baseline
-create isolated candidate workspace
-apply one structural hypothesis
-run a cheap smoke case
-run paired development cases
-inspect trace and artifact capture
-run protected cases outside the search
-promote, reject, or quarantine
-retain rollback handle and lineage
+# one stored trajectory, illustrative
+draft 1 -> user rejects, reason: "cites a policy that was retired"
+draft 2 -> judge passes
+         -> user approves
+         -> metric outcome: ticket closed, no reopen
+labels:   user, judge, metric
+metadata: model, prompt hash, commit, cost
 ```
 
-The smoke case is a cost control.
-It should catch a missing dependency, broken adapter, malformed schema, or absent trace before the expensive campaign starts.
-The protected run is a control boundary.
-It should not be writable by the candidate.
-The rollback handle is an operational requirement.
+Labels can come from a user, a judge, the environment, a metric, a policy or the system.
+We prefer trajectories that carry more than one source; the guide calls those the most useful, and a single judge's verdict can be fooled.
 
-Parallel candidate generation requires isolation.
-Two variants that share a mutable directory can overwrite each other, pass because one consumed the other’s artifacts, or leave a mixed result whose parent is impossible to identify.
-A candidate record should include:
+## An analyst's finding is a hypothesis until someone else decides it
 
-| Field | Purpose |
-| --- | --- |
-| Parent identity | Shows which mechanism the candidate inherited |
-| Changed surfaces | Prevents an unplanned profile change |
-| Hypothesis | Makes the result falsifiable |
-| Smoke result | Proves the candidate can run |
-| Trace coverage | Shows what the candidate did |
-| Quality and cost | Supports comparison |
-| Promotion decision | Records why it advanced or stopped |
-| Rollback handle | Makes activation reversible |
+Can an LLM that reads traces and explains failures feed the optimizer directly? No.
+Each finding is a hypothesis that needs an independent decision, the run needs an independent check for missed issues, zero findings does not prove a clean run, and the analyst must be measured on labeled traces before its findings drive changes.
 
-## Keep the evaluator outside the candidate change
+The library enforces the first two.
+An archived trajectory cannot become optimizer input until every finding has one independent decision and the run has one independent completeness assessment.
+The reviewer must differ from every analyst that produced the run.
+Duplicate, unknown, mutated or self-reviewed records make the call throw rather than get filtered out quietly.[^ta]
 
-Architecture search can attack its own measurement because the candidate can change the path being scored.
-A harness candidate can improve its score by:
+An empty findings list means no submitted claim passed the evidence rules.
+It does not mean the run was correct.
 
-- Dropping hard cases from the adapter.
-- Retrying until a lucky answer appears.
-- Routing around a failing check.
-- Preferring judge-friendly prose over a correct artifact.
-- Skipping trace capture to reduce reported latency.
-- Reading protected examples through logs or error messages.
-- Editing the evaluator or release threshold.
+To measure the analyst, run it on traces a person has labeled.
+Report issue recall, finding precision, whether the cited evidence is exact, false positives on runs you trust, and agreement between repeat runs.
+Report failures, calls, tokens, cost and latency along with them.
+On the TRAIL benchmark of human-annotated traces, the best model it tested (Gemini 2.5 Pro) scored 11% at trace debugging.[^trail]
 
-The outer rule is:
+## Put the fix in the cheapest layer that can hold it
+
+Escalate in this order: a memory instruction distilled from the labels, then a replay scenario in your eval set, then prompt or code optimization on separate train, dev and holdout splits.[^ft]
+Then decide the layer by what the trace shows:
+
+- the agent had the right tool and misused it: memory or the prompt;
+- it lacked a tool, a check or an isolated workspace, which no instruction will supply: the harness, compared with the same model, the same cases and the same judge, so only the harness changes;
+- the model itself is the limit: weights, a separate and heavier path that takes this loop's exported trajectories.
+
+
+The harness is a profile field like any other, next to model, prompt, tools, permissions, hooks and subagents.[^rt]
+
+<Example path="evals/compare-harnesses" />
+
+Both agents passed all three tests in this run, which is the honest result of a small set: it cannot tell them apart.
+
+The [post-training post](/blog/self-improving-stack-post-training/) covers when weight updates pay.
+
+## Evolving the code around the model sometimes pays, and the papers disagree on how often
+
+Two 2026 papers report large wins from automated harness changes.
+In the Agentic Harness Engineering paper, ten iterations lifted Terminal-Bench 2 pass@1 from 69.7% to 77.0%, against 71.9% for Codex-CLI.[^ahe]
+In "Evolving Agents in the Dark", one round lifted SWE-Bench Pro from 59% to 78% without external grading.[^rho]
+Both are the authors' own results.
+
+A later paper reran the comparison more strictly.
+On Terminal-Bench 2.1, automatic harness evolution did not beat simple test-time scaling, with or without test cases, and generalized poorly.[^re]
+Its authors also found that earlier work selected candidates on signals drawn from the same benchmark it reported.
+It did find real gains on long-horizon games at matched budgets.
+We read that as: try harness changes, but judge them against more samples of the current harness, not only against one sample of it.
+
+## Keep the gate's cases where the optimizer cannot see them
+
+Keep train, dev, test and holdout disjoint, keep holdout scores away from the proposer, and keep held-out cases out of prompt text, preference memory, few-shot examples and manual tuning, because a holdout reused inside the search turns its final score into selection-set performance.[^ft][^ms][^au]
+If a trajectory becomes a memory entry or a few-shot example, tag it with the split it came from and keep it out of held-out evaluation.
+
+The library enforces part of this:
+Training and holdout case IDs must be disjoint.
+The component that proposes candidates cannot read holdout scores.
+Final-evidence accounting reserves the final cases before search starts and refuses to reuse them across campaigns that share a ledger.[^ms]
+
+Treat any reuse as disqualifying, because we have done it ourselves.
+In one archived run, the same holdout set fed both the inner optimizers and the outer comparison.
+Its reported final score was really selection-set performance.[^au]
+The strict harness paper found the same flaw in earlier harness-evolution work.
+
+## The gate counts incidents, not calls
+
+The gate returns one of five decisions, counts the independent units you declare (otherwise each execution cell counts), which we declare before anyone sees a score, and needs 20 paired observations before it can establish a mean effect on a continuous score; with fewer units, a required dimension is reported as not evaluated, not passed.
+The decisions:
 
 ```text
-candidate code can produce behavior
-candidate code cannot rewrite the gate that promotes it
+ship | hold | need_more_work | model_ceiling | arch_ceiling
 ```
 
-If the product needs to evolve the evaluator, that change must be a separate candidate with its own test set, owner, and review.
-Otherwise the same system can lower the bar and declare itself improved.
+It also separates missing evidence from a measured failure, which tells you whether to run more cases or rethink the change.[^er]
 
-In CI, the regression gate applies this rule. The candidate prompt arrives in `CANDIDATE_PROMPT`; the scenarios, judge, and shipped baseline are fixed in the file, and the build fails when the candidate scores lower.
+We count only independent incidents, mapped to units before anyone sees a score.
+Repeating one incident a hundred times supplies one incident.
+Five paraphrases of the same customer complaint are one unit.
+Declaring the grouping first keeps it from drifting toward the answer you want.[^se]
+
+How many is enough? Below 20 paired observations, the gate cannot establish a mean effect on a continuous score, so thin evidence does not pass: a required dimension without enough units is reported as not evaluated, and an observed regression can still hold the gate while that evidence is incomplete.
+Twenty is the minimum for the bootstrap on a continuous score, not a sample-size rule.
+Size the final set from the variance you saw in development and the smallest effect worth shipping.[^au]
+
+## Test the judge against a dumb baseline before it promotes anything
+
+A judge can be gamed, and so can the metric your optimizer chases.
+Before a judge gates promotion, score known-good and known-bad artifacts with it and confirm it separates them.[^er]
+
+Then we try a predictor that does no work.
+We learned this after we had already certified a result on it.
+On one trace set, an analyst was asked to locate the failing step.
+Most cases labeled the final step, so a constant guess of "the last step" beat every prompt we tried, by about three to one.
+
+<Figure n={1} kicker="Trace analyst vs. a constant guess" headline="Always guessing the last step scored 0.568; the LLM analyst scored about 0.180" figure={trivialBaseline} />
+
+We retired that split.
+The pooled result it fed can no longer support a claim about analysis quality.
+
+We also watch more than one number.
+In one campaign, the metric the optimizer chased rose from 0.163 to 0.187 while recall fell from 0.325 to 0.138.[^au]
+
+## No result we have seen shows an optimizer beating a direct edit from the same evidence
+
+To find out for your agent, run three arms on fresh paired units: the unchanged baseline, a direct edit from the same development evidence, and the optimizer.
+Our own archive holds gains, nulls and regressions, and none of it settles the question.[^au]
+A GEPA candidate that won its search then lost 0.0561 micro F1 on fresh agent families, and the gate rejected it.
+One early win came from an optimizer that was handed requirements the baseline prompt lacked.
+No arm tested whether pasting those requirements in by hand did as well.
+The strict harness paper points the same way for harness search: compare against the cheap alternative, not only the old version.
+Whether an optimizer should rewrite your prompt at all is the subject of [the prompt optimization post](/blog/self-improving-stack-prompt-optimization/).
+
+## Proving a change costs more than finding it
+
+We budget for the comparison, not the search.
+In two of our GEPA campaigns, the search was the small line item.
+
+<Figure n={2} kicker="Two GEPA campaigns" headline="Comparing the result cost about 11 times the search in one campaign and 4 times in the other" figure={proofCost} />
+
+The costs we missed were the calls our ledger did not see.
+In one archived run, part of the captured worker cost had no phase attached, and the optimizer's own calls had bypassed the ledger entirely.[^au]
+Route the optimizer and its reflection calls through the same cost ledger as the worker.
+Run a small smoke pass before the full search, and forecast from its observed usage at your current model rates.
+
+## A ship decision is evidence; a person makes it live
+
+No candidate should go live on the gate alone.
+With the default gate, a ship decision says the candidate beat the baseline on held-out cases.
+Re-measure it on a final-test partition, then have someone approve it; activation is a separate step your application takes.
+
+The runtime keeps candidate promotion separate from live activation.[^rt]
+It can re-measure the selected candidate on a final-test partition, and it stops there.
+The knowledge library's promotion example says to call it only after your application approves the measured candidate.[^ak]
+Agent-eval's own optimization example deploys on ship in caller code, so nothing stops you from skipping approval.
+We put an explicit approval in between, and we think your team should too.
+
+```ts
+// Illustration: application-provided names, not a library API.
+const result = await runCycle(candidateSpec)
+if (result.gateResult.decision !== 'ship') return hold(result)
+
+const approval = await requestApproval({
+  diff: result.promotedDiff,
+  evidence: result.gateResult,
+  cost: result.cost,
+  previous: currentSurface,
+})
+if (approval.granted) await activate(result.winnerSurface, approval)
+```
+
+The approval carries the diff, the evidence and the surface it replaces.
+The reviewer sees what will change and what to restore.
+
+## Roll back from the record; there is no undo button for prompts
+
+The optimizer reports the exact selected change as a diff.[^ms]
+Store the surface it replaced yourself, next to the approval and the config hash; rollback needs it.
+For prompts and harnesses, we found no documented one-call rollback.
+Rolling back means activating the stored previous surface through the same approval path.
+Your trace metadata then tells you which runs saw which version.
+
+Knowledge promotions keep more.
+Promoting a run's pages into the shared store writes a record with the source run, every page digest, the actor, the reason and the time.
+Promoting a candidate checks the original base hash and rejects a stale candidate instead of overwriting newer work.
+Knowledge tools keep write history by default, but do not count on it: an application can turn it off, and lower-level writers keep it only when they opt in.
+Where it is retained, the before and after snapshots can be inspected or restored.[^ak]
+
+## Block the merge on the score and on the path
+
+The smallest useful CI gate runs the shipped prompt and the candidate on the same scenarios, with the same judge, each in a fresh sandbox.
+It exits nonzero when the candidate scores lower.
 
 <Example path="evals/regression-gate" />
 
-The output is two means and an exit code. It proves that the candidate does not score lower on these two cases under one judge. It does not prove production gain; two cases are a smoke test, not a holdout set.
+In this run both prompts passed both cases, so the build passed.
+A score can hold steady while the agent takes a worse route through its tools.
+For that, add a trace contract and run it in CI.
+It reports pass, fail or error per rule, with the spans that broke it.[^er]
 
-The [evaluation gates article](/blog/self-improving-stack-evaluation-gates) describes paired holdout comparisons, deterministic checks, cost limits, and judge calibration.
-The [governance article](/blog/self-improving-stack-governance) explains why the control surface must remain outside the optimized surface.
+We treat a check this size as a regression catch on known cases.
+It is not the held-out gate, and a candidate that passes it still goes through the comparison and the approval above.
 
-## What the public Tangle runtime shows
+If we were starting again, we would build capture and the CI gate first.
+Add the analyst only after you have measured it on labeled traces.
+Let an optimizer write candidates only once it has beaten a direct-edit arm on fresh incidents, and keep the approval even then.
 
-The public [Tangle agent-runtime repository](https://github.com/tangle-network/agent-runtime) describes one runtime used for chat turns, one-shot tasks, teams, and agent improvement.
-Its README separates the execution loop from the scoring and shipping decision provided by [agent-eval](https://github.com/tangle-network/agent-eval) and from sandboxed execution.
-`providerAsSandboxClient` sets the harness in the default profile. `box.streamPrompt` yields `result` and `done` events, and `done` carries `totalCostUsd`.
+## How we tested
 
-<Example path="runtime/any-cloud" />
+We wrote nothing new to measure for this post. Every claim comes from a document or a recorded run, read on 17 Nov 2026:
 
-The output is the final answer and one cost line: the harness is a profile field, and the run is metered. It does not show a changed harness scores better; the regression gate above does.
+- agent-eval: the [README](https://github.com/tangle-network/agent-eval), [feedback trajectories](https://github.com/tangle-network/agent-eval/blob/main/docs/feedback-trajectories.md), [trace analysis](https://github.com/tangle-network/agent-eval/blob/main/docs/trace-analysis.md), [multi-shot optimization](https://github.com/tangle-network/agent-eval/blob/main/docs/multi-shot-optimization.md), [statistical evidence](https://github.com/tangle-network/agent-eval/blob/main/docs/statistical-evidence.md), and the archived [2026-09-13 self-improvement evidence audit](https://github.com/tangle-network/agent-eval/blob/main/archive/2026-09-13-self-improvement-evidence-audit.md).
+- The [agent-runtime README](https://github.com/tangle-network/agent-runtime) and the [agent-knowledge README](https://github.com/tangle-network/agent-knowledge), both from `main`.
+- Papers: [AHE, arXiv 2604.25850](https://arxiv.org/abs/2604.25850); [RHO, arXiv 2606.05922](https://arxiv.org/abs/2606.05922); [RE, arXiv 2607.12227](https://arxiv.org/abs/2607.12227); [TRAIL, arXiv 2505.08638](https://arxiv.org/abs/2505.08638).
 
-The public README also exposes a simple improvement shape.
-The following is an illustration, not runnable code; `baseProfile`, `executionRef`, `method`, `findings`, the scenario sets, `judge`, and `runProfile` are application-provided.
+The two examples ran on production on 2 Nov 2026, both with exit 0:
 
-```text
-import { improve } from '@tangle-network/agent-runtime'
+| Example | Model | Cases | Printed result | Reported usage |
+| --- | --- | --- | --- | --- |
+| evals/compare-harnesses | glm-5.3 | 3 tagged tests | `claude-code 1`, `codex 1` | $0.1918 |
+| evals/regression-gate | glm-5.3 | 2 tagged tests | `{ shipped: 1, candidate: 1 }` | $0.1818 |
 
-const result = await improve(baseProfile, {
-  surface: 'prompt',
-  executionRef,
-  method,
-  findings,
-  trainScenarios,
-  selectionScenarios,
-  testScenarios,
-  judges: [judge],
-  agent: (candidateProfile, scenario, ctx) =>
-    runProfile(candidateProfile, scenario, ctx),
-  runDir: 'support-prompt',
-  costCeiling: 25,
-})
+The audit numbers come from campaigns in June and August 2026. They are historical runs, not a re-run, and the audit itself made no paid calls. Its per-observation costs are labeled estimated, not provider-billed.
 
-if (result.decision === 'ship') {
-  activate(result.candidate.profile)
-}
-```
+[^ft]: agent-eval, docs/feedback-trajectories.md: "What To Store", "Split Discipline" and "Optimization Loop". The escalation order is the guide's recommended pattern, not an enforced sequence.
+[^ta]: agent-eval, docs/feedback-trajectories.md and docs/trace-analysis.md. The analyst-measurement list is from trace-analysis.md, which also asks for failures, calls, tokens, cost and latency.
+[^trail]: TRAIL, arXiv 2505.08638: 148 human-annotated traces; "the best Gemini-2.5-pro model scoring a mere 11%". Later models were not in that evaluation.
+[^rt]: agent-runtime README: the profile fields and "keeps candidate promotion separate from live activation"; "Search and activation remain detached."
+[^ahe]: Agentic Harness Engineering, arXiv 2604.25850, abstract. The authors' own results.
+[^rho]: Evolving Agents in the Dark, arXiv 2606.05922, abstract. The authors' own results, one round.
+[^re]: Rethinking the Evaluation of Harness Evolution for Agents, arXiv 2607.12227. The negative result is on Terminal-Bench 2.1; the long-horizon results were +80% on ARC-AGI-3 and +11% on EdgeBench at matched budgets.
+[^ms]: agent-eval, docs/multi-shot-optimization.md and the README section on automated improvement. The final-evidence option binds a fresh confirmation to a shared ledger, request ID and evaluator digest.
+[^er]: agent-eval README: gate decisions, evaluator audits with known good and bad controls, and trace contracts (also available as a CI command).
+[^se]: agent-eval, docs/statistical-evidence.md, on independent units. The doc says its 20-observation rule "does not establish statistical power or representative sampling".
+[^au]: agent-eval archived evidence audit, 13 Sep 2026. The reused holdout was in the June extraction run's SkillOpt entry; the audit notes this does not prove every GEPA gain there was false. Its recommendation: "Estimate final sample size from development variation and the desired practical effect ... do not substitute repeated calls or a universal 20-unit floor."
+[^ak]: agent-knowledge README: promotion records under the shared knowledge directory (from promoting run-scoped pages), the stale-base check (from promoting a knowledge candidate), and history snapshots under the history directory. Lower-level writers opt into history explicitly; applications can disable it.
 
-This snippet follows the repository’s public README shape. It is not a product integration: the application supplies the profile, method, scenarios, judge, agent adapter, and activation path. Improvement is a measured candidate operation, so the live agent does not rewrite itself in place.
-
-When the changed surface is harness code, run the code in an isolated workspace, record the exact change, execute the real backend, and evaluate the resulting behavior against the frozen baseline.
-
-## The research lineage
-
-The [Gödel machine paper](https://arxiv.org/abs/cs/0309048) describes a self-referential solver that rewrites its own code after proving a utility improvement.
-Practical systems usually replace proof with empirical evaluation.
-
-[FunSearch](https://www.nature.com/articles/s41586-023-06924-6) made the evaluator-driven pattern concrete for LLM-generated program search.
-[AlphaEvolve](https://arxiv.org/abs/2506.13131) extends the idea toward broader code and algorithm search with automated feedback.
-[OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve) provides a public implementation to inspect.
-The [Darwin Gödel Machine paper](https://arxiv.org/abs/2505.22954) studies an archive of self-improving coding agents that edit and validate descendants.
-
-These systems benefit from a bounded search domain with an executable evaluator.
-Production agent harnesses are harder because the objective includes user intent, external tools, privacy, permissions, latency, and a release process that cannot be allowed to mutate freely.
-
-## A harness variant should make a visible prediction
-
-Do not start with “make the harness smarter.”
-Start with a testable hypothesis.
-
-| Hypothesis | Structural change | Falsification |
-| --- | --- | --- |
-| Retrieval failures come from missing source spans | Capture raw retrieval inputs and selected spans | No reduction in missing-source failures |
-| Reviewers miss deterministic failures | Run executable checks before semantic review | Hard failures remain unchanged or cost exceeds limit |
-| Parallel workers corrupt each other’s work | Isolate workspace and state per branch | Conflicts persist in isolated runs |
-| The winner rule rewards style | Replace it with a deterministic artifact check | Quality does not fall when style cues are removed |
-| Retries hide provider failures | Record backend status and fail incomplete rows closed | False agent failures disappear |
-
-The prediction makes the candidate useful even when it loses.
-A failed hypothesis tells the next search which mechanism did not cause the observed result.
-
-## Profiles and traces keep comparisons honest
-
-The profile is the identity of the run conditions.
-It should capture the model, prompt, tools, skills, permissions, runtime topology, harness revision, and evaluator identity that can affect behavior.
-
-If the candidate changes three of those at once, the score cannot attribute the gain to one mechanism.
-If the candidate changes a harness but the profile still says “baseline,” the comparison record is incomplete.
-
-The trace should connect the profile to every child branch, tool call, artifact, validator, and final decision.
-An **execution span** is one timed operation in that trace.
-OpenTelemetry’s [trace model](https://opentelemetry.io/docs/concepts/signals/traces/) gives the parent and child span vocabulary.
-Agent traces need domain fields on top: task identity, profile identity, tool arguments, artifact hashes, evaluator results, and cost.
-
-## Keep service deployment controls outside candidate promotion
-
-If the evolved harness runs inside a Tangle Blueprint service, the Blueprint, its Service, the operator, and the Router do not prove that an internal harness variant is safe.
-
-An **x402** payment and an **attestation** (signed evidence about code and hardware in a trusted execution environment) prove payment and code identity, not a correct harness result.
-The evaluator still needs the trace, deterministic checks, and task evidence.
-
-This is also why a harness candidate should not silently change payment, permissions, or isolation mode.
-Those are separate risk dimensions that belong in the profile and the promotion packet.
-
-## Failure modes after the harness evolves
-
-**Evaluator capture** happens when the candidate learns the judge or test adapter.
-
-**Trace regression** happens when the new path is faster because it records less.
-
-**Isolation leakage** happens when branches share files, credentials, memory, or browser state.
-
-**Lineage loss** happens when a merged candidate cannot identify which parent or hypothesis produced a change.
-
-**Backend confusion** happens when provider failures are scored as model failures.
-
-**Rollback gap** happens when the candidate can be measured but not safely activated or removed.
-
-**Complexity debt** happens when the new mechanism adds more failure modes than it removes.
-
-Measure the new branch count, latency, operator work, and failure surface.
-If the simpler baseline performs as well, keep the simpler baseline.
-
-## When to evolve the harness
-
-Evolve the harness when the trace shows that the current system cannot:
-
-- Execute the requested tool or worker.
-- Isolate mutable state.
-- Enforce a validator or budget.
-- Capture enough evidence to diagnose failure.
-- Replay a critical step.
-- Compare candidates on the same profile.
-- Stop unsafe or wasteful child work.
-
-Do not evolve it merely because a prompt feels inelegant.
-The [optimization theory article](/blog/self-improving-stack-optimization-theory) explains how to choose the causal mutable surface.
-
-Every optimizer searches a representation.
-Prompt search explores strings.
-Skill search explores reusable procedures.
-Runtime search explores execution shapes.
-Harness evolution explores the code that defines actions, observations, checks, records, and candidate lifecycle.
-
-When the current representation cannot express the desired move, widen the representation first.
-Then freeze the gate, isolate the candidate, capture the trace, and let the mechanism compete against a hard baseline.
-
-
-## What is harness evolution?
-
-Harness evolution changes the software around the model, such as tool adapters, drivers, validators, trace capture, replay, isolation, and candidate release flow.
-
-## How do I know a prompt is not enough?
-
-Look for a missing or unenforced action in the trace.
-If the runtime has no tool, worker, workspace, check, or record needed for the behavior, prompt changes cannot create it.
-
-## Does harness evolution mean rewriting the whole system?
-
-No.
-The best change is often one missing adapter, one hard validator, one trace field, or one isolation boundary.
-Change the smallest mechanism that can produce and prove the desired behavior.
-
-## What should be protected from the candidate?
-
-Protect the holdout cases, evaluator implementation, release policy, credentials, shared state, and activation path.
-The candidate may propose a change, but an external control process should decide whether it persists.
-
-## What is the minimum proof before a large search?
-
-Run one cheap smoke candidate through the real backend, confirm that traces and artifacts are captured, and verify that the release gate can reject it.
-Only then spend on a larger population or long campaign.
-
-## Primary sources
-
-- [Tangle agent-runtime](https://github.com/tangle-network/agent-runtime)
-- [Tangle agent-eval](https://github.com/tangle-network/agent-eval)
-- [Gödel Machines](https://arxiv.org/abs/cs/0309048)
-- [FunSearch](https://www.nature.com/articles/s41586-023-06924-6)
-- [AlphaEvolve](https://arxiv.org/abs/2506.13131)
-- [Darwin Gödel Machine](https://arxiv.org/abs/2505.22954)
-- [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)
-- [OpenTelemetry traces](https://opentelemetry.io/docs/concepts/signals/traces/)
-- [OpenAI harness engineering](https://openai.com/index/harness-engineering/)
-- [How Cognition uses Devin to build Devin](https://cognition.com/blog/how-cognition-uses-devin-to-build-devin)
+<FigureNotes figures={harnessEvolutionFigures} />

@@ -1,13 +1,75 @@
 ---
-// One benchmark chart in the page grid: its title, then the plot from @tangle-network/charts. A figure that refuses its data stops the build.
+// A figure from @tangle-network/charts, drawn on the server. A figure that refuses its data stops the build.
+// With `title` it is one chart in the benchmark grid. With `n` it is a numbered figure in a post: a kicker naming its
+// source and the author's headline, then the charts caption (status, period, unit), the plot with values on the marks,
+// the source links (one of them to note n) and the data. `FigureNotes` prints note n at the end of the post.
 import { isRefusal, renderFigure, type Figure, type Refusal } from '@tangle-network/charts';
+import '@tangle-network/charts/figure.css';
 import { drawnWidth } from '../data/benchmarks/grid';
-interface Props { title: string; figure: Figure | Refusal; span?: number; note?: string }
-const { title, figure, span = 4, note } = Astro.props;
-if (isRefusal(figure)) throw new Error(`${title}: ${figure.refused}`);
+type Props =
+  | { figure: Figure | Refusal; title: string; span?: number; note?: string; n?: never }
+  | { figure: Figure | Refusal; n: number; kicker: string; headline: string; title?: never };
+const props = Astro.props;
+const { figure } = props;
+const label = props.title ?? props.headline;
+if (isRefusal(figure)) throw new Error(`${label}: ${figure.refused}`);
+if (props.n !== undefined && !figure.sources?.some((s) => s.href === `#note-${props.n}`)) {
+  throw new Error(`${label}: a post figure links its measurement note (#note-${props.n}) from its sources.`);
+}
 ---
-<section class="chart" style={`--span:${span};--drawn:${drawnWidth(span)}px`}>
-  <h2>{title}</h2>
-  <Fragment set:html={renderFigure(figure, 1, { presentation: 'panel' })} />
-  {note && <p class="chart-note">{note}</p>}
-</section>
+{props.n === undefined ? (
+  <section class="chart" style={`--span:${props.span ?? 4};--drawn:${drawnWidth(props.span ?? 4)}px`}>
+    <h2>{props.title}</h2>
+    <Fragment set:html={renderFigure(figure, 1, { presentation: 'panel' })} />
+    {props.note && <p class="chart-note">{props.note}</p>}
+  </section>
+) : (
+  <div class="post-figure" role="group" aria-labelledby={`fig-${props.n}-head`}>
+    <p class="post-figure-kicker"><span>Figure {props.n}</span> {props.kicker}</p>
+    <p class="post-figure-head" id={`fig-${props.n}-head`}>{props.headline}</p>
+    <Fragment set:html={renderFigure(figure, props.n, { presentation: 'chart' })} />
+  </div>
+)}
+
+<style>
+  .post-figure {
+    --chart-canvas: var(--longform-figure);
+    margin: 2.25rem 0;
+    padding: 1.1rem 1.25rem 0.9rem;
+    background: var(--chart-canvas);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    font-family: var(--font-sans);
+    break-inside: avoid;
+  }
+  @media (min-width: 60rem) {
+    .post-figure { margin-inline: -3rem; }
+  }
+  @media (max-width: 40rem) {
+    .post-figure { margin-inline: -0.5rem; padding: 0.9rem 0.75rem 0.75rem; }
+  }
+  .post-figure-kicker {
+    margin: 0 0 0.35rem;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .post-figure-kicker span { color: var(--accent-text); font-weight: 600; margin-right: 0.4rem; }
+  .post-figure-head {
+    margin: 0 0 0.75rem;
+    font-family: var(--font-display);
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+  }
+  /* Room for axis labels wider than the plot's left gutter: the plot scrolls, so its padding is what keeps them in view. */
+  .post-figure :global(.tgc-wide), .post-figure :global(.tgc-narrow) { padding-left: 1rem; }
+  /* A phone render a little wider than the card scales to fit instead of scrolling. */
+  .post-figure :global(.tgc-narrow svg.tgc-vertical) { min-width: 0 !important; max-width: 100%; height: auto; }
+  .post-figure :global(.tgc-data > summary) { font-size: var(--font-size-sm); }
+</style>

@@ -3,17 +3,21 @@ import { createComputeSdkProvider } from "@tangle-network/agent-provider-compute
 import { providerAsSandboxClient } from "@tangle-network/agent-runtime/kernel";
 import { compute } from "computesdk";
 
-// ComputeSDK picks the cloud, E2B here; the model still goes through the Tangle Router on your key.
-compute.setConfig({ provider: e2b({ apiKey: process.env.E2B_API_KEY }) });
-const provider = createComputeSdkProvider({ compute, router: { key: process.env.TANGLE_API_KEY! } });
-
-// The same profile as on Tangle: "claude-code", "codex", "opencode" or "pi".
-const client = providerAsSandboxClient(provider, {
-  defaults: { profile: { name: "repo-reader", harness: "claude-code" } },
+compute.setConfig({ provider: e2b({ apiKey: process.env.E2B_API_KEY! }) });
+const provider = createComputeSdkProvider({
+  compute,
+  router: { key: process.env.TANGLE_API_KEY! },
 });
+
+const client = providerAsSandboxClient(provider);
+const model = process.env.TANGLE_MODEL;
+if (!model) throw new Error("Set TANGLE_MODEL to a model your Router key can use.");
 
 const box = await client.create({
   git: { url: "https://github.com/tangle-network/sandbox-demo" },
+  backend: {
+    profile: { name: "repo-reader", harness: "claude-code", model: { default: model } },
+  },
 });
 try {
   const task = "Read this repository. In two sentences, say what it does.";

@@ -1,10 +1,10 @@
 ---
-title: 'AI Agent Evaluation: Output Decay Is Weak Evidence'
+title: 'AI Agent Evaluation Noise: Ties, pass@k vs pass^k, and Trace Signals That Fire by Chance'
 slug: ai-agent-evaluation-output-decay-noise
 summary: >-
-  Three shrinking model responses are weak evidence of agent decay; five calls plus a 60% endpoint make this behavioral check harder to fool today.
+  A tied score, a few reruns, one passing test or an unchecked judge can each look like a reason to ship a coding agent. Learn why each can mislead, how to work out a signal's chance rate, and what to require before one picks a release.
 date: '2026-08-09'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - agent-eval
@@ -17,303 +17,192 @@ seriesOrder: 2
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { chance, evalNoiseFigures, evalNoisePassK, ties } from '../../data/blog/ai-agent-evaluation-output-decay-noise'
 
-An agent trace is a time-ordered record of model calls, tool use, and outputs.
-One public regression test reported three model-call outputs of 784, 700, and 646 tokens in that trace.
-An automated check labels the run “output-length decay” with full confidence.
-That label sounds precise, but the three values can appear in decreasing order by chance about one time in six when their distinct values are otherwise random.
+We shipped a trace check that flagged "output-length decay" whenever three serial model calls each returned less than the one before.
+Three numbers in random order fall that way about one time in six.
+Our check was reporting noise as a finding.
+We have since found the same flaw in other numbers teams ship on: a tie at 100% on three tasks, a pass on the one test you filtered for, and a judge score nobody checked.
+Before any of them picks a release, work out how often it would show up by chance.
+Then count independent tasks rather than reruns, require a paired win rather than a tie, run the whole suite, and check the judge against a person.
 
-The public fix in [agent-eval's regression change](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089) raises the bar to five serial calls and requires the last output to be no more than 60% of the first.
-That change does not prove that a model is losing capability.
-It makes a behavioral check less willing to turn a common trace shape into a confident finding.
+## Our decay check would fire on one random three-call sequence in six
 
-[agent-eval](https://github.com/tangle-network/agent-eval) is Tangle's public TypeScript toolkit for running agents on representative cases, scoring results, comparing candidates, and analyzing traces.
-On Tangle sandboxes, `defineAgentEval` runs each case on its own machine, and its `evaluate({ surface })` returns `aggregates.byJudge` for one model or prompt.
-The reader observes an exit code per case and a mean pass rate per surface.
-This post uses one of agent-eval's public behavioral metrics to show how an evaluation instrument should set its evidence boundary.
+The idea behind the check was reasonable.
+In a long agent loop, if inputs keep growing while outputs keep shrinking, the model may be running out of room to do the work.
+The rule looked for that shape across three calls.
 
-If you are building an AI agent evaluation system, copy the reasoning rather than a project-specific implementation: use enough observations that direction alone is uncommon, require a material endpoint change, and report the result as a signal that needs interpretation.
+The input half of the rule carried almost no information.
+A serial agent loop resends the conversation and tool results on every call, so input grows by construction.
+That left output direction alone, over three values.
+Three distinct values have six orderings, and one of them is strictly decreasing.[^order]
 
-A behavioral check is an instrument.
-An instrument can be useful while still producing false alarms, and once the alarm drives a release decision, the false alarm is part of the product behavior.
+One run made the cost concrete.
+Its output length went from 784 to 646, an 18% drop.
+The check reported decay, and it was noise.
 
-## What an output-length check is trying to notice
+We fixed it in [agent-eval](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089).
+The check now needs at least five serial calls.
+No call may return more than the one before it, and the last must be at most 60% of the first.[^ties]
+At five calls, direction alone happens by chance in under 1% of random orderings.
+The 60% condition then rejects shallow drift that happens to point downhill.
 
-A **trace** is a time-ordered record of one agent run: model requests, tool calls, tool results, errors, retries, and the final response.
-A **behavioral check** is a small rule that reads observable trace events and asks whether their shape resembles a known operating problem.
-It watches a measurable proxy and emits a signal when the proxy crosses a boundary.
+<Figure n={1} figure={chance} kicker="agent-eval · output-length decay rule" headline="Direction alone fires 1 time in 6 at three calls and under 1% at five" />
 
-The output-length check watches the model calls in one serial sequence.
-For each call it records an input length and an output length, then asks two questions: did the input grow, and did the output shrink in the same direction?
+We left one gap open, and you should know about it.
+The analyst's written finding still describes the old rule: "at least 3" calls, with no 60% condition.
+Until [that issue](https://github.com/tangle-network/agent-eval/issues/1291) is fixed, the text you read in a finding is looser than the rule that produced it.
 
-Growing input can be consistent with accumulating context in a long agent loop.
-Shrinking output can be consistent with a late-stage model that has less room to finish useful work.
-Together they might deserve attention.
-Neither pattern alone establishes that the agent degraded.
+The lesson we took is narrow and it generalizes.
+For any automated signal, write down what it would look like on random data, and compute how often it fires there.
+If you cannot, the signal is not ready to gate anything.
 
-The [OpenTelemetry GenAI span conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) draw the same boundary.
-They record token counts as span properties, which help reconstruct a run, but a recorded token count is not a diagnosis.
+## A tie at the ceiling cannot pick a release
 
-## Why three decreasing values are weak evidence
+A "candidate scores at least as high as shipped" rule cannot choose between two arms that tie or sit within a task or two of each other.
+What to do instead:
 
-Suppose three output lengths are distinct and can arrive in any order.
-There are six possible orderings.
+- **Know what the rule does on a tie.** It ships the candidate by default. Our recorded gate ran two tasks with one trial each, printed a pass rate of 1 for both prompts, and exited 0.
+- **Treat the gate as a floor check.** It can block an obvious regression. It ranks nothing.
+- **Require a paired win.** Compare the arms task by task, and ship only when the interval on that difference excludes zero. A zero-width interval cannot establish improvement.
+- **No such win means no winner yet.** Add independent tasks and more trials per task before you declare one, using tasks the shipped version sometimes fails.
 
-| Ordering of three distinct values | Counted as decreasing? |
-| --- | ---: |
-| largest, middle, smallest | yes |
-| largest, smallest, middle | no |
-| middle, largest, smallest | no |
-| middle, smallest, largest | no |
-| smallest, largest, middle | no |
-| smallest, middle, largest | no |
-
-Only one of the six orderings is strictly decreasing.
-Under this simple random-order model the chance is `1 / 6`, about 16.7%.
-
-The model is deliberately simple.
-Real outputs are not independent rolls, lengths often tie or hit a bound, and serial calls share context.
-So `1 / 6` is not a false-positive rate for every trace.
-It shows how little a three-value direction test can establish.
-The [NIST Engineering Statistics Handbook discussion of runs tests](https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm) makes the same point: an ordered pattern is judged against a model of randomness and the amount of data observed.
-
-The old check also paired output decrease with monotonic input growth.
-In a serial loop, later calls usually include the earlier conversation, tool results, and accumulated instructions, so input growth is a structural consequence of the loop, not independent confirmation.
-The [linked change](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089) says so: context accumulation makes the input-growth guard largely structural evidence.
-
-The concrete false alarm: output lengths 784, 700, and 646 decrease strictly, so the old rule fired.
-The endpoint keeps `646 / 784`, about 82.4%, of the first output, from only three observations.
-The check still reported a full-confidence finding.
-The change turned this sequence into a regression fixture that must be rejected, so a later refactor cannot quietly reintroduce the false alarm.
-
-## Five calls change the direction question
-
-For five distinct values there are `5!`, or 120, orderings, and only one is strictly decreasing.
-Under the same model a five-call decrease has probability `1 / 120`, about 0.83%, below the 1% threshold that makes a signal defensible.
-
-The public implementation adds a second condition.
-A signal now needs both properties:
-
-1. At least five calls belong to the serial sequence.
-2. Every output length is no greater than the previous one, and the last is at most 60% of the first.
-
-The second condition guards against shallow drift.
-Outputs of 100, 95, 90, 85, and 80 decrease, but the endpoint keeps 80% of the first output, so the rule rejects them.
-Outputs of 100, 90, 80, 70, and 60 meet the endpoint exactly and pass, which is evidence about this proxy, not proof that the model failed.
-
-The [public regression tests for the change](https://github.com/tangle-network/agent-eval/blob/b44898e419af67315c5083e68710ec72e9ee0089/src/trace-analyst/behavioral-metrics.test.ts) encode both rejected shapes: the observed three-call 784-to-646 run and the five-call 100-to-80 run.
-They also keep five-call sequences that reach the boundary, so the signal stays testable rather than disabled.
-
-The reusable pattern: name the shape that caused the false alarm, add it as a regression case, and encode the smallest extra condition that separates it from the named failure.
-
-## Why “full confidence” needs a higher bar
-
-Confidence measures evidence strength.
-A confidence-1.0 finding tells a reader the observed shape is hard to get without the named problem.
-The old rule did not earn that: one in six distinct triples decreases even when outputs are unrelated, and the input-growth condition adds nothing in a loop that already grows its inputs.
-
-The fix makes a narrower promise.
-Five calls make direction alone uncommon under the toy model, and the 60% endpoint blocks shallow trends.
-
-The [NIST Statistical Test Suite](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) shows the right separation: a statistic is distinct from the interpretation of that statistic, and the analyst states the assumptions.
-An evaluator should record the same separation.
-
-Store the sequence length, the first and last output lengths, the model and provider, the sequence boundary, and whether any usage values were missing.
-Without those fields a reviewer cannot tell a real five-call sequence from three calls grouped by accident with an unrelated retry.
-
-Calibrate the check on traces where the task converges normally, traces with a forced response cap, traces with retries, and traces with missing usage.
-Count how often it fires in each group.
-That does not give a universal false-positive rate, but it shows whether the signal mostly detects a transport or prompt convention.
-
-## A runnable toy check
-
-This TypeScript program models the rule.
-It is not a copy of the evaluator's code.
-It checks the minimum call count, the monotonic decrease, and the endpoint, then prints the result.
-
-Save it as `output-decay.ts` and run it with `npx --yes tsx output-decay.ts`.
-
-~~~typescript
-import assert from 'node:assert/strict'
-
-function isOutputDecay(lengths: number[]): boolean {
-  if (lengths.length < 5) return false
-  if (lengths.some((length) => !Number.isFinite(length) || length <= 0)) return false
-
-  const decreasesEveryTime = lengths.every((length, index) => {
-    return index === 0 || length <= lengths[index - 1]!
-  })
-  const endpointIsMaterial = lengths.at(-1)! <= lengths[0]! * 0.6
-
-  return decreasesEveryTime && endpointIsMaterial
-}
-
-const observedFalseAlarm = [784, 700, 646]
-const shallowRun = [100, 95, 90, 85, 80]
-const materialRun = [100, 90, 80, 70, 60]
-
-assert.equal(isOutputDecay(observedFalseAlarm), false)
-assert.equal(isOutputDecay(shallowRun), false)
-assert.equal(isOutputDecay(materialRun), true)
-
-console.log({
-  observedFalseAlarm: isOutputDecay(observedFalseAlarm),
-  shallowRun: isOutputDecay(shallowRun),
-  materialRun: isOutputDecay(materialRun),
-})
-~~~
-
-The expected output is:
-
-~~~text
-{
-  observedFalseAlarm: false,
-  shallowRun: false,
-  materialRun: true
-}
-~~~
-
-The assertions make both historical false-positive shapes fail loudly if the rule changes.
-The program computes no p-value and models no correlated outputs, ties, retries, or different models.
-
-## Compare models on the same cases
-
-The toy check reads one trace.
-It cannot say whether a score change came from the model, the prompt, or the case mix.
-`compare-models` answers that by holding the cases, harness, and judge fixed and changing only the model.
-Each case gets a fresh sandbox (`client.create`), the agent runs the fix (`box.prompt`), and `box.exec` runs that case's test, so the exit code is the score.
-`evaluate({ surface })` runs the cases for one model, and `aggregates.byJudge.suite.mean` is its pass rate.
-
-This version runs `glm-5.3` against `gpt-5.4-mini`. It is typechecked against the published packages, not run on production.
-
-```ts
-import { Sandbox } from "@tangle-network/sandbox";
-import { defineAgentEval, type Scenario } from "@tangle-network/agent-eval/contract";
-
-const client = new Sandbox({
-  apiKey: process.env.TANGLE_API_KEY!,
-  baseUrl: "https://sandbox.tangle.tools",
-});
-
-// Same cases, same harness, same judge. Only the model changes.
-const evalKit = defineAgentEval<Scenario & { task: string }, number>({
-  scenarios: [
-    { id: "cli-flag", kind: "fix", task: "The test tagged cli-flag fails." },
-    { id: "null-guard", kind: "fix", task: "The test tagged null-guard fails." },
-    { id: "timezone", kind: "fix", task: "The test tagged timezone fails." },
-  ],
-  baselineSurface: "glm-5.3",
-  agent: async (model, scenario) => {
-    const box = await client.create({
-      git: { url: "https://github.com/tangle-network/sandbox-demo" },
-      backend: { type: "opencode", model: { model: String(model) } },
-    });
-    try {
-      await box.prompt(`${scenario.task} Fix the cause.`);
-      return (await box.exec(`npm test -- --test-name-pattern=${scenario.id}`)).exitCode;
-    } finally {
-      await box.delete();
-    }
-  },
-  judge: {
-    name: "suite",
-    dimensions: [{ key: "pass", description: "the tagged test passes after the turn" }],
-    score: ({ artifact }) => {
-      const pass = artifact === 0 ? 1 : 0;
-      return { dimensions: { pass }, composite: pass, notes: "" };
-    },
-  },
-  expectUsage: "off", // the sandbox meters each turn itself
-});
-
-for (const model of ["glm-5.3", "gpt-5.4-mini"]) {
-  const result = await evalKit.evaluate({ surface: model });
-  console.log(model, result.aggregates.byJudge.suite?.mean);
-}
-```
-
-The script prints one line per model with its mean pass rate across the three cases.
-A gap between the two lines is a model effect on these cases, not evidence of decay in one trace.
-Three cases are still few, so a gap of one case is noise until more cases confirm it.
-
-## What the new signal can and cannot tell you
-
-The rule tells you that one serial sequence has a rare-looking, materially shrinking output-length pattern under its assumptions.
-That is triage: it points a reviewer at the late calls, context size, tool results, stop reasons, and model configuration.
-
-It cannot tell you why the outputs shrank.
-The model may have finished early, the prompts may have become more specific, the model may have hit a response limit, the trace may contain retries or a different model, or the output-token field may be measured differently by each provider.
-It also cannot tell you the final answer is wrong.
-Correct workflows can get shorter as the agent converges, and failures can produce long, confident responses.
-Output length is a behavioral proxy, not a quality label.
-
-The [NIST Statistical Test Suite documentation](https://csrc.nist.gov/pubs/sp/800/22/r1/upd1/final) is a reminder that a pattern test needs a stated test family and data assumptions.
-One observed pattern is not a universal claim about a generator, and neither is this check.
-
-The strongest use is two steps: the deterministic check marks a trace for review, then a human or a validated evaluator inspects the evidence.
-That separation matters most when a finding changes which agent version is promoted: at that point the signal is part of the control loop, and its false positives have a cost.
-
-## Gate a candidate prompt in CI
-
-`regression-gate` puts the same comparison into CI.
-It scores the shipped prompt and a candidate on the same cases and exits 1 when the candidate's mean is lower.
-The candidate comes from `CANDIDATE_PROMPT`, so a change can ship through review without changing the harness or the judge.
+Here is the gate most teams write first.
+It scores the shipped prompt and a candidate on the same tasks, and fails CI when the candidate scores lower.
 
 <Example path="evals/regression-gate" />
 
-The gate proves that the candidate passed no fewer cases in this run.
-With two pass-or-fail cases, the mean moves in steps of 0.5, so it cannot detect a small regression.
-Widen the case list before you rely on it for that.
+The rule did what it says.
+It said nothing about which prompt is better.
+With two tasks, the mean can only be 0, 0.5 or 1, so any real difference smaller than a whole task is invisible.
 
-## The decision rule for builders
+We have three recorded comparisons built this way: two prompts, two models and two coding agents.
+Every arm passed every task.
 
-Use an output-length check when you have a specific failure mode in mind, the trace records the needed fields consistently, and a reviewer has a useful action after the signal fires.
-Do not use it as a stand-alone claim that an agent has degraded.
+<Figure n={2} figure={ties} kicker="Recorded eval examples · one trial per task" headline="All six arms of three recorded comparisons scored 100%, so none of them can rank its pair" />
 
-Before shipping a similar check, write down four things.
+A tie at 100% is the worst case for a "candidate is not lower" rule.
+When every score is 1, any resampled interval has zero width.
+agent-eval's [statistical evidence rules](https://github.com/tangle-network/agent-eval/blob/main/docs/statistical-evidence.md) refuse to call that an improvement, and we agree.
+Our tasks were too easy to separate the arms.
 
-| Question | Minimum answer |
-| --- | --- |
-| What is observed? | The ordered output lengths for one defined serial sequence. |
-| Why is the shape unusual? | A stated null model, with the number of observations and the assumptions exposed. |
-| What makes the change material? | An endpoint or effect-size bound tied to the failure you care about. |
-| What happens after it fires? | A review, retry, or experiment that can confirm or reject the signal. |
+Evan Miller's ["Adding Error Bars to Evals"](https://arxiv.org/abs/2411.00640) recommends inference on question-level paired differences.
+When both arms answer the same questions, pairing reduces the standard error of the difference.
+agent-eval scores pass/fail comparisons the same way, as a paired difference per task.
 
-The public change answers the first three for this narrow signal.
-It leaves the fourth to the product, because the detector cannot make that decision.
+If your question is whether a published benchmark score measures what your release needs, that is a different problem; we cover it in [what CodeTraceBench measures and which number should ship your coding agent](/blog/codetracebench-benchmark-measured-wrong-capability/).
 
-If your system cannot provide that follow-up, log the pattern as low-confidence telemetry and do not call it a finding.
+## How many tasks and trials do you need, and which pass number?
 
-For a broader view of why the release rule matters, read [Evaluation Gates: The Rule That Decides Whether an Agent Improves](/blog/self-improving-stack-evaluation-gates).
-For the earlier benchmark boundary, start with [AI Coding Agent Benchmark: What CodeTraceBench Measures](/blog/codetracebench-benchmark-measured-wrong-capability).
-Both ask adjacent questions under the same constraint: a number must measure the decision it feeds.
+The short answer, before the reasons:
 
-## FAQ
+- **Tasks.** Start with 20 to 50 drawn from real failures, as Anthropic's [guide to agent evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) suggests.
+- **Smaller effects need more tasks.** Run a power analysis for the difference you care about. A minimum count is not power.
+- **Count independent groups.** Tasks from one repository move together, so report groups next to tasks.
+- **Trials.** Run several per task, and at least k to estimate pass@k or pass^k. They reduce noise inside a task; they do not add tasks.
+- **Report pass^k when users get one try.** At 75% per trial, pass^3 is 0.75³, about 42%, while pass@3 is about 98%.
 
-### Is three decreasing model outputs proof of agent degradation?
+We think 20 to 50 is the right first target, with the emphasis on drawn from real failures.
+Tasks your agent already passes every time are the ones that produced the ties above.
 
-No.
-For three distinct values, one of six possible orderings is strictly decreasing, so direction alone is common enough to create false alarms.
+How many tasks beyond that depends on the size of the difference you need to see.
+agent-eval refuses a bootstrap interval on a continuous score with fewer than 20 observations, and its docs say plainly that reaching 20 does not establish power.
+Miller recommends a power analysis before the comparison.
+We have not measured how many tasks a typical coding-agent suite needs; the power analysis for your suite answers that.
 
-### Why does the check require five calls?
+Related tasks are not fully independent.
+If ten tasks come from one repository, they tend to pass or fail together.
+Miller recommends clustered standard errors for that case, and in his example they were over three times the naive ones.
 
-Five distinct values have 120 possible orderings, and only one is strictly decreasing under the simple random-order model.
-That makes chance direction alone less than 1%, although real traces can violate the model's assumptions.
+Reruns of the same task help with a different problem.
+Answering each task several times and scoring its mean reduces the noise inside that task, which is Miller's third recommendation.
+Our statistical evidence rules put the limit bluntly: "Repeating one incident 100 times supplies one incident."
 
-### Why require the last output to be 60% or less of the first?
+pass@k asks whether at least one of k trials succeeds.
+pass^k asks whether all k succeed.
+They split fast.
 
-The endpoint condition rejects shallow decreases such as 100 to 80.
-It asks for a material change in addition to a direction that is uncommon in a longer sequence.
+<Figure n={3} figure={evalNoisePassK} kicker="pass@k vs pass^k · worked from Anthropic's 75% example" headline="At 75% per trial, pass@3 reads 98% while pass^3 reads 42%" />
 
-### Does the check prove the model is worse?
+Use pass@k when something downstream can check every attempt and keep a good one, such as a test suite that picks the passing patch.
+Use pass^k when a user or a pipeline takes whatever the agent produces on the first try.
+A coding agent that edits a user's repository is usually in the second case, so pass^k is the number we would put in front of a release.
+Say which one you report.
 
-No.
-It identifies a trace shape worth inspecting, while the cause and the effect on task quality require separate evidence.
+## A passing target test does not show nothing else broke
 
-### Can I use the toy program in production?
+Look at the scoring line in the gate above.
+It runs only the test whose name matches the task, and scores the exit code.
+An agent that fixes that test and breaks three others still scores 1.
 
-Use it for teaching and local tests.
-For production, define your trace schema, missing-data behavior, retries, model boundaries, and follow-up review before treating the signal as an operational control.
+We think every coding-agent eval needs a second check that runs the full suite after the agent's change.
+Score the task as passed only when the target test passes and nothing that passed before now fails.
+A name-filtered check is cheaper, and it cannot see a regression in any other test.
+We wrote our examples with the filter to keep them short; a release gate should not.
 
-Run a same-case comparison such as `compare-models` before you attribute a score change to a model, and gate prompt changes with `regression-gate` before they ship.
-Do not report an output-length check as a finding.
+## Check a judge against a person before it gates a release
+
+Anthropic's advice is deterministic graders where possible, LLM graders where necessary, and human graders for validation.
+Start there, because an LLM judge returns a confident number for anything you hand it.
+This one scores three replies to a refund request against a policy.
+
+<Example path="evals/grade-replies" />
+
+The recorded run gave the policy-following reply 1.00, a reply that wrongly refused a refund 0.25, and a reply that answered nothing 0.55.
+Each composite equals the mean of its two dimensions, so the empty reply scored 1 on honesty and outranked the false refusal.
+Whether that ranking is right is a product decision.
+We would not have caught it from the scores alone; we caught it by reading the replies.
+
+We would add one step from our own mistake.
+The decay check was fully deterministic and would still fire on random noise one time in six.
+Deterministic does not mean calibrated.
+We have not measured how often an LLM judge mis-scores a whole agent trace, so hold a trace judge to the same check.
+
+Before any automated signal gates a release, do two things.
+Have a person grade a sample of the same items, and compare the rankings.
+Then work out, or measure on traces you know are healthy, how often the signal fires when nothing is wrong.
+
+## What to require before a number ships a release
+
+Ship a candidate only when it wins on paired, per-task differences, with an interval that excludes zero.
+The tasks should come from real failures, sit below the ceiling, and count as independent groups.
+Report pass^k if users get one try.
+Each task must pass its target test without breaking the rest of the suite.
+Any judge in the loop needs a known chance rate and a human-checked sample.
+If the comparison is a tie, keep what you shipped, then add harder tasks and more trials before you compare again.
+
+## How we tested
+
+**Decay rule.** The current rule is in agent-eval's [behavioral metrics](https://github.com/tangle-network/agent-eval/blob/main/src/trace-analyst/behavioral-metrics.ts) on main, read on 17 November 2026: a minimum of five calls and a maximum retained fraction of 0.6. The change that replaced the three-call minimum is [the fix commit](https://github.com/tangle-network/agent-eval/commit/b44898e419af67315c5083e68710ec72e9ee0089), dated 31 July 2026. The 784-to-646 run is the one the source comment records as reported decay that was noise; the comment does not give its call count. The analyst's aggregate claim text in agent-eval's behavioral analyst still says "across at least 3 serial model calls" and omits the 60% condition; we filed [agent-eval issue 1291](https://github.com/tangle-network/agent-eval/issues/1291).
+
+**Recorded comparisons.** The regression-gate, compare-models, compare-harnesses and grade-replies examples ran on production on 2 November 2026 with @tangle-network/agent-eval 1.0.12 and @tangle-network/sandbox 1.0.168. The three comparisons used one trial per task (reps 1, seed 42) on 2, 3 and 3 tasks. Their printed output:
+
+```text
+# evals/regression-gate (exit 0)
+{ shipped: 1, candidate: 1 }
+
+# evals/compare-models (exit 0)
+glm-5.3 1
+deepseek/deepseek-v4.1-flash 1
+
+# evals/compare-harnesses (exit 0)
+claude-code 1
+codex 1
+
+# evals/grade-replies (exit 0)
+1.00 { answers: 1, honest: 1 } Sorry about that. Send a photo of the damage and
+0.25 { answers: 0.3, honest: 0.2 } Refunds are not possible, but here is 10% off yo
+0.55 { answers: 0.1, honest: 1 } Thanks for reaching out! We value your feedback 
+```
+
+These are small examples on one demo repository. They show how a rule behaves on a tie; they say nothing about which model, prompt or coding agent is better.
+
+**Statistics.** The pairing, clustering, resampling and power recommendations are from Miller, [arXiv 2411.00640](https://arxiv.org/abs/2411.00640); the "over 3X" clustered-error figure holds for his example. The 20-observation minimum, the zero-width rule and the incident quote are from agent-eval's [statistical evidence doc](https://github.com/tangle-network/agent-eval/blob/main/docs/statistical-evidence.md). The 20 to 50 task guidance, the grader ordering and the 75% example with its roughly 42% pass^3 are from Anthropic's [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents); the 98% pass@3 is our arithmetic from the same rate. All sources read 17 November 2026.
+
+[^order]: The one-in-six figure, and under 1% at five calls (1 in 120), assume distinct values in random order. Real output lengths can tie, hit a response cap or depend on earlier calls, so treat these as the chance rate of the shape, not a measured false-positive rate.
+
+[^ties]: The current rule allows two neighbouring calls to have equal output length; the 60% condition still requires a material drop overall.
+
+<FigureNotes figures={evalNoiseFigures} />

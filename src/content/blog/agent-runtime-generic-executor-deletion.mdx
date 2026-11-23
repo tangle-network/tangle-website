@@ -1,326 +1,271 @@
 ---
-title: 'AI Agent Runtime Architecture: When to Remove a Path'
+title: 'Do you need an agent runtime, or is your own loop enough?'
 slug: agent-runtime-generic-executor-deletion
 summary: >-
-  Delete a second execution path only after the shared route preserves its settings, controls, errors, and trace records.
+  Your tool-calling loop works on a laptop, and production asks for a shell, crash survival, a spend cap and a record of what the agent did. When to keep the loop, when a runtime earns its place, and what ours needs our hosted service for.
 date: '2026-08-01'
-updated: '2026-11-01'
+updated: '2026-11-17'
 author: Drew Stone
 tags:
   - agent-runtime
   - coding-agents
   - ai-infrastructure
   - software-architecture
-series: Agent Runtime Infrastructure
-seriesOrder: 2
+series: 'Agent Runtime Infrastructure'
+seriesOrder: 1
 ---
 
 import Example from '../../components/Example.astro'
+import Figure from '../../components/Figure.astro'
+import FigureNotes from '../../components/FigureNotes.astro'
+import { fleetCap, runtimeOrLoopFigures } from '../../data/blog/agent-runtime-generic-executor-deletion'
 
-Two programs can start the same coding agent and still give its caller different behavior.
-One path may stream progress, preserve tool calls, and accept an interrupt.
-The other may return only a final response.
+An agent runtime is your loop (call the model, run the tools it asks for, repeat until a final message) plus a record that outlives your process.
+Pick the setup by the tools: a run that needs no tool, file or session is one model call; your own loop with no sandbox is enough while every tool is a function you wrote, a hosted connection or an HTTP read, and the run finishes inside one request; and when the run needs a harness, files, a shell or MCP servers, add a sandbox, which your loop can use as its tools.
+Our client places runs by the same rule.
+Adopt a runtime when a run has to survive your process dying, spends money while nobody watches, or runs Claude Code or Codex.
+We build one, agent-runtime, and we would keep a hand-written loop until one of those needs shows up.
 
-Deleting the larger path can remove duplicate code while also removing the only place a user could see what happened.
-Line count is therefore a useful result of cleanup, but a poor reason to begin it.
+## A runtime runs the loop and keeps the record
 
-The question for this change was stricter: could the shared path deliver the settings, controls, errors, and records that made the special path necessary?
-It could for the promised profile behavior and not for several backend-specific controls, and those losses were named.
+Our library exports it as a tool loop, and it stops on a finish, a turn cap, a deadline, a cost limit or a stuck-loop check.
 
-> A second execution path is safe to delete only after the shared path can express the user-visible behavior that matters.
+A framework is a library for writing that loop.
+It gives you prompt templates, tool schemas and step graphs, and it lives and dies with your process.
 
-## Run the shared route on a Tangle sandbox
+A harness is a coding agent that brings its own loop.
+Claude Code, Codex, OpenCode and Pi each decide when to read a file, run a command or stop.
+You hand a harness a task and a machine, and it drives.
 
-The route here is the agent-runtime front door on a Tangle sandbox.
-`providerAsSandboxClient` wraps a provider, and the harness is a profile field, so `claude-code`, `codex`, `opencode` and `pi` all go through the same `client.create` and `box.streamPrompt` calls.
-The stream carries two signals: a `result` event with the final text, and a `done` event with `totalCostUsd`.
+A sandbox is the machine the agent acts on: files, a shell, a git checkout.
+On our service it is a container on the host kernel or a microVM with its own kernel.
+
+The runtime sits around all of them.
+It starts the run on the harness or your loop, in the sandbox, under limits, and records every step and how it ended.
+Restate puts it well: the harness runs the agent loop, and the runtime helps you run and manage it in production.[^restate]
+
+## Your own loop is enough while every tool is your own function
+
+Pick the setup by what the run needs:
+
+- no tool, file or session: one model call;
+- only your own functions, hosted connections or HTTP reads, nothing the model writes gets executed, and the run fits in one request: your own loop, no sandbox;
+- a harness, files, a shell or MCP servers: add a sandbox, which your loop can use as its tools.
+
+A crash there loses one request, and a retry costs one request.
+
+Things change when any of these become true:
+
+- the model writes code and something has to run it;
+- a run lasts longer than the process that started it;
+- the agent spends real money unattended;
+- someone will ask what the agent did, and you need more than a final message;
+- you want Claude Code or Codex, which bring their own loop.
+
+
+## Keep your loop and give it a sandbox
+
+If a shell is all you need, add a sandbox and keep everything else.
+The sandbox SDK hands your Chat Completions loop a tool list and a handler for the assistant's tool calls.
+The model, the loop and the stop rule stay yours.
+
+<Example path="products/worker-loop" />
+
+The agent found the slowest test, 589 ms of an 817 ms suite, and swapped trial division for a square-root bound.
+What the test checks did not change.
+Nothing in that file is agent-runtime.
+If this is the whole job, stop here.
+
+## The loop you keep has to manage its own history
+
+Keeping your loop means keeping its bookkeeping, and the model call is the easy part.
+Every turn re-sends the whole message list, so the request grows with each tool result.
+Past the context window, the call fails.
+
+Prompt caching makes the long history affordable, but only for an unchanged prefix.
+OpenAI and Anthropic both describe caching as reusing the unchanged start of the prompt.[^cache]
+Swap the tools, the model or an early message mid-run, and the whole history is billed again at the uncached rate.
+We infer that from how prefix caching works; we did not measure it.
+
+So a long-running loop needs compaction: summarize older history once it crosses a token threshold.
+Codex has a config key for that threshold, and Claude Code has an auto-compact window.[^compact]
+If you run a harness, it does this for you; if you keep your own loop, you write it.
+
+## Claude Code and Codex are one field in a profile
+
+A harness ships its own loop, compaction included, so the runtime's job is to start it, feed it and record it.
+In agent-runtime the harness is one field in a profile.
+This example runs Claude Code on a hosted sandbox and streams the result and the cost.
 
 <Example path="runtime/any-cloud" />
 
-The output shows the profile reaching the coding program through the shared route, and the route reporting what the run cost.
-It does not show that the answer is correct.
+Change that field to codex and the create call, the stream and the event shapes stay the same.
+Both harnesses stream each tool call as an event and end with a result.
 
-## Start with what the caller can observe
+We ran the same three failing tests, the same model and the same judge through Claude Code and Codex.
+Both passed, one run each.[^harnesses]
+Both ran on GLM 5.3 through our router, which is neither harness's native vendor.
+Read it as proof that the swap works; it says nothing about which agent is better.
 
-An **agent** is a program that uses a language model and tools to complete a task.
-An **agent runtime** is the software that starts, controls, and records that program.
-A **worker** is one running copy of the agent.
-An **execution path** is the route that starts and supervises that worker.
+## A spend cap that stops running turns can still overshoot
 
-An **agent profile** is a saved set of instructions, model choices, tools, permissions, and resources.
-A **trace** is the record of a run's inputs, actions, tool events, outputs, and failures.
+A cap checked after each run only reports money already spent.
+Ours holds while a turn is running:
 
-The special path in this change started Pi directly.
-Pi is a coding-agent program, not a model.
-The shared path used a bridge.
-A **bridge** is an adapter that translates the runtime's worker requests into a remote service request and translates the service's events back.
+- `budgetUsd` is a hard cap the Platform enforces at every charge, mid-turn included;
+- the `costUsd` that `client.run()` reports is model spend only, and sandbox time is billed separately.
 
-A **parent** is the program that starts a worker and decides whether to wait, steer, stop, or restart it.
-Before removing a path, compare the boundary that a caller can see.
-For a coding task, that boundary includes more than the final text.
+A fleet's dollar budget rides on a budgeted key for every turn.
+A refused turn ends with the status budget_exhausted.
+Turns already running are not aborted.
+Each one is refused at its own next charge.[^cap]
+So the hard cap can overshoot by whatever calls were in flight when it was crossed.
+We have not recorded a run that reached the hard cap, so we cannot tell you how large that overshoot gets.
 
-| Capability | Shared path before the change | Why a caller needed it |
-| --- | --- | --- |
-| Live progress | No current activity was available | A parent program could not tell whether to wait or stop |
-| Tool-call records | Tool requests were discarded before the settled trace | A reviewer could not see what the worker asked to run |
-| Mid-run steering | A non-interactive request accepted no new input | A person had to stop and restart to change direction |
-| Provider errors | One failure could look like an empty successful response | A caller could mistake missing work for a valid result |
+The pattern we use is a hard cap well above the number we care about, plus our own soft stop below it.
 
-Without these signals, the parent has to infer state from silence.
-That is where an apparently harmless simplification becomes a behavior change.
+<Example path="fleets/cancel-on-cap" />
 
-## Compare the edges, not the internals
+<Figure n={1} figure={fleetCap} kicker="One fleet, six Claude Code agents" headline="Polling a $1 soft cap every 5 s stopped the fleet at $1.01, far under the $5 hard cap" />
 
-Two execution paths rarely have identical implementations, so parity belongs at the boundary visible to the caller, not in a line-by-line comparison of internal functions.
+The soft cap overshot by one cent because the agents kept spending between polls.
+In another run, four OpenCode agents sharing one sandbox finished their tasks for six cents under a one-dollar budget.
 
-For a coding task, write the comparison as a small contract before changing the route:
+## Reattach to a run by its execution id
 
-| Boundary | Old path must show | Shared path must show |
-| --- | --- | --- |
-| Inputs | The same effective profile and task | The same effective profile and task |
-| Activity | Whether a turn or tool request is in progress | Whether a turn or tool request is in progress |
-| Control | What steering and interruption mean | What steering and interruption mean |
-| Failure | The provider or process error | The provider or process error, without converting it to success |
-| Artifacts | The requested tool, files, and final record | The requested tool, files, and final record |
-| Completion | The terminal state and its reason | The terminal state and its reason |
+A long run on your laptop dies with your laptop.
+Retrying it from the top repeats every side effect.
 
-The comparison should include a task that deliberately visits each boundary.
-For example, start with a profile containing a system prompt, a resource file, and one tool.
-Ask the worker to read the resource, request the tool, and stop after the first response.
-Then repeat with a provider failure and a cancellation.
-The useful output is not two identical transcripts.
-It is a result showing which caller-visible facts survived the route change.
+Ours runs the agent in a hosted sandbox and hands you two ids.
+Dispatch the run when it must continue after the caller disconnects. On our batch streams, disconnecting an unkeyed stream cancels the work, while a keyed run continues.
+The first invocation below creates the box, dispatches the task under a session id you choose, prints the ids and exits.
+A second, separate process uses those ids to collect the result.
 
-This method catches a common false positive.
-Both paths may return the same final sentence for a task that never uses a tool.
-That says little about tool delivery.
-Both paths may return a failure, but one may preserve the provider error while the other returns an empty result.
-The final status matches while the recovery experience differs.
+<Example path="sandboxes/worker" />
 
-The parity record should also name intentional differences.
-If the old path supported immediate mid-turn input and the shared path supports only queued steering, mark that as a changed control contract.
-The product can then decide whether queued steering is acceptable.
-It cannot make that decision if the comparison reports only “both completed.”
+In the recorded run, the first process printed both ids in under seven seconds and exited.
+The second waited 45 seconds more for Codex to finish upgrading the dependencies, then printed the result.
+Dispatching again with the same session id finds the existing session instead of starting a second run.[^dispatch]
+The execution id pins collect and interrupt to that one run.
 
-## Add the shared behavior before deleting code
+That is one run with a 45-second gap, and we have not recorded a longer one.
+agent-runtime also documents how a dead coordinator process resumes from its run directory.
+Its README says an external effect the record leaves unconfirmed is reconciled at that effect's own boundary.
+Your code still owns idempotency at the edge.
 
-The public [bridge implementation](https://github.com/tangle-network/agent-runtime/blob/main/src/runtime/supervise/runtime.ts) now carries the shared observability behavior.
-It reads live progress from a local event mirror and records the OpenAI-shaped tool-call events arriving from the remote stream.
-It does not manufacture tool completion when the stream carries only the model's request.
+## Every tool call is in the stream, and a dead run says why
 
-The resulting shape is easier to reason about:
+The record has two layers.
+The stream gives you each tool call as the agent makes it, with its input, its output and its status.
+It ends with a result carrying the final text, then a done event carrying the run's total cost (`totalCostUsd`), which the any-cloud example above prints.
 
-~~~text
-profile
-  -> delivery contract
-  -> shared bridge
-  -> coding worker
-       -> progress mirror
-       -> requested-tool trace
-       -> remote terminal status
-~~~
+<Example path="sandboxes/watch-an-agent" />
 
-The diagram describes the public source change, not a promise that every provider sends the same events.
-The source can preserve a request when the remote service exposes a request.
-It cannot infer a tool result that never crossed the bridge.
+That run made twelve tool calls.
+The last one ran the test suite.
+The agent's final text reports the timezone test passing and 7 of 9 tests passing; the two still failing, cli-flag and null-guard, fail by design in the demo repository.
+That is the agent's own test run on one attempt, so read it as one result.
 
-The shared path also received the profile behavior that the special path had carried separately.
-The public [runtime changelog](https://github.com/tangle-network/agent-runtime/blob/main/CHANGELOG.md#pi-runs-through-the-bridge-like-every-other-harness) names four important settings:
+The second layer is a report over the trace.
+We asked for a deterministic report on a Claude Code turn that made eight tool calls, and it came back unbilled.
+Its findings were structured claims, each with a severity, a confidence and pointers into the trace.
+They covered compute and egress rather than narrating each call.
 
-| Profile setting | What the shared path does for the coding worker |
-| --- | --- |
-| Reasoning effort | Translates the saved level into the coding program's thinking option |
-| Tools | Applies the saved tool exclusions |
-| Resources | Places saved files and instructions in the run directory |
-| System prompt | Passes the saved instructions to the coding program |
+A run that dies before it produces output reports its cause on the session status: a binary that could not start, or a profile that could not be built.[^failure]
 
-The same saved profile no longer takes one interpretation on a special route and another on the shared route.
+## Agents that share a sandbox share trust
 
-## The deletion changed the capability boundary
+The isolation boundary is the sandbox.
+Agents in one sandbox share a broad trust and resource boundary, so use separate sandboxes for untrusted agents or separate tenants.
+Pick a microVM when you want a separate kernel; a Firecracker request never falls back to a container.
 
-The cleanup removed a special executor, its tool-connection code, and the tests that only exercised that path.
+A fleet policy caps machines, concurrent creates, total CPU and memory, spend and accelerators, and `maxLifetimeSeconds` in the fleet's defaults caps each sandbox's lifetime.
+It is checked before provisioning and does not replace account quotas.
 
-The capability comparison and the named losses answer the useful question: which caller-visible behaviors survived, and which no longer have a channel?
+Your account key controls the whole account, so it never goes to a browser or into a sandbox.
+Mint a scoped token on your server instead; the runtime refuses to inject the account key into a sandbox.
+Keys you do inject can carry a lifetime, after which the runtime removes them.
+Processes already running keep their environment, so removal does not revoke a copy the agent already read; give it keys you can rotate.
 
-After the change, a Pi worker uses the shared bridge like the other supported workers.
-Pi becomes a model or backend choice inside one execution route rather than a separate runtime family that needs a second implementation of every new feature.
+## Start time and price live on pages that change
 
-It also concentrates risk.
-If the bridge later loses a capability, every worker using that bridge sees the loss.
-Shared code reduces divergence only when its contract is explicit and its missing signals are visible.
+We publish sandbox start times on our [benchmarks page](https://tangle.tools/benchmarks/), from a dated window of production test runs.[^bench]
+Sandbox prices are per CPU-core-hour, memory and disk, with a minimum hourly charge, on the [pricing endpoint](https://sandbox.tangle.tools/v1/pricing/sandboxes) and the [pricing section](https://tangle.tools/#pricing).
 
-## Publish the behavior that did not survive
+## What runs without us, and what you lose if you leave
 
-The deletion did not preserve every Pi-specific control.
-A reliable architecture description includes the losses beside the gains.
-A cloud adapter shows the same contract from the other side.
-The E2B adapter runs the same profile as Tangle, with the model on the Tangle Router:
+agent-runtime (`@tangle-network/agent-runtime`) is MIT-licensed on npm and runs in your process; it has shipped seven major versions since 3.0.24 on 1 November, so pin the version.
+The tool loop runs with a scripted model and no credentials.
+Supervised runs keep their record in a directory on your disk.
+Its real-model example calls a model through our router and exits until a router key is set.
+
+These need our hosted service:
+
+- the hard spend cap, because the budget lives on a Platform-minted key;
+- hosted sandboxes, and reattaching to them by execution id;
+- model calls on every provider, which go through our router;
+- trace reports.
+
+We host the sandboxes.
+On-premises hosting is planned and not available today.
+
+You can move the sandbox.
+Swap the Tangle provider for E2B, Daytona or ComputeSDK; the imports and the provider setup change (ComputeSDK also needs its own cloud configured). Daytona also needs a model in the profile, and the turn loop loses its cost line.
 
 <Example path="runtime/any-cloud-e2b" />
 
-What E2B cannot give is refused by name before any E2B call: a custom image, resource sizes, egress modes, snapshots and checkpoints.
-The Pi-specific losses in this change follow the same pattern:
+Those versions are typechecked on every site build but have never run.
+On those clouds the harness still sends its model calls through our router on a per-run key, so the sandbox moves and the model account does not.
+Their events also omit per-run cost, because the dollar figure there is the harness's own catalog estimate.
 
-| Removed capability | Behavior after the deletion |
-| --- | --- |
-| Immediate mid-turn steering | New input arrives after the current non-interactive request, and an interrupt stops the process tree |
-| Per-worker arguments and environment | The shared connection has no per-worker channel, so configure these on the bridge service |
-| Per-worker program override | The shared connection has no field for it |
-| Worker trace propagation through an environment variable | The old row is removed because the shared connection exposes no worker environment channel |
-| Pi-specific tool-connection file | Tool registration belongs to the bridge service, so the runtime no longer writes a Pi-specific file |
+We do not document what happens to a running agent, or to budget enforcement, if our Platform or router is down.
+We do not know yet, and you should plan as if the answer is "the run stops".
 
-They are the conditions under which a team might still need a specialized route.
-If a product depends on per-worker environment variables, deleting the special path is not a neutral cleanup until the product has another way to supply them.
+The agent-runtime examples here ran on version 3.0.24, most of them on 12 November, and we have not rerun them on 10.x.
+Each release carries a conformance manifest that marks every capability as supported, unsupported or unproven.
+Two are unproven today: acknowledging an interaction response, and transferring context.
 
-The right architecture decision can therefore be conditional:
+If you leave, you keep the library, your profiles and your own loop.
+You lose the hard cap, reattach and the hosted traces, and you point each harness back at its usual model vendor.
 
-~~~text
-Keep a special path when it expresses a required capability.
-Remove it when the shared path expresses that capability and records its limits.
-~~~
+## Pick by the first thing your loop cannot do
 
-## A small parity check is better than a large assumption
+Keep your loop while every tool is your own function and a run fits in one request.
+When the model's code needs a shell, add a sandbox as your loop's tools and change nothing else.
+When a run must outlive your process, spend money unattended, or run Claude Code or Codex, adopt a runtime.
+Before you do, run its crash path and its cap against your own task.
 
-The public runtime package is installable with:
+## How we tested
 
-~~~bash
-pnpm add @tangle-network/agent-runtime
-~~~
+Every code block above is a site example rendered byte for byte. Its caption links the production run recorded from those exact bytes, except the E2B example, which is typechecked against the published packages and has never run.
 
-The current [public README](https://github.com/tangle-network/agent-runtime#supervise-a-team-of-agents) shows the runtime passing a profile, task, budget, model route, and backend into one supervision call.
-The important design choice is that the execution location is data supplied to one shared flow rather than a hidden branch that silently changes the profile.
+| Example | Recorded | Packages | Cost reported |
+|---|---|---|---|
+| products/worker-loop | 2026-10-31, exit 0 | sandbox 1.0.134, agent-eval 1.0.9 | none (Router calls in your loop) |
+| runtime/any-cloud | 2026-11-12, exit 0 | agent-runtime 3.0.24, agent-provider-tangle 5.0.5, sandbox 1.0.168 | $0.074 |
+| evals/compare-harnesses | 2026-11-02, exit 0 | sandbox 1.0.168, agent-eval 1.0.12, agent-runtime 3.0.24, agent-provider-tangle 5.0.5 | $0.1918 for both harnesses and the judge |
+| fleets/cancel-on-cap | 2026-10-31, exit 0 | sandbox 1.0.146, agent-eval 1.0.9 | $1.0103 |
+| fleets/under-a-budget | 2026-10-31, exit 0 | sandbox 1.0.134, agent-eval 1.0.9 | $0.0611; spend() returned remainingUsd 0.9389 |
+| sandboxes/worker | 2026-11-12, exit 0 | sandbox 1.0.168 | ids printed at 6.5 s; result collected after 45 s more |
+| sandboxes/watch-an-agent | 2026-11-12, exit 0 | sandbox 1.0.168 | $0.1254; 12 tool calls; 7 of 9 tests passing, `cli-flag` and `null-guard` failing by design |
+| evals/what-did-it-do | 2026-11-12, exit 0 | sandbox 1.0.168 | $0.0119 for the turn; report `billing: { billable: false, costUsd: 0, billedTo: "platform", reason: "deterministic_platform_report" }` |
 
-A parity test for a cleanup like this can be concrete:
+- agent-runtime 3.0.24 was published on 1 November 2026. The examples ran on it between 2 and 12 November, most of them on 12 November. The latest release, 10.0.7, was published on 17 November 2026, seven major versions later. `providerAsSandboxClient` is still exported from `/kernel` in 10.0.7; we have not rerun the examples on 10.x.
+- The worker-loop agent called `glm-5.3` through Tangle Router from a plain `for` loop with `openaiTools(box)`. The slowest test took 589 ms of an 817 ms suite.
+- The harness comparison used the same 3 failing tests, model `glm-5.3` and judge, one run per harness.
+- The cancel-on-cap fleet ran 6 Claude Code agents with `budgetUsd: 5` and a $1 soft cap polled every 5 s; it printed "$1.01 spent", with 2 agents completed and 4 cancelled. No recorded run reached a hard cap.
+- The under-a-budget fleet ran 4 OpenCode agents with `agentsPerSandbox: 4` and `budgetUsd: 1`, and all 4 tasks completed.
+- The automatic placement, dispatch, stream, isolation and credential rules are quoted from the sandbox README. The tool loop, the ways to continue a run, external effects and the conformance manifest are from the agent-runtime README. Both were read on 17 November 2026.
+- The E2B, Daytona and ComputeSDK provider behavior (per-run Router key, `BOX_HARNESSES`, no `usage.cost`) is from the `@tangle-network/agent-provider-cli-bridge` 2.0.16 README.
+- A single cold-start sample on 12 November 2026 measured create 1842 ms, first command 567 ms and delete 872 ms. Use the benchmarks page instead.
 
-~~~typescript
-type ObservableRun = {
-  profile: string[]
-  progressKinds: string[]
-  toolRequests: string[]
-  providerError?: string
-  finalStatus: 'completed' | 'failed' | 'cancelled'
-}
+[^restate]: Restate, ["What is an agent runtime?"](https://restate.dev/what-is-an-agent-runtime). Restate also says these boundaries are not standardized, and we agree.
+[^cache]: OpenAI, [Prompt caching](https://platform.openai.com/docs/guides/prompt-caching): caching "preserves that state for a reusable prefix: the unchanged tokens at the beginning of a prompt". Anthropic, [Prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching): it lets "the API resume from specific prefixes in your prompts".
+[^compact]: Codex `model_auto_compact_token_limit`, the "Token threshold that triggers automatic history compaction" ([config reference](https://developers.openai.com/codex/config-reference)). Claude Code's auto-compact window is "the threshold where Claude Code summarizes older history to free space" ([costs](https://docs.anthropic.com/en/docs/claude-code/costs)). Both have `/compact`.
+[^harnesses]: `evals/compare-harnesses`, recorded 2026-11-02, $0.1918 in total. Model `glm-5.3` through Tangle Router for both harnesses.
+[^cap]: The doc comment on `fleet.run` in the published `@tangle-network/sandbox` 1.0.438 typings: such a turn ends `budget_exhausted`. Sandbox create, resume, session create and model-driving calls past a key's budget answer 402 `KEY_BUDGET_EXHAUSTED`; the SDK raises `KeyBudgetExhaustedError` and never retries it (sandbox SDK CHANGELOG). Fleet policies (`maxMachines`, `maxConcurrentCreates`, `maxTotalCpu`, `maxTotalMemoryMb`, `maxSpendUsd`, `allowAccelerators`) are checked before provisioning and do not replace account quotas.
+[^dispatch]: Sandbox README: "Reusing the same caller-owned session ID makes a repeated dispatch find the existing session instead of starting another run." For batch streams, "disconnecting an unkeyed stream cancels server work, while a keyed run continues and can be joined again with the same key and body." A browser's session stream through `/session-gateway` reattaches after a drop and resumes after the last event delivered.
+[^failure]: `session.status()` carries `failureReason.message` with the runtime's own error.
+[^bench]: The page shows p50 and p95 for a new sandbox, first command, first reply, resume and fork, and counts the failed runs. On 17 November 2026 the page's window was 2 to 9 November 2026, over 11,066 test runs.
 
-function comparePaths(before: ObservableRun, after: ObservableRun) {
-  return {
-    profile: before.profile.every((setting) => after.profile.includes(setting)),
-    progress: before.progressKinds.every((kind) => after.progressKinds.includes(kind)),
-    tools: before.toolRequests.every((tool) => after.toolRequests.includes(tool)),
-    error: before.providerError === after.providerError,
-    finalStatus: before.finalStatus === after.finalStatus,
-  }
-}
-~~~
-
-This is illustrative test code, not an exported API.
-It makes the acceptance question visible.
-The real test should use a fixed task, a known tool request, a deliberate provider failure, an interrupt, and the same profile on both paths.
-
-Do not compare only successful final answers.
-A successful answer can hide a missing tool.
-A failed answer can reveal whether the path preserves the error that explains the failure.
-
-## What the cleanup proves, and what it does not
-
-The deletion proves that the special source path is no longer needed for the selected set of profile and run behaviors at the pinned source revision.
-It also proves that several Pi-specific controls no longer have a channel through the shared bridge.
-
-It does not prove that every model provider behaves the same.
-It does not prove that a remote service will remain healthy.
-It does not prove that a tool request completed.
-It does not prove that a worker's final code is correct.
-
-| Evidence | Narrow claim |
-| --- | --- |
-| Public deletion diff | Which source path and tests were removed |
-| Capability table | Which caller-visible behaviors were compared |
-| Shared observability change | Which live and trace signals the bridge now exposes |
-| Profile materialization source | Which settings the selected path declares it can carry |
-| Task-specific evaluation | Whether a particular coding task passed its acceptance checks |
-
-An **evaluation** is a structured check of a result against a stated criterion.
-For a coding worker, that might be a test command, a type check, a review rule, or a human decision.
-It is separate from architecture parity because two routes can produce the same trace shape and still produce different code.
-
-## The package boundary still matters
-
-Source and release are different evidence.
-The public repository records what the source contains.
-The package version is what an application can install without building from source.
-
-Check the [published package](https://www.npmjs.com/package/@tangle-network/agent-runtime) and its release notes before assuming that the current source behavior is in the version your application runs.
-
-A team can read the deletion, install an older package, and conclude that the shared path still drops a setting.
-That conclusion may be correct for the installed package and wrong for the current source.
-Record the package version with the run.
-
-## Migration is part of the deletion
-
-Removing a path changes more than new runs.
-Existing sessions may still point at the old worker kind.
-Stored traces may contain event names that the shared path does not emit.
-Operational dashboards may count the old executor separately.
-Support tooling may offer a retry button that assumes the old path can accept per-worker environment values.
-
-Treat those consumers as part of the migration surface.
-Before release, find the records and controls that mention the old path and decide what each one should do.
-
-| Existing item | Safe migration question |
-| --- | --- |
-| In-flight session | Can it finish on the old route, or must the product stop and explain the change? |
-| Stored trace | Can readers display both old and shared event shapes? |
-| Retry action | Will retrying preserve the same profile and choose the shared route explicitly? |
-| Dashboard label | Does it describe a worker capability rather than a deleted implementation name? |
-| Rollback package | Can a release be reverted without starting a second worker for the same run? |
-
-The last question is about duplicate side effects.
-Rolling back code is not the same as replaying a task.
-If the worker already changed a repository or called an external service, a new path must inspect the existing run before trying again.
-Use a stable run identifier and preserve the old record even when the new runtime cannot resume it.
-
-This is also where the named capability losses become operationally useful.
-If per-worker environment overrides disappeared, the migration should reject requests that still depend on them.
-If steering moved from immediate input to queued input, the user interface should not promise an instant turn change.
-An honest incompatibility at release time is safer than a retry that appears to work while dropping the control.
-
-## A safer rule for deleting execution paths
-
-First, list the user-visible capabilities of the old and new routes.
-Second, add missing shared behavior before touching the old route.
-Third, run the same task through both paths with a profile that exercises tools, resources, progress, cancellation, and failure.
-Fourth, publish the differences that remain.
-Finally, remove the old path and keep a regression test for the shared contract.
-
-
-The [agent profile contract guide](/blog/agent-profile-materialization-contracts) explains the input boundary that should be checked before launch.
-The [worker observability guide](/blog/agent-runtime-worker-observability) explains why progress and tool requests were prerequisites for this cleanup.
-For the filesystem and process boundary around a coding worker, read [AI dev container for production agents](/blog/ai-dev-container-production-agent-runtime).
-
-
-## Why remove a backend-specific execution path?
-
-Remove it when a shared route can carry the profile settings and run signals that made the special path necessary.
-The source becomes easier to change because a new feature no longer needs two implementations.
-
-## Did the deletion remove behavior?
-
-Yes.
-Immediate mid-turn steering, per-worker environment overrides, a per-worker program override, and a Pi-specific tool-connection file no longer travel through the shared route.
-
-## Does deleting source code prove the architecture improved?
-
-No.
-Source removal measures cleanup.
-The capability comparison, shared observability change, and named losses provide the evidence for the architecture decision.
-
-## Is the shared path the same as a model router?
-
-No.
-A router chooses or forwards model requests.
-The shared path is the runtime route that starts the worker and translates its events.
-
-## Does a passing evaluation prove the two paths are equivalent?
-
-No.
-An evaluation covers the checks it defines.
-Use a task that exercises the capabilities your product depends on, including failures and cancellation.
+<FigureNotes figures={runtimeOrLoopFigures} />
