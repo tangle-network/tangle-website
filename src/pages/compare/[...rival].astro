@@ -1,5 +1,6 @@
 ---
 import { formatSpanDuration as time } from '@tangle-network/charts';
+import { Code } from 'astro:components';
 import BlogLayout from '../../layouts/BlogLayout.astro';
 import bench from '../../data/benchmarks/sandbox.json';
 import compare from '../../data/compare.json';
@@ -20,24 +21,59 @@ const measured = compare.measured.map((m) => {
   return { ...row, label: m.label };
 });
 const dates = `${bench.window.from.slice(0, 10)} to ${bench.window.to.slice(0, 10)}`;
+// A selling page: what the buyer gains, the one difference as code, reasons with proof, the switch, one action.
+const sell = rival && 'sell' in rival ? rival.sell : undefined;
+const reply = bench.panels.find((p) => p.title === 'First reply, from create')?.rows.find((r) => r.label === 'Claude Code');
+if (sell && !reply) throw new Error('compare: /benchmarks has no "First reply, from create" row "Claude Code"');
 ---
 
 <BlogLayout
   crumb={{ href: '/compare/', label: 'Compare' }}
-  title={`Tangle vs ${name}: which sandbox for coding agents?`}
-  summary={(rival ?? compare).summary}
+  title={sell?.headline ?? `Tangle vs ${name}: which sandbox for coding agents?`}
+  summary={sell?.summary ?? (rival ?? compare).summary}
   date={checked}
   author="Drew Stone"
   tags={['comparison', 'sandbox', 'coding agents', ...others.map((r) => r.name)]}
   slug={rival?.slug ?? 'compare'}
   seriesPosts={[]}
 >
+  {sell && rival && reply ? (
+    <>
+      <Code code={sell.code.text} lang={sell.code.lang} theme="github-dark" />
+      <p>{sell.code.returns} come back from one call (<a href={sell.code.src}>{where(sell.code.src)}</a>). Claude Code's first reply arrives {time(reply.p50)} after create at p50 and {reply.p95 === null ? 'n/a' : time(reply.p95)} at p95, over {reply.n} production runs (<a href="/benchmarks/">tangle.tools/benchmarks</a>).</p>
+      <h2>What else you get</h2>
+      <ul>{sell.reasons.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+      <h2>Move your code</h2>
+      <Code code={sell.switch.text} lang={sell.switch.lang} theme="github-dark" />
+      {'rest' in sell.switch && <p>{sell.switch.rest} (<a href={sell.switch.restSrc}>{where(sell.switch.restSrc)}</a>)</p>}
+      <p>For everything else, <a href={sell.switch.guide.href}>{sell.switch.guide.label}</a>.</p>
+      <h2>{rival.name} and Tangle, side by side</h2>
+      <table class="product-comparison">
+        <thead><tr><th scope="col">Feature</th><th scope="col">{rival.name}</th><th scope="col">Tangle</th></tr></thead>
+        <tbody>
+          {sell.rows.map((id) => {
+            const r = rival.rows.find((x) => x.id === id)!;
+            const t = tangle[id as keyof typeof tangle];
+            return (
+              <tr>
+                <th scope="row">{t.label}</th>
+                <td data-label={rival.name}>{r.text} (<a href={r.src}>{where(r.src)}</a>)</td>
+                <td data-label="Tangle">{t.text} (<a href={t.src}>{where(t.src)}</a>)</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p>Each {rival.name} fact links the page it came from, read {formatDate(sell.checked)}.</p>
+    </>
+  ) : (
   <p>Last checked {formatDate(checked)}: each {rival ? rival.name : 'rival'} fact in the table links the page it came from, read that day.</p>
+  )}
 
-  {rival ? (
+  {sell ? null : rival ? (
     <>
       <h2>Why pick Tangle over {rival.name}</h2>
-      <ul>{rival.pickTangle.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+      <ul>{('pickTangle' in rival ? rival.pickTangle : []).map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
       <h2>{rival.name} and Tangle, row by row</h2>
       <table class="product-comparison">
         <thead><tr><th scope="col">Feature</th><th scope="col">{rival.name}</th><th scope="col">Tangle</th></tr></thead>
@@ -78,12 +114,17 @@ const dates = `${bench.window.from.slice(0, 10)} to ${bench.window.to.slice(0, 1
     </tbody>
   </table>
   <p>Production runs from {dates}, the same rows <a href="/benchmarks/">tangle.tools/benchmarks</a> draws.</p>
-  <p>agent-runtime runs the same agent code on Tangle and on other providers, so you can run your own task on each and compare: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on other providers</a>.</p>
+  {sell ? (
+    <p><a class="btn btn-primary" href={sell.cta.href}>{sell.cta.label}</a></p>
+  ) : (
+    <>
+      <p>agent-runtime runs the same agent code on Tangle and on other providers, so you can run your own task on each and compare: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on other providers</a>.</p>
+      <h2>Pricing</h2>
+      <p>Tangle <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>.</p>
+    </>
+  )}
 
-  <h2>Pricing</h2>
-  <p>Tangle <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>.</p>
-
-  {rival?.move && (
+  {rival && 'move' in rival && rival.move && (
     <>
       <h2>Move from {rival.name}</h2>
       <p>{rival.move.text} {rival.move.links.map((l, i) => <>{i > 0 && ', '}<a href={l.href}>{l.label}</a></>)}.</p>
