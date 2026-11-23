@@ -24,7 +24,7 @@ export const PLANS = [
     monthlyPriceCents: 2999,
     creditsPerMonth: 2999,
     popular: true,
-    features: ['Unlimited sandboxes', '10 snapshots per sandbox', '2 TB egress per account each month, then $0.05/GB'],
+    features: ['Unlimited sandboxes', '10 snapshots per sandbox', '2 TB egress per sandbox each month, then $0.05/GB'],
   },
   {
     id: 'enterprise',
@@ -32,7 +32,7 @@ export const PLANS = [
     monthlyPriceCents: 9900,
     creditsPerMonth: 9900,
     popular: false,
-    features: ['Unlimited sandboxes', '25 snapshots per sandbox', '2 TB egress per account each month, then $0.04/GB'],
+    features: ['Unlimited sandboxes', '25 snapshots per sandbox', '2 TB egress per sandbox each month, then $0.04/GB'],
   },
 ];
 
