@@ -2,6 +2,7 @@
 import { formatSpanDuration as time } from '@tangle-network/charts';
 import { Code } from 'astro:components';
 import BlogLayout from '../../layouts/BlogLayout.astro';
+import ProductLayout from '../../layouts/ProductLayout.astro';
 import bench from '../../data/benchmarks/sandbox.json';
 import compare from '../../data/compare.json';
 import { formatDate } from '../../utils/date';
@@ -21,7 +22,8 @@ const measured = compare.measured.map((m) => {
   return { ...row, label: m.label };
 });
 const dates = `${bench.window.from.slice(0, 10)} to ${bench.window.to.slice(0, 10)}`;
-// A selling page: what the buyer gains, the one difference as code, reasons with proof, the switch, one action.
+// A selling page is a product page: the gain beside its code on the first screen, reasons in a row, the switch, what
+// every sandbox includes, one action. The other pages stay the sourced comparison in the blog layout.
 const sell = rival && 'sell' in rival ? rival.sell : undefined;
 const reply = bench.panels.find((p) => p.title === 'First reply, from create')?.rows.find((r) => r.label === 'Claude Code');
 if (sell && !reply) throw new Error('compare: /benchmarks has no "First reply, from create" row "Claude Code"');
@@ -29,46 +31,51 @@ if (sell && !reply) throw new Error('compare: /benchmarks has no "First reply, f
 const sellTitle = sell && rival ? `Tangle vs ${rival.name}: ${sell.headline[0].toLowerCase()}${sell.headline.slice(1).replace(/\.$/, '')}` : undefined;
 ---
 
+{sell && rival && reply ? (
+  <ProductLayout title={sellTitle ?? rival.name} description={sell.summary} crumb={{ href: '/compare/', label: 'Compare' }}>
+    <a slot="action" class="cta" href={sell.cta.href}>{sell.cta.label}</a>
+    <div slot="aside" class="proof">
+      <Code code={sell.code.text} lang={sell.code.lang as 'ts' | 'python'} theme="github-dark" />
+      <p>{sell.code.returns} come back from one call (<a href={sell.code.src}>{where(sell.code.src)}</a>). Claude Code's first reply arrives {time(reply.p50)} after create at p50 and {reply.p95 === null ? 'n/a' : time(reply.p95)} at p95, over {reply.n} measured runs (<a href="/benchmarks/">tangle.tools/benchmarks</a>).</p>
+    </div>
+    <section>
+      <h2>What else you get</h2>
+      <ul class="product-row reasons">{sell.reasons.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
+    </section>
+    <section>
+      <h2>Move your code from {rival.name}</h2>
+      <div class="move">
+        <Code code={sell.switch.text} lang={sell.switch.lang as 'diff'} theme="github-dark" />
+        <div>
+          {'rest' in sell.switch && sell.switch.rest && sell.switch.restSrc && <p>{sell.switch.rest} (<a href={sell.switch.restSrc}>{where(sell.switch.restSrc)}</a>)</p>}
+          <p>For everything else, <a href={sell.switch.guide.href}>{sell.switch.guide.label}</a>.</p>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>What every sandbox includes</h2>
+      <dl class="product-row includes">
+        {sell.rows.map((id) => {
+          const t = tangle[id as keyof typeof tangle];
+          return <div><dt>{t.label}</dt><dd>{t.text} (<a href={t.src}>{where(t.src)}</a>)</dd></div>;
+        })}
+      </dl>
+    </section>
+  </ProductLayout>
+) : (
 <BlogLayout
   crumb={{ href: '/compare/', label: 'Compare' }}
-  title={sellTitle ?? `Tangle vs ${name}: which sandbox for coding agents?`}
-  summary={sell?.summary ?? (rival ?? compare).summary}
-  date={sell?.checked ?? checked}
+  title={`Tangle vs ${name}: which sandbox for coding agents?`}
+  summary={(rival ?? compare).summary}
+  date={checked}
   author="Drew Stone"
   tags={['comparison', 'sandbox', 'coding agents', ...others.map((r) => r.name)]}
   slug={rival?.slug ?? 'compare'}
   seriesPosts={[]}
 >
-  {sell && rival && reply ? (
-    <>
-      <Code code={sell.code.text} lang={sell.code.lang as 'ts' | 'python'} theme="github-dark" />
-      <p>{sell.code.returns} come back from one call (<a href={sell.code.src}>{where(sell.code.src)}</a>). Claude Code's first reply arrives {time(reply.p50)} after create at p50 and {reply.p95 === null ? 'n/a' : time(reply.p95)} at p95, over {reply.n} measured runs (<a href="/benchmarks/">tangle.tools/benchmarks</a>).</p>
-      <h2>What else you get</h2>
-      <ul>{sell.reasons.map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
-      <h2>Move your code from {rival.name}</h2>
-      <Code code={sell.switch.text} lang={sell.switch.lang as 'diff'} theme="github-dark" />
-      {'rest' in sell.switch && sell.switch.rest && sell.switch.restSrc && <p>{sell.switch.rest} (<a href={sell.switch.restSrc}>{where(sell.switch.restSrc)}</a>)</p>}
-      <p>For everything else, <a href={sell.switch.guide.href}>{sell.switch.guide.label}</a>.</p>
-      <h2>What every sandbox includes</h2>
-      <table class="product-comparison">
-        <tbody>
-          {sell.rows.map((id) => {
-            const t = tangle[id as keyof typeof tangle];
-            return (
-              <tr>
-                <th scope="row">{t.label}</th>
-                <td>{t.text} (<a href={t.src}>{where(t.src)}</a>)</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </>
-  ) : (
   <p>Last checked {formatDate(checked)}: each {rival ? rival.name : 'rival'} fact in the table links the page it came from, read that day.</p>
-  )}
 
-  {sell ? null : rival ? (
+  {rival ? (
     <>
       <h2>Why pick Tangle over {rival.name}</h2>
       <ul>{(('pickTangle' in rival && rival.pickTangle) || []).map((c) => <li>{c.text} (<a href={c.src}>{where(c.src)}</a>)</li>)}</ul>
@@ -96,7 +103,6 @@ const sellTitle = sell && rival ? `Tangle vs ${rival.name}: ${sell.headline[0].t
     </>
   ))}
 
-  {!sell && (<>
   <h2>Start times, measured in production</h2>
   <table class="product-comparison">
     <thead><tr><th scope="col">Tangle, measured</th><th scope="col">p50</th><th scope="col">p95</th><th scope="col">Runs</th><th scope="col">Failed</th></tr></thead>
@@ -113,23 +119,31 @@ const sellTitle = sell && rival ? `Tangle vs ${rival.name}: ${sell.headline[0].t
     </tbody>
   </table>
   <p>Production runs from {dates}, the same rows <a href="/benchmarks/">tangle.tools/benchmarks</a> draws.</p>
-  </>)}
-  {sell ? (
-    <p><a class="cta" href={sell.cta.href}>{sell.cta.label}</a></p>
-  ) : (
-    <>
-      <p>agent-runtime runs the same agent code on Tangle and on other providers, so you can run your own task on each and compare: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on other providers</a>.</p>
-      <h2>Pricing</h2>
-      <p>Tangle <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>.</p>
-    </>
-  )}
+  <p>agent-runtime runs the same agent code on Tangle and on other providers, so you can run your own task on each and compare: <a href="https://docs.tangle.tools/sandbox/other-providers">run the same agent on other providers</a>.</p>
+  <h2>Pricing</h2>
+  <p>Tangle <a href="/#pricing">plans</a> and the <a href="https://sandbox.tangle.tools/v1/pricing/sandboxes">rate card</a>.</p>
 </BlogLayout>
+)}
 
 <style>
-  /* The call to action of a selling page, in the site's primary button colours. */
+  /* The proof under the first screen's code. */
+  .proof p { margin: 0.9rem 0 0; font-size: 0.95rem; }
+  /* Reasons in a row, each under a rule in the brand colour. */
+  .reasons li { padding-top: 1rem; border-top: 2px solid var(--color-brand-cool, var(--border-hover)); font-size: 1.05rem; }
+  /* The diff takes the wide column; what to read next sits beside it. */
+  .move { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 2rem 3rem; align-items: start; }
+  .move > * { min-width: 0; }
+  .move p { margin: 0 0 1rem; font-size: 1.05rem; }
+  .includes div { padding-top: 0.9rem; border-top: 1px solid var(--border-default); }
+  .includes dt { margin: 0 0 0.35rem; color: var(--text-primary); font-weight: 600; }
+  .includes dd { margin: 0; color: var(--text-secondary); line-height: 1.55; }
+  @media (max-width: 1100px) {
+    .move { grid-template-columns: minmax(0, 1fr); }
+  }
+  /* The one call to action, in the site's primary button colours. */
   a.cta {
     display: inline-flex;
-    margin-top: 1rem;
+    margin-top: 1.6rem;
     padding: 0.75rem 1.3rem;
     border-radius: 9px;
     background: var(--btn-primary-bg);
